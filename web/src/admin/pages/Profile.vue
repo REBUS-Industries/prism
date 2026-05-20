@@ -123,13 +123,9 @@ form { display: flex; flex-direction: column; gap: 12px; max-width: 420px; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--color-text-muted); }
 .hints {
   margin: 6px 0 0; padding-left: 18px; font-size: 11px;
-  color: var(--color-warning, var(--color-text-muted));
+  color: var(--color-warn);
 }
-.hint-good { font-size: 11px; color: var(--color-success, #2e7d32); margin-top: 4px; }
-.hint-bad  { font-size: 11px; color: var(--color-danger,  #c62828); margin-top: 4px; }
-.success-box {
-  background: var(--color-success-bg, #e8f5e9);
-  color: var(--color-success, #2e7d32);
-  padding: 8px 10px; border-radius: var(--radius); font-size: 12px;
-}
+.hint-good { font-size: 11px; color: var(--color-success); margin-top: 4px; }
+.hint-bad  { font-size: 11px; color: var(--color-error); margin-top: 4px; }
+/* `.success-box` is styled globally in designSystem.css; no override needed. */
 </style>

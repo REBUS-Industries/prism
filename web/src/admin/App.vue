@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { adminApi } from '../shared/api';
+import ThemeToggle from '../shared/ThemeToggle.vue';
 import { adminWs } from '../shared/ws';
 
 const router = useRouter();
@@ -53,7 +54,10 @@ async function logout() {
         <RouterLink :to="{ name: 'profile' }" class="profile-link">
           {{ username ?? '—' }}
         </RouterLink>
-        <button @click="logout">Log out</button>
+        <div class="user-actions">
+          <button class="flex-1" @click="logout">Log out</button>
+          <ThemeToggle />
+        </div>
       </div>
     </aside>
     <main>
@@ -92,6 +96,7 @@ nav a.external {
 }
 nav a.external:hover { background: transparent; color: var(--color-text); }
 .user-box { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+.user-actions { display: flex; align-items: center; gap: 6px; }
 .profile-link {
   color: var(--color-text); text-decoration: none; font-weight: 600;
   padding: 4px 0;

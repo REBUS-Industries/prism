@@ -34,13 +34,28 @@ async function readInstallAsset(name: string): Promise<Buffer | null> {
 }
 
 /** Compute the WSS URL the agent should use for this server, honouring the
- *  admin override and falling back to the request's host. */
-async function resolveAgentWsUrl(reqHost: string | undefined, reqProto: string | undefined): Promise<string> {
+ *  admin override and falling back to the request's host. Caddy fronts the
+ *  prod deployment and terminates TLS, so we must look at x-forwarded-proto
+ *  (and x-forwarded-host) before falling back to Fastify's direct values. */
+async function resolveAgentWsUrl(req: {
+  hostname?: string;
+  protocol?: string;
+  headers: Record<string, string | string[] | undefined>;
+}): Promise<string> {
   const override = (await getSetting('workstation_agent_ws_url'))?.trim();
   if (override) return override;
-  const host = reqHost && reqHost.trim() ? reqHost : 'prism.rebus.industries';
-  const scheme = reqProto === 'http' ? 'ws' : 'wss';
+  const xfHost  = pickFirstHeader(req.headers['x-forwarded-host']);
+  const xfProto = pickFirstHeader(req.headers['x-forwarded-proto']);
+  const host = (xfHost ?? req.hostname ?? '').trim() || 'prism.rebus.industries';
+  const proto = (xfProto ?? req.protocol ?? '').trim();
+  const scheme = proto === 'http' ? 'ws' : 'wss';
   return `${scheme}://${host}/ws/agent`;
+}
+
+function pickFirstHeader(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  if (typeof value === 'string') return value.split(',')[0]?.trim();
+  return undefined;
 }
 
 const plugin: FastifyPluginAsync = async (app) => {
@@ -54,7 +69,7 @@ const plugin: FastifyPluginAsync = async (app) => {
   app.get('/agent', async (req) => {
     const downloadUrl = (await getSetting('workstation_agent_download_url'))?.trim() || null;
     const version     = (await getSetting('workstation_agent_version'))?.trim()      || null;
-    const wsUrl       = await resolveAgentWsUrl(req.hostname, req.protocol);
+    const wsUrl       = await resolveAgentWsUrl(req);
     return {
       downloadUrl,
       version,
@@ -125,7 +140,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       const roles = rolesParam.filter((r) => validRoles.has(r));
       if (roles.length === 0) roles.push('conversion', 'layering');
 
-      const wsUrl = await resolveAgentWsUrl(req.hostname, req.protocol);
+      const wsUrl = await resolveAgentWsUrl(req);
 
       const config = {
         prismUrl: wsUrl,

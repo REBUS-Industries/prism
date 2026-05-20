@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref } from 'vue';
 import { convertApi, jobsApi, type ApiError, type JobSummary } from '../shared/api';
 import OrbitPicker from '../shared/OrbitPicker.vue';
+import ThemeToggle from '../shared/ThemeToggle.vue';
 
 const file = ref<File | null>(null);
 const projectId = ref('');
@@ -111,10 +112,14 @@ function fmtBytes(b: number): string {
 
 <template>
   <div class="page">
-    <div class="brand">
-      <span class="brand-dot"></span>
-      PRISM convert
-    </div>
+    <header class="page-head">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        PRISM convert
+      </div>
+      <div class="spacer"></div>
+      <ThemeToggle />
+    </header>
 
     <div v-if="!jobId" class="card">
       <h2>Submit a conversion</h2>
@@ -191,7 +196,8 @@ function fmtBytes(b: number): string {
 
 <style scoped>
 .page { max-width: 640px; margin: 40px auto; padding: 0 24px; }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; margin-bottom: 16px; }
+.page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; }
 .brand-dot { width: 10px; height: 10px; background: var(--orbit-primary); border-radius: 50%; }
 h2 { font-size: 18px; margin: 0 0 16px; }
 .form { display: flex; flex-direction: column; gap: 12px; }

@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { adminApi, type ApiError } from '../../shared/api';
+import ThemeToggle from '../../shared/ThemeToggle.vue';
 
 const router = useRouter();
 const username = ref('');
@@ -25,6 +26,7 @@ async function submit() {
 
 <template>
   <div class="wrap">
+    <div class="theme-corner"><ThemeToggle /></div>
     <form class="card" @submit.prevent="submit">
       <div class="brand">
         <span class="brand-dot"></span>
@@ -43,7 +45,8 @@ async function submit() {
 </template>
 
 <style scoped>
-.wrap { display: grid; place-items: center; height: 100vh; }
+.wrap { display: grid; place-items: center; height: 100vh; position: relative; }
+.theme-corner { position: absolute; top: 16px; right: 16px; }
 form { width: 320px; display: flex; flex-direction: column; gap: 12px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; margin-bottom: 6px; }
 .brand-dot { width: 10px; height: 10px; background: var(--orbit-primary); border-radius: 50%; }

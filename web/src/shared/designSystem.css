@@ -1,12 +1,21 @@
 /* PRISM design system.
  *
- * Mirrors the ORBIT brand tokens (the colour scheme stored in
- * `vendor/orbit-monorepo/ORBIT-COLORS.md` once the brand file lands;
- * defined inline here so the build doesn't depend on the submodule
- * having that asset at the pinned SHA).
+ * Mirrors the ORBIT brand tokens. The light palette stays close to the
+ * existing PRISM look; the dark palette is sampled from the live ORBIT
+ * site (`https://orbit.rebus.industries/_nuxt/entry.*.css` — `--foundation`,
+ * `--foundation-page`, `--outline-2`, `--primary-muted`, etc.) so PRISM
+ * dark mode visually belongs in the same family as ORBIT's web app.
+ *
+ * Theme is selected by `[data-theme="dark"]` on the <html> element. A
+ * tiny inline script in each entry HTML applies the preference before
+ * the SPA boots (see web/src/{admin,convert}/index.html) so there is no
+ * white flash. The `prism.theme` localStorage key persists user choice
+ * across `light` / `dark` / `system`. See `web/src/shared/theme.ts`.
  */
 
 :root {
+  color-scheme: light;
+
   /* Brand */
   --orbit-primary:        #e06238;
   --orbit-primary-hover:  #c4542d;
@@ -17,6 +26,7 @@
   --color-bg:             #ffffff;
   --color-bg-elevated:    #fafafa;
   --color-bg-input:       #ffffff;
+  --color-bg-hover:       #f3f4f6;
   --color-border:         #e5e7eb;
   --color-border-strong:  #d1d5db;
   --color-text:           #111827;
@@ -31,6 +41,13 @@
   --color-info:           #1d4ed8;
   --color-info-bg:        #dbeafe;
 
+  /* Aliases for legacy/alternate naming used by some components.
+     Keep these in sync with the canonical tokens above. */
+  --color-danger:         var(--color-error);
+  --color-danger-bg:      var(--color-error-bg);
+  --color-warning:        var(--color-warn);
+  --color-warning-bg:     var(--color-warn-bg);
+
   /* Radii / spacing */
   --radius-sm: 4px;
   --radius:    8px;
@@ -43,23 +60,40 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
+/* Dark theme — sampled from ORBIT's live `entry.*.css`:
+     foundation-page #101012, foundation #15161c, foundation-2 #191a22,
+     outline-3 #332b28, outline-2 #3e312d, primary-muted #382d29,
+     foreground #fff, foreground-2 #b0b1b5, foreground-3 #7e7f82,
+     success #34d399 / lightest #072c1f, warning #fbbf24 / lightest #302303,
+     danger #f87171 / lightest #300303.
+   The orange accent (`--orbit-primary` #e06238) is preserved across both
+   themes so PRISM keeps its branded identity in dark mode. */
 html.dark, html[class*="dark"], [data-theme="dark"] {
-  --color-bg:             #0f1115;
-  --color-bg-elevated:    #1a1d24;
-  --color-bg-input:       #11141a;
-  --color-border:         #2a2f3a;
-  --color-border-strong:  #3a4150;
-  --color-text:           #e7eaf0;
-  --color-text-muted:     #aab1c0;
-  --color-text-subtle:    #6b7280;
-  --color-success:        #4ade80;
-  --color-success-bg:     #052e16;
+  color-scheme: dark;
+
+  --orbit-primary-hover:  #c94f26;
+  --orbit-primary-fade:   #382d29;
+
+  --color-bg:             #101012;
+  --color-bg-elevated:    #15161c;
+  --color-bg-input:       #191a22;
+  --color-bg-hover:       #1f2129;
+  --color-border:         #332b28;
+  --color-border-strong:  #3e312d;
+  --color-text:           #ffffff;
+  --color-text-muted:     #b0b1b5;
+  --color-text-subtle:    #7e7f82;
+  --color-success:        #34d399;
+  --color-success-bg:     #072c1f;
   --color-warn:           #fbbf24;
-  --color-warn-bg:        #422006;
+  --color-warn-bg:        #302303;
   --color-error:          #f87171;
-  --color-error-bg:       #4c0a0a;
-  --color-info:           #60a5fa;
-  --color-info-bg:        #0c2545;
+  --color-error-bg:       #300303;
+  --color-info:           #93c5fd;
+  --color-info-bg:        #1e2a3d;
+
+  --shadow-1: 0 1px 2px 0 rgba(0,0,0,.4);
+  --shadow-2: 0 4px 12px -2px rgba(0,0,0,.55), 0 2px 4px -1px rgba(0,0,0,.4);
 }
 
 * { box-sizing: border-box; }
@@ -102,6 +136,25 @@ button.primary, .btn.primary {
 button.primary:hover, .btn.primary:hover { background: var(--orbit-primary-hover); border-color: var(--orbit-primary-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Icon-only buttons (e.g. theme toggle) — square, transparent, restrained hover. */
+button.icon-btn, .btn.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-muted);
+  padding: 6px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+button.icon-btn:hover, .btn.icon-btn:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+button.icon-btn svg { width: 18px; height: 18px; }
+
 input, select, textarea {
   background: var(--color-bg-input);
   color: var(--color-text);
@@ -139,6 +192,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--o
 .pill.cancelled  { background: var(--color-error-bg);   color: var(--color-error); }
 .pill.online     { background: var(--color-success-bg); color: var(--color-success); }
 .pill.offline    { background: var(--color-error-bg);   color: var(--color-error); }
+.pill.ok         { background: var(--color-success-bg); color: var(--color-success); }
+.pill.fail       { background: var(--color-error-bg);   color: var(--color-error); }
 
 table {
   width: 100%;
@@ -151,7 +206,7 @@ th, td {
   border-bottom: 1px solid var(--color-border);
 }
 th { font-weight: 600; color: var(--color-text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-tbody tr:hover { background: var(--color-bg); }
+tbody tr:hover { background: var(--color-bg-hover); }
 
 code, .mono { font-family: var(--font-mono); font-size: 12px; }
 

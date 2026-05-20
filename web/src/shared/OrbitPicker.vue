@@ -284,24 +284,24 @@ const modelInputValue = computed(() => modelOpen.value
 .combo input { width: 100%; }
 .dropdown {
   position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 100;
-  background: var(--color-bg-elevated, #fafafa);
-  border: 1px solid var(--color-border, #e5e7eb);
-  border-radius: var(--radius, 8px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
   max-height: 280px; overflow: auto;
-  box-shadow: var(--shadow-2, 0 4px 12px rgba(0,0,0,0.08));
+  box-shadow: var(--shadow-2);
 }
 .item  { padding: 8px 10px; cursor: pointer; }
-.item:hover { background: var(--orbit-primary-fade, #fde9df); }
-.item-main { font-weight: 500; color: var(--color-text, #111); font-size: 13px; }
-.item-sub  { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--color-text-muted, #6b7280); }
-.item-sub code { font-family: var(--font-mono, ui-monospace, monospace); }
-.empty { padding: 10px; color: var(--color-text-muted, #6b7280); font-size: 12px; font-style: italic; }
+.item:hover { background: var(--orbit-primary-fade); }
+.item-main { font-weight: 500; color: var(--color-text); font-size: 13px; }
+.item-sub  { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--color-text-muted); }
+.item-sub code { font-family: var(--font-mono); }
+.empty { padding: 10px; color: var(--color-text-muted); font-size: 12px; font-style: italic; }
 
 .link {
   background: none; border: none; padding: 0;
-  color: var(--orbit-primary, #e06238); cursor: pointer;
+  color: var(--orbit-primary); cursor: pointer;
   font-size: 11px; text-decoration: underline;
 }
-.muted-role { color: var(--color-text-muted, #6b7280); font-size: 11px; }
-.hint-bad   { color: var(--color-error, #b91c1c); font-size: 11px; margin-top: 4px; }
+.muted-role { color: var(--color-text-muted); font-size: 11px; }
+.hint-bad   { color: var(--color-error); font-size: 11px; margin-top: 4px; }
 </style>
