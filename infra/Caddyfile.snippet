@@ -1,0 +1,44 @@
+# PRISM — Caddy snippet for the proxy pair (LXC 251 + 252).
+# Append to /etc/caddy/Caddyfile on both proxies, then `systemctl reload caddy`.
+#
+# Public URL: https://prism.rebus.industries
+# Origin:     http://10.0.200.211:8765 (PRISM Server on VM 211)
+#
+# /ws/agent is a long-lived WebSocket — Caddy proxies it transparently.
+
+prism.rebus.industries {
+    encode zstd gzip
+
+    # WebSocket upgrade for /ws/* (admin + agent)
+    @ws {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    reverse_proxy @ws http://10.0.200.211:8765
+
+    # Everything else — REST + static SPAs
+    reverse_proxy http://10.0.200.211:8765 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        # Large file uploads (DWG / 3DM can be 200+ MB)
+        transport http {
+            read_buffer 64KB
+            response_header_timeout 10m
+        }
+    }
+
+    # File upload size cap — match server-side bodyLimit
+    request_body {
+        max_size 1GB
+    }
+
+    log {
+        output file /var/log/caddy/prism.log {
+            roll_size 50mb
+            roll_keep 10
+        }
+        format json
+    }
+}

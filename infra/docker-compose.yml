@@ -1,0 +1,85 @@
+# PRISM Server stack — runs on VM 211.
+#
+# Three services:
+#   prism-server   the Fastify + WS orchestrator (built from server/ + web/)
+#   postgres       jobs, settings, keys, workstations, presets
+#   redis          BullMQ queue + transient log fan-out
+#
+# Phase 8 will switch `prism-server.image` to ghcr.io/rebus-orbit/prism-server:latest
+# and remove the `build:` directive so deploys are pull-only.
+
+services:
+  prism-server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: prism-server:local
+    container_name: prism-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8765:8765"
+    environment:
+      NODE_ENV: production
+      PORT: 8765
+      POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
+      REDIS_URL: "redis://redis:6379"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  postgres:
+    image: postgres:16.9-alpine
+    container_name: prism-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-prism}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:-prism}"
+    volumes:
+      - prism-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prism} -d ${POSTGRES_DB:-prism}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: valkey/valkey:8-alpine
+    container_name: prism-redis
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "60", "1000", "--appendonly", "yes"]
+    volumes:
+      - prism-redis-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  prism-postgres-data:
+  prism-redis-data:

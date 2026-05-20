@@ -1,0 +1,58 @@
+# --- editors / OS ---------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- secrets --------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!infra/.env.example
+*.pem
+*.key
+*.pfx
+
+# --- node / typescript ----------------------------------------------------
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.eslintcache
+.vite/
+.nuxt/
+.output/
+coverage/
+.turbo/
+.pnpm-store/
+
+# --- python (in case any tool drops files) --------------------------------
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- .NET / Rhino / Visual Studio -----------------------------------------
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+TestResults/
+publish/
+
+# --- local data / scratch -------------------------------------------------
+data/
+tmp/
+*.log
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+local-uploads/
+
+# --- generated codegen outputs (they are produced from shared/contracts) --
+shared/generated/

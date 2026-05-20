@@ -1,0 +1,75 @@
+name: ci
+# Lightweight Phase-0 CI: typecheck the server + web, build the agent
+# scaffold, validate the JSON-Schema contracts. Heavier build/push/deploy
+# workflows arrive in Phase 8.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  server-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: server/package.json
+      - name: Install
+        working-directory: server
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: server
+        run: npx tsc --noEmit
+
+  web-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package.json
+      - name: Install
+        working-directory: web
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: web
+        run: npx vue-tsc --noEmit
+
+  agent-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        working-directory: agent
+        run: dotnet restore PRISM.Agent.sln
+      - name: Build (Debug)
+        working-directory: agent
+        run: dotnet build PRISM.Agent.sln -c Debug --no-restore
+
+  schemas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate JSON Schemas
+        run: |
+          npm install -g ajv-cli@5
+          for f in shared/contracts/*.json; do
+            echo "Validating $f"
+            ajv compile -s "$f"
+          done

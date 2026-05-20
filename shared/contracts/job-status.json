@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://prism.rebus.industries/schemas/job-status.json",
+  "title": "PRISM Job Status",
+  "description": "Public shape of a job row as returned by GET /api/jobs/:id and /v1/jobs/:id. Secrets (orbit token, agent session token) are never present.",
+  "type": "object",
+  "required": ["id", "status", "createdAt", "updatedAt"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "status": { "type": "string", "enum": ["queued", "dispatched", "processing", "complete", "failed", "cancelled"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": ["string", "null"], "format": "date-time" },
+    "fileName": { "type": "string" },
+    "fileSize": { "type": "integer" },
+    "format": { "type": "string", "description": "File extension including dot" },
+    "orbitTarget": { "type": "string", "enum": ["prod", "dev"] },
+    "projectId": { "type": "string" },
+    "modelId": { "type": "string" },
+    "modelName": { "type": "string" },
+    "nodeName": { "type": ["string", "null"], "description": "Workstation that ran the job (null until dispatched)" },
+    "queuePosition": { "type": ["integer", "null"] },
+    "currentStage": { "type": ["string", "null"] },
+    "progressPercent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+    "lastMessage": { "type": ["string", "null"] },
+    "resultUrl": { "type": ["string", "null"], "format": "uri" },
+    "rootObjectId": { "type": ["string", "null"] },
+    "versionId": { "type": ["string", "null"] },
+    "error": { "type": ["string", "null"] }
+  }
+}

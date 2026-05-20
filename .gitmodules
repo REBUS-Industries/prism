@@ -1,0 +1,4 @@
+[submodule "vendor/orbit-monorepo"]
+	path = vendor/orbit-monorepo
+	url = https://github.com/REBUS-ORBIT/orbit-server.git
+	branch = main

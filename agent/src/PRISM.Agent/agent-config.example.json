@@ -1,0 +1,9 @@
+{
+  "prismUrl": "wss://prism.rebus.industries/ws/agent",
+  "nodeName": "RB-DA2-PCxx",
+  "machineId": "auto",
+  "slots": 2,
+  "roles": ["conversion", "layering"],
+  "rhinoExecutablePath": "C:\\Program Files\\Rhino 8\\System\\Rhino.exe",
+  "logDir": "C:\\ProgramData\\PRISM.Agent\\logs"
+}

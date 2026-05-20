@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://prism.rebus.industries/schemas/agent-protocol.json",
+  "title": "PRISM Agent Protocol",
+  "description": "WebSocket message envelope for the agent <-> server channel. Codegen produces TypeScript types in shared/generated/ts/agent-protocol.ts and C# types in shared/generated/cs/AgentProtocol.cs.",
+  "type": "object",
+  "required": ["type", "v"],
+  "properties": {
+    "v": { "type": "integer", "enum": [1], "description": "Protocol major version" },
+    "type": { "$ref": "#/definitions/MessageType" },
+    "id": { "type": "string", "description": "Correlation id (set on agent->server requests so the server can reply with the same id)" },
+    "ts": { "type": "string", "format": "date-time", "description": "Sender timestamp (ISO-8601 UTC)" },
+    "data": { "type": "object", "description": "Per-type payload — see definitions below" }
+  },
+  "definitions": {
+    "MessageType": {
+      "type": "string",
+      "enum": [
+        "hello",
+        "welcome",
+        "heartbeat",
+        "assign",
+        "ack",
+        "progress",
+        "log",
+        "complete",
+        "fail",
+        "cancel",
+        "pollLayers",
+        "layers"
+      ]
+    },
+    "Hello": {
+      "description": "Agent -> server, first frame after WS open.",
+      "type": "object",
+      "required": ["machineId", "nodeName", "slots", "formats", "roles", "agentVersion"],
+      "properties": {
+        "machineId": { "type": "string", "description": "Stable GUID per Windows machine" },
+        "nodeName": { "type": "string", "description": "Human-readable name shown in admin UI" },
+        "slots": { "type": "integer", "minimum": 1, "description": "Concurrent worker slots this process exposes" },
+        "formats": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "File extensions this agent can convert (e.g. ['.3dm', '.dwg', '.obj'])"
+        },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["conversion", "layering", "receive"] }
+        },
+        "agentVersion": { "type": "string" },
+        "rhinoVersion": { "type": "string" }
+      }
+    },
+    "Welcome": {
+      "description": "Server -> agent reply to Hello. Carries a server-assigned session id used in subsequent admin WS events.",
+      "type": "object",
+      "required": ["sessionId", "serverTime"],
+      "properties": {
+        "sessionId": { "type": "string" },
+        "serverTime": { "type": "string", "format": "date-time" },
+        "heartbeatSeconds": { "type": "integer", "default": 15 }
+      }
+    },
+    "Heartbeat": {
+      "description": "Agent -> server, periodic.",
+      "type": "object",
+      "required": ["slotsBusy"],
+      "properties": {
+        "slotsBusy": { "type": "integer", "minimum": 0 },
+        "cpuPct": { "type": "number" },
+        "memUsedMb": { "type": "number" }
+      }
+    },
+    "Assign": {
+      "description": "Server -> agent dispatch.",
+      "type": "object",
+      "required": ["jobId", "slot", "format", "fileUrl", "orbitServerUrl", "orbitToken", "projectId", "modelId"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "slot": { "type": "integer", "minimum": 0 },
+        "format": { "type": "string", "description": "File extension including dot, lowercase" },
+        "fileUrl": { "type": "string", "format": "uri", "description": "Pre-signed download URL on the PRISM server" },
+        "fileName": { "type": "string" },
+        "orbitServerUrl": { "type": "string", "format": "uri" },
+        "orbitToken": { "type": "string", "description": "Bearer token forwarded from the original requester" },
+        "projectId": { "type": "string" },
+        "modelId": { "type": "string" },
+        "modelName": { "type": "string" },
+        "options": {
+          "type": "object",
+          "properties": {
+            "swapYZ": { "type": "boolean", "default": false },
+            "quality": { "type": "string", "enum": ["sensible", "extreme"], "default": "sensible" },
+            "includedLayers": { "type": "array", "items": { "type": "string" } },
+            "includeLayerDescendants": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+    "Ack": {
+      "description": "Agent -> server: I've accepted the assignment (or rejected it).",
+      "type": "object",
+      "required": ["jobId", "accepted"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "accepted": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    },
+    "Progress": {
+      "description": "Agent -> server, sent at every meaningful stage transition.",
+      "type": "object",
+      "required": ["jobId", "stage"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "stage": { "type": "string", "description": "Free-form: 'downloading' | 'opening' | 'meshing' | 'uploading' | 'creating-version' | ..." },
+        "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "message": { "type": "string" }
+      }
+    },
+    "Log": {
+      "description": "Agent -> server, streaming log line.",
+      "type": "object",
+      "required": ["jobId", "level", "message"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+        "message": { "type": "string" }
+      }
+    },
+    "Complete": {
+      "description": "Agent -> server, terminal success.",
+      "type": "object",
+      "required": ["jobId", "versionUrl"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "versionUrl": { "type": "string", "format": "uri", "description": "Full URL to the ORBIT version page" },
+        "rootObjectId": { "type": "string" },
+        "versionId": { "type": "string" },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "objects": { "type": "integer" },
+            "blobs": { "type": "integer" },
+            "uploadBytes": { "type": "integer" },
+            "elapsedMs": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "Fail": {
+      "description": "Agent -> server, terminal failure.",
+      "type": "object",
+      "required": ["jobId", "error"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "error": { "type": "string" },
+        "stack": { "type": "string" },
+        "retryable": { "type": "boolean", "default": false }
+      }
+    },
+    "Cancel": {
+      "description": "Server -> agent: abort the running job.",
+      "type": "object",
+      "required": ["jobId"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "reason": { "type": "string" }
+      }
+    },
+    "PollLayers": {
+      "description": "Server -> agent: open this file and return its layer tree (no conversion).",
+      "type": "object",
+      "required": ["jobId", "fileUrl", "format"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "fileUrl": { "type": "string", "format": "uri" },
+        "format": { "type": "string" }
+      }
+    },
+    "Layers": {
+      "description": "Agent -> server reply to PollLayers.",
+      "type": "object",
+      "required": ["jobId", "layers"],
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "fullPath": { "type": "string" },
+              "color": { "type": "string", "description": "Hex #rrggbb" },
+              "visible": { "type": "boolean" },
+              "children": { "type": "array", "items": { "$ref": "#/definitions/Layers/properties/layers/items" } }
+            }
+          }
+        }
+      }
+    }
+  }
+}
