@@ -1,43 +1,56 @@
-# PRISM Server — multi-stage build
-# Phase 0: builds a basic node image; Phase 1 fills in DB migrations on boot.
+# PRISM server image.
+#
+# Multi-stage build:
+#   1. web-builder — builds both Vue SPAs into web/dist
+#   2. server-builder — TypeScript compile to server/dist (depends on
+#      shared/ for the agent-protocol contract types and JSON schemas)
+#   3. runtime — slim node:22 with prod deps, the compiled server, the
+#      built SPAs, and the Drizzle migrations
+#
+# Image: ghcr.io/rebus-orbit/prism-server:<tag>
 
-# -------- builder --------
-FROM node:22-alpine AS builder
+# -------- web-builder --------
+FROM node:22-alpine AS web-builder
+WORKDIR /build/web
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+# -------- server-builder --------
+FROM node:22-alpine AS server-builder
 WORKDIR /build
-
-# Web assets (admin + convert SPA) are built first so the server can serve them as static.
-# Phase 4 will populate web/. Until then the COPY of an empty dir is a no-op.
-COPY web/ ./web/
-RUN if [ -f web/package.json ]; then \
-      cd web && npm ci && npm run build; \
-    else \
-      echo "web/ not yet built — Phase 4 will populate this"; \
-    fi
-
-# Server build
-COPY server/package.json server/tsconfig.json ./server/
+COPY shared ./shared
+COPY server/package.json server/package-lock.json* server/tsconfig.json ./server/
 WORKDIR /build/server
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 COPY server/src ./src
-COPY shared ../shared
+COPY server/scripts ./scripts
 RUN npm run build
 
 # -------- runtime --------
 FROM node:22-alpine AS runtime
 WORKDIR /prism
 
-# Only production deps
-COPY server/package.json server/package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN apk add --no-cache wget tini
 
-COPY --from=builder /build/server/dist ./dist
-COPY --from=builder /build/web/dist ./web-dist 2>/dev/null || true
+COPY server/package.json server/package-lock.json* ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+COPY --from=server-builder /build/server/dist     ./dist
+COPY --from=server-builder /build/server/src/db/migrations ./dist/db/migrations
+COPY --from=server-builder /build/shared          ../shared
+COPY --from=web-builder    /build/web/dist        ./web-dist
 
 ENV NODE_ENV=production
 ENV PORT=8765
+ENV WEB_DIST_DIR=/prism/web-dist
+ENV UPLOAD_DIR=/var/lib/prism/uploads
+
 EXPOSE 8765
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:8765/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://localhost:${PORT}/health || exit 1
 
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/main.js"]

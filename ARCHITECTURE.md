@@ -1,103 +1,133 @@
-# PRISM Architecture
+# PRISM — architecture
 
-This document is the design contract for PRISM. Implementations in
-[`server/`](server), [`web/`](web), and [`agent/`](agent) follow what's
-written here; if the implementation diverges, update this file in the same
-commit.
+PRISM is an ORBIT-native, node-based conversion pipeline. It's split
+across two repos and three deploy targets:
 
-## Two layers, one wire format
+- **`REBUS-ORBIT/prism`** — this repo: server, web SPAs, agent, contracts
+- **`REBUS-ORBIT/orbit-server`** (submodule at `vendor/orbit-monorepo/`)
+  — the shared C# SDK and the Rhino connector core, reused by the agent
+- **PRISM Server (VM 211)** + **`orbit-server` (VM 211)** + **Rhino
+  workstations (RB-DA2-PCxx)**
 
-PRISM separates the **orchestrator** (one TypeScript service on VM 211)
-from the **workers** (N Windows machines running PRISM.Agent.exe with
-Rhino 8). They talk over a single WebSocket connection per agent.
+## Component split
 
-```text
-+------- VM 211 ----------------+         +--- RB-DA2-PCxx (Windows) -------+
-|                               |  WSS    |                                  |
-|   PRISM Server (Fastify)      |<------->|   PRISM.Agent.exe                |
-|     REST  /api/*  /v1/*       |         |     Rhino.Inside .NET 8          |
-|     WS    /ws/agent           |         |     OrbitConnector.Rhino.Core    |
-|     WS    /ws/admin           |         |     N worker slots               |
-|                               |         |                                  |
-|   Postgres (Drizzle)          |         +----------------+-----------------+
-|   Redis (BullMQ)              |                          |
-|                               |                          | HTTPS  (orbit objects + blobs)
-|   Vue 3 admin + convert SPAs  |                          v
-+--+-----------------+----------+                +------- orbit-server -----+
-   |                 |                           |        (VM 211)          |
-   |                 |                           +--------------------------+
-   v                 v
-admin user      convert user           
+```
+External callers
+  Convert SPA      Public Convert UI (web/src/convert)
+  Admin SPA        Internal Admin UI (web/src/admin)
+  ORBIT Rhino      C# plugin pushing direct to orbit-server (not via PRISM)
+  /v1/*            REST callers with X-API-Key
+       │
+       ▼
+Caddy (prism.rebus.industries) ──► PRISM Server (Node + Fastify, VM 211)
+                                        │
+                                        ├── Postgres (jobs, keys, settings, ...)
+                                        ├── Redis    (BullMQ queue + SSE fan-out)
+                                        └── WS gateway (admin + agent)
+                                                  │
+                                                  ▼
+                                          PRISM.Agent.exe (Windows service)
+                                          on each Rhino workstation
+                                                  │
+                                                  ├── Rhino.Inside (Rhino 8)
+                                                  └── OrbitConnector.Rhino.Core
+                                                          │
+                                                          ▼
+                                                  orbit-server (VM 211)
+                                                  + MinIO blob store
 ```
 
-**Why one WS per agent rather than HTTP polling:**
+## Source policy
 
-- Real-time progress / log streaming (the Vue admin flow editor consumes
-  the same events for live job particles).
-- Server pushes work to idle agents instead of agents polling for it
-  (lower latency, simpler dispatch).
-- The agent can advertise capability changes (slot busy/free, supported
-  formats) instantly.
+3DConvert (the legacy Python service on the Speckle prod VM) and the
+`CheekiSkrub/*` Speckle fork repos are **read-only reference material**.
+They taught us what features the team relies on; every line of PRISM
+was written fresh against that capability checklist.
 
-**Why the agent uploads ORBIT objects directly:**
+The only first-party reuse comes from the ORBIT monorepo, via the
+git submodule at `vendor/orbit-monorepo/`:
 
-- PRISM never has to hold mesh data in memory. Converter output goes
-  straight from Rhino on the workstation to `orbit-server`'s object
-  endpoint — same code path the ORBIT Rhino Connector already uses.
-- The user's ORBIT bearer token rides the job and is used by the agent;
-  PRISM never sees or persists it.
+- `SDK/src/Orbit.Objects` — geometry types
+- `SDK/src/Orbit.Sdk`     — transport + auth client
+- `Connectors/src/OrbitConnector.Rhino` — the Rhino send / receive
+  pipeline. Phase 3 compile-includes the converter source until the
+  monorepo extracts `OrbitConnector.Rhino.Core`, at which point this
+  becomes a plain `ProjectReference`.
 
-## Repo + cross-repo dependencies
+## Server (TypeScript / Fastify)
 
-- This repo: [REBUS-ORBIT/prism](https://github.com/REBUS-ORBIT/prism).
-- ORBIT SDK + Rhino-connector core: vendored as a git submodule at
-  [`vendor/orbit-monorepo/`](vendor/orbit-monorepo), pinned to a specific
-  commit of [REBUS-ORBIT/orbit-server](https://github.com/REBUS-ORBIT/orbit-server).
-  PRISM's [`agent/PRISM.Agent.sln`](agent/PRISM.Agent.sln) references the
-  C# projects under that submodule directly. Bump the submodule when the
-  SDK / connector core moves.
+Source: `server/src/`
 
-## Wire format: agent <-> server
+- `main.ts`              app bootstrap (cookie, cors, multipart, websocket, static)
+- `bootstrap.ts`         on-boot migrations + admin seed
+- `db/`                  Drizzle schema + migrations (Postgres)
+- `auth/`                api-key, ORBIT bearer, admin session middleware
+- `api/`                 internal `/api/*` REST surface (convert / jobs /
+                         workstations / keys / settings / receive / pipelines / webhooks)
+- `v1/`                  public `/v1/*` external API + per-key rate
+                         limit + monthly quota
+- `webhooks/`            terminal-event dispatcher (per-job callback +
+                         admin-managed subscribers; HMAC-SHA256 signed)
+- `ws/`                  WS gateway, agent + admin protocols, session registry
+- `jobs/`                BullMQ wrapper (queue + worker + dispatcher)
+- `conversion/`          static pipeline DAG used by both dispatcher + flow editor
+- `webStatic.ts`         serves the built Vue SPAs from `WEB_DIST_DIR`
 
-Defined in [`shared/contracts/agent-protocol.json`](shared/contracts/agent-protocol.json)
-(JSON Schema). Both the TypeScript server and the C# agent generate their
-types from this single source.
+## Web (Vue 3)
 
-Message kinds (overview, see schema for shapes):
+Two SPAs sharing one Vite project + design system. Both use
+`createWebHashHistory` so all client-side routing is fragment-based —
+no SPA-fallback config needed at the web server.
 
-| Direction | Type | Purpose |
-|---|---|---|
-| agent -> server | `hello` | Agent identifies itself: name, machineId, slot count, supported formats, roles |
-| agent -> server | `heartbeat` | Periodic liveness + slot state |
-| server -> agent | `assign` | Dispatch a job to a specific slot |
-| agent -> server | `progress` | Stage + percent + free-form message |
-| agent -> server | `log` | Streaming log line for `/api/jobs/:id/stream` |
-| agent -> server | `complete` | Job succeeded; payload includes ORBIT version URL |
-| agent -> server | `fail` | Job failed; error + stack |
-| server -> agent | `cancel` | Server-initiated cancel |
-| server -> agent | `pollLayers` | Layer-inspection job (no conversion) |
-| agent -> server | `layers` | Response to pollLayers: layer tree |
+- `web/src/shared/`      design tokens, typed API client, admin WS client
+- `web/src/admin/`       admin SPA (Dashboard, Workstations, Pipeline,
+                         API keys, Webhooks, Settings, Users, Analytics)
+- `web/src/convert/`     public convert UI (upload + ORBIT target +
+                         progress with SSE live updates)
 
-## Stable surfaces
+The Pipeline page renders the static topology from
+`server/src/conversion/pipelines.ts` via `@vue-flow/core`, overlaid
+with live workstation nodes and animated job particles.
 
-- **REST**: `/api/*` for the admin + convert SPAs; `/v1/*` for external
-  callers (rate-limited, versioned, never breaking-changed).
-- **WS**: `/ws/agent`, `/ws/admin`.
-- **DB**: Drizzle migrations are the schema source of truth. No
-  hand-rolled SQL.
+## Agent (C# .NET 8)
 
-## Pipeline DAG
+Source: `agent/src/PRISM.Agent/`
 
-Declared in code at [`server/src/conversion/pipelines.ts`](server/src/conversion/pipelines.ts).
-The same DAG drives both job dispatch (which steps run, in what order) and
-the live flow editor in the admin SPA (the visible "nodes" the user sees).
+- `Program.cs`           Generic Host, DI wiring, AgentService
+- `Config/AgentConfig.cs`  reads `agent-config.json` + auto-resolves machineId
+- `Ws/WsClient.cs`       auto-reconnecting WS client
+- `Ws/AgentMessageDispatcher.cs`  routes server frames (welcome/assign/cancel)
+- `Pipeline/WorkerSlotPool.cs`    N-slot concurrent job processor
+- `Pipeline/ConvertJob.cs`        the actual conversion or receive job
+- `Rhino/RhinoHost.cs`            singleton Rhino.Inside host
+- `Rhino/RhinoFileOpener.cs`      format → import strategy
 
-Default pipeline:
+A single PRISM.Agent.exe process exposes N worker slots. Slots share
+the same in-process Rhino (Rhino is not reentrant, so they serialise
+on the Rhino-side but overlap download + upload).
 
-```text
-Ingest -> Validate -> Queue -> Dispatch -> Workstation -> Upload -> Notify
-```
+## Cross-language contracts
 
-Optional steps (toggle from admin): `LayerInspect` (between Ingest and
-Queue), `Preview` (after Upload, for the GLB preview link), `Webhook`
-(after Notify).
+`shared/contracts/agent-protocol.json` is the canonical wire format
+(JSON Schema). Hand-maintained typed mirrors live at:
+
+- `shared/contracts/agent-protocol.ts` (TypeScript)
+- `shared/contracts/AgentProtocol.cs`  (C#)
+
+`server/scripts/codegen-contracts.mjs` validates all three stay in
+sync — wired into CI as the `schemas` job.
+
+## Deployment
+
+- `.github/workflows/server.yml` — builds + pushes
+  `ghcr.io/rebus-orbit/prism-server` on every push to `main` and tag
+- `.github/workflows/agent.yml`  — builds the C# agent as a self-contained
+  single-file Windows publish, signs it (when CODE_SIGN_* secrets are set),
+  and attaches the zip to a GH Release on tag push
+- `.github/workflows/deploy.yml` — SSHes to VM 211 / 212, pulls the new
+  image, runs `docker compose up -d`
+- `infra/docker-compose.yml`     — production compose: prism-server +
+  postgres + redis
+- `infra/Caddyfile.snippet`      — proxy config for the LXC proxy pair
+
+See `DEPLOY.md` and `AGENT_INSTALL.md` for runbook detail.

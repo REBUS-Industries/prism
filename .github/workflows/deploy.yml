@@ -1,0 +1,83 @@
+name: deploy
+
+# SSH to VM 211 (prod) or VM 212 (dev), pull the freshly-built server
+# image, and `docker compose up -d`. Mirrors the ORBIT deploy workflow.
+#
+# Triggers:
+#   - push to main         -> prod
+#   - workflow_dispatch    -> pick env from input
+#
+# Required repository secrets:
+#   PROD_SSH_HOST        10.0.200.211
+#   PROD_SSH_USER        rebus
+#   PROD_SSH_KEY         private key with access to that user
+#   DEV_SSH_HOST         10.0.200.212  (optional — only when env=dev)
+#   DEV_SSH_USER         rebus
+#   DEV_SSH_KEY          private key
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Deployment target'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [prod, dev]
+  workflow_run:
+    workflows: [server-image]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # On workflow_run we only deploy when the upstream succeeded.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target
+        id: target
+        run: |
+          ENV="${{ github.event.inputs.env }}"
+          if [ -z "$ENV" ]; then ENV="prod"; fi
+          echo "env=$ENV" >> "$GITHUB_OUTPUT"
+
+      - name: Set SSH host / key
+        id: ssh
+        run: |
+          if [ "${{ steps.target.outputs.env }}" = "dev" ]; then
+            echo "host=${{ secrets.DEV_SSH_HOST }}" >> "$GITHUB_OUTPUT"
+            echo "user=${{ secrets.DEV_SSH_USER }}" >> "$GITHUB_OUTPUT"
+            echo "key_secret=DEV_SSH_KEY" >> "$GITHUB_OUTPUT"
+          else
+            echo "host=${{ secrets.PROD_SSH_HOST }}" >> "$GITHUB_OUTPUT"
+            echo "user=${{ secrets.PROD_SSH_USER }}" >> "$GITHUB_OUTPUT"
+            echo "key_secret=PROD_SSH_KEY" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Add SSH key
+        env:
+          KEY: ${{ steps.target.outputs.env == 'dev' && secrets.DEV_SSH_KEY || secrets.PROD_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ steps.ssh.outputs.host }}" >> ~/.ssh/known_hosts
+
+      - name: Copy compose + Caddy snippet
+        run: |
+          scp -i ~/.ssh/id_ed25519 \
+            infra/docker-compose.yml \
+            infra/.env.example \
+            "${{ steps.ssh.outputs.user }}@${{ steps.ssh.outputs.host }}:/opt/prism/"
+
+      - name: Pull + up
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${{ steps.ssh.outputs.user }}@${{ steps.ssh.outputs.host }}" \
+            "cd /opt/prism && \
+             docker compose pull && \
+             docker compose up -d && \
+             docker compose ps && \
+             curl -sf http://localhost:8765/health"

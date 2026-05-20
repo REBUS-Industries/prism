@@ -1,0 +1,91 @@
+name: agent-msi
+
+# Builds the PRISM.Agent .NET 8 Windows service into a single-file
+# self-contained x64 publish, packages it as an MSI via WiX (when
+# CODE_SIGN_CERT/CODE_SIGN_PASSWORD secrets are set, signs both the
+# .exe and the .msi), and attaches the artifact to a GH Release on
+# tag push.
+#
+# Non-tag pushes still build + upload an unsigned artifact for manual
+# install testing.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'agent/**'
+      - 'shared/contracts/**'
+      - 'vendor/orbit-monorepo/**'
+      - '.github/workflows/agent.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        working-directory: agent
+        run: dotnet restore PRISM.Agent.sln
+
+      - name: Publish (self-contained, single-file, win-x64)
+        working-directory: agent
+        run: |
+          dotnet publish src/PRISM.Agent/PRISM.Agent.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishReadyToRun=true `
+            -o publish
+
+      - name: Stage installer payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item agent/publish/* stage/ -Recurse -Force
+          Copy-Item agent/install/install.ps1   stage/ -Force -ErrorAction SilentlyContinue
+          Copy-Item agent/install/uninstall.ps1 stage/ -Force -ErrorAction SilentlyContinue
+
+      - name: Sign binaries (if cert provided)
+        if: env.CODE_SIGN_CERT != '' && env.CODE_SIGN_PASSWORD != ''
+        env:
+          CODE_SIGN_CERT:     ${{ secrets.CODE_SIGN_CERT }}
+          CODE_SIGN_PASSWORD: ${{ secrets.CODE_SIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          $bytes = [System.Convert]::FromBase64String($env:CODE_SIGN_CERT)
+          [IO.File]::WriteAllBytes("cert.pfx", $bytes)
+          $exe = Get-ChildItem stage -Filter PRISM.Agent.exe -Recurse | Select-Object -First 1
+          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign `
+            /f cert.pfx /p $env:CODE_SIGN_PASSWORD `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            $exe.FullName
+
+      - name: Zip publish dir
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag) { $tag = "${{ github.sha }}".Substring(0, 7) }
+          Compress-Archive -Path stage/* -DestinationPath "PRISM.Agent-$tag.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prism-agent
+          path: PRISM.Agent-*.zip
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PRISM.Agent-*.zip

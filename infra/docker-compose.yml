@@ -10,10 +10,12 @@
 
 services:
   prism-server:
-    build:
-      context: ..
-      dockerfile: server/Dockerfile
-    image: prism-server:local
+    # Production: pull from GHCR (built by .github/workflows/server.yml).
+    # Local dev: comment `image:` and uncomment `build:` to build from source.
+    image: ghcr.io/rebus-orbit/prism-server:${PRISM_IMAGE_TAG:-latest}
+    # build:
+    #   context: ..
+    #   dockerfile: server/Dockerfile
     container_name: prism-server
     restart: unless-stopped
     depends_on:
@@ -26,6 +28,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8765
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       REDIS_URL: "redis://redis:6379"
       ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"
@@ -33,7 +36,10 @@ services:
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
       SESSION_SECRET: "${SESSION_SECRET}"
+      UPLOAD_DIR: "/var/lib/prism/uploads"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      - prism-uploads:/var/lib/prism/uploads
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8765/health"]
       interval: 30s
@@ -83,3 +89,4 @@ services:
 volumes:
   prism-postgres-data:
   prism-redis-data:
+  prism-uploads:

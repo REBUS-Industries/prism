@@ -1,63 +1,103 @@
-# Install PRISM.Agent on a Rhino workstation
+# PRISM.Agent — workstation install
 
-The PRISM workstation agent is a Windows-only .NET 8 service that drives
-Rhino 8 via [Rhino.Inside](https://github.com/mcneel/rhino.inside) and
-connects to PRISM Server over WSS. One agent process hosts N concurrent
-worker slots; each slot has its own Rhino subprocess.
-
-This is a placeholder install guide — Phase 8 will produce a signed `.msi`
-attached to GitHub Releases. Until then, manual install steps:
+PRISM.Agent is the Windows service that runs on each Rhino workstation
+in the pool. It connects outbound to the PRISM server over WSS, advertises
+its capabilities, and processes conversion / receive jobs against an
+in-process Rhino 8 host.
 
 ## Prerequisites
 
-- Windows 10 / 11 or Windows Server 2019+
-- Rhino 8 installed and licensed (Zoo at `10.0.1.161` or local license)
-- .NET 8 Runtime (the .msi installer will bundle this)
-- Network reachability to `prism.rebus.industries:443` and
-  `orbit.rebus.industries:443`
+- Windows 10 / 11 / Server 2019+ x64
+- **Rhino 8** installed and licensed (Zoo or single-user)
+- Outbound HTTPS + WSS to `prism.rebus.industries` (port 443)
+- An admin PowerShell session
 
-## Manual install (pre-MSI)
+## Install
 
-1. Download the latest `PRISM.Agent.zip` from
-   [Releases](https://github.com/REBUS-ORBIT/prism/releases).
-2. Extract to `C:\Program Files\PRISM.Agent\`.
-3. Copy `agent-config.example.json` to `agent-config.json` and edit:
-   ```jsonc
-   {
-     "prismUrl": "wss://prism.rebus.industries/ws/agent",
-     "nodeName": "RB-DA2-PC01",
-     "machineId": "auto",        // or paste a stable GUID
-     "slots": 2,                 // concurrent Rhino instances
-     "roles": ["conversion", "layering"]
-   }
-   ```
-4. Install as a Windows service (PowerShell elevated):
+1. **Download the latest agent zip** from the [releases page](https://github.com/REBUS-ORBIT/prism/releases/latest)
+   (file: `PRISM.Agent-vX.Y.Z.zip`).
+2. **Unblock + extract** to a temp location:
+
    ```powershell
-   sc.exe create PRISMAgent binPath= "C:\Program Files\PRISM.Agent\PRISM.Agent.exe" start= auto
-   sc.exe start PRISMAgent
+   Unblock-File .\PRISM.Agent-vX.Y.Z.zip
+   Expand-Archive .\PRISM.Agent-vX.Y.Z.zip -DestinationPath .\PRISM.Agent
+   cd .\PRISM.Agent
    ```
-5. Verify in PRISM admin:
-   - Open `https://prism.rebus.industries/admin/workstations`.
-   - The new agent should appear within ~5s of starting the service.
 
-## Logs
+3. **Run the installer** from an elevated PowerShell:
 
-- Service stdout: `C:\ProgramData\PRISM.Agent\logs\agent.log`
-- Rhino subprocess logs: `C:\ProgramData\PRISM.Agent\logs\slot-<n>.log`
+   ```powershell
+   ./install.ps1 `
+     -PrismUrl wss://prism.rebus.industries/ws/agent `
+     -NodeName $env:COMPUTERNAME `
+     -Slots 2
+   ```
 
-## Updating
+   - `PrismUrl`: the agent WS endpoint (use `ws://10.0.200.211:8765/ws/agent`
+     for LAN-direct, bypassing Caddy)
+   - `NodeName`: friendly name surfaced in the admin pool
+   - `Slots`: how many concurrent conversion jobs this machine handles
+     (recommended: number of physical cores ÷ 2, capped at 4)
+
+   The installer:
+   - copies the payload to `C:\Program Files\PRISM.Agent\`
+   - writes `agent-config.json`
+   - registers + starts the `PRISM.Agent` Windows service
+   - configures the service to restart automatically on failure
+
+## Verify
 
 ```powershell
-sc.exe stop PRISMAgent
-Expand-Archive -Force PRISM.Agent.zip -DestinationPath "C:\Program Files\PRISM.Agent\"
-sc.exe start PRISMAgent
+Get-Service PRISM.Agent
+Get-Content C:\ProgramData\PRISM.Agent\logs\*.log -Tail 20 -Wait
 ```
+
+In the [admin UI](https://prism.rebus.industries/admin/) the workstation
+will appear under **Workstations** with `online` status within ~5 seconds.
+
+## Configuration file
+
+`C:\Program Files\PRISM.Agent\agent-config.json`:
+
+```json
+{
+  "prismUrl": "wss://prism.rebus.industries/ws/agent",
+  "nodeName": "RB-DA2-PC01",
+  "slots":    2,
+  "machineId": "auto",
+  "logDir":   "C:\\ProgramData\\PRISM.Agent\\logs"
+}
+```
+
+Edit + `Restart-Service PRISM.Agent` to apply changes.
+
+## Roles
+
+By default the agent advertises all three roles:
+
+- `conversion` — accepts upload conversion jobs
+- `layering`   — answers /prepare layer-inspection queries
+- `receive`    — produces .3dm / .step from ORBIT versions
+
+Disable a role in the admin UI per workstation (Workstations -> Edit)
+to gate dispatch.
 
 ## Uninstall
 
 ```powershell
-sc.exe stop PRISMAgent
-sc.exe delete PRISMAgent
-Remove-Item -Recurse -Force "C:\Program Files\PRISM.Agent"
-Remove-Item -Recurse -Force "C:\ProgramData\PRISM.Agent"
+./uninstall.ps1
+# Or, keeping logs / config:
+./uninstall.ps1 -KeepData
 ```
+
+## Troubleshooting
+
+- **Service starts then immediately stops** — check `C:\ProgramData\PRISM.Agent\logs\`.
+  Usually means Rhino 8 isn't installed at the expected path, or the
+  Rhino.Inside bootstrap failed.
+- **Service is online in admin but jobs never dispatch** — likely no
+  matching format in `supportedFormats` or `isEnabled=false`. Edit the
+  workstation row in the admin UI.
+- **Job dispatches but fails immediately** — most often an ORBIT auth
+  problem. Confirm `orbit_token` / `orbit_dev_token` are set in admin
+  Settings, and that the workstation can reach `orbit-server` on the LAN.
