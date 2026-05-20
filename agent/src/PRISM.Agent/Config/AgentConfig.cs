@@ -12,6 +12,15 @@ public sealed record AgentConfig
     public int    Slots      { get; init; } = 1;
     public AgentRole[] Roles { get; init; } = new[] { AgentRole.Conversion, AgentRole.Layering, AgentRole.Receive };
     public string? RhinoExecutablePath { get; init; }
+
+    /// <summary>
+    /// Which Rhino version to host. Values:
+    ///   "auto" (default) — probe for the highest installed version
+    ///   "8"             — require Rhino 8 specifically
+    ///   "9"             — require Rhino 9 specifically (future; fails fast if not installed)
+    /// </summary>
+    public string RhinoVersion { get; init; } = "auto";
+
     public string  LogDir { get; init; } = @"C:\ProgramData\PRISM.Agent\logs";
 
     public static AgentConfig Load(string? path = null)

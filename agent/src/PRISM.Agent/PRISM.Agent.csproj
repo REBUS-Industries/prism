@@ -57,11 +57,39 @@
 
   <!--
     Rhino bindings.
-    If Rhino 8 is installed locally, reference the on-disk DLLs (Private=false: Rhino provides
-    them at runtime when Rhino.Inside hosts Rhino). Otherwise fall back to the NuGet reference
-    assemblies for compile-only — the agent simply can't run, but the build still succeeds in
-    CI without Rhino.
+
+    RhinoCommon is pinned to a specific stable 8.31 build:
+      - Unconditional PackageReference anchors NuGet's dep graph so no WIP/pre-release
+        build from the McNeel feed can win via transitive resolution.
+      - ExcludeAssets="runtime" means the stub DLL is only used for compilation;
+        Rhino supplies the real DLL at runtime via the Rhino.Inside assembly resolver.
+      - When Rhino 8 is locally installed the on-disk DLL is referenced directly for
+        better IDE tooling; the NuGet anchor still keeps the restore graph stable.
+
+    NOTE: All Rhino.Inside 9.x-beta versions on nuget.org list RhinoCommon >= 9.x-wip
+    as a transitive dep (the nuget.org packages target the Rhino 9 WIP dev cycle).
+    NU1605 is suppressed so our explicit 8.31.x pin wins via nearest-wins resolution.
+    The Rhino.Inside.dll ships its own resolver/finder code that does NOT expose
+    RhinoCommon types in its public API, so the 8.31 stubs compile correctly.
   -->
+  <PropertyGroup>
+    <!-- Prevent env-var-injected extra sources (e.g. McNeel WIP feed on CI) -->
+    <RestoreAdditionalProjectSources></RestoreAdditionalProjectSources>
+    <!-- NU1605: package downgrade — suppressed because we intentionally pin RhinoCommon
+         below the version that Rhino.Inside lists as a transitive dep (see above).
+         NU1701: framework compatibility (net48 assets used in net8.0-windows context).
+         NU1604: pre-release package used for Rhino.Inside. -->
+    <NoWarn>$(NoWarn);NU1701;NU1604;NU1605</NoWarn>
+  </PropertyGroup>
+
+  <!-- Unconditional NuGet anchor — always present so the dep graph is unambiguous -->
+  <ItemGroup>
+    <PackageReference Include="RhinoCommon" Version="8.31.26126.13431" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!-- When Rhino 8 is installed locally, also add the on-disk DLL for richer IDE support.
+       The HintPath reference takes precedence over the PackageReference compile stubs
+       when both are present; the PackageReference still anchors the NuGet dep graph. -->
   <ItemGroup Condition="Exists('$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll')">
     <Reference Include="RhinoCommon">
       <HintPath>$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll</HintPath>
@@ -69,23 +97,14 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup Condition="!Exists('$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll')">
-    <PackageReference Include="RhinoCommon" Version="8.*" ExcludeAssets="runtime" />
-  </ItemGroup>
-
   <!--
-    Rhino.Inside hosts Rhino 8 inside our .NET 8 process. The NuGet
-    package `Rhino.Inside` only ships stable 7.x (targeting net48); the
-    Rhino 8 prerelease versions are 9.x-beta. We pin to a known-good
-    prerelease and explicitly allow prereleases so `dotnet restore`
-    doesn't choke on the absent stable.
+    Rhino.Inside hosts Rhino 8 inside our .NET 8 process.
+    9.x-beta on nuget.org = the active development series for Rhino 8 hosting
+    (McNeel's versioning: Rhino.Inside major = Rhino major + 1).
+    Latest available build pinned explicitly to avoid floating to an incompatible pre-release.
   -->
-  <PropertyGroup>
-    <NoWarn>$(NoWarn);NU1701;NU1604</NoWarn>
-  </PropertyGroup>
-
   <ItemGroup>
-    <PackageReference Include="Rhino.Inside" Version="9.0.0-beta" />
+    <PackageReference Include="Rhino.Inside" Version="9.0.26084.13070-beta" />
   </ItemGroup>
 
   <ItemGroup>

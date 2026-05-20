@@ -37,9 +37,26 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Block McNeel WIP feed (diagnose then clear)
+        shell: pwsh
+        run: |
+          Write-Host "--- Configured NuGet sources before restore ---"
+          dotnet nuget list source
+          # Remove known McNeel WIP feed entries that may be registered on the runner.
+          # Our agent/NuGet.Config already uses <clear/>, but env-var injected sources
+          # or machine-level configs can still override.  Belt-and-suspenders.
+          $wipNames = @("McNeel Build Server","McNeel","rhino","rhinocommon","mcneel")
+          foreach ($name in $wipNames) {
+            dotnet nuget remove source $name 2>$null; $true
+          }
+          Write-Host "--- Configured NuGet sources after clear ---"
+          dotnet nuget list source
+
       - name: Restore
         working-directory: agent
-        run: dotnet restore PRISM.Agent.sln
+        # --source overrides ALL configured sources for this restore, ensuring only
+        # nuget.org is consulted even if the runner has a WIP feed registered globally.
+        run: dotnet restore PRISM.Agent.sln --source https://api.nuget.org/v3/index.json
 
       - name: Publish (self-contained, single-file, win-x64)
         working-directory: agent

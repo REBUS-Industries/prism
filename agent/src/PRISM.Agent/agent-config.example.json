@@ -4,6 +4,7 @@
   "machineId": "auto",
   "slots": 2,
   "roles": ["conversion", "layering"],
+  "rhinoVersion": "auto",
   "rhinoExecutablePath": "C:\\Program Files\\Rhino 8\\System\\Rhino.exe",
   "logDir": "C:\\ProgramData\\PRISM.Agent\\logs"
 }
