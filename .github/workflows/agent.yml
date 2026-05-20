@@ -31,6 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          token: ${{ secrets.ORBIT_DEPLOY_PAT }}
 
       - uses: actions/setup-dotnet@v4
         with:
