@@ -73,6 +73,7 @@ async function buildApp() {
   await app.register(import('./api/pipelines.js'),     { prefix: '/api/pipelines' });
   await app.register(import('./api/receive.js'),       { prefix: '/api/receive' });
   await app.register(import('./api/webhooks.js'),      { prefix: '/api/webhooks' });
+  await app.register(import('./api/orbit.js'),         { prefix: '/api/orbit' });
   await app.register(import('./api/internal.js'),      { prefix: '/internal' });
   await app.register(import('./v1/routes.js'),         { prefix: '/v1' });
 

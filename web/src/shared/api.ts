@@ -226,3 +226,53 @@ export const receiveApi = {
     callbackUrl?: string;
   }) => api.post<{ jobId: string; status: string }>('/api/receive/async', body),
 };
+
+// ---------------------------------------------------------------- ORBIT lookups
+export interface OrbitServerInfo { name: string; version: string; company?: string | null; }
+export interface OrbitUser       { id: string; name: string; email?: string | null; role?: string | null; }
+export interface OrbitProject {
+  id: string;
+  name: string;
+  description?: string | null;
+  role?: string | null;
+  visibility?: string | null;
+  updatedAt?: string | null;
+}
+export interface OrbitModel {
+  id: string;
+  name: string;
+  displayName?: string | null;
+  description?: string | null;
+  previewUrl?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface OrbitTestOk   { ok: true;  target: 'prod' | 'dev'; user: OrbitUser; serverInfo: OrbitServerInfo; }
+export interface OrbitTestFail { ok: false; target: 'prod' | 'dev'; reason: 'no-creds' | 'no-user'; error: string; serverInfo?: OrbitServerInfo; }
+
+export const orbitApi = {
+  /** Test stored credentials for a target. Returns either `{ ok: true, user, serverInfo }` or `{ ok: false, reason, error }`. */
+  test: async (target: 'prod' | 'dev'): Promise<OrbitTestOk | OrbitTestFail> => {
+    try {
+      return await api.get<OrbitTestOk>(`/api/orbit/test?target=${target}`);
+    } catch (err) {
+      const e = err as ApiError;
+      const body = (e.body as Partial<OrbitTestFail>) ?? {};
+      return {
+        ok: false,
+        target,
+        reason: body.reason ?? 'no-user',
+        error: body.error ?? e.message,
+        serverInfo: body.serverInfo,
+      };
+    }
+  },
+  projects: (target: 'prod' | 'dev', limit = 100) =>
+    api.get<{ target: string; totalCount: number; cursor: string | null; items: OrbitProject[] }>(
+      `/api/orbit/projects?target=${target}&limit=${limit}`,
+    ),
+  models: (target: 'prod' | 'dev', projectId: string, limit = 200) =>
+    api.get<{ target: string; projectId: string; projectName: string; totalCount: number; cursor: string | null; items: OrbitModel[] }>(
+      `/api/orbit/projects/${encodeURIComponent(projectId)}/models?target=${target}&limit=${limit}`,
+    ),
+};

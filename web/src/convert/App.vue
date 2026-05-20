@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue';
 import { convertApi, jobsApi, type ApiError, type JobSummary } from '../shared/api';
+import OrbitPicker from '../shared/OrbitPicker.vue';
 
 const file = ref<File | null>(null);
 const projectId = ref('');
@@ -138,15 +139,11 @@ function fmtBytes(b: number): string {
           </label>
         </div>
 
-        <label>Project ID
-          <input v-model="projectId" placeholder="cf900606f5" required />
-        </label>
-        <label>Model ID
-          <input v-model="modelId" placeholder="be45d33eb1" required />
-        </label>
-        <label>Model name (optional)
-          <input v-model="modelName" placeholder="main" />
-        </label>
+        <OrbitPicker
+          :target="orbitTarget"
+          v-model:projectId="projectId"
+          v-model:modelId="modelId"
+          v-model:modelName="modelName" />
 
         <label class="check"><input type="checkbox" v-model="swapYZ" /> Swap Y/Z axes</label>
 
