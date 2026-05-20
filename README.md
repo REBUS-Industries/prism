@@ -57,7 +57,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design,
 | 0 | Repo bootstrap, scaffold, submodule | done |
 | 1 | Fastify server core, Drizzle schema, auth | done |
 | 2 | WS gateway, agent protocol, agent skeleton | done |
-| 3 | Rhino.Inside conversion, ORBIT upload | pending |
+| 3 | Rhino.Inside conversion, ORBIT upload | done |
 | 4 | Admin + Convert SPAs | pending |
 | 5 | Vue Flow live pipeline editor | pending |
 | 6 | Receive (ORBIT -> .3dm/.step), IFC/3DM/GLB outputs | pending |

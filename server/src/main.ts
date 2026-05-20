@@ -69,6 +69,7 @@ async function buildApp() {
   await app.register(import('./api/keys.js'),          { prefix: '/api/keys' });
   await app.register(import('./api/workstations.js'),  { prefix: '/api/workstations' });
   await app.register(import('./api/layerPresets.js'),  { prefix: '/api/layer-presets' });
+  await app.register(import('./api/internal.js'),      { prefix: '/internal' });
 
   return app;
 }
@@ -82,6 +83,10 @@ async function main() {
     process.exit(1);
   }
 
+  // Start the BullMQ worker that turns queued jobs into agent dispatches.
+  const { startConvertWorker } = await import('./jobs/worker.js');
+  const worker = startConvertWorker(app.log);
+
   try {
     await app.listen({ host: HOST, port: PORT });
   } catch (err) {
@@ -92,6 +97,7 @@ async function main() {
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.on(sig, async () => {
       app.log.info({ sig }, 'shutdown');
+      try { await worker.close(); } catch (err) { app.log.warn({ err }, 'worker close failed'); }
       await app.close();
       process.exit(0);
     });

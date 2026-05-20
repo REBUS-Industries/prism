@@ -24,6 +24,70 @@
     <Compile Include="..\..\..\shared\contracts\AgentProtocol.cs" Link="Contracts\AgentProtocol.cs" />
   </ItemGroup>
 
+  <!--
+    Cross-repo C# reuse via the vendor/orbit-monorepo submodule.
+    Pinned per release; bump by `cd vendor/orbit-monorepo && git checkout <sha>`.
+  -->
+  <PropertyGroup>
+    <OrbitVendor>$(MSBuildThisFileDirectory)..\..\..\vendor\orbit-monorepo</OrbitVendor>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(OrbitVendor)\SDK\src\Orbit.Objects\Orbit.Objects.csproj" />
+    <ProjectReference Include="$(OrbitVendor)\SDK\src\Orbit.Sdk\Orbit.Sdk.csproj" />
+  </ItemGroup>
+
+  <!--
+    Reuse of the OrbitConnector.Rhino converter pipeline.
+    Phase 3 compile-includes the headless-safe files directly. A follow-up
+    will factor these into a proper OrbitConnector.Rhino.Core library in
+    the ORBIT monorepo so both the Rhino plugin and this agent can take a
+    plain ProjectReference instead of file globs.
+  -->
+  <ItemGroup>
+    <Compile Include="$(OrbitVendor)\Connectors\src\OrbitConnector.Rhino\Converters\**\*.cs"
+             Link="OrbitConnectorRhino\Converters\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="$(OrbitVendor)\Connectors\src\OrbitConnector.Rhino\Pipeline\**\*.cs"
+             Link="OrbitConnectorRhino\Pipeline\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="$(OrbitVendor)\Connectors\src\OrbitConnector.Rhino\Models\ConnectorCard.cs"
+             Link="OrbitConnectorRhino\Models\ConnectorCard.cs" />
+    <Compile Include="$(OrbitVendor)\Connectors\src\OrbitConnector.Rhino\Models\ServerConfig.cs"
+             Link="OrbitConnectorRhino\Models\ServerConfig.cs" />
+  </ItemGroup>
+
+  <!--
+    Rhino bindings.
+    If Rhino 8 is installed locally, reference the on-disk DLLs (Private=false: Rhino provides
+    them at runtime when Rhino.Inside hosts Rhino). Otherwise fall back to the NuGet reference
+    assemblies for compile-only — the agent simply can't run, but the build still succeeds in
+    CI without Rhino.
+  -->
+  <ItemGroup Condition="Exists('$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll')">
+    <Reference Include="RhinoCommon">
+      <HintPath>$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll')">
+    <PackageReference Include="RhinoCommon" Version="8.*" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!--
+    Rhino.Inside hosts Rhino 8 inside our .NET 8 process. The NuGet
+    package `Rhino.Inside` only ships stable 7.x (targeting net48); the
+    Rhino 8 prerelease versions are 9.x-beta. We pin to a known-good
+    prerelease and explicitly allow prereleases so `dotnet restore`
+    doesn't choke on the absent stable.
+  -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);NU1701;NU1604</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Rhino.Inside" Version="9.0.0-beta" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />

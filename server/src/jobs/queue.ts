@@ -18,6 +18,12 @@ export type ConvertJobPayload = {
   modelName?: string;
   callbackUrl?: string;
   submittedBy?: string;
+  /**
+   * How many times the dispatcher has retried this job because no
+   * eligible agent was available. The worker requeues with a 30-second
+   * delay each time, up to MAX_NO_AGENT_RETRIES.
+   */
+  noAgentAttempts?: number;
 };
 
 export const CONVERT_QUEUE = 'prism-convert';

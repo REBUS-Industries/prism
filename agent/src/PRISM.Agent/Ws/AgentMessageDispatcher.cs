@@ -1,24 +1,27 @@
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using PRISM.Agent.Pipeline;
 using PRISM.Contracts;
 
 namespace PRISM.Agent.Ws;
 
 /// <summary>
-/// Routes incoming server-&gt;agent messages. Phase 2: log + ack. Phase 3
-/// hands `Assign` to the slot pool which actually drives Rhino.
+/// Routes incoming server-&gt;agent messages.
+/// Phase 3: real `Assign` hand-off to <see cref="WorkerSlotPool"/>.
 /// </summary>
 public sealed class AgentMessageDispatcher
 {
     readonly ILogger<AgentMessageDispatcher> _log;
     readonly WsClient _ws;
+    readonly WorkerSlotPool _pool;
 
     public string? SessionId { get; private set; }
 
-    public AgentMessageDispatcher(WsClient ws, ILogger<AgentMessageDispatcher> log)
+    public AgentMessageDispatcher(WsClient ws, WorkerSlotPool pool, ILogger<AgentMessageDispatcher> log)
     {
         _ws = ws;
+        _pool = pool;
         _log = log;
         _ws.OnMessage += Handle;
     }
@@ -58,15 +61,8 @@ public sealed class AgentMessageDispatcher
         _log.LogInformation("assign: jobId={JobId} slot={Slot} format={Format} file={FileName}",
             env.Data.JobId, env.Data.Slot, env.Data.Format, env.Data.FileName ?? "");
 
-        // Phase 2: ack and immediately fail with a clear "not implemented yet"
-        // so the server can move on. Phase 3 swaps this for a real worker.
         _ = _ws.SendAsync(MessageType.Ack, new AckData { JobId = env.Data.JobId, Accepted = true });
-        _ = _ws.SendAsync(MessageType.Fail, new FailData
-        {
-            JobId = env.Data.JobId,
-            Error = "PRISM agent: conversion not implemented in Phase 2 scaffold",
-            Retryable = false,
-        });
+        _pool.Enqueue(env.Data);
     }
 
     void HandleCancel(string raw)
