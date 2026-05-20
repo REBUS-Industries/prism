@@ -27,9 +27,9 @@ jobs:
       contents: read
       packages: write
     steps:
+      # No submodule fetch: the server image only needs server/ + web/ + shared/.
+      # The agent (which needs vendor/orbit-monorepo) is built by agent.yml.
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - uses: docker/setup-buildx-action@v3
 
