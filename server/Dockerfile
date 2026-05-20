@@ -15,10 +15,6 @@ WORKDIR /build/web
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
-RUN echo '=== DEBUG: OrbitPicker.vue grep ===' && \
-    (grep -c openProject src/shared/OrbitPicker.vue || true) && \
-    (grep -c closeProjectSoon src/shared/OrbitPicker.vue || true) && \
-    head -5 src/shared/OrbitPicker.vue
 RUN npm run build
 
 # -------- server-builder --------
@@ -46,11 +42,19 @@ COPY --from=server-builder /build/server/src/db/migrations ./migrations
 COPY --from=server-builder /build/shared          /shared
 COPY --from=web-builder    /build/web/dist        ./web-dist
 
+# Agent install scripts shipped to admins via the Workstations download UI.
+# Bundled into the image at build time so the route always serves the
+# version that matches the checked-in agent/install/*.ps1 sources.
+COPY agent/install/install.ps1     ./agent-install/install.ps1
+COPY agent/install/uninstall.ps1   ./agent-install/uninstall.ps1
+COPY agent/src/PRISM.Agent/agent-config.example.json ./agent-install/agent-config.example.json
+
 ENV NODE_ENV=production
 ENV PORT=8765
 ENV WEB_DIST_DIR=/prism/web-dist
 ENV UPLOAD_DIR=/var/lib/prism/uploads
 ENV MIGRATIONS_DIR=/prism/migrations
+ENV AGENT_INSTALL_DIR=/prism/agent-install
 
 EXPOSE 8765
 

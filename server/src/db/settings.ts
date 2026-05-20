@@ -20,7 +20,18 @@ export type SettingKey =
   | 'orbit_token'
   | 'orbit_dev_token'
   | 'job_retention_hours'
-  | 'maintenance_mode';
+  | 'maintenance_mode'
+  // Workstation agent download metadata. Set by the admin once a build is
+  // published via the agent.yml workflow (GitHub Release or other URL):
+  //   workstation_agent_download_url  — direct URL to the zipped agent payload
+  //   workstation_agent_version       — display label (e.g. "v0.4.1")
+  // Both are optional; the Workstations page renders a "build pending" notice
+  // when they aren't configured.
+  | 'workstation_agent_download_url'
+  | 'workstation_agent_version'
+  // Optional override for the WSS endpoint baked into the per-node agent
+  // config template. Falls back to wss://<request host>/ws/agent.
+  | 'workstation_agent_ws_url';
 
 export async function getSetting(key: SettingKey): Promise<string | undefined> {
   const rows = await db.select().from(settings).where(eq(settings.key, key)).limit(1);

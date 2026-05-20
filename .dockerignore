@@ -4,7 +4,16 @@
 # is noise (and the submodule would be empty in CI anyway).
 
 vendor/
-agent/
+agent/*
+# Allow the install scripts + example config so the server image can serve
+# them from /api/admin/workstations/downloads/* (see Dockerfile COPY agent/...).
+!agent/install
+!agent/install/**
+!agent/src
+agent/src/*
+!agent/src/PRISM.Agent
+agent/src/PRISM.Agent/*
+!agent/src/PRISM.Agent/agent-config.example.json
 .git/
 .github/
 **/node_modules/

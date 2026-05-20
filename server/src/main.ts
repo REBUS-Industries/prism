@@ -69,6 +69,7 @@ async function buildApp() {
   await app.register(import('./api/settings.js'),      { prefix: '/api/settings' });
   await app.register(import('./api/keys.js'),          { prefix: '/api/keys' });
   await app.register(import('./api/workstations.js'),  { prefix: '/api/workstations' });
+  await app.register(import('./api/workstationDownloads.js'), { prefix: '/api/admin/workstations/downloads' });
   await app.register(import('./api/layerPresets.js'),  { prefix: '/api/layer-presets' });
   await app.register(import('./api/pipelines.js'),     { prefix: '/api/pipelines' });
   await app.register(import('./api/receive.js'),       { prefix: '/api/receive' });

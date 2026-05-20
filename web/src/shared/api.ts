@@ -132,7 +132,49 @@ export const workstationsApi = {
   get:    (id: string) => api.get<Workstation>(`/api/workstations/${id}`),
   update: (id: string, body: Partial<Workstation>) => api.patch<Workstation>(`/api/workstations/${id}`, body),
   remove: (id: string) => api.delete<{ deleted: string }>(`/api/workstations/${id}`),
+
+  // ---------------------------------------------- node provisioning downloads
+  agentInfo: () => api.get<AgentBuildInfo>('/api/admin/workstations/downloads/agent'),
+  agentDownloadUrl: () => '/api/admin/workstations/downloads/agent/download',
+  installScriptUrl: (which: 'install' | 'uninstall' = 'install') =>
+    `/api/admin/workstations/downloads/install-script?which=${which}`,
+  agentConfigUrl: (opts: { nodeName: string; slots?: number; roles?: string[] }) => {
+    const qs = new URLSearchParams();
+    qs.set('nodeName', opts.nodeName);
+    if (opts.slots !== undefined) qs.set('slots', String(opts.slots));
+    if (opts.roles?.length)       qs.set('roles', opts.roles.join(','));
+    return `/api/admin/workstations/downloads/agent-config?${qs.toString()}`;
+  },
+  fetchAgentConfig: (opts: { nodeName: string; slots?: number; roles?: string[] }) => {
+    const qs = new URLSearchParams();
+    qs.set('nodeName', opts.nodeName);
+    if (opts.slots !== undefined) qs.set('slots', String(opts.slots));
+    if (opts.roles?.length)       qs.set('roles', opts.roles.join(','));
+    return api.get<AgentConfigTemplate>(`/api/admin/workstations/downloads/agent-config?${qs.toString()}`);
+  },
 };
+
+export interface AgentBuildInfo {
+  downloadUrl: string | null;
+  version: string | null;
+  wsUrl: string;
+  available: boolean;
+  buildSource: {
+    workflow: string;
+    artifact: string;
+    howTo: string;
+  };
+}
+
+export interface AgentConfigTemplate {
+  prismUrl: string;
+  nodeName: string;
+  machineId: 'auto' | string;
+  slots: number;
+  roles: ('conversion' | 'layering' | 'receive')[];
+  rhinoExecutablePath: string;
+  logDir: string;
+}
 
 export const keysApi = {
   list:   () => api.get<{ keys: ApiKey[] }>('/api/keys'),

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import { orbitApi, settingsApi, type ApiError, type OrbitTestFail, type OrbitTestOk } from '../../shared/api';
 
 interface FieldDef {
@@ -23,10 +24,28 @@ const otherFields: FieldDef[] = [
   { key: 'maintenance_mode',    label: 'Maintenance mode', type: 'switch' },
 ];
 
+const workstationAgentFields: FieldDef[] = [
+  {
+    key: 'workstation_agent_download_url',
+    label: 'Agent download URL',
+    placeholder: 'https://github.com/REBUS-ORBIT/prism/releases/download/v0.4.1/PRISM.Agent-v0.4.1.zip',
+  },
+  {
+    key: 'workstation_agent_version',
+    label: 'Agent version label',
+    placeholder: 'v0.4.1',
+  },
+  {
+    key: 'workstation_agent_ws_url',
+    label: 'WS endpoint override',
+    placeholder: 'wss://prism.rebus.industries/ws/agent (leave blank to derive from request)',
+  },
+];
+
 // Reactive state for each known key: current input + original DB value.
 // Pre-populate synchronously so the template can render before refresh()
 // returns — otherwise `values[f.key].value` blows up on first paint.
-const ALL_KEYS = [...orbitProdFields, ...orbitDevFields, ...otherFields].map((f) => f.key);
+const ALL_KEYS = [...orbitProdFields, ...orbitDevFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
 const values = reactive<Record<string, { value: string; original: string }>>(
   Object.fromEntries(ALL_KEYS.map((k) => [k, { value: '', original: '' }])),
 );
@@ -45,7 +64,7 @@ const testDev  = reactive<TestState>({ kind: 'idle' });
 
 async function refresh() {
   const all = (await settingsApi.list()).settings;
-  for (const f of [...orbitProdFields, ...orbitDevFields, ...otherFields]) {
+  for (const f of [...orbitProdFields, ...orbitDevFields, ...otherFields, ...workstationAgentFields]) {
     const v = all[f.key] ?? '';
     values[f.key] = { value: v, original: v };
   }
@@ -214,6 +233,35 @@ onMounted(refresh);
       </div>
     </div>
   </section>
+
+  <!-- ============================================== Workstation agent -->
+  <section class="block">
+    <header class="block-head">
+      <h2>Workstation agent</h2>
+    </header>
+    <p class="muted" style="font-size: 12px; margin: 0 0 8px;">
+      Surfaced on the
+      <RouterLink :to="{ name: 'workstations' }">Workstations</RouterLink>
+      page under <em>Node downloads</em>. The download URL points at the zip
+      produced by the <code>agent-msi</code> GitHub Action (tag a release or
+      trigger it manually); leave the WS override blank to derive
+      <code>wss://&lt;host&gt;/ws/agent</code> from the request host.
+    </p>
+    <div class="card">
+      <div class="row" v-for="f in workstationAgentFields" :key="f.key">
+        <label>
+          {{ f.label }}
+          <code class="muted">{{ f.key }}</code>
+        </label>
+        <input
+          type="text"
+          :placeholder="f.placeholder ?? ''"
+          v-model="values[f.key].value"
+        />
+        <button :disabled="!isDirty(f.key) || saving[f.key]" @click="save(f.key)">Save</button>
+      </div>
+    </div>
+  </section>
 </template>
 
 <style scoped>
@@ -229,6 +277,5 @@ h2 { font-size: 14px; margin: 0; letter-spacing: 0.04em; text-transform: upperca
 label { display: flex; flex-direction: column; gap: 2px; font-weight: 500; }
 label code { font-size: 11px; font-weight: 400; }
 .status { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-.pill.ok   { background: var(--color-success-bg, #e8f5e9); color: var(--color-success, #2e7d32); }
-.pill.fail { background: var(--color-danger-bg,  #ffebee); color: var(--color-danger,  #c62828); }
+/* `.pill.ok` and `.pill.fail` are styled globally in designSystem.css. */
 </style>

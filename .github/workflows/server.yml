@@ -17,6 +17,11 @@ on:
       - 'server/**'
       - 'web/**'
       - 'shared/**'
+      # Agent install scripts + the example config are baked into the
+      # server image (served by /api/admin/workstations/downloads/*) so
+      # rebuild when they change too.
+      - 'agent/install/**'
+      - 'agent/src/PRISM.Agent/agent-config.example.json'
       - '.github/workflows/server.yml'
   workflow_dispatch:
 
