@@ -24,7 +24,12 @@ const otherFields: FieldDef[] = [
 ];
 
 // Reactive state for each known key: current input + original DB value.
-const values = reactive<Record<string, { value: string; original: string }>>({});
+// Pre-populate synchronously so the template can render before refresh()
+// returns — otherwise `values[f.key].value` blows up on first paint.
+const ALL_KEYS = [...orbitProdFields, ...orbitDevFields, ...otherFields].map((f) => f.key);
+const values = reactive<Record<string, { value: string; original: string }>>(
+  Object.fromEntries(ALL_KEYS.map((k) => [k, { value: '', original: '' }])),
+);
 const saving = reactive<Record<string, boolean>>({});
 const status = ref<string | null>(null);
 const error  = ref<string | null>(null);
