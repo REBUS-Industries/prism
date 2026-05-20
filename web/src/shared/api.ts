@@ -149,6 +149,21 @@ export const adminApi = {
   logout: () => api.post<{ ok: true }>('/api/admin/logout', {}),
 };
 
+export interface PipelineNode {
+  id: string;
+  kind: string;
+  label: string;
+  description: string;
+  optional?: boolean;
+}
+export interface PipelineEdge { from: string; to: string; label?: string; }
+export interface PipelineTopology { nodes: PipelineNode[]; edges: PipelineEdge[]; }
+
+export const pipelinesApi = {
+  list: () => api.get<{ pipelines: Record<string, PipelineTopology> }>('/api/pipelines'),
+  get:  (id: string) => api.get<PipelineTopology>(`/api/pipelines/${id}`),
+};
+
 export const convertApi = {
   submit: (file: File, opts: {
     projectId: string;

@@ -1,68 +1,76 @@
 /**
- * Pipeline DAG declarations.
+ * Static pipeline topology.
  *
- * Both the job dispatcher (server-side: decides which stages run) and
- * the admin SPA flow editor (client-side: draws the nodes) read from
- * this file. Editing the DAG here is the only way to change the visible
- * pipeline.
+ * The flow editor renders this DAG; the dispatcher uses it as the
+ * canonical sequence of stages a job moves through. Adding a new stage
+ * here automatically:
+ *   - shows up in the admin Pipeline view
+ *   - becomes a valid `currentStage` value on jobs
+ *   - is exposed via /api/conversion/pipeline
  *
- * Phase 5 fills in the live overlays. Phase 1 only needs this typed so
- * the dispatcher can iterate stages in order.
+ * Workstations are NOT modelled here as nodes — they're rendered as a
+ * live overlay around the Dispatch -> Workstation -> Upload edge.
  */
 
-export type StageKind =
-  | 'ingest'        // accept the upload, persist metadata
-  | 'validate'     // check format, size, ORBIT target reachable
-  | 'layerInspect' // optional: open the file just to read layer tree
-  | 'queue'         // BullMQ enqueue
-  | 'dispatch'    // pick an eligible agent slot
-  | 'workstation'   // Rhino opens + converts
-  | 'upload'      // agent pushes ORBIT objects + blobs
-  | 'preview'      // optional: generate GLB preview
-  | 'notify'       // mark job complete, fire admin WS event
-  | 'webhook';      // optional: POST callback url
+export type StageKind = 'ingest' | 'validate' | 'queue' | 'dispatch' | 'workstation' | 'upload' | 'notify' | 'receive';
 
-export interface Stage {
+export interface PipelineNode {
   id: string;
   kind: StageKind;
   label: string;
-  optional: boolean;
   description: string;
+  optional?: boolean;
 }
 
-export interface Pipeline {
-  id: string;
-  label: string;
-  stages: Stage[];
-  edges: Array<[fromId: string, toId: string]>;
+export interface PipelineEdge {
+  from: string;
+  to: string;
+  label?: string;
 }
 
-export const DEFAULT_PIPELINE: Pipeline = {
-  id: 'default',
-  label: 'Default conversion pipeline',
-  stages: [
-    { id: 'ingest',       kind: 'ingest',       label: 'Ingest',         optional: false, description: 'Accept upload, persist job row' },
-    { id: 'validate',     kind: 'validate',     label: 'Validate',       optional: false, description: 'Format + size + ORBIT target check' },
-    { id: 'layerInspect', kind: 'layerInspect', label: 'Layer inspect',  optional: true,  description: 'Open file once to list layers (skipped if no layer filter)' },
-    { id: 'queue',        kind: 'queue',        label: 'Queue',          optional: false, description: 'BullMQ enqueue' },
-    { id: 'dispatch',     kind: 'dispatch',     label: 'Dispatch',       optional: false, description: 'Pick an eligible idle agent slot' },
-    { id: 'workstation',  kind: 'workstation',  label: 'Workstation',    optional: false, description: 'Rhino opens the file and converts' },
-    { id: 'upload',       kind: 'upload',       label: 'Upload to ORBIT', optional: false, description: 'Agent pushes objects + blobs to orbit-server' },
-    { id: 'preview',      kind: 'preview',      label: 'GLB preview',    optional: true,  description: 'Generate preview thumbnail (optional)' },
-    { id: 'notify',       kind: 'notify',       label: 'Notify',         optional: false, description: 'Mark complete, fan out events' },
-    { id: 'webhook',      kind: 'webhook',      label: 'Webhook',        optional: true,  description: 'POST callback url if the job specified one' },
+export interface PipelineTopology {
+  nodes: PipelineNode[];
+  edges: PipelineEdge[];
+}
+
+export const sendPipeline: PipelineTopology = {
+  nodes: [
+    { id: 'ingest',      kind: 'ingest',      label: 'Ingest',          description: 'Accept upload via /api/convert/async or /v1/convert' },
+    { id: 'validate',    kind: 'validate',    label: 'Validate',        description: 'Extension whitelist + size limits + format sniff' },
+    { id: 'queue',       kind: 'queue',       label: 'Queue',           description: 'BullMQ convert queue, prioritised by user/key' },
+    { id: 'dispatch',    kind: 'dispatch',    label: 'Dispatch',        description: 'Pick least-loaded agent slot with matching role + format' },
+    { id: 'workstation', kind: 'workstation', label: 'Workstation',     description: 'Rhino opens file, runs OrbitConnector send pipeline' },
+    { id: 'upload',      kind: 'upload',      label: 'ORBIT upload',    description: 'Agent posts objects + blobs directly to orbit-server' },
+    { id: 'notify',      kind: 'notify',      label: 'Notify',          description: 'WS push + webhook callback (when configured)', optional: true },
   ],
   edges: [
-    ['ingest',       'validate'],
-    ['validate',     'layerInspect'],
-    ['layerInspect', 'queue'],
-    ['validate',     'queue'],          // when layerInspect is skipped
-    ['queue',        'dispatch'],
-    ['dispatch',     'workstation'],
-    ['workstation',  'upload'],
-    ['upload',       'preview'],
-    ['upload',       'notify'],         // when preview is skipped
-    ['preview',      'notify'],
-    ['notify',       'webhook'],        // optional fan-out
+    { from: 'ingest',      to: 'validate'    },
+    { from: 'validate',    to: 'queue'       },
+    { from: 'queue',       to: 'dispatch'    },
+    { from: 'dispatch',    to: 'workstation' },
+    { from: 'workstation', to: 'upload'      },
+    { from: 'upload',      to: 'notify'      },
   ],
 };
+
+export const receivePipeline: PipelineTopology = {
+  nodes: [
+    { id: 'receive-request',  kind: 'ingest',      label: 'Request',         description: 'GET /api/receive triggers a receive job with a target ORBIT version' },
+    { id: 'receive-queue',    kind: 'queue',       label: 'Queue',           description: 'BullMQ receive queue' },
+    { id: 'receive-dispatch', kind: 'dispatch',    label: 'Dispatch',        description: 'Pick agent slot with the receive role' },
+    { id: 'receive-rhino',    kind: 'workstation', label: 'Rhino',           description: 'Pull objects from ORBIT, hydrate raw encoding, write .3dm / .step' },
+    { id: 'receive-deliver',  kind: 'upload',      label: 'Deliver',         description: 'Stream output back to caller' },
+  ],
+  edges: [
+    { from: 'receive-request',  to: 'receive-queue'    },
+    { from: 'receive-queue',    to: 'receive-dispatch' },
+    { from: 'receive-dispatch', to: 'receive-rhino'    },
+    { from: 'receive-rhino',    to: 'receive-deliver'  },
+  ],
+};
+
+export const PIPELINES = {
+  send:    sendPipeline,
+  receive: receivePipeline,
+} as const;
+export type PipelineId = keyof typeof PIPELINES;
