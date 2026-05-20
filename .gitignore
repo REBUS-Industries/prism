@@ -47,6 +47,7 @@ publish/
 # --- local data / scratch -------------------------------------------------
 data/
 tmp/
+.tmp/
 *.log
 *.db
 *.db-journal
