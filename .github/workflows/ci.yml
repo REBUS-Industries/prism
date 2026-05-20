@@ -66,10 +66,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Validate JSON Schemas
-        run: |
-          npm install -g ajv-cli@5
-          for f in shared/contracts/*.json; do
-            echo "Validating $f"
-            ajv compile -s "$f"
-          done
+          cache: 'npm'
+          cache-dependency-path: server/package.json
+      - name: Install (server only — owns the validator deps)
+        working-directory: server
+        run: npm install --no-audit --no-fund
+      - name: Validate JSON Schemas + TS<->JSON consistency
+        working-directory: server
+        run: npm run validate:contracts

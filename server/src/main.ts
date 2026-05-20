@@ -58,6 +58,10 @@ async function buildApp() {
     phase: 1,
   }));
 
+  // WS gateway must be registered before any REST plugins so its
+  // `upgrade`-aware handler wins for /ws/* paths.
+  await app.register(import('./ws/gateway.js'));
+
   await app.register(import('./api/admin.js'),         { prefix: '/api/admin' });
   await app.register(import('./api/jobs.js'),          { prefix: '/api/jobs' });
   await app.register(import('./api/convert.js'),       { prefix: '/api/convert' });

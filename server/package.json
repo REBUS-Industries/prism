@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "codegen:contracts": "node ../shared/contracts/codegen-ts.mjs"
+    "codegen:contracts": "node scripts/codegen-contracts.mjs",
+    "validate:contracts": "node scripts/codegen-contracts.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",
@@ -41,6 +42,7 @@
     "@types/node": "^22.5.0",
     "@types/pg": "^8.11.6",
     "@types/ws": "^8.5.12",
+    "ajv": "^8.20.0",
     "drizzle-kit": "^0.24.0",
     "eslint": "^9.9.1",
     "tsx": "^4.19.0",

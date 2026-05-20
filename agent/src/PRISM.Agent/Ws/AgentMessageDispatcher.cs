@@ -1,0 +1,101 @@
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using PRISM.Contracts;
+
+namespace PRISM.Agent.Ws;
+
+/// <summary>
+/// Routes incoming server-&gt;agent messages. Phase 2: log + ack. Phase 3
+/// hands `Assign` to the slot pool which actually drives Rhino.
+/// </summary>
+public sealed class AgentMessageDispatcher
+{
+    readonly ILogger<AgentMessageDispatcher> _log;
+    readonly WsClient _ws;
+
+    public string? SessionId { get; private set; }
+
+    public AgentMessageDispatcher(WsClient ws, ILogger<AgentMessageDispatcher> log)
+    {
+        _ws = ws;
+        _log = log;
+        _ws.OnMessage += Handle;
+    }
+
+    void Handle(MessageType type, string rawJson)
+    {
+        try
+        {
+            switch (type)
+            {
+                case MessageType.Welcome:    HandleWelcome(rawJson);    return;
+                case MessageType.Assign:     HandleAssign(rawJson);     return;
+                case MessageType.Cancel:     HandleCancel(rawJson);     return;
+                case MessageType.PollLayers: HandlePollLayers(rawJson); return;
+                default:
+                    _log.LogDebug("dispatcher ignoring inbound type {Type}", type);
+                    return;
+            }
+        }
+        catch (Exception err)
+        {
+            _log.LogError(err, "dispatcher failed handling {Type}", type);
+        }
+    }
+
+    void HandleWelcome(string raw)
+    {
+        var env = ParseEnvelope<WelcomeData>(raw);
+        SessionId = env?.Data?.SessionId;
+        _log.LogInformation("welcome: sessionId={Sid} heartbeatSec={Hb}", SessionId, env?.Data?.HeartbeatSeconds);
+    }
+
+    void HandleAssign(string raw)
+    {
+        var env = ParseEnvelope<AssignData>(raw);
+        if (env?.Data is null) return;
+        _log.LogInformation("assign: jobId={JobId} slot={Slot} format={Format} file={FileName}",
+            env.Data.JobId, env.Data.Slot, env.Data.Format, env.Data.FileName ?? "");
+
+        // Phase 2: ack and immediately fail with a clear "not implemented yet"
+        // so the server can move on. Phase 3 swaps this for a real worker.
+        _ = _ws.SendAsync(MessageType.Ack, new AckData { JobId = env.Data.JobId, Accepted = true });
+        _ = _ws.SendAsync(MessageType.Fail, new FailData
+        {
+            JobId = env.Data.JobId,
+            Error = "PRISM agent: conversion not implemented in Phase 2 scaffold",
+            Retryable = false,
+        });
+    }
+
+    void HandleCancel(string raw)
+    {
+        var env = ParseEnvelope<CancelData>(raw);
+        if (env?.Data is null) return;
+        _log.LogInformation("cancel: jobId={JobId} reason={Reason}", env.Data.JobId, env.Data.Reason ?? "");
+    }
+
+    void HandlePollLayers(string raw)
+    {
+        var env = ParseEnvelope<PollLayersData>(raw);
+        if (env?.Data is null) return;
+        _log.LogInformation("pollLayers: jobId={JobId} file={FileUrl}", env.Data.JobId, env.Data.FileUrl);
+        _ = _ws.SendAsync(MessageType.Layers, new LayersData { JobId = env.Data.JobId, Layers = Array.Empty<LayerNode>() });
+    }
+
+    static Envelope<T>? ParseEnvelope<T>(string raw)
+    {
+        // Two-step: parse into JObject, then re-bind data into the typed T.
+        var obj = JObject.Parse(raw);
+        var env = new Envelope<T>
+        {
+            Version   = obj.Value<int>("v"),
+            Type      = obj["type"]!.ToObject<MessageType>(),
+            Id        = obj.Value<string?>("id"),
+            Timestamp = obj.Value<string?>("ts"),
+            Data      = obj["data"]!.ToObject<T>()!,
+        };
+        return env;
+    }
+}

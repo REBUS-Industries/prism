@@ -55,8 +55,8 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design,
 | Phase | What | State |
 |---|---|---|
 | 0 | Repo bootstrap, scaffold, submodule | done |
-| 1 | Fastify server core, Drizzle schema, auth | in progress |
-| 2 | WS gateway, agent protocol, agent skeleton | pending |
+| 1 | Fastify server core, Drizzle schema, auth | done |
+| 2 | WS gateway, agent protocol, agent skeleton | done |
 | 3 | Rhino.Inside conversion, ORBIT upload | pending |
 | 4 | Admin + Convert SPAs | pending |
 | 5 | Vue Flow live pipeline editor | pending |

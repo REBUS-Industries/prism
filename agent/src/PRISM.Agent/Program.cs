@@ -1,12 +1,16 @@
 // PRISM.Agent — Windows service entrypoint.
-// Phase 0 scaffold: just enough to boot, log a heartbeat, and exit cleanly.
-// Phase 2 wires the WS client to PRISM server.
-// Phase 3 wires Rhino.Inside + the converter pipeline from
-// vendor/orbit-monorepo/Connectors/src/OrbitConnector.Rhino.Core/.
+//
+// Phase 2: connects to PRISM via WSS, sends `hello`, heartbeats, and
+// acks dispatched jobs as fail("not implemented") so the orchestrator
+// can be tested end-to-end. Phase 3 swaps the dispatcher to actually
+// drive Rhino.Inside.
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging;
+using PRISM.Agent.Config;
+using PRISM.Agent.Ws;
 
 namespace PRISM.Agent;
 
@@ -16,40 +20,35 @@ public static class Program
     {
         var builder = Host.CreateApplicationBuilder(args);
 
-        builder.Services.AddWindowsService(opts =>
-        {
-            opts.ServiceName = "PRISMAgent";
-        });
+        builder.Services.AddWindowsService(opts => opts.ServiceName = "PRISMAgent");
 
         builder.Logging
             .ClearProviders()
-            .AddConsole()
-            .AddEventLog(settings => { settings.SourceName = "PRISM.Agent"; });
+            .AddConsole();
 
-        // Phase 2: register IHostedService for WsClient + WorkerSlot pool.
-        // builder.Services.AddSingleton<AgentConfig>(_ => AgentConfig.Load(args));
-        // builder.Services.AddSingleton<IWsClient, WsClient>();
-        // builder.Services.AddHostedService<AgentService>();
+        // OS event log is helpful when running under SCM. Skip on non-Windows
+        // dev hosts (where the eventlog API throws at startup).
+        if (OperatingSystem.IsWindows())
+        {
+            builder.Logging.AddEventLog(s => s.SourceName = "PRISM.Agent");
+        }
 
-        builder.Services.AddHostedService<HeartbeatService>();
+        var cfg = AgentConfig.Load(args.FirstOrDefault());
+        builder.Services.AddSingleton(cfg);
+
+        builder.Services.AddSingleton(sp =>
+        {
+            var log = sp.GetRequiredService<ILogger<WsClient>>();
+            return new WsClient(new Uri(cfg.PrismUrl), log);
+        });
+        builder.Services.AddSingleton<AgentMessageDispatcher>();
+        builder.Services.AddHostedService<AgentService>();
 
         var host = builder.Build();
-        await host.RunAsync();
-    }
-}
 
-/// <summary>Phase 0 stand-in so the process has a HostedService to keep it alive.</summary>
-internal sealed class HeartbeatService(ILogger<HeartbeatService> log) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        log.LogInformation("PRISM.Agent phase-0 stub started");
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            log.LogDebug("heartbeat");
-            try { await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken); }
-            catch (TaskCanceledException) { break; }
-        }
-        log.LogInformation("PRISM.Agent stopping");
+        // Force dispatcher to materialise so its event subscription on WsClient runs.
+        _ = host.Services.GetRequiredService<AgentMessageDispatcher>();
+
+        await host.RunAsync();
     }
 }

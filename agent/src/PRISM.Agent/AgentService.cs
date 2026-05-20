@@ -1,0 +1,87 @@
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using PRISM.Agent.Config;
+using PRISM.Agent.Ws;
+using PRISM.Contracts;
+
+namespace PRISM.Agent;
+
+/// <summary>
+/// Main hosted service. Wires the WS client, sends <c>hello</c> on
+/// connect, runs the heartbeat loop, and surfaces dispatcher acks.
+/// </summary>
+public sealed class AgentService : BackgroundService
+{
+    readonly ILogger<AgentService> _log;
+    readonly AgentConfig _cfg;
+    readonly WsClient _ws;
+    readonly AgentMessageDispatcher _dispatcher;
+
+    public AgentService(
+        ILogger<AgentService> log,
+        AgentConfig cfg,
+        WsClient ws,
+        AgentMessageDispatcher dispatcher)
+    {
+        _log = log;
+        _cfg = cfg;
+        _ws = ws;
+        _dispatcher = dispatcher;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _log.LogInformation("PRISM.Agent starting: node={NodeName} machineId={MachineId} slots={Slots} prismUrl={Url}",
+            _cfg.NodeName, _cfg.MachineId, _cfg.Slots, _cfg.PrismUrl);
+
+        _ws.OnReconnected += SendHelloFireAndForget;
+        await _ws.StartAsync(stoppingToken);
+        SendHelloFireAndForget();
+
+        // Heartbeat loop
+        var hb = TimeSpan.FromSeconds(15);
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try { await Task.Delay(hb, stoppingToken); }
+            catch (TaskCanceledException) { break; }
+
+            try
+            {
+                await _ws.SendAsync(MessageType.Heartbeat, new HeartbeatData
+                {
+                    SlotsBusy = 0,  // Phase 3: read from the slot pool
+                });
+            }
+            catch (Exception err)
+            {
+                _log.LogWarning(err, "heartbeat send failed");
+            }
+        }
+
+        _log.LogInformation("PRISM.Agent stopping");
+    }
+
+    void SendHelloFireAndForget()
+    {
+        var hello = new HelloData
+        {
+            MachineId = _cfg.MachineId,
+            NodeName = _cfg.NodeName,
+            Slots = _cfg.Slots,
+            Formats = SupportedFormats,
+            Roles = _cfg.Roles,
+            AgentVersion = typeof(AgentService).Assembly.GetName().Version?.ToString() ?? "0.1.0",
+            RhinoVersion = null,  // Phase 3: read from Rhino.Inside host
+        };
+        _ = _ws.SendAsync(MessageType.Hello, hello);
+    }
+
+    static readonly string[] SupportedFormats =
+    {
+        // Phase 2 scaffold reports what Rhino *can* handle once Phase 3
+        // wires up the importers. The orchestrator uses this list to
+        // route jobs.
+        ".3dm", ".dwg", ".dxf", ".fbx", ".obj", ".stl", ".ply",
+        ".3mf", ".dae", ".step", ".stp", ".iges", ".igs",
+    };
+}
