@@ -103,6 +103,9 @@ function pickModel(m: OrbitModel) {
   modelOpen.value   = false;
 }
 
+const __ORBIT_PICKER_BUILD_TAG__ = 'PICKER_REWRITE_V2_BUILD_SENTINEL_4242';
+console.log('OrbitPicker loaded', __ORBIT_PICKER_BUILD_TAG__);
+
 function openProject() {
   projectOpen.value = true;
   projectFilter.value = '';
