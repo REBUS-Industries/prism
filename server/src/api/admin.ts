@@ -6,6 +6,7 @@
  */
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import bcrypt from 'bcryptjs';
 import { hashPassword, loginAdmin, logoutAdmin, tryAuthAdminSession } from '../auth/adminSession.js';
 import { db } from '../db/client.js';
 import { adminUsers } from '../db/schema.js';
@@ -48,7 +49,6 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (principal.kind !== 'adminSession') return reply.code(403).send({ error: 'admin only' });
     const row = (await db.select().from(adminUsers).where(eq(adminUsers.id, principal.adminUserId)).limit(1))[0];
     if (!row) return reply.code(404).send({ error: 'not found' });
-    const bcrypt = await import('bcryptjs');
     const ok = await bcrypt.compare(parsed.data.currentPassword, row.passwordHash);
     if (!ok) return reply.code(401).send({ error: 'invalid current password' });
     const newHash = await hashPassword(parsed.data.newPassword);
