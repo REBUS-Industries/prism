@@ -9,6 +9,7 @@ import ApiKeys from './pages/ApiKeys.vue';
 import Users from './pages/Users.vue';
 import Analytics from './pages/Analytics.vue';
 import Pipeline from './pages/Pipeline.vue';
+import Webhooks from './pages/Webhooks.vue';
 import Login from './pages/Login.vue';
 
 import '../shared/designSystem.css';
@@ -21,6 +22,7 @@ const router = createRouter({
     { path: '/pipeline',     component: Pipeline,     name: 'pipeline' },
     { path: '/settings',     component: Settings,     name: 'settings' },
     { path: '/keys',         component: ApiKeys,      name: 'keys' },
+    { path: '/webhooks',     component: Webhooks,     name: 'webhooks' },
     { path: '/users',        component: Users,        name: 'users' },
     { path: '/analytics',    component: Analytics,    name: 'analytics' },
     { path: '/login',        component: Login,        name: 'login' },

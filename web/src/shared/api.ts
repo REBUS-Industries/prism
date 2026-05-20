@@ -195,6 +195,24 @@ export const convertApi = {
   },
 };
 
+export interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  events: string[];
+  isActive: boolean;
+  createdAt: string;
+  secret?: string;       // only present in the create response
+}
+
+export const webhooksApi = {
+  list:   () => api.get<{ webhooks: Webhook[] }>('/api/webhooks'),
+  create: (body: { name: string; url: string; events?: string[] }) => api.post<Webhook>('/api/webhooks', body),
+  patch:  (id: string, body: Partial<Pick<Webhook, 'name'|'url'|'events'|'isActive'>> & { regenerateSecret?: boolean }) =>
+            api.patch<Webhook>(`/api/webhooks/${id}`, body),
+  remove: (id: string) => api.delete<{ deleted: string }>(`/api/webhooks/${id}`),
+};
+
 export const receiveApi = {
   submit: (body: {
     projectId: string;

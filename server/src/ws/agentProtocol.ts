@@ -20,6 +20,7 @@ import {
   type AgentToServerMsg, type HelloData, type WelcomeData,
 } from '../../../shared/contracts/agent-protocol.js';
 import { broadcastJobUpdate, broadcastWorkstationUpdate } from './adminProtocol.js';
+import { dispatchJobEvent } from '../webhooks/dispatcher.js';
 
 const HEARTBEAT_SECONDS = 15;
 
@@ -116,16 +117,18 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
           .update(jobs)
           .set({
             status: 'complete',
-            resultUrl: msg.data.versionUrl,
+            resultUrl: msg.data.versionUrl ?? null,
             rootObjectId: msg.data.rootObjectId ?? null,
             versionId: msg.data.versionId ?? null,
+            outputs: msg.data.outputs ?? {},
             currentStage: 'complete',
             progressPercent: 100,
             completedAt: new Date(),
             updatedAt: new Date(),
           })
           .where(eq(jobs.id, msg.data.jobId));
-        broadcastJobUpdate(msg.data.jobId, { status: 'complete', resultUrl: msg.data.versionUrl });
+        broadcastJobUpdate(msg.data.jobId, { status: 'complete', resultUrl: msg.data.versionUrl, outputs: msg.data.outputs });
+        void dispatchJobEvent('job.complete', msg.data.jobId).catch((err) => childLog.warn({ err }, 'webhook dispatch failed'));
         return;
       case 'fail':
         if (!conn) return;
@@ -140,6 +143,7 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
           })
           .where(eq(jobs.id, msg.data.jobId));
         broadcastJobUpdate(msg.data.jobId, { status: 'failed', error: msg.data.error });
+        void dispatchJobEvent('job.failed', msg.data.jobId).catch((err) => childLog.warn({ err }, 'webhook dispatch failed'));
         return;
       case 'layers':
         if (!conn) return;

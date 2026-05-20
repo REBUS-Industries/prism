@@ -42,6 +42,7 @@ async function logout() {
         <RouterLink :to="{ name: 'workstations' }">Workstations</RouterLink>
         <RouterLink :to="{ name: 'pipeline'     }">Pipeline</RouterLink>
         <RouterLink :to="{ name: 'keys'         }">API keys</RouterLink>
+        <RouterLink :to="{ name: 'webhooks'     }">Webhooks</RouterLink>
         <RouterLink :to="{ name: 'settings'     }">Settings</RouterLink>
         <RouterLink :to="{ name: 'users'        }">Users</RouterLink>
         <RouterLink :to="{ name: 'analytics'    }">Analytics</RouterLink>

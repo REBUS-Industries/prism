@@ -61,7 +61,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design,
 | 4 | Admin + Convert SPAs | done |
 | 5 | Vue Flow live pipeline editor | done |
 | 6 | Receive (ORBIT -> .3dm/.step), IFC/3DM/GLB outputs | done |
-| 7 | Public `/v1/*` external API | pending |
+| 7 | Public `/v1/*` external API | done |
 | 8 | CI + deploy to VM 211 | pending |
 
 ## Source policy
