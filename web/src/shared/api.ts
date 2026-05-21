@@ -9,9 +9,27 @@ export interface ApiError {
   body?: unknown;
 }
 
+export type JobStatus =
+  | 'queued'
+  | 'dispatched'
+  | 'awaiting_selection'
+  | 'processing'
+  | 'uploading'
+  | 'complete'
+  | 'failed'
+  | 'cancelled';
+
+export interface LayerNode {
+  name: string;
+  fullPath?: string;
+  color?: string;
+  visible?: boolean;
+  children?: LayerNode[];
+}
+
 export interface JobSummary {
   id: string;
-  status: 'queued' | 'dispatched' | 'processing' | 'complete' | 'failed' | 'cancelled';
+  status: JobStatus;
   jobType?: 'convert' | 'receive';
   createdAt: string;
   updatedAt: string;
@@ -34,6 +52,11 @@ export interface JobSummary {
   outputs?: Record<string, string> | null;
   receiveVersionId?: string | null;
   error?: string | null;
+  // Two-phase layer-selection flow:
+  selectLayers?: boolean;
+  includedLayers?: string[];
+  includeLayerDescendants?: boolean;
+  hasLayers?: boolean;
 }
 
 export interface Workstation {
@@ -114,6 +137,14 @@ function extractMessage(body: unknown): string | undefined {
 
 export const api = new ApiClient('');
 
+export interface LayersResponse {
+  jobId: string;
+  status: JobStatus;
+  layers: LayerNode[];
+  includedLayers: string[];
+  includeLayerDescendants: boolean;
+}
+
 // Sugar for the common endpoints — typed responses
 export const jobsApi = {
   list:   (params?: { status?: string; limit?: number; offset?: number }) => {
@@ -125,6 +156,13 @@ export const jobsApi = {
   },
   get:    (id: string) => api.get<JobSummary>(`/api/jobs/${id}`),
   remove: (id: string) => api.delete<{ deleted: string }>(`/api/jobs/${id}`),
+  // Two-phase layer-selection flow:
+  getLayers:    (id: string) => api.get<LayersResponse>(`/api/jobs/${id}/layers`),
+  submitLayers: (id: string, body: { includedLayers: string[]; includeLayerDescendants: boolean }) =>
+    api.post<{ jobId: string; status: JobStatus; includedLayers: string[]; includeLayerDescendants: boolean }>(
+      `/api/jobs/${id}/layers`,
+      body,
+    ),
 };
 
 export const workstationsApi = {
@@ -224,6 +262,8 @@ export const convertApi = {
     callbackUrl?: string;
     includedLayers?: string[];
     includeLayerDescendants?: boolean;
+    /** Two-phase flow: ask agent for layer tree before conversion. */
+    selectLayers?: boolean;
   }) => {
     const fd = new FormData();
     fd.append('file', file);
@@ -236,6 +276,7 @@ export const convertApi = {
     if (opts.callbackUrl)            fd.append('callbackUrl', opts.callbackUrl);
     if (opts.includedLayers?.length) fd.append('includedLayers', opts.includedLayers.join(','));
     if (opts.includeLayerDescendants !== undefined) fd.append('includeLayerDescendants', String(opts.includeLayerDescendants));
+    if (opts.selectLayers !== undefined) fd.append('selectLayers', String(opts.selectLayers));
     return api.postForm<{ jobId: string; status: string }>('/api/convert/async', fd);
   },
 };
