@@ -64,3 +64,18 @@ jobs:
           no-cache: ${{ github.event_name == 'workflow_dispatch' }}
           cache-from: ${{ github.event_name == 'workflow_dispatch' && '' || 'type=gha' }}
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host:     ${{ secrets.PROD_VM_HOST }}
+          username: ${{ secrets.PROD_VM_USER }}
+          key:      ${{ secrets.PROD_VM_SSH_KEY }}
+          script: |
+            cd /opt/prism
+            docker compose pull prism-server
+            docker compose up -d prism-server
