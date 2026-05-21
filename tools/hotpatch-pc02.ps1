@@ -38,21 +38,34 @@
   Ignore the local hash cache and push every DLL regardless.
 
 .ENVIRONMENT
-  PRISM_PC02_HOST   default 10.0.10.202
-  PRISM_PC02_USER   default Admin
-  PRISM_SSH_KEY     default D:\Documents\Claude\REBUS System\3DConvert\id_ed25519_windows
+  PRISM_PC02_HOST          default 10.0.10.202
+  PRISM_PC02_USER          default LocalUser
+  PRISM_SSH_KEY            default D:\Documents\Claude\REBUS System\3DConvert\id_ed25519_windows
+  PRISM_PC02_INSTALL_DIR   default C:/Program Files/PRISM.Agent
+                           Override when install.ps1 was run with a custom
+                           -InstallDir (e.g. C:/ProgramData/PRISM.Agent/PRISM.Agent-v0.1.22).
+
+.PARAMETER InstallDir
+  CLI override for PRISM_PC02_INSTALL_DIR.  Takes precedence over the env var.
+  Use forward slashes -- the script normalises them for scp / ssh quoting.
+
+.PARAMETER TaskName
+  CLI override for the scheduled task name (default: PRISM.Agent).
 
 .EXAMPLE
   pwsh tools/hotpatch-pc02.ps1 -Build
   pwsh tools/hotpatch-pc02.ps1            # skip build, push whatever is on disk
   pwsh tools/hotpatch-pc02.ps1 -Force     # ignore cache, re-push everything
+  pwsh tools/hotpatch-pc02.ps1 -Build -InstallDir 'C:/ProgramData/PRISM.Agent/PRISM.Agent-v0.1.22'
 #>
 
 [CmdletBinding()]
 param(
     [switch] $Build,
     [switch] $NoLogTail,
-    [switch] $Force
+    [switch] $Force,
+    [string] $InstallDir,
+    [string] $TaskName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,12 +81,21 @@ $cacheFile  = Join-Path $cacheDir 'hotpatch-pc02.json'
 
 # ---- Resolve env vars + defaults ----
 $pc02Host = if ($env:PRISM_PC02_HOST) { $env:PRISM_PC02_HOST } else { '10.0.10.202' }
-$pc02User = if ($env:PRISM_PC02_USER) { $env:PRISM_PC02_USER } else { 'Admin' }
+$pc02User = if ($env:PRISM_PC02_USER) { $env:PRISM_PC02_USER } else { 'LocalUser' }
 $sshKey   = if ($env:PRISM_SSH_KEY)   { $env:PRISM_SSH_KEY   } else {
     'D:\Documents\Claude\REBUS System\3DConvert\id_ed25519_windows'
 }
-$installDir = 'C:/Program Files/PRISM.Agent'
-$taskName   = 'PRISM.Agent'
+# Resolution priority: -InstallDir / -TaskName CLI > env var > default.
+$installDir = if ($InstallDir)                  { $InstallDir }
+              elseif ($env:PRISM_PC02_INSTALL_DIR) { $env:PRISM_PC02_INSTALL_DIR }
+              else                                { 'C:/Program Files/PRISM.Agent' }
+$taskName   = if ($TaskName)              { $TaskName }
+              elseif ($env:PRISM_PC02_TASK) { $env:PRISM_PC02_TASK }
+              else                          { 'PRISM.Agent' }
+
+# Normalise backslashes to forward slashes for scp's remote-path parser (which
+# treats `:` as the host/path separator and gets confused by `C:\...`).
+$installDir = $installDir -replace '\\', '/'
 
 if (-not $env:PRISM_PC02_HOST) {
     Write-Warning "PRISM_PC02_HOST not set; defaulting to $pc02Host. Set the env var to silence this."
@@ -178,7 +200,54 @@ $sshOpts = @(
     '-o', 'ConnectTimeout=10',
     '-o', 'ServerAliveInterval=5'
 )
-$dest = "${pc02User}@${pc02Host}:'${installDir}/'"
+
+# scp.exe on Windows passes the remote part to the remote shell verbatim.
+# Cmd.exe (the default Windows OpenSSH shell) does NOT strip single quotes,
+# so wrapping the path in `'...'` gets it treated as a literal `'C:/...'`.
+# Instead: only quote when the path actually contains a space, and use double
+# quotes (which cmd.exe does strip). Backslashes inside are fine to leave.
+if ($installDir -match '\s') {
+    $dest = "${pc02User}@${pc02Host}:`"${installDir}/`""
+} else {
+    $dest = "${pc02User}@${pc02Host}:${installDir}/"
+}
+
+# Helper -- invoke a PowerShell snippet on the remote via base64 (Windows
+# sshd's default shell is cmd.exe which mangles `|` and PS cmdlets unless we
+# bypass it).  Strips PowerShell's CLIXML stderr framing so the caller sees
+# plain stdout.
+function Invoke-RemotePS {
+    param([string]$Script)
+    $b = [System.Text.Encoding]::Unicode.GetBytes($Script)
+    $enc = [Convert]::ToBase64String($b)
+    $args = $sshOpts + @("${pc02User}@${pc02Host}", "powershell -NoProfile -EncodedCommand $enc")
+    $out = & ssh @args 2>&1
+    return ($out | Where-Object { $_ -notmatch '^(#< CLIXML|<Objs )' })
+}
+
+# ---- Stop the running agent FIRST so DLLs aren't locked ----
+# PRISM.Agent.dll lives in the install dir and is mapped into the running
+# process, so Windows refuses to overwrite it until the exe exits.  We end
+# the scheduled task (best-effort, ignored if not running), kill any orphan
+# PRISM.Agent.exe process, and verify the process is gone before SCP.
+Write-Host ""
+Write-Host "==> Stopping agent on $pc02Host (releases DLL locks)" -ForegroundColor Cyan
+$stopOutput = (Invoke-RemotePS @"
+schtasks /End /TN '$taskName' 2>`$null | Out-Null
+Get-Process PRISM.Agent -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 800
+if (Get-Process PRISM.Agent -ErrorAction SilentlyContinue) {
+    Write-Output 'stop-still-running'
+} else {
+    Write-Output 'stop-ok'
+}
+"@) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "ssh stop failed (exit $LASTEXITCODE); output: $stopOutput" }
+if ($stopOutput -notmatch 'stop-ok') {
+    Write-Warning "Agent did not stop cleanly. Output: $stopOutput"
+} else {
+    Write-Host "    agent stopped" -ForegroundColor Green
+}
 
 # ---- SCP changed DLLs ----
 Write-Host ""
@@ -201,27 +270,18 @@ if (-not (Test-Path -LiteralPath $cacheDir)) {
 }
 $newCache | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $cacheFile -Encoding UTF8
 
-# ---- Bounce the scheduled task ----
+# ---- Restart the scheduled task ----
 Write-Host ""
-Write-Host "==> Restarting scheduled task '$taskName'" -ForegroundColor Cyan
-# Single-line remote pipeline to keep the command quoting sane.  schtasks /End
-# is best-effort (it returns non-zero if the task isn't currently running),
-# so we explicitly swallow that failure; the killalbeit + /Run combo is what
-# actually guarantees a clean restart.
-$remoteCmd = @(
-    "schtasks /End /TN `"$taskName`" 2>`$null;",
-    "Get-Process PRISM.Agent -ErrorAction SilentlyContinue | Stop-Process -Force;",
-    "Start-Sleep -Seconds 2;",
-    "schtasks /Run /TN `"$taskName`" | Out-Null;",
-    "Write-Output 'restart-ok'"
-) -join ' '
-$sshArgs = $sshOpts + @("${pc02User}@${pc02Host}", "powershell -NoProfile -Command `"$remoteCmd`"")
-$restartOutput = & ssh @sshArgs
-if ($LASTEXITCODE -ne 0) { throw "ssh restart failed (exit $LASTEXITCODE); output: $restartOutput" }
-if ($restartOutput -notmatch 'restart-ok') {
-    Write-Warning "Remote restart did not emit the expected marker. Output was: $restartOutput"
+Write-Host "==> Starting scheduled task '$taskName'" -ForegroundColor Cyan
+$startOutput = (Invoke-RemotePS @"
+schtasks /Run /TN '$taskName' | Out-Null
+Write-Output 'start-ok'
+"@) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "ssh start failed (exit $LASTEXITCODE); output: $startOutput" }
+if ($startOutput -notmatch 'start-ok') {
+    Write-Warning "Task /Run did not emit the expected marker. Output was: $startOutput"
 }
-Write-Host "    task bounced" -ForegroundColor Green
+Write-Host "    task started" -ForegroundColor Green
 
 # ---- Confirm the process came back ----
 Write-Host ""
@@ -229,10 +289,12 @@ Write-Host "==> Confirming agent is back up (polling up to 10s)" -ForegroundColo
 $pollSw = [System.Diagnostics.Stopwatch]::StartNew()
 $alive  = $false
 while ($pollSw.Elapsed.TotalSeconds -lt 10) {
-    $probeCmd = "(Get-Process PRISM.Agent -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id)"
-    $probeArgs = $sshOpts + @("${pc02User}@${pc02Host}", "powershell -NoProfile -Command `"$probeCmd`"")
-    $remotePid = (& ssh @probeArgs) -join "`n"
-    if ($remotePid -match '^\s*(\d+)\s*$') {
+    $probe = @"
+`$p = Get-Process PRISM.Agent -ErrorAction SilentlyContinue | Select-Object -First 1
+if (`$p) { Write-Output `$p.Id } else { Write-Output 'none' }
+"@
+    $remotePid = (Invoke-RemotePS $probe) -join "`n"
+    if ($remotePid -match '(\d+)') {
         $alive = $true
         Write-Host ("    PRISM.Agent.exe pid={0} after {1:N1} s" -f $matches[1], $pollSw.Elapsed.TotalSeconds) -ForegroundColor Green
         break
@@ -247,14 +309,13 @@ if (-not $alive) {
 if (-not $NoLogTail) {
     Write-Host ""
     Write-Host "==> Latest agent log lines" -ForegroundColor Cyan
-    $tailCmd = @(
-        '$f = Get-ChildItem ''C:\ProgramData\PRISM.Agent\logs\*.log'' -ErrorAction SilentlyContinue',
-        '| Sort-Object LastWriteTime -Descending | Select-Object -First 1;',
-        'if ($f) { Get-Content -LiteralPath $f.FullName -Tail 8 } else { Write-Output ''(no log files found)'' }'
-    ) -join ' '
-    $tailArgs = $sshOpts + @("${pc02User}@${pc02Host}", "powershell -NoProfile -Command `"$tailCmd`"")
-    $tail = & ssh @tailArgs
-    foreach ($line in $tail) { Write-Host "    $line" }
+    $tail = @"
+`$f = Get-ChildItem 'C:\ProgramData\PRISM.Agent\logs\*.log' -ErrorAction SilentlyContinue |
+       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (`$f) { Get-Content -LiteralPath `$f.FullName -Tail 8 } else { Write-Output '(no log files found)' }
+"@
+    $tailOut = Invoke-RemotePS $tail
+    foreach ($line in $tailOut) { Write-Host "    $line" }
 }
 
 $totalSw.Stop()
