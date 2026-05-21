@@ -48,18 +48,36 @@ public sealed class RhinoVersionSelector
 
         if (version is "" or "auto")
         {
-            // Let Rhino.Inside's built-in resolver choose the best installed version.
-            Resolver.Initialize();
-            SelectedSystemDir = Resolver.RhinoSystemDirectory;
-            if (string.IsNullOrEmpty(SelectedSystemDir))
+            // Probe Rhino 8 then 9 ourselves so we always have an explicit path to
+            // pass to Resolver.Initialize(systemDir). The no-arg overload registers
+            // the AssemblyResolve callback even when it can't find Rhino, leaving
+            // RhinoSystemDirectory null — Path.Combine(null, …) then throws on
+            // the first assembly load.
+            var systemDir = ProbeRhinoSystemDir(8) ?? ProbeRhinoSystemDir(9);
+
+            if (!string.IsNullOrEmpty(systemDir))
             {
-                _log.LogWarning(
-                    "RhinoVersionSelector: Resolver.Initialize() found no Rhino installation. " +
-                    "The agent will start but cannot process jobs until Rhino is installed.");
+                _log.LogInformation("Rhino version selected (auto): {SystemDir}", systemDir);
+                SelectedSystemDir = systemDir;
+                Resolver.Initialize(systemDir);
+                IsInitialized = true;
                 return;
             }
-            _log.LogInformation("Rhino version selected (auto): {SystemDir}", SelectedSystemDir);
-            IsInitialized = true;
+
+            // Last-resort: let Rhino.Inside's own resolver try (it may find Rhino
+            // via environment variables or a non-standard install path).
+            Resolver.Initialize();
+            SelectedSystemDir = Resolver.RhinoSystemDirectory;
+            if (!string.IsNullOrEmpty(SelectedSystemDir))
+            {
+                _log.LogInformation("Rhino version selected (auto/resolver): {SystemDir}", SelectedSystemDir);
+                IsInitialized = true;
+                return;
+            }
+
+            _log.LogWarning(
+                "RhinoVersionSelector: no Rhino 8 or 9 installation found. " +
+                "The agent will start but jobs will be rejected until Rhino is installed.");
             return;
         }
 
@@ -69,12 +87,13 @@ public sealed class RhinoVersionSelector
                 "RhinoVersionSelector: unrecognised rhinoVersion value \"{Value}\". " +
                 "Use \"auto\", \"8\", or \"9\". Falling back to auto.",
                 rhinoVersionConfig);
-            // Fall through to auto by re-entering with "auto"
-            Resolver.Initialize();
-            SelectedSystemDir = Resolver.RhinoSystemDirectory;
-            if (!string.IsNullOrEmpty(SelectedSystemDir))
+            // Fall through to auto probe (same logic as the "auto" branch above).
+            var fallbackDir = ProbeRhinoSystemDir(8) ?? ProbeRhinoSystemDir(9);
+            if (!string.IsNullOrEmpty(fallbackDir))
             {
-                _log.LogInformation("Rhino version selected (auto fallback): {SystemDir}", SelectedSystemDir);
+                _log.LogInformation("Rhino version selected (auto fallback): {SystemDir}", fallbackDir);
+                SelectedSystemDir = fallbackDir;
+                Resolver.Initialize(fallbackDir);
                 IsInitialized = true;
             }
             else

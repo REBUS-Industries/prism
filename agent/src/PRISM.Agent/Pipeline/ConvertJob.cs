@@ -20,14 +20,28 @@ public sealed class ConvertJob
     readonly RhinoHost _host;
     readonly RhinoFileOpener _opener;
     readonly WsClient _ws;
+    readonly RhinoVersionSelector _rhinoSelector;
 
-    public ConvertJob(ILogger<ConvertJob> log, RhinoHost host, RhinoFileOpener opener, WsClient ws)
+    public ConvertJob(ILogger<ConvertJob> log, RhinoHost host, RhinoFileOpener opener, WsClient ws, RhinoVersionSelector rhinoSelector)
     {
-        _log = log; _host = host; _opener = opener; _ws = ws;
+        _log = log; _host = host; _opener = opener; _ws = ws; _rhinoSelector = rhinoSelector;
     }
 
     public async Task RunAsync(AssignData assign, CancellationToken ct)
     {
+        if (!_rhinoSelector.IsInitialized)
+        {
+            _log.LogError("Rhino is not initialised — rejecting job {JobId}. Install Rhino 8 or 9 on this workstation.", assign.JobId);
+            await _ws.SendAsync(MessageType.Fail, new FailData
+            {
+                JobId = assign.JobId,
+                Error = "Rhino is not installed or could not be found on this workstation. " +
+                        "Install Rhino 8 or 9 and restart the PRISM Agent service.",
+                Retryable = false,
+            });
+            return;
+        }
+
         if (string.Equals(assign.JobType, "receive", StringComparison.OrdinalIgnoreCase))
         {
             await RunReceiveAsync(assign, ct);
