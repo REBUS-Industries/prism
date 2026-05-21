@@ -220,3 +220,59 @@ export async function listModels(target: OrbitTarget, projectId: string, opts: {
     items: data.project.models.items,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Mutations                                                                   */
+/* -------------------------------------------------------------------------- */
+
+const CREATE_PROJECT_MUTATION = `mutation CreateProject($name: String!, $description: String) {
+  projectMutations {
+    create(input: { name: $name, description: $description }) {
+      id name description role visibility updatedAt
+    }
+  }
+}`;
+
+interface CreateProjectResult {
+  projectMutations: { create: OrbitProjectSummary };
+}
+
+export async function createProject(
+  target: OrbitTarget,
+  name: string,
+  description?: string,
+): Promise<OrbitProjectSummary> {
+  const creds = await getOrbitCreds(target);
+  if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
+  const data = await gql<CreateProjectResult>(creds, CREATE_PROJECT_MUTATION, {
+    name,
+    description: description ?? null,
+  });
+  return data.projectMutations.create;
+}
+
+const CREATE_MODEL_MUTATION = `mutation CreateModel($input: CreateModelInput!) {
+  modelMutations {
+    create(input: $input) {
+      id name displayName description previewUrl updatedAt
+    }
+  }
+}`;
+
+interface CreateModelResult {
+  modelMutations: { create: OrbitModelSummary };
+}
+
+export async function createModel(
+  target: OrbitTarget,
+  projectId: string,
+  name: string,
+  description?: string,
+): Promise<OrbitModelSummary> {
+  const creds = await getOrbitCreds(target);
+  if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
+  const data = await gql<CreateModelResult>(creds, CREATE_MODEL_MUTATION, {
+    input: { projectId, name, description: description ?? null },
+  });
+  return data.modelMutations.create;
+}

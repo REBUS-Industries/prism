@@ -317,4 +317,11 @@ export const orbitApi = {
     api.get<{ target: string; projectId: string; projectName: string; totalCount: number; cursor: string | null; items: OrbitModel[] }>(
       `/api/orbit/projects/${encodeURIComponent(projectId)}/models?target=${target}&limit=${limit}`,
     ),
+  createProject: (target: 'prod' | 'dev', name: string) =>
+    api.post<{ target: string; project: OrbitProject }>('/api/orbit/projects', { target, name }),
+  createModel: (target: 'prod' | 'dev', projectId: string, name: string) =>
+    api.post<{ target: string; projectId: string; model: OrbitModel }>(
+      `/api/orbit/projects/${encodeURIComponent(projectId)}/models`,
+      { target, name },
+    ),
 };

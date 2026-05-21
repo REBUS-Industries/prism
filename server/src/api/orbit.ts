@@ -12,6 +12,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import {
+  createModel as createModelFn,
+  createProject as createProjectFn,
   listModels,
   listProjects,
   OrbitClientError,
@@ -73,6 +75,35 @@ const plugin: FastifyPluginAsync = async (app) => {
       try {
         const r = await listModels(target, req.params.id, { limit, cursor });
         return reply.send({ target, projectId: req.params.id, ...r });
+      } catch (err) {
+        return errorReply(reply, err);
+      }
+    },
+  );
+
+  // POST /api/orbit/projects — create a new project
+  app.post<{ Body: { name?: string; description?: string; target?: string } }>('/projects', async (req, reply) => {
+    const target = pickTarget(req.body ?? {});
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) return reply.code(400).send({ error: 'name is required' });
+    try {
+      const project = await createProjectFn(target, name, req.body?.description);
+      return reply.send({ target, project });
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // POST /api/orbit/projects/:id/models — create a new model in a project
+  app.post<{ Params: { id: string }; Body: { name?: string; description?: string; target?: string } }>(
+    '/projects/:id/models',
+    async (req, reply) => {
+      const target = pickTarget(req.body ?? {});
+      const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+      if (!name) return reply.code(400).send({ error: 'name is required' });
+      try {
+        const model = await createModelFn(target, req.params.id, name, req.body?.description);
+        return reply.send({ target, projectId: req.params.id, model });
       } catch (err) {
         return errorReply(reply, err);
       }

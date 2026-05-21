@@ -8,6 +8,35 @@ const jobs = ref<JobSummary[]>([]);
 const workstations = ref<Workstation[]>([]);
 const loading = ref(true);
 let unsubscribe: (() => void) | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+const NON_TERMINAL = new Set<string>(['queued', 'dispatched', 'processing']);
+
+function hasActiveJobs() {
+  return jobs.value.some((j) => NON_TERMINAL.has(j.status));
+}
+
+function startPollIfNeeded() {
+  if (pollTimer || !hasActiveJobs()) return;
+  pollTimer = setInterval(async () => {
+    try {
+      const [j, w] = await Promise.all([
+        jobsApi.list({ limit: 100 }),
+        workstationsApi.list(),
+      ]);
+      jobs.value = j.jobs;
+      workstations.value = w.workstations;
+    } catch { /* keep polling */ }
+    if (!hasActiveJobs()) {
+      clearInterval(pollTimer!);
+      pollTimer = null;
+    }
+  }, 5_000);
+}
+
+function stopPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
 
 async function refresh() {
   const [j, w] = await Promise.all([
@@ -17,6 +46,7 @@ async function refresh() {
   jobs.value = j.jobs;
   workstations.value = w.workstations;
   loading.value = false;
+  startPollIfNeeded();
 }
 
 onMounted(async () => {
@@ -34,13 +64,16 @@ onMounted(async () => {
       if (typeof ev['error']            === 'string') patch.error          = ev['error'] as string;
       if (typeof ev['nodeName']         === 'string') patch.nodeName       = ev['nodeName'] as string;
       jobs.value = jobs.value.map((j, i) => (i === idx ? { ...j, ...patch } : j));
+      // Re-evaluate polling need after a WS patch (job may have gone terminal).
+      if (!hasActiveJobs()) stopPoll();
+      else startPollIfNeeded();
     } else if (ev.type === 'workstation') {
       void refresh();
     }
   });
 });
 
-onUnmounted(() => unsubscribe?.());
+onUnmounted(() => { unsubscribe?.(); stopPoll(); });
 
 const activeCount = computed(() => jobs.value.filter((j) => j.status === 'queued' || j.status === 'dispatched' || j.status === 'processing').length);
 const failedCount = computed(() => jobs.value.filter((j) => j.status === 'failed').length);

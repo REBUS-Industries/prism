@@ -9,8 +9,9 @@
  * works (matching the legacy 3DConvert behaviour).
  *
  * Emits the selected IDs via v-model:projectId / v-model:modelId / v-model:modelName.
+ * Supports inline creation of new projects and models via "+ Create new" items.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { orbitApi, type ApiError, type OrbitModel, type OrbitProject } from './api';
 
 const props = defineProps<{
@@ -38,6 +39,20 @@ const projectFilter  = ref('');
 const modelFilter    = ref('');
 const projectOpen    = ref(false);
 const modelOpen      = ref(false);
+
+// --- Create-new state ---
+const creatingProject      = ref(false);
+const newProjectName       = ref('');
+const projectCreatePending = ref(false);
+const projectCreateError   = ref<string | null>(null);
+
+const creatingModel        = ref(false);
+const newModelName         = ref('');
+const modelCreatePending   = ref(false);
+const modelCreateError     = ref<string | null>(null);
+
+const newProjectInputRef = ref<HTMLInputElement | null>(null);
+const newModelInputRef   = ref<HTMLInputElement | null>(null);
 
 const selectedProject = computed(() => projects.value.find((p) => p.id === props.projectId));
 const selectedModel   = computed(() => models.value.find((m) => m.id === props.modelId));
@@ -103,9 +118,6 @@ function pickModel(m: OrbitModel) {
   modelOpen.value   = false;
 }
 
-const __ORBIT_PICKER_BUILD_TAG__ = 'PICKER_REWRITE_V2_BUILD_SENTINEL_4242';
-console.log('OrbitPicker loaded', __ORBIT_PICKER_BUILD_TAG__);
-
 function openProject() {
   projectOpen.value = true;
   projectFilter.value = '';
@@ -146,6 +158,85 @@ const projectInputValue = computed(() => projectOpen.value
 const modelInputValue = computed(() => modelOpen.value
   ? modelFilter.value
   : (selectedModel.value?.name ?? ''));
+
+// ----------------------------- Create project --------------------------------
+
+function startCreateProject() {
+  newProjectName.value = projectFilter.value;
+  projectCreateError.value = null;
+  creatingProject.value = true;
+  projectOpen.value = false;
+  void nextTick(() => newProjectInputRef.value?.focus());
+}
+
+function cancelCreateProject() {
+  creatingProject.value = false;
+  newProjectName.value = '';
+  projectCreateError.value = null;
+}
+
+async function doCreateProject() {
+  const name = newProjectName.value.trim();
+  if (!name || projectCreatePending.value) return;
+  projectCreatePending.value = true;
+  projectCreateError.value = null;
+  try {
+    const r = await orbitApi.createProject(props.target, name);
+    const proj = r.project;
+    projects.value = [proj, ...projects.value];
+    emit('update:projectId', proj.id);
+    emit('update:modelId',   '');
+    emit('update:modelName', '');
+    creatingProject.value = false;
+    newProjectName.value = '';
+    // Models will be loaded by the projectId watcher. Auto-start model creation.
+    await loadModels(proj.id);
+    creatingModel.value = true;
+    newModelName.value = '';
+    modelCreateError.value = null;
+    void nextTick(() => newModelInputRef.value?.focus());
+  } catch (err) {
+    projectCreateError.value = (err as ApiError).message ?? 'failed to create project';
+  } finally {
+    projectCreatePending.value = false;
+  }
+}
+
+// ------------------------------ Create model ---------------------------------
+
+function startCreateModel() {
+  newModelName.value = modelFilter.value;
+  modelCreateError.value = null;
+  creatingModel.value = true;
+  modelOpen.value = false;
+  void nextTick(() => newModelInputRef.value?.focus());
+}
+
+function cancelCreateModel() {
+  creatingModel.value = false;
+  newModelName.value = '';
+  modelCreateError.value = null;
+}
+
+async function doCreateModel() {
+  const name = newModelName.value.trim();
+  if (!name || !props.projectId || modelCreatePending.value) return;
+  modelCreatePending.value = true;
+  modelCreateError.value = null;
+  try {
+    const r = await orbitApi.createModel(props.target, props.projectId, name);
+    const mdl = r.model;
+    models.value = [mdl, ...models.value];
+    emit('update:modelId',   mdl.id);
+    emit('update:modelName', mdl.name);
+    creatingModel.value = false;
+    newModelName.value = '';
+  } catch (err) {
+    modelCreateError.value = (err as ApiError).message ?? 'failed to create model';
+  } finally {
+    modelCreatePending.value = false;
+  }
+}
 </script>
 
 <template>
@@ -168,16 +259,16 @@ const modelInputValue = computed(() => modelOpen.value
         <div class="combo">
           <input
             type="text"
-            :placeholder="loadingProjects ? 'loading projects…' : (selectedProject ? selectedProject.name : 'search projects…')"
+            :placeholder="loadingProjects ? 'loading projects...' : (selectedProject ? selectedProject.name : 'search projects...')"
             :value="projectInputValue"
-            :disabled="loadingProjects"
+            :disabled="loadingProjects || creatingProject"
             @focus="openProject"
             @blur="closeProjectSoon"
             @input="onProjectInput"
           />
           <div v-if="projectOpen" class="dropdown">
             <div v-if="!filteredProjects.length" class="empty">
-              <template v-if="loadingProjects">loading…</template>
+              <template v-if="loadingProjects">loading...</template>
               <template v-else-if="projectFilter">no match for "{{ projectFilter }}"</template>
               <template v-else>no projects available</template>
             </div>
@@ -193,9 +284,43 @@ const modelInputValue = computed(() => modelOpen.value
                 <span v-if="p.role" class="muted-role">· {{ p.role }}</span>
               </div>
             </div>
+            <!-- Create-new option always at bottom of project dropdown -->
+            <div class="item create-item" @mousedown.prevent="startCreateProject">
+              + Create new project<template v-if="projectFilter"> "{{ projectFilter }}"</template>
+            </div>
           </div>
         </div>
-        <div v-if="projectsError" class="hint-bad">
+
+        <!-- Inline create-project form -->
+        <template v-if="creatingProject">
+          <div class="create-row">
+            <input
+              ref="newProjectInputRef"
+              type="text"
+              class="create-input"
+              v-model="newProjectName"
+              placeholder="New project name..."
+              :disabled="projectCreatePending"
+              @keydown.enter.prevent="doCreateProject"
+              @keydown.escape="cancelCreateProject"
+            />
+            <button
+              type="button"
+              class="create-btn"
+              :disabled="!newProjectName.trim() || projectCreatePending"
+              @click="doCreateProject"
+            >{{ projectCreatePending ? '...' : 'Create' }}</button>
+            <button
+              type="button"
+              class="cancel-btn"
+              :disabled="projectCreatePending"
+              @click="cancelCreateProject"
+            >x</button>
+          </div>
+          <div v-if="projectCreateError" class="hint-bad">{{ projectCreateError }}</div>
+        </template>
+
+        <div v-if="projectsError && !creatingProject" class="hint-bad">
           {{ projectsError }}
           <button v-if="fallbackAvailable" type="button" class="link" @click="manual = true">
             enter manually instead
@@ -218,9 +343,6 @@ const modelInputValue = computed(() => modelOpen.value
     <div class="field">
       <div class="lbl-row">
         <label class="lbl">Model</label>
-        <span v-if="!manual && selectedProject && !models.length && !loadingModels && !modelsError" class="muted-role">
-          no models in this project yet
-        </span>
       </div>
 
       <template v-if="!manual">
@@ -229,18 +351,25 @@ const modelInputValue = computed(() => modelOpen.value
             type="text"
             :placeholder="!projectId
               ? 'select a project first'
-              : (loadingModels ? 'loading models…' : (selectedModel ? selectedModel.name : 'search models…'))"
+              : (loadingModels ? 'loading models...' : (selectedModel ? selectedModel.name : 'search or create a model...'))"
             :value="modelInputValue"
-            :disabled="!projectId || loadingModels"
+            :disabled="!projectId || loadingModels || creatingModel"
             @focus="openModel"
             @blur="closeModelSoon"
             @input="onModelInput"
           />
           <div v-if="modelOpen" class="dropdown">
-            <div v-if="!filteredModels.length" class="empty">
-              <template v-if="loadingModels">loading…</template>
-              <template v-else-if="modelFilter">no match for "{{ modelFilter }}"</template>
-              <template v-else>no models available</template>
+            <!-- When project has no models, show create as primary option -->
+            <div
+              v-if="!loadingModels && !filteredModels.length && !modelFilter"
+              class="item create-item first-create"
+              @mousedown.prevent="startCreateModel"
+            >
+              + Create new model
+            </div>
+            <div v-else-if="!filteredModels.length" class="empty">
+              <template v-if="loadingModels">loading...</template>
+              <template v-else>no match for "{{ modelFilter }}"</template>
             </div>
             <div
               v-for="m in filteredModels.slice(0, 50)"
@@ -251,8 +380,46 @@ const modelInputValue = computed(() => modelOpen.value
               <div class="item-main">{{ m.name }}</div>
               <div class="item-sub"><code>{{ m.id }}</code></div>
             </div>
+            <!-- Create option at bottom when there are existing models or a filter -->
+            <div
+              v-if="filteredModels.length || modelFilter"
+              class="item create-item"
+              @mousedown.prevent="startCreateModel"
+            >
+              + Create new model<template v-if="modelFilter"> "{{ modelFilter }}"</template>
+            </div>
           </div>
         </div>
+
+        <!-- Inline create-model form -->
+        <template v-if="creatingModel">
+          <div class="create-row">
+            <input
+              ref="newModelInputRef"
+              type="text"
+              class="create-input"
+              v-model="newModelName"
+              placeholder="New model name..."
+              :disabled="modelCreatePending"
+              @keydown.enter.prevent="doCreateModel"
+              @keydown.escape="cancelCreateModel"
+            />
+            <button
+              type="button"
+              class="create-btn"
+              :disabled="!newModelName.trim() || modelCreatePending"
+              @click="doCreateModel"
+            >{{ modelCreatePending ? '...' : 'Create' }}</button>
+            <button
+              type="button"
+              class="cancel-btn"
+              :disabled="modelCreatePending"
+              @click="cancelCreateModel"
+            >x</button>
+          </div>
+          <div v-if="modelCreateError" class="hint-bad">{{ modelCreateError }}</div>
+        </template>
+
         <div v-if="modelsError" class="hint-bad">{{ modelsError }}</div>
       </template>
 
@@ -296,6 +463,51 @@ const modelInputValue = computed(() => modelOpen.value
 .item-sub  { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--color-text-muted); }
 .item-sub code { font-family: var(--font-mono); }
 .empty { padding: 10px; color: var(--color-text-muted); font-size: 12px; font-style: italic; }
+
+.create-item {
+  color: var(--orbit-primary);
+  font-size: 12px;
+  border-top: 1px solid var(--color-border);
+  font-weight: 500;
+}
+.create-item.first-create {
+  border-top: none;
+  font-size: 13px;
+  padding: 10px;
+}
+.create-item:hover { background: var(--orbit-primary-fade); }
+
+.create-row {
+  display: flex; gap: 6px; align-items: center;
+  margin-top: 4px;
+}
+.create-input {
+  flex: 1;
+  font-size: 12px;
+}
+.create-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  background: var(--orbit-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.create-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cancel-btn {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+.cancel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .link {
   background: none; border: none; padding: 0;
