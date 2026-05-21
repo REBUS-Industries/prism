@@ -7,10 +7,11 @@
  * from agent/install/), and a per-node `agent-config.json` template
  * pre-filled with the right WSS endpoint.
  *
- * The MSI/zip itself lives as a GitHub Release asset on REBUS-ORBIT/prism-agent.
- * The server first checks the DB for a manually set URL; if absent, it falls
- * back to the GitHub Releases API so the workstation download page always
- * shows the current version without requiring the CI runner to SSH into the VM.
+ * Agent version resolution — GitHub Releases API is always the primary source.
+ * The DB settings `workstation_agent_version` / `workstation_agent_download_url`
+ * act as admin overrides to pin a specific version; when they are absent the
+ * latest release from REBUS-ORBIT/prism-agent is used automatically on every
+ * page load (no server-side cache so the page always reflects the actual latest).
  */
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -27,13 +28,11 @@ interface GitHubReleaseInfo {
   downloadUrl: string;
 }
 
-// Simple 1-hour in-memory cache so we don't hammer the GitHub API on every page load.
-let _releaseCache: { data: GitHubReleaseInfo; expiresAt: number } | null = null;
-
+/** Always fetches the latest release directly from the GitHub Releases API.
+ *  No server-side cache — the admin page should reflect the real latest on
+ *  every load. GitHub's unauthenticated rate limit (60 req/h) is well above
+ *  realistic admin page traffic. */
 async function fetchLatestAgentRelease(): Promise<GitHubReleaseInfo | null> {
-  const now = Date.now();
-  if (_releaseCache && _releaseCache.expiresAt > now) return _releaseCache.data;
-
   try {
     const res = await fetch(
       `https://api.github.com/repos/${GITHUB_RELEASE_REPO}/releases/latest`,
@@ -53,12 +52,7 @@ async function fetchLatestAgentRelease(): Promise<GitHubReleaseInfo | null> {
     };
     const asset = json.assets?.find((a) => GITHUB_RELEASE_ASSET_PATTERN.test(a.name));
     if (!asset) return null;
-    const data: GitHubReleaseInfo = {
-      version: json.tag_name,
-      downloadUrl: asset.browser_download_url,
-    };
-    _releaseCache = { data, expiresAt: now + 60 * 60 * 1000 };
-    return data;
+    return { version: json.tag_name, downloadUrl: asset.browser_download_url };
   } catch {
     return null;
   }
@@ -108,22 +102,23 @@ const plugin: FastifyPluginAsync = async (app) => {
    * GET /agent — meta JSON describing the latest agent build.
    *
    * Resolution order for version + downloadUrl:
-   *   1. DB settings (set manually or by the CI SSH step when the runner
-   *      can reach the VM — currently the runner is on the public internet
-   *      so the SSH step is non-fatal and may not update the DB).
-   *   2. GitHub Releases API for REBUS-ORBIT/prism-agent (cached 1 h).
+   *   1. GitHub Releases API for REBUS-ORBIT/prism-agent (live, no cache).
+   *   2. DB settings — admin override to pin a specific version. Only used
+   *      when GitHub API is unreachable or returns no matching asset.
    *   3. null / available: false so the UI renders the "build pending" state.
    */
   app.get('/agent', async (req) => {
-    let downloadUrl = (await getSetting('workstation_agent_download_url'))?.trim() || null;
-    let version     = (await getSetting('workstation_agent_version'))?.trim()      || null;
+    // Primary: GitHub Releases API — always reflects the true latest build.
+    const ghRelease = await fetchLatestAgentRelease();
+    let downloadUrl = ghRelease?.downloadUrl ?? null;
+    let version     = ghRelease?.version     ?? null;
 
+    // Fallback: DB admin override (pinned version or when GitHub is unreachable).
     if (!downloadUrl || !version) {
-      const ghRelease = await fetchLatestAgentRelease();
-      if (ghRelease) {
-        downloadUrl = downloadUrl ?? ghRelease.downloadUrl;
-        version     = version     ?? ghRelease.version;
-      }
+      const dbUrl = (await getSetting('workstation_agent_download_url'))?.trim() || null;
+      const dbVer = (await getSetting('workstation_agent_version'))?.trim()      || null;
+      downloadUrl = downloadUrl ?? dbUrl;
+      version     = version     ?? dbVer;
     }
 
     const wsUrl = await resolveAgentWsUrl(req);
@@ -141,16 +136,18 @@ const plugin: FastifyPluginAsync = async (app) => {
   });
 
   /**
-   * GET /agent/download — 302 redirect to the configured zip URL. We
-   * could proxy the bytes here, but a redirect keeps PRISM out of the
-   * upload path and lets GitHub serve at its full bandwidth.
+   * GET /agent/download — 302 redirect to the latest zip URL.
+   * Resolves via GitHub Releases API first, DB override as fallback.
    */
   app.get('/agent/download', async (_req, reply) => {
-    const url = (await getSetting('workstation_agent_download_url'))?.trim();
+    const ghRelease = await fetchLatestAgentRelease();
+    const url = ghRelease?.downloadUrl
+      ?? (await getSetting('workstation_agent_download_url'))?.trim()
+      ?? null;
     if (!url) {
       return reply.code(404).send({
-        error: 'no agent build configured',
-        hint: 'set workstation_agent_download_url in Settings',
+        error: 'no agent build available',
+        hint: 'push a vX.Y.Z tag to trigger the agent-msi workflow',
       });
     }
     return reply.redirect(url, 302);
