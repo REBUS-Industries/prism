@@ -29,6 +29,12 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
   let helloProcessed = false;
   const childLog = log.child({ ws: 'agent' });
 
+  // Send a WebSocket protocol-level ping every 30 s so the connection stays
+  // alive through reverse-proxy idle timeouts (Caddy default: 60 s).
+  const pingInterval = setInterval(() => {
+    if (socket.readyState === socket.OPEN) socket.ping();
+  }, 30_000);
+
   socket.on('message', (raw) => {
     let msg: AgentToServerMsg;
     try {
@@ -49,6 +55,7 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
   });
 
   socket.on('close', async (code, reason) => {
+    clearInterval(pingInterval);
     if (conn) {
       childLog.info({ sessionId: conn.sessionId, nodeName: conn.nodeName, code, reason: reason.toString() }, 'agent ws closed');
       sessionRegistry.removeAgent(conn.sessionId);
