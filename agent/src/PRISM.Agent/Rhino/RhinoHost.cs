@@ -41,7 +41,7 @@ public sealed class RhinoHost : IDisposable
         // any P/Invoke into the Rhino C++ layer throws DllNotFoundException.
         _core = new RhinoCore(new[] { "/nosplash", "/notemplate" });
 
-        _log.LogInformation("RhinoHost: Rhino {Version} ready", RhinoApp.Version);
+        _log.LogInformation("RhinoHost: Rhino {Version} ready", global::Rhino.RhinoApp.Version);
     }
 
     public string RhinoVersion =>
