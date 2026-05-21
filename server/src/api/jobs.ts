@@ -9,10 +9,13 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, or } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { jobLogs, jobs } from '../db/schema.js';
 import { requireAuth } from '../auth/middleware.js';
+import { sessionRegistry } from '../ws/sessionRegistry.js';
+import { envelope } from '../../../shared/contracts/agent-protocol.js';
+import { broadcastJobUpdate } from '../ws/adminProtocol.js';
 
 const ALLOWED_OUTPUT_FORMATS = new Set(['3dm', 'step', 'ifc', 'glb']);
 
@@ -46,6 +49,42 @@ const plugin: FastifyPluginAsync = async (app) => {
     const res = await db.delete(jobs).where(eq(jobs.id, req.params.id)).returning({ id: jobs.id });
     if (res.length === 0) return reply.code(404).send({ error: 'not found' });
     return { deleted: res[0]!.id };
+  });
+
+  // POST /api/jobs/:id/cancel
+  app.post<{ Params: { id: string } }>('/:id/cancel', async (req, reply) => {
+    const CANCELLABLE = or(
+      eq(jobs.status, 'queued'),
+      eq(jobs.status, 'dispatched'),
+      eq(jobs.status, 'processing'),
+      eq(jobs.status, 'uploading'),
+    );
+    // Atomic check-and-update: only succeeds if the job is still in a
+    // cancellable state, preventing races with the agent completing the job.
+    const updated = await db
+      .update(jobs)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(and(eq(jobs.id, req.params.id), CANCELLABLE))
+      .returning({ id: jobs.id, agentSessionId: jobs.agentSessionId });
+
+    if (updated.length === 0) {
+      // Job either doesn't exist or is already in a terminal state.
+      const existing = await db.query.jobs.findFirst({ where: eq(jobs.id, req.params.id) });
+      if (!existing) return reply.code(404).send({ error: 'not found' });
+      return reply.code(409).send({ error: `job is already ${existing.status}` });
+    }
+
+    const { agentSessionId } = updated[0]!;
+    // Forward cancel to the agent if it has the job in flight.
+    if (agentSessionId) {
+      const conn = sessionRegistry.getAgent(agentSessionId);
+      if (conn && conn.socket.readyState === conn.socket.OPEN) {
+        conn.socket.send(JSON.stringify(envelope('cancel', { jobId: req.params.id, reason: 'cancelled by admin' })));
+      }
+    }
+
+    broadcastJobUpdate(req.params.id, { status: 'cancelled' });
+    return { cancelled: true };
   });
 
   // GET /api/jobs/:id/logs?since=

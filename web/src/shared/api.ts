@@ -195,6 +195,7 @@ export const adminApi = {
   logout: () => api.post<{ ok: true }>('/api/admin/logout', {}),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post<{ ok: true }>('/api/admin/change-password', { currentPassword, newPassword }),
+  cancelJob: (id: string) => api.post<{ cancelled: boolean }>(`/api/jobs/${id}/cancel`, {}),
 };
 
 export interface PipelineNode {

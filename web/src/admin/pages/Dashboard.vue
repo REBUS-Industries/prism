@@ -101,7 +101,7 @@ const onlineCount = computed(() => workstations.value.filter((w) => w.online).le
   <div class="card mt-lg">
     <h2>Recent jobs</h2>
     <div v-if="loading" class="muted">loading…</div>
-    <JobTable v-else :jobs="jobs" />
+    <JobTable v-else :jobs="jobs" @cancelled="refresh" />
   </div>
 </template>
 
