@@ -17,7 +17,8 @@ import { requireAuth } from '../auth/middleware.js';
 import { sessionRegistry } from '../ws/sessionRegistry.js';
 import { envelope } from '../../../shared/contracts/agent-protocol.js';
 import { broadcastJobUpdate } from '../ws/adminProtocol.js';
-import { enqueueConvert } from '../jobs/queue.js';
+import { enqueueConvert, convertQueue } from '../jobs/queue.js';
+import { tryDispatch } from '../jobs/dispatcher.js';
 
 const ALLOWED_OUTPUT_FORMATS = new Set(['3dm', 'step', 'ifc', 'glb']);
 
@@ -181,7 +182,12 @@ const plugin: FastifyPluginAsync = async (app) => {
       includeLayerDescendants: parsed.data.includeLayerDescendants,
     });
 
-    await enqueueConvert({ jobId: req.params.id });
+    try { await convertQueue.remove(req.params.id); } catch { /* not present */ }
+
+    const outcome = await tryDispatch(req.params.id, req.log);
+    if (!outcome.dispatched) {
+      await enqueueConvert({ jobId: req.params.id });
+    }
 
     return {
       jobId: req.params.id,
