@@ -108,6 +108,7 @@ jobs:
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        id: release
         uses: softprops/action-gh-release@v2
         with:
           repository: REBUS-ORBIT/prism-agent
@@ -116,3 +117,32 @@ jobs:
           token: ${{ secrets.ORBIT_DEPLOY_PAT }}
           files: PRISM.Agent-*.zip
           make_latest: true
+
+      - name: Update PRISM server settings (version + download URL)
+        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && secrets.PROD_VM_SSH_KEY != ''
+        shell: pwsh
+        env:
+          PROD_VM_SSH_KEY: ${{ secrets.PROD_VM_SSH_KEY }}
+          PROD_VM_HOST:    ${{ secrets.PROD_VM_HOST }}
+          PROD_VM_USER:    ${{ secrets.PROD_VM_USER }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag) { $tag = "latest" }
+          $zipName = "PRISM.Agent-$tag.zip"
+          $downloadUrl = "https://github.com/REBUS-ORBIT/prism-agent/releases/download/$tag/$zipName"
+
+          # Write SSH key from secret
+          $keyPath = "$env:RUNNER_TEMP\prod_vm_key"
+          [IO.File]::WriteAllText($keyPath, $env:PROD_VM_SSH_KEY)
+          icacls $keyPath /inheritance:r /grant:r "${env:USERNAME}:R" | Out-Null
+
+          $sql = @"
+          INSERT INTO settings (key, value) VALUES ('workstation_agent_version', '$tag'), ('workstation_agent_download_url', '$downloadUrl')
+          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
+          "@
+
+          # Run psql inside the prism-postgres container via SSH
+          $remote = "cd /opt/prism && docker compose exec -T prism-postgres psql -U prism -d prism -c ""$sql"""
+          ssh -i $keyPath -o StrictHostKeyChecking=no `
+            "$($env:PROD_VM_USER)@$($env:PROD_VM_HOST)" $remote
+          Write-Host "Updated PRISM settings: version=$tag url=$downloadUrl"
