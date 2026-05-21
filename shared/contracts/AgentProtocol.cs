@@ -3,6 +3,7 @@
 // Edit all three in the same commit and let CI's `npm run validate:contracts`
 // catch any drift in the MessageType union.
 
+using System.Runtime.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Serialization;
@@ -19,6 +20,7 @@ public enum MessageType
 {
     Hello,
     Welcome,
+    [EnumMember(Value = "server_ping")]
     ServerPing,
     Heartbeat,
     Assign,
