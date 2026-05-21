@@ -67,7 +67,7 @@ public sealed class RhinoHost : IDisposable
         // / empty path means "not registered in this Rhino installation",
         // which is itself useful diagnostic information.
         string? rdkPath = TryGet(() => global::Rhino.PlugIns.PlugIn.PathFromId(RdkPlugInId));
-        _log.LogInformation(
+        _log.LogWarning(
             "RhinoHost: RDK PathFromId({Id}) → '{Path}'",
             RdkPlugInId, rdkPath ?? "<unknown>");
 
@@ -84,7 +84,7 @@ public sealed class RhinoHost : IDisposable
         {
             loadResult = $"<threw {err.GetType().Name}: {err.Message}>";
         }
-        _log.LogInformation("RhinoHost: PlugIn.LoadPlugIn(RDK) → {Result}", loadResult);
+        _log.LogWarning("RhinoHost: PlugIn.LoadPlugIn(RDK) → {Result}", loadResult);
 
         // Step 3: exercise an RDK code path. We can't reliably call into
         // the document material collection here (ActiveDoc may legitimately
@@ -96,7 +96,7 @@ public sealed class RhinoHost : IDisposable
         try
         {
             var registeredTypes = global::Rhino.Render.RenderContentType.GetAllAvailableTypes();
-            _log.LogInformation(
+            _log.LogWarning(
                 "RhinoHost: RDK probe — RenderContentType.GetAllAvailableTypes() returned {Total} types. " +
                 ">0 means RDK is live and SimulatedTexture / FindRenderTexture will work.",
                 registeredTypes?.Length ?? 0);

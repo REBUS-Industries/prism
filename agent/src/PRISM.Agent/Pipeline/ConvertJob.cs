@@ -80,12 +80,7 @@ public sealed class ConvertJob
             {
                 diagLineCount++;
                 _log.LogInformation("{Line}", line);
-                // Stream a sampled subset to the admin UI to avoid swamping
-                // the WS channel — the full picture lives in the agent log
-                // file. Always forward summary/upload lines; skip noisy
-                // per-material strategy chatter.
-                if (line.StartsWith("[ORBIT-DIAG]") || line.StartsWith("[BlobUploader]"))
-                    _ = LogToServer(assign.JobId, PRISM.Contracts.LogLevel.Info, line);
+                _ = LogToServer(assign.JobId, PRISM.Contracts.LogLevel.Info, line);
             };
 
             await Progress(assign.JobId, "converting", 15, "running conversion pipeline");
