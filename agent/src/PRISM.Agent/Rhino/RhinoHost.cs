@@ -42,6 +42,68 @@ public sealed class RhinoHost : IDisposable
         _core = new RhinoCore(new[] { "/nosplash", "/notemplate" });
 
         _log.LogInformation("RhinoHost: Rhino {Version} ready", global::Rhino.RhinoApp.Version);
+
+        // The RDK (Renderer Development Kit) plug-in owns
+        // `RenderMaterial.FindRenderTexture`, `RenderTexture.SimulatedTexture`,
+        // and the entire `Rhino.Render.*` material/texture API. In a headless
+        // Rhino.Inside host RDK is NOT auto-loaded — meaning every texture
+        // extraction strategy in the connector silently returns null, which
+        // is the primary suspect for PRISM uploads landing with zero blobs.
+        // Force-load it here and log the result so we can confirm in v0.1.14
+        // diagnostics whether the RDK was the blocker.
+        EnsureRdkLoaded();
+    }
+
+    /// <summary>
+    /// Canonical RDK plug-in GUID — the same value Rhino uses to identify
+    /// the RhinoRdk.rhp shipped in every Rhino 8 install.
+    /// </summary>
+    static readonly Guid RdkPlugInId = new("16592D58-4A2F-401D-BF5E-3B87741C1B1B");
+
+    void EnsureRdkLoaded()
+    {
+        // Step 1: log the on-disk path Rhino has registered for the RDK GUID
+        // (proves the plug-in is at least installed and discoverable). A null
+        // / empty path means "not registered in this Rhino installation",
+        // which is itself useful diagnostic information.
+        string? rdkPath = TryGet(() => global::Rhino.PlugIns.PlugIn.PathFromId(RdkPlugInId));
+        _log.LogInformation(
+            "RhinoHost: RDK PathFromId({Id}) → '{Path}'",
+            RdkPlugInId, rdkPath ?? "<unknown>");
+
+        // Step 2: force-load. Returns false when the plug-in is missing OR
+        // when it is already loaded (depending on Rhino version) — log it
+        // either way so we can correlate against the probe result below.
+        string loadResult;
+        try
+        {
+            var ok = global::Rhino.PlugIns.PlugIn.LoadPlugIn(RdkPlugInId);
+            loadResult = ok.ToString();
+        }
+        catch (Exception err)
+        {
+            loadResult = $"<threw {err.GetType().Name}: {err.Message}>";
+        }
+        _log.LogInformation("RhinoHost: PlugIn.LoadPlugIn(RDK) → {Result}", loadResult);
+
+        // Step 3: actually exercise an RDK code path. If this throws we know
+        // RDK is not functional in the host regardless of what LoadPlugIn
+        // reported. Catching here is critical because the host MUST still
+        // come up so PRISM can at least surface the error to the admin UI.
+        try
+        {
+            var doc = global::Rhino.RhinoDoc.ActiveDoc;
+            var renderer = global::Rhino.Render.RenderContent.GetCurrentRendererName(doc);
+            _log.LogInformation(
+                "RhinoHost: RDK probe — current renderer for ActiveDoc: '{Renderer}'",
+                renderer ?? "<null>");
+        }
+        catch (Exception probeErr)
+        {
+            _log.LogWarning(probeErr,
+                "RhinoHost: RDK probe (RenderContent.GetCurrentRendererName) threw — " +
+                "RDK is NOT functional in this host. Texture extraction will fail.");
+        }
     }
 
     public string RhinoVersion =>

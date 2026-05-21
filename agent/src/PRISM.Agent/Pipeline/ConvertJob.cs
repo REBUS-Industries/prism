@@ -71,10 +71,34 @@ public sealed class ConvertJob
                 _ = Progress(assign.JobId, t.status, t.percent, t.status);
             });
 
+            // Diagnostic sink — every material/texture/blob decision lands in
+            // the agent's Serilog file (tailable over SSH) and bubbles up via
+            // MessageType.Log to the admin UI. Critical for Phase 1 of the
+            // PRISM missing-textures investigation (v0.1.14+).
+            int diagLineCount = 0;
+            Action<string> pipelineLog = line =>
+            {
+                diagLineCount++;
+                _log.LogInformation("{Line}", line);
+                // Stream a sampled subset to the admin UI to avoid swamping
+                // the WS channel — the full picture lives in the agent log
+                // file. Always forward summary/upload lines; skip noisy
+                // per-material strategy chatter.
+                if (line.StartsWith("[ORBIT-DIAG]") || line.StartsWith("[BlobUploader]"))
+                    _ = LogToServer(assign.JobId, PRISM.Contracts.LogLevel.Info, line);
+            };
+
             await Progress(assign.JobId, "converting", 15, "running conversion pipeline");
-            string versionId = await pipeline.SendAsync(card, doc, transport, client, prog, ct);
+            string versionId = await pipeline.SendAsync(card, doc, transport, client, prog, ct, pipelineLog);
 
             var versionUrl = $"{assign.OrbitServerUrl.TrimEnd('/')}/projects/{assign.ProjectId}/models/{assign.ModelId}";
+
+            _log.LogInformation(
+                "Rhino conversion summary for job {JobId}: versionId={VersionId} versionUrl={VersionUrl} " +
+                "diagLines={Diag} (raw blob/material details streamed above)",
+                assign.JobId, versionId, versionUrl, diagLineCount);
+            await LogToServer(assign.JobId, PRISM.Contracts.LogLevel.Info,
+                $"conversion summary: versionId={versionId} url={versionUrl} diagnosticLines={diagLineCount}");
 
             // Optional additional outputs (3DM / GLB / IFC) — produced from the
             // same loaded RhinoDoc, then uploaded back to the PRISM server via
@@ -249,6 +273,30 @@ public sealed class ConvertJob
         {
             JobId = jobId, Stage = stage, Percent = percent, Message = message,
         }).AsTask();
+    }
+
+    /// <summary>
+    /// Push a Log envelope to the server so the admin UI can surface per-job
+    /// diagnostic detail (Rhino texture extraction strategy traces, blob
+    /// upload results, RDK plugin status, etc.) without requiring SSH access
+    /// to the workstation. Best-effort: failures here must never abort a job.
+    /// </summary>
+    Task LogToServer(string jobId, PRISM.Contracts.LogLevel level, string message)
+    {
+        try
+        {
+            return _ws.SendAsync(MessageType.Log, new LogData
+            {
+                JobId = jobId,
+                Level = level,
+                Message = message,
+            }).AsTask();
+        }
+        catch (Exception err)
+        {
+            _log.LogDebug(err, "best-effort LogToServer for job {JobId} failed", jobId);
+            return Task.CompletedTask;
+        }
     }
 
     void TryDelete(string path)
