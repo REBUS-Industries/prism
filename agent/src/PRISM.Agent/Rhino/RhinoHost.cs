@@ -39,9 +39,31 @@ public sealed class RhinoHost : IDisposable
         // RhinoCore is the object that actually loads the native Rhino engine
         // DLLs and initialises the Rhino application object.  Without it,
         // any P/Invoke into the Rhino C++ layer throws DllNotFoundException.
-        _core = new RhinoCore(new[] { "/nosplash", "/notemplate" });
+        //
+        // v0.1.20: drop /notemplate so Rhino loads its default template on
+        // startup. That establishes a real ActiveDoc with full interactive
+        // infrastructure — RDK hydration, render-mesh cache, doc.Bitmaps
+        // table, doc.RenderMaterials, ChunkUnit etc — exactly the way the
+        // working interactive ORBIT plug-in sees the world. Without a
+        // default template, headless docs have no doc-level RDK and
+        // `mat.RenderMaterial.FirstChild` is null even for clearly textured
+        // materials.
+        _core = new RhinoCore(new[] { "/nosplash" });
 
         _log.LogInformation("RhinoHost: Rhino {Version} ready", global::Rhino.RhinoApp.Version);
+
+        // v0.1.20 verification: did the default template establish an ActiveDoc?
+        try
+        {
+            var ad = global::Rhino.RhinoDoc.ActiveDoc;
+            _log.LogInformation(
+                "[ORBIT-DIAG] post-boot ActiveDoc={HasAd} RuntimeSerial={Sn}",
+                ad != null, ad?.RuntimeSerialNumber ?? 0u);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "[ORBIT-DIAG] post-boot ActiveDoc probe threw");
+        }
 
         // The RDK (Renderer Development Kit) plug-in owns
         // `RenderMaterial.FindRenderTexture`, `RenderTexture.SimulatedTexture`,
@@ -133,10 +155,28 @@ public sealed class RhinoHost : IDisposable
     public string RhinoVersion =>
         TryGet(() => global::Rhino.RhinoApp.Version.ToString()) ?? "unknown";
 
-    /// <summary>Create a fresh headless RhinoDoc for a job to populate.</summary>
+    /// <summary>
+    /// Create a fresh RhinoDoc for a job to populate.
+    /// <para>
+    /// v0.1.20: uses <c>RhinoDoc.Create(null)</c> instead of
+    /// <c>RhinoDoc.CreateHeadless(null)</c>. The non-headless constructor
+    /// participates in the host's interactive context — RDK is hydrated
+    /// against the doc, the render-mesh cache and <c>doc.Bitmaps</c> table
+    /// are real, and <c>mat.RenderMaterial.FirstChild</c> resolves
+    /// correctly. Headless docs were causing the connector's RDK / PBR
+    /// texture-extraction strategies to return null on every material in
+    /// the v0.1.14–v0.1.19 test runs.
+    /// </para>
+    /// <para>
+    /// The new doc becomes <see cref="global::Rhino.RhinoDoc.ActiveDoc"/>;
+    /// the existing single-Rhino-engine serialisation in
+    /// <see cref="Pipeline.WorkerSlotPool"/> keeps concurrent jobs from
+    /// stomping each other.
+    /// </para>
+    /// </summary>
     public global::Rhino.RhinoDoc CreateDoc() =>
-        global::Rhino.RhinoDoc.CreateHeadless(null)
-        ?? throw new InvalidOperationException("RhinoDoc.CreateHeadless returned null — is Rhino 8 installed?");
+        global::Rhino.RhinoDoc.Create(null)
+        ?? throw new InvalidOperationException("RhinoDoc.Create returned null — is Rhino 8 installed?");
 
     public void Dispose()
     {

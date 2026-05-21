@@ -47,8 +47,16 @@ public sealed class RhinoFileOpener
         RhinoDoc doc;
         if (ext == ".3dm")
         {
-            doc = RhinoDoc.OpenHeadless(path) ?? throw new IOException($"failed to open {path}");
-            _log.LogInformation("opened {Path}: {ObjectCount} objects", path, doc.Objects.Count);
+            // v0.1.20: open via RunScript("-_Open ...") so the file becomes
+            // the host's ActiveDoc with full interactive context (RDK
+            // hydration, doc.Bitmaps, render-mesh cache, doc.RenderMaterials).
+            // OpenHeadless skips that hydration — leaving mat.RenderMaterial
+            // null on PBR materials and breaking every texture-extraction
+            // strategy in the connector pipeline (v0.1.14 → v0.1.19).
+            doc = OpenViaScript(path);
+            _log.LogInformation(
+                "opened {Path}: {ObjectCount} objects doc={DocRuntimeSerial}",
+                path, doc.Objects.Count, doc.RuntimeSerialNumber);
         }
         else
         {
@@ -56,7 +64,9 @@ public sealed class RhinoFileOpener
             var ok = ImportFileInto(doc, path, ext);
             if (!ok)
                 throw new IOException($"Rhino refused to import {path} (format {ext})");
-            _log.LogInformation("imported {Path}: {ObjectCount} objects", path, doc.Objects.Count);
+            _log.LogInformation(
+                "imported {Path}: {ObjectCount} objects doc={DocRuntimeSerial}",
+                path, doc.Objects.Count, doc.RuntimeSerialNumber);
         }
 
         // Fix 1 (v0.1.17): warm render meshes after headless open.
@@ -206,5 +216,46 @@ public sealed class RhinoFileOpener
             global::Rhino.RhinoApp.WriteLine($"PRISM.Agent: import script threw: {err.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Open a <c>.3dm</c> file via the canonical <c>-_Open</c> RunScript so
+    /// the resulting doc becomes <see cref="RhinoDoc.ActiveDoc"/> with full
+    /// interactive RDK / render-mesh / bitmap hydration.
+    /// <para>
+    /// Backslashes inside the path are converted to forward slashes for the
+    /// RunScript parser (the parser accepts either on Windows). Quotes are
+    /// escaped defensively though it would be very unusual for a downloaded
+    /// job file to contain one.
+    /// </para>
+    /// <para>
+    /// <see cref="RhinoApp.RunScript(string, bool)"/> with no doc serial
+    /// number runs against the current ActiveDoc — so after the call
+    /// <c>RhinoDoc.ActiveDoc</c> points at the opened file.
+    /// </para>
+    /// </summary>
+    RhinoDoc OpenViaScript(string path)
+    {
+        var escaped = path.Replace("\\", "/").Replace("\"", "\\\"");
+        var script = $"-_Open \"{escaped}\"";
+
+        bool ok;
+        try
+        {
+            ok = RhinoApp.RunScript(script, echo: false);
+        }
+        catch (Exception err)
+        {
+            throw new IOException(
+                $"RunScript('-_Open {path}') threw {err.GetType().Name}: {err.Message}", err);
+        }
+
+        if (!ok)
+            throw new IOException($"RunScript('-_Open') refused to open {path}");
+
+        var doc = RhinoDoc.ActiveDoc
+            ?? throw new IOException(
+                $"no ActiveDoc after -_Open of {path} — RhinoCore may have been booted with /notemplate");
+        return doc;
     }
 }
