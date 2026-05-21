@@ -21,6 +21,7 @@ import {
 } from '../../../shared/contracts/agent-protocol.js';
 import { broadcastJobUpdate, broadcastWorkstationUpdate } from './adminProtocol.js';
 import { dispatchJobEvent } from '../webhooks/dispatcher.js';
+import { tryDispatch } from '../jobs/dispatcher.js';
 
 const HEARTBEAT_SECONDS = 15;
 
@@ -170,7 +171,7 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
       return;
     }
     helloProcessed = true;
-    childLog.info({ machineId: hello.machineId, nodeName: hello.nodeName, slots: hello.slots }, 'agent hello');
+    childLog.info({ machineId: hello.machineId, nodeName: hello.nodeName, slots: hello.slots, roles: hello.roles }, 'agent hello');
 
     // Upsert workstation row by machineId.
     let workstation = (await db
@@ -198,6 +199,8 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
       workstation = inserted[0]!;
       childLog.info({ workstationId: workstation.id }, 'registered new workstation');
     } else {
+      // UPDATE — do NOT touch canConvert/canLayer/canReceive; those are admin-managed.
+      // Only refresh the fields the agent self-reports on every connect.
       await db
         .update(workstations)
         .set({
@@ -206,9 +209,6 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
           slotsTotal: hello.slots,
           agentVersion: hello.agentVersion,
           rhinoVersion: hello.rhinoVersion ?? null,
-          canConvert: hello.roles.includes('conversion'),
-          canLayer:   hello.roles.includes('layering'),
-          canReceive: hello.roles.includes('receive'),
           lastSeenAt: new Date(),
         })
         .where(eq(workstations.id, workstation.id));
@@ -259,5 +259,21 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
       slotsTotal: workstation.slotsTotal,
       slotsBusy: 0,
     });
+
+    // Dispatch any jobs that were queued before this agent connected.
+    try {
+      const queuedJobs = await db
+        .select({ id: jobs.id })
+        .from(jobs)
+        .where(eq(jobs.status, 'queued'));
+      for (const { id } of queuedJobs) {
+        const outcome = await tryDispatch(id, childLog);
+        if (outcome.dispatched) {
+          childLog.info({ jobId: id, nodeName: outcome.nodeName }, 'dispatched queued job to newly connected agent');
+        }
+      }
+    } catch (err) {
+      childLog.warn({ err }, 'post-hello dispatch sweep failed');
+    }
   }
 }
