@@ -31,8 +31,22 @@ import { consumeQuotaOrReject, enforceRateLimit } from './rateLimit.js';
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? '/var/lib/prism/uploads';
 
+// Mirror of `RhinoFileOpener.SupportedExtensions` on the agent side.
+// Keep in sync with `api/convert.ts` and the agent's
+// `PRISM/agent/src/PRISM.Agent/Rhino/RhinoFileOpener.cs`.
+// `.dae` and `.3ds` are intentionally excluded — Rhino 8 ships only the
+// EXPORT plug-ins for those formats (`Export_DAE.rhp`, `export_3DS.rhp`),
+// so the agent cannot import either even though Rhino can write them.
+// `.zip` is accepted as a bundle wrapper — see the agent-side
+// ZipBundleExtractor which expands the archive and selects the primary
+// geometry file at job runtime.
 const SUPPORTED_EXTS = new Set([
-  '.3dm', '.dwg', '.dxf', '.fbx', '.obj', '.stl', '.ply', '.3mf', '.dae', '.step', '.iges', '.igs', '.stp',
+  '.3dm',
+  '.dwg', '.dxf',
+  '.fbx', '.obj', '.stl', '.ply',
+  '.3mf', '.skp',
+  '.step', '.stp', '.iges', '.igs',
+  '.zip',
 ]);
 const ALLOWED_OUTPUT_FORMATS = new Set(['3dm', 'step', 'ifc', 'glb']);
 const RECEIVE_OUTPUTS = new Set(['3dm', 'step']);

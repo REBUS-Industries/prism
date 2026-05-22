@@ -300,7 +300,11 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           summary: 'Submit a file for conversion -> ORBIT',
           description: [
             'Upload a CAD/mesh/IFC file. Supported formats:',
-            '`.3dm .dwg .dxf .fbx .obj .stl .ply .3mf .dae .step .stp .iges .igs`.',
+            '`.3dm .dwg .dxf .fbx .obj .stl .ply .3mf .skp .step .stp .iges .igs .zip`.',
+            '',
+            'Upload a `.zip` archive when your file references external assets',
+            '(e.g. an OBJ + .mtl + texture bitmaps): the worker extracts the',
+            'archive on disk before importing so Rhino can resolve siblings.',
             '',
             'The response contains a `jobId` you can poll via `GET /jobs/{jobId}` or',
             'stream live progress over Server-Sent Events at `GET /jobs/{jobId}/stream`.',

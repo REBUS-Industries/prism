@@ -18,8 +18,29 @@ import { requireAuth } from '../auth/middleware.js';
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? '/var/lib/prism/uploads';
 
+// Mirror of `RhinoFileOpener.SupportedExtensions` on the agent side
+// (PRISM/agent/src/PRISM.Agent/Rhino/RhinoFileOpener.cs). Keep these in
+// sync — the server gates uploads, the agent gates the import path.
+// `.skp` requires Rhino's SketchUp importer plug-in; we accept the upload
+// and let the agent surface a clear `[OBJ-IMPORT]` error if the plug-in
+// isn't loaded on the chosen workstation.
+// `.dae` and `.3ds` are intentionally excluded: Rhino 8 ships only their
+// EXPORT plug-ins (`Export_DAE.rhp`, `export_3DS.rhp`); there is no
+// matching FileImport plug-in registered, so accepting the upload would
+// just produce an `[OBJ-IMPORT] RhinoApp.RunScript returned false` error
+// later in the pipeline.
+// `.zip` is the bundle-ingestion format: callers upload an OBJ + .mtl +
+// texture set (or any multi-file format) inside a single archive. The
+// server stores the .zip untouched and dispatches it to the agent; the
+// agent expands it via ZipBundleExtractor before invoking RhinoFileOpener
+// so the .mtl / textures resolve relative to the primary geometry file.
 const SUPPORTED_EXTS = new Set([
-  '.3dm', '.dwg', '.dxf', '.fbx', '.obj', '.stl', '.ply', '.3mf', '.dae', '.step', '.iges', '.igs', '.stp',
+  '.3dm',
+  '.dwg', '.dxf',
+  '.fbx', '.obj', '.stl', '.ply',
+  '.3mf', '.skp',
+  '.step', '.stp', '.iges', '.igs',
+  '.zip',
 ]);
 
 const submitSchema = z.object({
