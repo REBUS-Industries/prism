@@ -39,6 +39,23 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
     if (socket.readyState === socket.OPEN) socket.send(pingFrame);
   }, 30_000);
 
+  // Serialize per-connection message processing so the WS send order ==
+  // the DB write order. Without this, the `message` event fires
+  // fire-and-forget async handlers; back-to-back messages from the same
+  // agent (e.g. PollLayersJob sends `progress("extracting-layers", "walking
+  // layer table")` immediately followed by `layers(<tree>)`) race in the
+  // DB and the loser-by-microseconds overwrites the winner. Observed
+  // failure mode (2026-05-25 job c80c9a1d): the Progress UPDATE landed
+  // *after* the Layers UPDATE, leaving the job stuck in
+  // `processing/extracting-layers/walking layer table` with
+  // `layers_json` populated and `agent_sessions.slots_busy` already
+  // decremented — i.e. the Layers handler did its work but the Progress
+  // handler's stale write clobbered the status/stage/lastMessage. The
+  // SSE broadcast suffers the same race because it fires right after
+  // each handler's `await db.update`, so the user's browser also
+  // received `awaiting_selection` followed by `processing` and reverted
+  // to the loading state.
+  let pendingHandler: Promise<void> = Promise.resolve();
   socket.on('message', (raw) => {
     let msg: AgentToServerMsg;
     try {
@@ -53,9 +70,11 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
       socket.close(1002, 'protocol version mismatch');
       return;
     }
-    void handleMessage(msg).catch((err) => {
-      childLog.error({ err, type: msg.type }, 'agent handler failed');
-    });
+    pendingHandler = pendingHandler.then(() =>
+      handleMessage(msg).catch((err) => {
+        childLog.error({ err, type: msg.type }, 'agent handler failed');
+      }),
+    );
   });
 
   socket.on('close', async (code, reason) => {
