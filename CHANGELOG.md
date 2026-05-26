@@ -9,6 +9,56 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ---
 
+## v0.1.32 — 2026-05-26
+
+Fix the in-app updater silently failing on workstations whose interactive
+user is not a local administrator. Symptom: clicking **Check for updates →
+Yes** flashed a CMD/PowerShell window for ~1 s and then nothing happened
+(version unchanged, tray came back at the old version after the scheduled
+task auto-restarted).
+
+### Fixed
+
+- **Auto-update silently fails on Program Files (ACL)**: the elevated
+  PowerShell child process spawned by `Updater.cs` couldn't write to
+  `C:\Program Files\PRISM.Agent` because the interactive user wasn't a
+  local administrator (the scheduled task's `RunLevel=Highest` only
+  promotes admin users; standard users stay standard). Two-pronged fix:
+  - **Pre-grant `BUILTIN\Users:(OI)(CI)M` on `$InstallDir`** in
+    `install.ps1` via `icacls /grant *S-1-5-32-545:(OI)(CI)M /T`. After
+    install (or re-running the wizard once), the agent's PowerShell
+    child can extract the new zip on top of Program Files without
+    elevation.
+  - **`Updater.IsInstallDirWritable()` pre-flight check** before
+    downloading: if the install dir is read-only the updater throws a
+    clear `UnauthorizedAccessException` ("Please re-run
+    PRISM.Agent-Setup.exe (run as administrator) once...") that the
+    tray surfaces via `MessageBox`. No more silent CMD-flash mystery.
+- **Brief CMD/console flash before update**: the spawned PowerShell
+  used `-WindowStyle Hidden`, which only hides the window *after* it's
+  created — there was always a 0.5–1 s flash. Switched to
+  `ProcessStartInfo.CreateNoWindow = true`, which the kernel applies
+  before any console host appears. Update now runs fully silently.
+- **Updater script logs to `%TEMP%\PRISM.Agent.Update.log`**: the
+  PowerShell update script now wraps every step in `try/catch` and
+  appends timestamped status lines (`update script started`, `waiting
+  for agent pid N to exit`, `extracting ...`, `extraction complete`,
+  `launched`, plus `FATAL: <message>` on any error). The next agent
+  startup checks this log and, if it contains a fatal/error and is
+  less than 10 minutes old, surfaces it via the agent's structured
+  logger so the failure shows up in the tray Logs window and
+  `prism-agent.log`.
+
+### Notes
+
+- For workstations already on v0.1.31 with a non-admin login user, the
+  in-app update to v0.1.32 will fail with the new clear error message.
+  Re-run **PRISM.Agent-Setup-v0.1.32.exe** (right-click → Run as
+  administrator) once to apply the ACL grant. From v0.1.32 onward,
+  every future update goes through cleanly without elevation.
+
+---
+
 ## v0.1.31 — 2026-05-26
 
 Web UI hardening: fixes the Save → 500 ACL crash, makes LAN access work

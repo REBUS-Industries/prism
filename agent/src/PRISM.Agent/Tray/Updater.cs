@@ -94,6 +94,67 @@ public static class Updater
     // ------------------------------------------------------------------
 
     /// <summary>
+    /// Path the update PowerShell script writes its diagnostic log to.
+    /// Survives across the agent restart so the next launch can surface
+    /// the result of the last update attempt.
+    /// </summary>
+    static string UpdateLogPath =>
+        Path.Combine(Path.GetTempPath(), "PRISM.Agent.Update.log");
+
+    /// <summary>
+    /// True when the agent's install directory is writable by the current
+    /// user.  When false, the in-app updater cannot extract the new zip
+    /// in place and will silently fail; we surface that to the operator
+    /// instead of pretending the update succeeded.
+    /// </summary>
+    public static bool IsInstallDirWritable()
+    {
+        var probe = Path.Combine(
+            AppContext.BaseDirectory,
+            ".update-probe-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            File.WriteAllText(probe, "x");
+            File.Delete(probe);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns the trailing portion of the most recent update log if it
+    /// contains a fatal marker and post-dates this process's start time.
+    /// Used by the tray to surface a "last update failed" message when
+    /// the agent is relaunched after a botched update.
+    /// </summary>
+    public static string? GetLastUpdateFailure()
+    {
+        try
+        {
+            if (!File.Exists(UpdateLogPath)) return null;
+            var fi = new FileInfo(UpdateLogPath);
+            // Only care about logs younger than 10 minutes -- anything
+            // older was a previous session the operator already saw.
+            if (fi.LastWriteTime < DateTime.Now.AddMinutes(-10)) return null;
+
+            var text = File.ReadAllText(UpdateLogPath);
+            if (text.Contains("FATAL", StringComparison.Ordinal) ||
+                text.Contains("ERROR", StringComparison.Ordinal))
+            {
+                return text;
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Downloads the update zip, then launches a background PowerShell script
     /// that waits for this process to exit, extracts the zip over the install
     /// directory, and relaunches the agent.
@@ -103,6 +164,21 @@ public static class Updater
     {
         if (string.IsNullOrEmpty(info.DownloadUrl))
             throw new InvalidOperationException("No download URL in the release.");
+
+        // Pre-flight: verify we can actually overwrite the install dir.
+        // On workstations whose interactive user is not a local admin and
+        // whose install was done via the legacy install.ps1 (pre-v0.1.32,
+        // no Users:Modify grant), Program Files is read-only and the
+        // updater would silently fail.  Fail loudly instead.
+        if (!IsInstallDirWritable())
+        {
+            throw new UnauthorizedAccessException(
+                "The agent's install directory is not writable by this Windows " +
+                "user, so the in-app updater cannot replace the running binaries. " +
+                "Please re-run PRISM.Agent-Setup.exe (run as administrator) once " +
+                "to grant write access -- future in-app updates will then work " +
+                "without elevation.");
+        }
 
         var tempZip = Path.Combine(Path.GetTempPath(), "PRISM.Agent.Update.zip");
 
@@ -134,22 +210,55 @@ public static class Updater
         var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
         var pid        = Environment.ProcessId;
         var exePath    = Path.Combine(installDir, "PRISM.Agent.exe");
+        var logPath    = UpdateLogPath;
+
+        // Wipe any stale log from a previous attempt so the diagnostic-on-
+        // next-startup hook only sees this run.
+        try { if (File.Exists(logPath)) File.Delete(logPath); } catch { /* nop */ }
 
         // Single-quoted strings inside the PS script escape ' as ''.
         var ps = $@"
-$proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
-if ($proc) {{ $proc.WaitForExit(60000) }}
-Start-Sleep -Milliseconds 500
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[IO.Compression.ZipFile]::ExtractToDirectory('{Esc(tempZip)}', '{Esc(installDir)}', $true)
-if (Test-Path '{Esc(exePath)}') {{ Start-Process '{Esc(exePath)}' }}
+$ErrorActionPreference = 'Stop'
+$log = '{Esc(logPath)}'
+function W($m) {{ Add-Content -Path $log -Value (""[$([DateTime]::Now.ToString('HH:mm:ss'))] "" + $m) }}
+
+try {{
+    W 'update script started'
+    $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
+    if ($proc) {{
+        W 'waiting for agent pid {pid} to exit'
+        $null = $proc.WaitForExit(60000)
+        W 'agent exited'
+    }} else {{
+        W 'agent already exited'
+    }}
+    Start-Sleep -Milliseconds 500
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    W 'extracting {Esc(tempZip)} -> {Esc(installDir)}'
+    [IO.Compression.ZipFile]::ExtractToDirectory('{Esc(tempZip)}', '{Esc(installDir)}', $true)
+    W 'extraction complete'
+    if (Test-Path '{Esc(exePath)}') {{
+        W 'launching new agent'
+        Start-Process -FilePath '{Esc(exePath)}'
+        W 'launched'
+    }} else {{
+        W ""ERROR: exe not found at '{Esc(exePath)}'""
+    }}
+}} catch {{
+    W ""FATAL: $_""
+    if ($_.ScriptStackTrace) {{ W $_.ScriptStackTrace }}
+}}
 ";
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(ps));
         Process.Start(new ProcessStartInfo
         {
             FileName        = "powershell.exe",
-            Arguments       = $"-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {encoded}",
+            Arguments       = $"-NoProfile -NonInteractive -EncodedCommand {encoded}",
             UseShellExecute = false,
+            // CreateNoWindow=true is what actually suppresses the brief
+            // CMD/console flash that -WindowStyle Hidden cannot prevent
+            // (Hidden takes effect only after the window is created).
+            CreateNoWindow  = true,
         });
 
         Application.Exit();

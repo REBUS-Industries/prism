@@ -38,6 +38,17 @@ public sealed class AgentService : BackgroundService
         _log.LogInformation("PRISM.Agent starting: node={NodeName} machineId={MachineId} slots={Slots} prismUrl={Url}",
             _cfg.NodeName, _cfg.MachineId, _cfg.Slots, _cfg.PrismUrl);
 
+        // If the previous run attempted an in-app update and the script
+        // logged a failure, surface that prominently so the operator
+        // doesn't think "Check for updates" was a no-op.
+        var lastFailure = Tray.Updater.GetLastUpdateFailure();
+        if (lastFailure is not null)
+        {
+            _log.LogError(
+                "Previous in-app update attempt failed. Diagnostic log:\n{Log}",
+                lastFailure);
+        }
+
         _ws.OnReconnected += SendHelloFireAndForget;
         await _ws.StartAsync(stoppingToken);
         SendHelloFireAndForget();

@@ -60,6 +60,20 @@ New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
 New-Item -Path $DataDir    -ItemType Directory -Force | Out-Null
 New-Item -Path (Join-Path $DataDir 'logs') -ItemType Directory -Force | Out-Null
 
+# ---- Grant Users:Modify on the install dir ----
+# The in-app auto-updater extracts a new agent zip on top of $InstallDir.
+# By default Program Files is read-only for non-admin users, so the updater
+# silently fails on workstations whose interactive login user isn't a local
+# admin (RunLevel=Highest cannot promote a non-admin to admin).  Granting
+# Modify to BUILTIN\Users on $InstallDir lets the agent's PowerShell child
+# process overwrite its own DLLs without elevation.  Acceptable trade-off
+# given the agent already trusts code shipped under this directory.
+Write-Host "Granting BUILTIN\Users Modify on $InstallDir..."
+& icacls $InstallDir /grant "*S-1-5-32-545:(OI)(CI)M" /T 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "icacls returned $LASTEXITCODE; auto-update may fail for non-admin users."
+}
+
 # ---- Copy payload ----
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $payload = Get-ChildItem -Path $scriptRoot -Filter PRISM.Agent.exe -Recurse | Select-Object -First 1
