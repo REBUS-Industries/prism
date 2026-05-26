@@ -43,21 +43,30 @@ const SUPPORTED_EXTS = new Set([
   '.zip',
 ]);
 
+// Form fields arrive as strings. `z.coerce.boolean()` is `Boolean(input)` —
+// any non-empty string is truthy, so `"false"` coerces to `true`. This made
+// every swapYZ submission from the convert UI silently true regardless of
+// the checkbox state. Explicit preprocess handles the string forms correctly.
+const formBool = () => z.preprocess(
+  (v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v),
+  z.boolean(),
+);
+
 const submitSchema = z.object({
   projectId:    z.string().min(1),
   modelId:      z.string().min(1),
   modelName:    z.string().optional(),
   orbitTarget:  z.enum(['prod', 'dev']).default('prod'),
-  swapYZ:       z.coerce.boolean().optional(),
+  swapYZ:       formBool().optional(),
   quality:      z.enum(['sensible', 'extreme']).optional(),
   callbackUrl:  z.string().url().optional(),
   includedLayers:           z.string().optional(),  // CSV
-  includeLayerDescendants:  z.coerce.boolean().optional(),
+  includeLayerDescendants:  formBool().optional(),
   // Two-phase flow: when true, the job is first dispatched to a `canLayer`
   // agent that returns the file's layer tree. The job lands in
   // `awaiting_selection`; the caller then POSTs the chosen layers to
   // `/api/jobs/:id/layers` which kicks off the real convert dispatch.
-  selectLayers: z.coerce.boolean().optional(),
+  selectLayers: formBool().optional(),
 });
 
 const plugin: FastifyPluginAsync = async (app) => {

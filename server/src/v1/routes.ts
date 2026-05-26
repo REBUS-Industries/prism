@@ -51,20 +51,26 @@ const SUPPORTED_EXTS = new Set([
 const ALLOWED_OUTPUT_FORMATS = new Set(['3dm', 'step', 'ifc', 'glb']);
 const RECEIVE_OUTPUTS = new Set(['3dm', 'step']);
 
+// See api/convert.ts for context on why z.coerce.boolean() is wrong here.
+const formBool = () => z.preprocess(
+  (v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v),
+  z.boolean(),
+);
+
 const convertFieldsSchema = z.object({
   projectId:   z.string().min(1),
   modelId:     z.string().min(1),
   modelName:   z.string().optional(),
   orbitTarget: z.enum(['prod', 'dev']).default('prod'),
-  swapYZ:      z.coerce.boolean().optional(),
+  swapYZ:      formBool().optional(),
   quality:     z.enum(['sensible', 'extreme']).optional(),
   callbackUrl: z.string().url().optional(),
   outputFormats: z.string().optional(),    // CSV
   includedLayers: z.string().optional(),    // CSV
-  includeLayerDescendants: z.coerce.boolean().optional(),
+  includeLayerDescendants: formBool().optional(),
   // See /api/convert/async — selectLayers=true puts the job into the
   // two-phase pollLayers → awaiting_selection → convert flow.
-  selectLayers: z.coerce.boolean().optional(),
+  selectLayers: formBool().optional(),
 });
 
 const receiveBodySchema = z.object({
