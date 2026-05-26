@@ -125,44 +125,45 @@ def lookup_layer(layer_map: Dict[str, str], pyassimp_mesh_name: str) -> Optional
 _COLLADA_NS = "{http://www.collada.org/2005/11/COLLADASchema}"
 
 
-def _walk_collada_nodes(elem: ET.Element, parent_name: str, mapping: Dict[str, str]) -> None:
-    """Recursively populate ``geometry_id -> human node name``."""
-    name = elem.get("name") or elem.get("id") or parent_name
-    for child in elem:
-        if child.tag == _COLLADA_NS + "instance_geometry":
-            url = child.get("url", "")
-            if url.startswith("#mesh-"):
-                geom_id = url[len("#mesh-") :]
-            elif url.startswith("#"):
-                geom_id = url[1:]
-            else:
-                geom_id = url
-            if geom_id and geom_id not in mapping:
-                mapping[geom_id] = name
-        elif child.tag == _COLLADA_NS + "node":
-            _walk_collada_nodes(child, name, mapping)
+def _strip_url_prefix(url: str) -> str:
+    """``"#mesh-<UUID>"`` -> ``"<UUID>"``; ``"#<id>"`` -> ``"<id>"``."""
+    if url.startswith("#mesh-"):
+        return url[len("#mesh-") :]
+    if url.startswith("#"):
+        return url[1:]
+    return url
 
 
 def build_collada_layer_map(src_path: Path) -> Dict[str, str]:
-    """Map mesh-name (Assimp's ``mName`` for a COLLADA import, equal to
-    the ``<geometry id>`` minus the ``mesh-`` prefix) to the
-    human-readable ``<node name>`` attribute that wraps the corresponding
+    """Map ``<geometry id>`` (sans ``mesh-`` prefix) to the
+    human-readable ``<node name>`` attribute on the wrapping
     ``<instance_geometry>``.
 
+    Iterates *every* ``<node>`` in the document, not just those rooted in
+    ``<library_visual_scenes>``, so block / instance definitions parked
+    in ``<library_nodes>`` are picked up too -- otherwise Rhino's
+    block-instanced geometry comes back as raw geometry ids in the
+    layer picker.
+
     Returns an empty dict for non-COLLADA inputs or unparseable XML so
-    callers can blindly merge it into a higher-level mapping.
+    callers can blindly merge it.
     """
     if src_path.suffix.lower() != ".dae":
         return {}
     try:
         tree = ET.parse(src_path)
-    except Exception:  # pragma: no cover - bad XML is still a valid input for assimp
+    except Exception:  # pragma: no cover - assimp will reject these too
         logger.exception("collada-xml-parse-failed: %s", src_path)
         return {}
     mapping: Dict[str, str] = {}
-    for visual_scene in tree.iter(_COLLADA_NS + "visual_scene"):
-        for top_node in visual_scene.findall(_COLLADA_NS + "node"):
-            _walk_collada_nodes(top_node, top_node.get("name", "") or "", mapping)
+    for node in tree.iter(_COLLADA_NS + "node"):
+        name = node.get("name") or node.get("id") or ""
+        if not name:
+            continue
+        for ig in node.findall(_COLLADA_NS + "instance_geometry"):
+            geom_id = _strip_url_prefix(ig.get("url", ""))
+            if geom_id and geom_id not in mapping:
+                mapping[geom_id] = name
     if mapping:
         logger.info(
             "collada-layer-map: extracted %d geometry-id -> node-name entries",
