@@ -8,13 +8,125 @@ gets a complete picture of the layer hierarchy.
 
 from __future__ import annotations
 
+import ctypes
 import logging
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from typing import Iterator, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
 logger = logging.getLogger("prism-assimp.layers")
+
+
+# ---------------------------------------------------------------------------
+# pyassimp 4.1.4 aiString workaround
+# ---------------------------------------------------------------------------
+# The C ``aiString`` from <assimp/types.h> is laid out as
+#   ai_uint32 length;
+#   char data[1024];
+# so the actual UTF-8 payload starts at byte offset 4.  pyassimp 4.1.4's
+# ``structs.String`` declares ``length`` with a 64-bit ctypes type, which
+# pushes its ``data`` field to byte offset 8 instead of 4 -- so every name
+# read through pyassimp comes back missing the first four characters
+# (``VisualSceneNode`` reads as ``alSceneNode``, ``View-Front`` reads as
+# ``-Front``, and Rhino-exported COLLADA UUIDs all lose their first four
+# hex digits).  See ORBIT/PRISM/assimp/docs/INTEGRATION.md for the trace.
+#
+# Instead of patching pyassimp, just read the raw bytes back at the
+# correct offset.  ``ctypes.addressof(s)`` gives us the start of the C
+# struct in memory regardless of how pyassimp's wrapper happens to type
+# the fields.
+def decode_aistring(s: object) -> str:
+    """Return the UTF-8 payload of a pyassimp ``String`` struct."""
+    try:
+        addr = ctypes.addressof(s)  # type: ignore[arg-type]
+    except Exception:
+        return ""
+    raw = (ctypes.c_ubyte * 1028).from_address(addr)
+    length = int.from_bytes(bytes(raw[0:4]), "little")
+    if length == 0 or length > 1024:
+        return ""
+    try:
+        return bytes(raw[4 : 4 + length]).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def mesh_name(mesh: object) -> str:
+    """Read ``mesh.mName`` correctly, falling back to pyassimp's
+    (truncated) ``.name`` only when raw access fails."""
+    raw = getattr(mesh, "mName", None)
+    if raw is not None:
+        decoded = decode_aistring(raw)
+        if decoded:
+            return decoded
+    fallback = getattr(mesh, "name", None) or ""
+    if isinstance(fallback, bytes):
+        fallback = fallback.decode("utf-8", errors="ignore")
+    return fallback
+
+
+# ---------------------------------------------------------------------------
+# Format-specific layer-name extraction
+# ---------------------------------------------------------------------------
+# Assimp's COLLADA importer stores ``<node id="...">`` in ``aiNode.mName``
+# and discards ``<node name="...">`` -- but Rhino's exporter writes the
+# human-readable layer name on the ``name`` attribute and a synthetic UUID
+# on ``id``.  So even a perfectly-decoded mName comes back as a UUID.
+#
+# Recover the human name by parsing the COLLADA XML directly: walk every
+# ``<node>`` and every ``<instance_geometry url="#mesh-<UUID>">`` it
+# contains, and map that geometry id (without the ``mesh-`` prefix that
+# Assimp also strips) to the parent node's ``name`` attribute.
+_COLLADA_NS = "{http://www.collada.org/2005/11/COLLADASchema}"
+
+
+def _walk_collada_nodes(elem: ET.Element, parent_name: str, mapping: Dict[str, str]) -> None:
+    """Recursively populate ``geometry_id -> human node name``."""
+    name = elem.get("name") or elem.get("id") or parent_name
+    for child in elem:
+        if child.tag == _COLLADA_NS + "instance_geometry":
+            url = child.get("url", "")
+            if url.startswith("#mesh-"):
+                geom_id = url[len("#mesh-") :]
+            elif url.startswith("#"):
+                geom_id = url[1:]
+            else:
+                geom_id = url
+            if geom_id and geom_id not in mapping:
+                mapping[geom_id] = name
+        elif child.tag == _COLLADA_NS + "node":
+            _walk_collada_nodes(child, name, mapping)
+
+
+def build_collada_layer_map(src_path: Path) -> Dict[str, str]:
+    """Map mesh-name (Assimp's ``mName`` for a COLLADA import, equal to
+    the ``<geometry id>`` minus the ``mesh-`` prefix) to the
+    human-readable ``<node name>`` attribute that wraps the corresponding
+    ``<instance_geometry>``.
+
+    Returns an empty dict for non-COLLADA inputs or unparseable XML so
+    callers can blindly merge it into a higher-level mapping.
+    """
+    if src_path.suffix.lower() != ".dae":
+        return {}
+    try:
+        tree = ET.parse(src_path)
+    except Exception:  # pragma: no cover - bad XML is still a valid input for assimp
+        logger.exception("collada-xml-parse-failed: %s", src_path)
+        return {}
+    mapping: Dict[str, str] = {}
+    for visual_scene in tree.iter(_COLLADA_NS + "visual_scene"):
+        for top_node in visual_scene.findall(_COLLADA_NS + "node"):
+            _walk_collada_nodes(top_node, top_node.get("name", "") or "", mapping)
+    if mapping:
+        logger.info(
+            "collada-layer-map: extracted %d geometry-id -> node-name entries",
+            len(mapping),
+        )
+    return mapping
 
 
 @dataclass(frozen=True)
@@ -88,7 +200,10 @@ def _node_meshes(node: object, scene_meshes: List[object]) -> List[Tuple[int, ob
 _IDENTITY_4X4 = tuple(float(v) for v in np.eye(4, dtype=np.float64).ravel())
 
 
-def walk_leaves(scene: object) -> Iterator[LeafRecord]:
+def walk_leaves(
+    scene: object,
+    layer_map: Optional[Dict[str, str]] = None,
+) -> Iterator[LeafRecord]:
     """Yield one ``LeafRecord`` per mesh in the scene.
 
     Implementation note (Phase 1)
@@ -97,24 +212,36 @@ def walk_leaves(scene: object) -> Iterator[LeafRecord]:
     ``aiProcess_PreTransformVertices``, which bakes every node's world
     transform into its meshes and collapses the hierarchy.  We therefore
     read meshes straight off ``scene.meshes`` and use identity transforms
-    everywhere, deriving a layer name from the mesh's own ``name``
-    attribute (Assimp populates this from the source format's group /
-    object / layer name when one exists).  When the mesh name is empty,
-    fall back to ``mesh_<index>`` so the OBJ group line is still
-    deterministic.
+    everywhere.
 
-    Phase 2 will replace this with the per-node DFS that's currently
-    blocked by the pyassimp 4.1.4 ``node.transformation`` bug; the
-    ``LeafRecord`` shape is intentionally unchanged so that revert is
-    contained to this file.
+    Layer naming priority (highest first):
+      1. ``layer_map[mesh_name]`` -- format-specific human names
+         extracted by the converter pre-pass (e.g.
+         :func:`build_collada_layer_map` for ``.dae`` inputs).
+      2. The mesh's own ``mName``, decoded via :func:`decode_aistring`
+         to bypass pyassimp 4.1.4's 4-character truncation bug.
+      3. ``mesh_<index>`` as a deterministic last-resort fallback.
+
+    When two leaves resolve to the same human name (common after
+    PreTransformVertices merges by material), each subsequent occurrence
+    gets a ``_<n>`` numeric suffix so the OBJ group lines are unique.
     """
     scene_meshes = list(getattr(scene, "meshes", []) or [])
+    used: Dict[str, int] = {}
     for mesh_index, mesh in enumerate(scene_meshes):
         material_index = int(getattr(mesh, "materialindex", 0) or 0)
-        raw_name = getattr(mesh, "name", None)
-        if isinstance(raw_name, bytes):
-            raw_name = raw_name.decode("utf-8", errors="ignore")
-        layer_seg = sanitise_group_name(raw_name, f"mesh_{mesh_index}")
+        raw = mesh_name(mesh)
+        chosen: Optional[str] = None
+        if layer_map and raw:
+            chosen = layer_map.get(raw)
+        if not chosen:
+            chosen = raw or None
+        layer_seg = sanitise_group_name(chosen, f"mesh_{mesh_index}")
+        if layer_seg in used:
+            used[layer_seg] += 1
+            layer_seg = f"{layer_seg}_{used[layer_seg]}"
+        else:
+            used[layer_seg] = 0
         yield LeafRecord(
             layer_path=layer_seg,
             mesh_index=mesh_index,

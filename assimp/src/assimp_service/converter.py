@@ -194,9 +194,18 @@ def preconvert_file(
     # tests against the FastAPI surface don't transitively require the
     # native library.
     import pyassimp  # type: ignore
-    from .layers import walk_leaves
+    from .layers import build_collada_layer_map, walk_leaves
     from .materials import emit_mtl_and_textures
     from .packaging import build_zip, write_manifest, write_obj
+
+    # Format-specific human-name extraction, before we hand the file to
+    # libassimp.  Today only COLLADA is supported -- other formats fall
+    # back to the corrected `mName` decode in walk_leaves.
+    layer_map = build_collada_layer_map(src_path)
+    if layer_map:
+        logger.info(
+            "preconvert: layer-map source=collada-xml entries=%d", len(layer_map)
+        )
 
     flags = _postprocess_flags(options)
 
@@ -207,7 +216,7 @@ def preconvert_file(
     scene = None
     try:
         scene = pyassimp.load(str(src_path), processing=flags)
-        leaves = list(walk_leaves(scene))
+        leaves = list(walk_leaves(scene, layer_map=layer_map))
         materials_bundle = emit_mtl_and_textures(
             scene,
             src_path.parent,
