@@ -387,6 +387,20 @@ public sealed class RhinoFileOpener
             $"[OBJ-IMPORT] post-import ok=True ext={ext} " +
             $"objects={postObjects} layers={postLayers} blocks={postBlocks} materials={postMaterials}");
 
+        // Salvage textures from sibling files when the importer brought in
+        // geometry but no materials. This is the FBX-with-external-textures
+        // case (Rhino.FileIO.FileFbxReadOptions has no material-import knob —
+        // confirmed via reflection: only ImportCameras / ImportLights /
+        // ImportMeshesAsSubD / MapFbxYtoRhinoZ / Unweld / UnweldAngle exist)
+        // but it covers any format that lands geometry without materials
+        // alongside a bundled `tex/*.jpg` set.  See
+        // SiblingTextureHydrator for the heuristic.
+        if (postObjects > 0 && postMaterials == 0)
+        {
+            try { SiblingTextureHydrator.Hydrate(doc, path, diag); }
+            catch (Exception hex) { diag?.Invoke($"[FBX-HYDRATE] outer guard caught {hex.GetType().Name}: {hex.Message}"); }
+        }
+
         // Probe the layer tree so admins can verify from job_logs that the
         // group→layer mapping toggle (and any future format-specific
         // options seeded above) actually produced a multi-layer doc.
