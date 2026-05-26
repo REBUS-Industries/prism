@@ -40,12 +40,18 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR ?? '/var/lib/prism/uploads';
 // `.zip` is accepted as a bundle wrapper — see the agent-side
 // ZipBundleExtractor which expands the archive and selects the primary
 // geometry file at job runtime.
+//
+// Assimp-eligible extensions (gltf/glb/dae/blend/x/usdz) get pre-converted
+// into a `.zip` bundle by the prism-assimp sidecar before the agent picks
+// them up — see conversion/preconvert.ts.  Listed here so v1 SDK callers
+// don't get a spurious 415.
 const SUPPORTED_EXTS = new Set([
   '.3dm',
   '.dwg', '.dxf',
   '.fbx', '.obj', '.stl', '.ply',
   '.3mf', '.skp',
   '.step', '.stp', '.iges', '.igs',
+  '.gltf', '.glb', '.dae', '.blend', '.x', '.usdz',
   '.zip',
 ]);
 const ALLOWED_OUTPUT_FORMATS = new Set(['3dm', 'step', 'ifc', 'glb']);
