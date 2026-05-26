@@ -89,6 +89,16 @@ def _postprocess_flags(options: PreconvertOptions) -> int:
     """
     from pyassimp import postprocess  # type: ignore
 
+    # NOTE on ``aiProcess_ValidateDataStructure``: deliberately omitted.
+    # The validator is overly strict for real-world exporter output -- in
+    # particular Rhinoceros's COLLADA exporter writes multiple cameras
+    # with duplicate names (`Front` / `Back` / `Left` / `Right` from the
+    # default viewport set), which the validator rejects with
+    # `Validation failed: aiScene::mCameras[0] has the same name as
+    # aiScene::mCameras[2]` and refuses to return a scene at all.  Since
+    # we re-emit everything as OBJ regardless, we don't depend on the
+    # internal aiScene structure being clean; loading without validation
+    # lets us recover the geometry from files that fail validator nits.
     flags = (
         postprocess.aiProcess_Triangulate
         | postprocess.aiProcess_GenSmoothNormals
@@ -97,11 +107,59 @@ def _postprocess_flags(options: PreconvertOptions) -> int:
         | postprocess.aiProcess_JoinIdenticalVertices
         | postprocess.aiProcess_ImproveCacheLocality
         | postprocess.aiProcess_FindInstances
-        | postprocess.aiProcess_ValidateDataStructure
         | postprocess.aiProcess_FixInfacingNormals
         | postprocess.aiProcess_PreTransformVertices
     )
     return flags
+
+
+def _assimp_last_error() -> str:
+    """Best-effort ``aiGetErrorString()`` lookup.
+
+    pyassimp's ``AssimpError`` is hard-coded to the literal "Could not
+    import file!" string regardless of why import actually failed.  The
+    real reason is sitting in libassimp's per-thread error slot, reachable
+    via the C function ``aiGetErrorString``.  Surfacing it on the way up
+    saves the next debugger an hour of strace.
+
+    Returns an empty string if the lookup itself fails.
+    """
+    try:
+        import ctypes
+        from pyassimp import helper as _helper
+
+        lib_path = None
+        candidates = list(getattr(_helper, "additional_dirs", []) or []) + [
+            "/opt/assimp/lib",
+            "/usr/local/lib",
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib",
+        ]
+        for d in candidates:
+            for fn in (
+                "libassimp.so",
+                "libassimp.so.5",
+                "libassimp.so.5.4",
+                "libassimp.so.5.4.3",
+            ):
+                p = f"{d}/{fn}"
+                try:
+                    open(p, "rb").close()
+                except OSError:
+                    continue
+                lib_path = p
+                break
+            if lib_path:
+                break
+        dll = ctypes.cdll.LoadLibrary(lib_path or "libassimp.so")
+        dll.aiGetErrorString.restype = ctypes.c_char_p
+        dll.aiGetErrorString.argtypes = []
+        raw = dll.aiGetErrorString()
+        if not raw:
+            return ""
+        return raw.decode("utf-8", errors="replace").strip()
+    except Exception:  # pragma: no cover - diagnostic only
+        return ""
 
 
 def preconvert_file(
@@ -168,7 +226,16 @@ def preconvert_file(
         manifest = write_manifest(manifest_path, leaves, materials_bundle)
         mesh_count = len(list(getattr(scene, "meshes", []) or []))
     except pyassimp.AssimpError as exc:
-        logger.exception("assimp failed to load %s", src_path)
+        # pyassimp's exception always carries the literal "Could not import
+        # file!" -- the real reason is in libassimp's aiGetErrorString slot.
+        detail = _assimp_last_error()
+        logger.exception(
+            "assimp failed to load %s (aiGetErrorString=%r)", src_path, detail
+        )
+        if detail:
+            raise RuntimeError(
+                f"Assimp failed to load file: {detail}"
+            ) from exc
         raise RuntimeError(f"Assimp failed to load file: {exc}") from exc
     finally:
         if scene is not None:
