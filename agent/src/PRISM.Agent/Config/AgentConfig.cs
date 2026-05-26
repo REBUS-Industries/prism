@@ -25,6 +25,24 @@ public sealed class AgentConfig
     public string LogDir { get; set; } = @"C:\ProgramData\PRISM.Agent\logs";
 
     /// <summary>
+    /// Port the agent's local web UI binds to.  The UI is a single page served
+    /// straight from the agent process for in-place configuration -- see
+    /// <c>WebUi/AgentWebUi.cs</c>.  Defaults to 7421.  Set to 0 to disable
+    /// the web UI entirely (the tray menu still works).
+    /// </summary>
+    public int WebUiPort { get; set; } = 7421;
+
+    /// <summary>
+    /// When false (default) the web UI binds to <c>localhost</c> only -- the
+    /// page is reachable from the workstation itself but not from the LAN.
+    /// Set to true to bind to <c>0.0.0.0</c> (Windows: <c>http://+:port/</c>)
+    /// when an operator wants to reach the UI from a separate machine.
+    /// Note: there is no auth on the local UI, so only enable LAN binding on
+    /// trusted networks.
+    /// </summary>
+    public bool WebUiBindAll { get; set; } = false;
+
+    /// <summary>
     /// Path the config was loaded from (or last saved to). Not persisted to JSON.
     /// </summary>
     [JsonIgnore]

@@ -3,6 +3,7 @@ using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using PRISM.Agent;
 using PRISM.Agent.Config;
 using PRISM.Agent.Ws;
 using PRISM.Contracts;
@@ -23,6 +24,7 @@ public sealed class PrismTrayContext : ApplicationContext
     readonly IHost               _host;
     readonly AgentConfig         _cfg;
     readonly WsClient            _ws;
+    readonly AgentControlPlane   _plane;
     readonly TrayLoggerProvider  _logProvider;
     readonly NotifyIcon          _tray;
     readonly ContextMenuStrip    _menu;
@@ -60,6 +62,7 @@ public sealed class PrismTrayContext : ApplicationContext
         _cfg         = cfg;
         _logProvider = logProvider;
         _ws          = host.Services.GetRequiredService<WsClient>();
+        _plane       = host.Services.GetRequiredService<AgentControlPlane>();
 
         // Ensure the dummy control has a Windows handle so BeginInvoke works
         // from background threads before the first real window is created.
@@ -106,6 +109,7 @@ public sealed class PrismTrayContext : ApplicationContext
         Add(new ToolStripSeparator());
 
         Add(new ToolStripMenuItem("⚙  Settings…",         null, OnSettings));
+        Add(new ToolStripMenuItem("🌐  Open Web UI",       null, (_, _) => OpenWebUi()));
         Add(new ToolStripMenuItem("📋  View Logs…",        null, (_, _) => ShowLogs()));
         Add(new ToolStripMenuItem("🔄  Check for Updates", null, OnCheckUpdate));
         Add(new ToolStripSeparator());
@@ -133,6 +137,9 @@ public sealed class PrismTrayContext : ApplicationContext
             // Only revert to Connecting if the agent is supposed to be running.
             if (_agentRunning) ApplyState(TrayState.Connecting);
         });
+
+        // ---- Web UI state changes (pause/resume, slot/role updates) ----
+        _plane.StateChanged += () => _sync.BeginInvoke(SyncFromPlane);
 
         // ---- Start the host (non-blocking) ----
         _ = _host.StartAsync().ContinueWith(t =>
@@ -178,10 +185,7 @@ public sealed class PrismTrayContext : ApplicationContext
     {
         var next = Math.Max(1, Math.Min(8, _cfg.Slots + delta));
         if (next == _cfg.Slots) return;
-        _cfg.Slots      = next;
-        _slotsItem.Text = $"Workers: {_cfg.Slots}";
-        _cfg.Save();
-        SendHello();
+        _ = _plane.SetSlotsAsync(next);
     }
 
     void UpdateRoles()
@@ -190,9 +194,34 @@ public sealed class PrismTrayContext : ApplicationContext
         if (_convItem.Checked) roles.Add(AgentRole.Conversion);
         if (_layItem.Checked)  roles.Add(AgentRole.Layering);
         if (_rcvItem.Checked)  roles.Add(AgentRole.Receive);
-        _cfg.Roles = roles.ToArray();
-        _cfg.Save();
-        SendHello();
+        _ = _plane.SetRolesAsync(roles.ToArray());
+    }
+
+    /// <summary>
+    /// Re-render tray bits that depend on <see cref="AgentControlPlane"/>
+    /// state (slot count, role checkmarks, pause label) — called whenever
+    /// the web UI mutates settings.
+    /// </summary>
+    void SyncFromPlane()
+    {
+        _slotsItem.Text  = $"Workers: {_cfg.Slots}";
+        _nodeItem.Text   = $"Node: {_cfg.NodeName}";
+        RefreshRoleCheckmarks();
+
+        // Mirror watcher pause state into the tray toggle so the
+        // ■ Stop / ▶ Start label and tray icon stay accurate.
+        if (_plane.IsPaused && _agentRunning)
+        {
+            _agentRunning    = false;
+            _toggleItem.Text = "▶  Start Agent";
+            ApplyState(TrayState.Stopped);
+        }
+        else if (!_plane.IsPaused && !_agentRunning)
+        {
+            _agentRunning    = true;
+            _toggleItem.Text = "■  Stop Agent";
+            ApplyState(_ws.IsConnected ? TrayState.Connected : TrayState.Connecting);
+        }
     }
 
     /// <summary>
@@ -206,19 +235,6 @@ public sealed class PrismTrayContext : ApplicationContext
         _convItem.Checked = _cfg.Roles.Contains(AgentRole.Conversion);
         _layItem.Checked  = _cfg.Roles.Contains(AgentRole.Layering);
         _rcvItem.Checked  = _cfg.Roles.Contains(AgentRole.Receive);
-    }
-
-    void SendHello()
-    {
-        _ = _ws.SendAsync(MessageType.Hello, new HelloData
-        {
-            MachineId    = _cfg.MachineId,
-            NodeName     = _cfg.NodeName,
-            Slots        = _cfg.Slots,
-            Roles        = _cfg.Roles,
-            Formats      = AgentService.SupportedFormats,
-            AgentVersion = typeof(PrismTrayContext).Assembly.GetName().Version?.ToString() ?? "0.1.0",
-        });
     }
 
     void OnSettings(object? sender, EventArgs e)
@@ -247,7 +263,7 @@ public sealed class PrismTrayContext : ApplicationContext
         else
         {
             // Just re-announce the (possibly updated) config to the server.
-            SendHello();
+            _ = _plane.SendHelloAsync();
         }
     }
 
@@ -316,14 +332,44 @@ public sealed class PrismTrayContext : ApplicationContext
             _agentRunning       = false;
             _toggleItem.Text    = "▶  Start Agent";
             ApplyState(TrayState.Stopped);
-            _ = _ws.PauseAsync();
+            _ = _plane.PauseAsync();
         }
         else
         {
             _agentRunning       = true;
             _toggleItem.Text    = "■  Stop Agent";
             ApplyState(TrayState.Connecting);
-            _ws.Resume();
+            _plane.Resume();
+        }
+    }
+
+    void OpenWebUi()
+    {
+        if (_cfg.WebUiPort <= 0)
+        {
+            MessageBox.Show(
+                "The local web UI is disabled (webUiPort = 0).\n\n"
+                + "Edit agent-config.json to set a port and restart the agent.",
+                "PRISM Agent",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var url = $"http://localhost:{_cfg.WebUiPort}/";
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = url,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Failed to open {url}:\n\n{ex.Message}",
+                "PRISM Agent",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 

@@ -18,7 +18,24 @@ compose stack, accepts the source file over HTTP, and returns an
 OBJ+MTL+textures zip that the existing Rhino agent path already knows
 how to ingest.
 
+This release also gives the agent a local **web UI** so operators can
+configure all settings and pause/resume the watcher from a browser
+instead of RDP-ing into each workstation to use the WinForms tray.
+
 ### Added
+
+- **agent web UI** (`PRISM/agent/.../WebUi/`): the agent now serves a
+  single-page configuration site on `http://localhost:7421/` (right-click
+  the tray icon → **🌐 Open Web UI**). Backed by a tiny `HttpListener`
+  hosted service plus an `AgentControlPlane` singleton that the tray + the
+  web UI both mutate, so `nodeName`, `slots`, `roles`, watcher pause/resume,
+  Rhino version, log dir, and the web UI's own `webUiPort` /
+  `webUiBindAll` flags can all be edited live. Routes:
+  `GET /api/state`, `POST /api/config`, `POST /api/watcher/pause|resume`,
+  `GET /api/logs?n=N`. Live-applied (no restart): `nodeName`, `slots`,
+  `roles`, `logDir`. Restart-required: `prismUrl`, `rhinoVersion`,
+  `webUiPort`, `webUiBindAll`. Defaults to `localhost`-only binding;
+  flip `webUiBindAll: true` to expose on the LAN (no auth).
 
 - **assimp service** (`PRISM/assimp/`): new FastAPI app shipped as
   `ghcr.io/rebus-orbit/prism-assimp:latest`, multi-stage Docker image

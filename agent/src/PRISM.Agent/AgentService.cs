@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PRISM.Agent.Config;
+using PRISM.Agent.Pipeline;
 using PRISM.Agent.Ws;
 using PRISM.Contracts;
 
@@ -16,17 +17,20 @@ public sealed class AgentService : BackgroundService
     readonly AgentConfig _cfg;
     readonly WsClient _ws;
     readonly AgentMessageDispatcher _dispatcher;
+    readonly WorkerSlotPool _slots;
 
     public AgentService(
         ILogger<AgentService> log,
         AgentConfig cfg,
         WsClient ws,
-        AgentMessageDispatcher dispatcher)
+        AgentMessageDispatcher dispatcher,
+        WorkerSlotPool slots)
     {
         _log = log;
         _cfg = cfg;
         _ws = ws;
         _dispatcher = dispatcher;
+        _slots = slots;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -49,7 +53,7 @@ public sealed class AgentService : BackgroundService
             {
                 await _ws.SendAsync(MessageType.Heartbeat, new HeartbeatData
                 {
-                    SlotsBusy = 0,  // Phase 3: read from the slot pool
+                    SlotsBusy = _slots.BusyCount,
                 });
             }
             catch (Exception err)

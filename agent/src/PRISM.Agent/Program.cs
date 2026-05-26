@@ -12,6 +12,7 @@ using PRISM.Agent.Config;
 using PRISM.Agent.Pipeline;
 using PRISM.Agent.Rhino;
 using PRISM.Agent.Tray;
+using PRISM.Agent.WebUi;
 using PRISM.Agent.Ws;
 
 namespace PRISM.Agent;
@@ -93,6 +94,17 @@ public static class Program
             cfg.Slots));
 
         builder.Services.AddSingleton<AgentMessageDispatcher>();
+        builder.Services.AddSingleton<AgentControlPlane>();
+
+        // Inject the in-process log buffer so the web UI's /api/logs route
+        // and the tray's LogsForm read from the same ring buffer.
+        if (trayLogger != null)
+            builder.Services.AddSingleton(trayLogger);
+
+        // Local web UI (settings + watcher pause/resume).  Disabled when
+        // AgentConfig.WebUiPort = 0; the hosted service short-circuits in
+        // StartAsync.
+        builder.Services.AddHostedService<AgentWebUi>();
 
         // Only add the heartbeat/hello service in headless mode; the tray context
         // manages the WS lifecycle directly (starts the host after UI is ready).

@@ -65,11 +65,33 @@ will appear under **Workstations** with `online` status within ~5 seconds.
   "nodeName": "RB-DA2-PC01",
   "slots":    2,
   "machineId": "auto",
-  "logDir":   "C:\\ProgramData\\PRISM.Agent\\logs"
+  "logDir":   "C:\\ProgramData\\PRISM.Agent\\logs",
+  "webUiPort": 7421,
+  "webUiBindAll": false
 }
 ```
 
 Edit + `Restart-Service PRISM.Agent` to apply changes.
+
+## Local web UI (v0.1.28+)
+
+The agent serves an in-process configuration page on
+[`http://localhost:7421/`](http://localhost:7421/).  Right-click the tray
+icon → **🌐 Open Web UI**, or open the URL directly in any browser on the
+workstation.  The page exposes:
+
+- live connection / pause / busy-slot status
+- watcher **pause / resume** (disconnects WS so jobs route to other nodes)
+- all of `agent-config.json` — node name, slots, roles, server URL,
+  Rhino version, log dir, web UI port, LAN-binding toggle
+- a tail of the in-process log buffer
+
+Live-applied (no restart): `nodeName`, `slots`, `roles`, `logDir`.
+Restart-required: `prismUrl`, `rhinoVersion`, `webUiPort`, `webUiBindAll`.
+
+Set `webUiPort: 0` to disable the local UI entirely.  The default binds to
+`localhost` only; flip `webUiBindAll: true` to expose the page on the LAN
+(no auth — only do this on trusted networks).
 
 ## Roles
 

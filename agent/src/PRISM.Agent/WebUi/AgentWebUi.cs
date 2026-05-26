@@ -1,0 +1,266 @@
+using System.Net;
+using System.Text;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
+using PRISM.Agent.Config;
+using PRISM.Agent.Tray;
+using PRISM.Contracts;
+
+namespace PRISM.Agent.WebUi;
+
+/// <summary>
+/// Tiny hosted HTTP server that exposes the agent's settings + watcher
+/// pause/resume controls in a browser.  Bound to <c>localhost:7421</c> by
+/// default; the user can flip <see cref="AgentConfig.WebUiBindAll"/> to
+/// expose it on the LAN (no auth — only do this on trusted networks).
+///
+/// Routes:
+///   GET  /                       single-page HTML
+///   GET  /api/state              full snapshot for the UI
+///   POST /api/config             apply <see cref="ConfigUpdate"/>
+///   POST /api/watcher/pause      pause job acceptance
+///   POST /api/watcher/resume     resume
+///   GET  /api/logs?n=200         tail buffered log lines
+///   GET  /api/health             liveness ping
+///
+/// The server is intentionally small — no template engine, no WebSockets,
+/// no DI container, just <see cref="HttpListener"/>.  When this surface
+/// grows past "settings page" it should move to Kestrel + minimal APIs.
+/// </summary>
+public sealed class AgentWebUi : IHostedService, IAsyncDisposable
+{
+    readonly ILogger<AgentWebUi> _log;
+    readonly AgentControlPlane _plane;
+    readonly TrayLoggerProvider? _logBuf;
+    readonly AgentConfig _cfg;
+
+    HttpListener? _listener;
+    CancellationTokenSource? _cts;
+    Task? _loop;
+
+    static readonly JsonSerializerSettings _json = new()
+    {
+        ContractResolver = new CamelCasePropertyNamesContractResolver(),
+        Converters = { new Newtonsoft.Json.Converters.StringEnumConverter() },
+        NullValueHandling = NullValueHandling.Ignore,
+    };
+
+    public AgentWebUi(
+        ILogger<AgentWebUi> log,
+        AgentControlPlane plane,
+        AgentConfig cfg,
+        IServiceProvider sp)
+    {
+        _log = log;
+        _plane = plane;
+        _cfg = cfg;
+        _logBuf = sp.GetService<TrayLoggerProvider>();
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (_cfg.WebUiPort <= 0)
+        {
+            _log.LogInformation("web UI disabled (webUiPort=0)");
+            return Task.CompletedTask;
+        }
+
+        var prefix = _cfg.WebUiBindAll
+            ? $"http://+:{_cfg.WebUiPort}/"
+            : $"http://localhost:{_cfg.WebUiPort}/";
+
+        _listener = new HttpListener();
+        _listener.Prefixes.Add(prefix);
+
+        try
+        {
+            _listener.Start();
+        }
+        catch (HttpListenerException ex) when (ex.ErrorCode == 5 /* access denied */)
+        {
+            _log.LogWarning(ex,
+                "web UI failed to bind {Prefix} — agent process is not allowed to "
+                + "register that URL ACL. Either run agent elevated or `netsh http "
+                + "add urlacl url={Prefix} user=Everyone`.",
+                prefix, prefix);
+            _listener.Close();
+            _listener = null;
+            return Task.CompletedTask;
+        }
+
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _loop = Task.Run(() => AcceptLoopAsync(_cts.Token));
+        _log.LogInformation("web UI listening on {Prefix}", prefix);
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        try { _cts?.Cancel(); } catch { /* nop */ }
+        try { _listener?.Stop(); } catch { /* nop */ }
+        if (_loop is { } l) { try { await l; } catch { /* nop */ } }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await StopAsync(CancellationToken.None);
+        _listener?.Close();
+        _cts?.Dispose();
+    }
+
+    // -----------------------------------------------------------------
+
+    async Task AcceptLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && _listener?.IsListening == true)
+        {
+            HttpListenerContext ctx;
+            try { ctx = await _listener.GetContextAsync(); }
+            catch (ObjectDisposedException) { break; }
+            catch (HttpListenerException) { break; }
+
+            _ = Task.Run(() => HandleAsync(ctx, ct));
+        }
+    }
+
+    async Task HandleAsync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var req = ctx.Request;
+        var res = ctx.Response;
+        try
+        {
+            res.Headers["Cache-Control"] = "no-store";
+            res.Headers["X-Content-Type-Options"] = "nosniff";
+
+            var path = req.Url?.AbsolutePath?.TrimEnd('/') ?? "/";
+            if (string.IsNullOrEmpty(path)) path = "/";
+
+            switch ((req.HttpMethod, path))
+            {
+                case ("GET", "/"):
+                case ("GET", ""):
+                    await WriteHtmlAsync(res, IndexHtml.Body);
+                    break;
+
+                case ("GET", "/api/state"):
+                    await WriteJsonAsync(res, BuildState());
+                    break;
+
+                case ("GET", "/api/health"):
+                    await WriteJsonAsync(res, new { ok = true });
+                    break;
+
+                case ("GET", "/api/logs"):
+                    {
+                        int n = 200;
+                        var qs = req.Url?.Query ?? "";
+                        var match = System.Text.RegularExpressions.Regex.Match(qs, @"[?&]n=(\d+)");
+                        if (match.Success) int.TryParse(match.Groups[1].Value, out n);
+                        n = Math.Clamp(n, 1, 2000);
+                        var snapshot = _logBuf?.GetSnapshot() ?? Array.Empty<string>();
+                        var lines = snapshot.Skip(Math.Max(0, snapshot.Count - n)).ToArray();
+                        await WriteJsonAsync(res, new { lines });
+                        break;
+                    }
+
+                case ("POST", "/api/config"):
+                    {
+                        var body = await ReadBodyAsync(req);
+                        var update = JsonConvert.DeserializeObject<ConfigUpdate>(body, _json) ?? new ConfigUpdate();
+                        var result = await _plane.ApplyAsync(update);
+                        await WriteJsonAsync(res, new
+                        {
+                            ok = true,
+                            restartRequired = result.RestartRequired,
+                            state = BuildState(),
+                        });
+                        break;
+                    }
+
+                case ("POST", "/api/watcher/pause"):
+                    await _plane.PauseAsync();
+                    await WriteJsonAsync(res, new { ok = true, state = BuildState() });
+                    break;
+
+                case ("POST", "/api/watcher/resume"):
+                    _plane.Resume();
+                    await WriteJsonAsync(res, new { ok = true, state = BuildState() });
+                    break;
+
+                default:
+                    res.StatusCode = 404;
+                    await WriteJsonAsync(res, new { error = "not_found", path });
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "web UI request failed: {Method} {Path}", req.HttpMethod, req.Url?.AbsolutePath);
+            try
+            {
+                res.StatusCode = 500;
+                await WriteJsonAsync(res, new { error = ex.Message });
+            }
+            catch { /* nothing more we can do */ }
+        }
+        finally
+        {
+            try { res.OutputStream.Close(); } catch { /* nop */ }
+        }
+    }
+
+    object BuildState()
+    {
+        var cfg = _plane.Config;
+        return new
+        {
+            agent = new
+            {
+                version = _plane.AgentVersion,
+                connected = _plane.IsConnected,
+                paused = _plane.IsPaused,
+                slotsBusy = _plane.SlotsBusy,
+                machineId = cfg.MachineId,
+                supportedFormats = _plane.SupportedFormats,
+            },
+            config = new
+            {
+                prismUrl    = cfg.PrismUrl,
+                nodeName    = cfg.NodeName,
+                slots       = cfg.Slots,
+                roles       = cfg.Roles.Select(r => r.ToString().ToLowerInvariant()).ToArray(),
+                rhinoVersion = cfg.RhinoVersion,
+                logDir      = cfg.LogDir,
+                webUiPort   = cfg.WebUiPort,
+                webUiBindAll = cfg.WebUiBindAll,
+            },
+            availableRoles = Enum.GetNames(typeof(AgentRole)).Select(s => s.ToLowerInvariant()).ToArray(),
+        };
+    }
+
+    static async Task<string> ReadBodyAsync(HttpListenerRequest req)
+    {
+        using var sr = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8);
+        return await sr.ReadToEndAsync();
+    }
+
+    static async Task WriteJsonAsync(HttpListenerResponse res, object payload)
+    {
+        var json = JsonConvert.SerializeObject(payload, _json);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        res.ContentType = "application/json; charset=utf-8";
+        res.ContentLength64 = bytes.Length;
+        await res.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+    }
+
+    static async Task WriteHtmlAsync(HttpListenerResponse res, string html)
+    {
+        var bytes = Encoding.UTF8.GetBytes(html);
+        res.ContentType = "text/html; charset=utf-8";
+        res.ContentLength64 = bytes.Length;
+        await res.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+    }
+}
