@@ -9,6 +9,77 @@ export interface ApiError {
   body?: unknown;
 }
 
+// ---------------------------------------------------------------------------
+// API call logging — records every fetch through ApiClient so the admin SPA
+// can render a live log panel. Lightweight in-memory ring buffer + simple
+// pub/sub. Bodies are JSON-stringified (truncated) for display; FormData
+// requests log just the field names + file sizes.
+// ---------------------------------------------------------------------------
+
+export interface ApiLogEntry {
+  id: number;
+  startedAt: number;          // epoch ms
+  durationMs: number;
+  method: string;
+  url: string;
+  status: number;             // 0 if network failure
+  ok: boolean;
+  requestBody?: string;
+  responseBody?: string;
+  errorMessage?: string;
+}
+
+const MAX_LOG_ENTRIES = 250;
+const MAX_BODY_PREVIEW = 4000;
+let nextLogId = 1;
+
+class ApiLog {
+  private entries: ApiLogEntry[] = [];
+  private listeners = new Set<(entries: ApiLogEntry[]) => void>();
+
+  list(): ApiLogEntry[] { return this.entries; }
+
+  push(entry: ApiLogEntry): void {
+    this.entries = [entry, ...this.entries].slice(0, MAX_LOG_ENTRIES);
+    for (const fn of this.listeners) fn(this.entries);
+  }
+
+  clear(): void {
+    this.entries = [];
+    for (const fn of this.listeners) fn(this.entries);
+  }
+
+  subscribe(fn: (entries: ApiLogEntry[]) => void): () => void {
+    this.listeners.add(fn);
+    fn(this.entries);
+    return () => this.listeners.delete(fn);
+  }
+}
+
+export const apiLog = new ApiLog();
+
+function previewBody(body: BodyInit | null | undefined): string | undefined {
+  if (body == null) return undefined;
+  if (typeof body === 'string') return truncate(body);
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    const parts: string[] = [];
+    body.forEach((v, k) => {
+      if (typeof File !== 'undefined' && v instanceof File) {
+        parts.push(`${k}=<file ${v.name} ${v.size}B ${v.type || '?'}>`);
+      } else {
+        parts.push(`${k}=${truncate(String(v), 200)}`);
+      }
+    });
+    return `FormData { ${parts.join(', ')} }`;
+  }
+  try { return truncate(JSON.stringify(body)); } catch { return '<unserialisable>'; }
+}
+
+function truncate(s: string, max = MAX_BODY_PREVIEW): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max) + ` …(+${s.length - max} bytes)`;
+}
+
 export type JobStatus =
   | 'queued'
   | 'dispatched'
@@ -93,19 +164,49 @@ class ApiClient {
   constructor(private base: string = '') {}
 
   private async req<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(this.base + path, {
-      credentials: 'include',
-      headers: { accept: 'application/json', ...(init.headers ?? {}) },
-      ...init,
-    });
+    const startedAt = Date.now();
+    const method = (init.method ?? 'GET').toUpperCase();
+    const url = this.base + path;
+    const requestBody = previewBody(init.body);
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        credentials: 'include',
+        headers: { accept: 'application/json', ...(init.headers ?? {}) },
+        ...init,
+      });
+    } catch (netErr) {
+      const message = netErr instanceof Error ? netErr.message : String(netErr);
+      apiLog.push({
+        id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+        method, url, status: 0, ok: false, requestBody, errorMessage: message,
+      });
+      throw { status: 0, message, body: undefined } satisfies ApiError;
+    }
+
+    const ct = res.headers.get('content-type') ?? '';
     if (!res.ok) {
       let body: unknown;
       try { body = await res.json(); } catch { body = await res.text().catch(() => ''); }
       const err: ApiError = { status: res.status, message: extractMessage(body) ?? res.statusText, body };
+      apiLog.push({
+        id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+        method, url, status: res.status, ok: false, requestBody,
+        responseBody: previewBody(typeof body === 'string' ? body : safeJson(body)),
+        errorMessage: err.message,
+      });
       throw err;
     }
-    const ct = res.headers.get('content-type') ?? '';
-    return (ct.includes('application/json') ? res.json() : (res.text() as unknown)) as Promise<T>;
+
+    const isJson = ct.includes('application/json');
+    const parsed = (isJson ? await res.json() : await res.text()) as unknown;
+    apiLog.push({
+      id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+      method, url, status: res.status, ok: true, requestBody,
+      responseBody: previewBody(isJson ? safeJson(parsed) : (parsed as string)),
+    });
+    return parsed as T;
   }
 
   get<T>(path: string)  { return this.req<T>(path, { method: 'GET' }); }
@@ -123,6 +224,10 @@ class ApiClient {
   postForm<T>(path: string, form: FormData) {
     return this.req<T>(path, { method: 'POST', body: form });
   }
+}
+
+function safeJson(value: unknown): string {
+  try { return JSON.stringify(value); } catch { return String(value); }
 }
 
 function extractMessage(body: unknown): string | undefined {

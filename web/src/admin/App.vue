@@ -47,6 +47,7 @@ async function logout() {
         <RouterLink :to="{ name: 'settings'     }">Settings</RouterLink>
         <RouterLink :to="{ name: 'users'        }">Users</RouterLink>
         <RouterLink :to="{ name: 'analytics'    }">Analytics</RouterLink>
+        <RouterLink :to="{ name: 'logs'         }">Logs</RouterLink>
         <a href="/docs/" target="_blank" rel="noopener" class="external">API docs ↗</a>
       </nav>
       <div class="user-box">

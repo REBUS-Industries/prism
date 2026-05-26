@@ -54,6 +54,8 @@ tmp/
 *.sqlite
 *.sqlite-journal
 local-uploads/
+# Per-job admin log exports pulled to disk during local debugging
+job_*_logs.csv
 
 # --- generated codegen outputs (they are produced from shared/contracts) --
 shared/generated/
