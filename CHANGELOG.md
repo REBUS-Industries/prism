@@ -9,18 +9,12 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ---
 
-## v0.1.28 — 2026-05-26
+## v0.1.29 — 2026-05-26
 
-Adds the `prism-assimp` pre-conversion sidecar so uploads in the
-glTF/Collada/Blender/USDZ/DirectX/PLY/STL family no longer get rejected
-at the validation gate. The sidecar lives next to `prism-server` in the
-compose stack, accepts the source file over HTTP, and returns an
-OBJ+MTL+textures zip that the existing Rhino agent path already knows
-how to ingest.
-
-This release also gives the agent a local **web UI** so operators can
-configure all settings and pause/resume the watcher from a browser
-instead of RDP-ing into each workstation to use the WinForms tray.
+Gives the agent a local **web UI** so operators can configure all
+settings and pause/resume the watcher from a browser instead of
+RDP-ing into each workstation to use the WinForms tray. Also fixes
+the heartbeat that has been reporting `slotsBusy=0` since phase 3.
 
 ### Added
 
@@ -36,6 +30,30 @@ instead of RDP-ing into each workstation to use the WinForms tray.
   `roles`, `logDir`. Restart-required: `prismUrl`, `rhinoVersion`,
   `webUiPort`, `webUiBindAll`. Defaults to `localhost`-only binding;
   flip `webUiBindAll: true` to expose on the LAN (no auth).
+
+### Fixed
+
+- **agent heartbeat**: `HeartbeatData.slotsBusy` now reports the real
+  `WorkerSlotPool.BusyCount` instead of the hard-coded `0` placeholder
+  left in since the phase 3 scaffold, so the admin dashboard's
+  concurrency stat finally matches reality.
+
+- **install docs**: `AGENT_INSTALL.md` download link now points at
+  `REBUS-ORBIT/prism-agent/releases/latest` (matches the in-app
+  Updater's poll URL).
+
+---
+
+## v0.1.28 — 2026-05-26
+
+Adds the `prism-assimp` pre-conversion sidecar so uploads in the
+glTF/Collada/Blender/USDZ/DirectX/PLY/STL family no longer get rejected
+at the validation gate. The sidecar lives next to `prism-server` in the
+compose stack, accepts the source file over HTTP, and returns an
+OBJ+MTL+textures zip that the existing Rhino agent path already knows
+how to ingest.
+
+### Added
 
 - **assimp service** (`PRISM/assimp/`): new FastAPI app shipped as
   `ghcr.io/rebus-orbit/prism-assimp:latest`, multi-stage Docker image
