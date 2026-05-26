@@ -28,7 +28,12 @@ RUN git clone --depth 1 --branch v${ASSIMP_VERSION} https://github.com/assimp/as
     && cmake --install build
 
 # ---------- stage 2: runtime ----------
-FROM python:3.12-slim-bookworm AS runtime
+# Python 3.11 (not 3.12) because pyassimp 4.1.4 -- the most recent release
+# of the official Assimp Python bindings (2018) -- still imports the
+# stdlib `distutils` module, which was removed in 3.12.  Switching to a
+# distutils-providing interpreter is cheaper than vendoring a fork or
+# polyfilling distutils ourselves.
+FROM python:3.11-slim-bookworm AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpng16-16 libjpeg62-turbo zlib1g \
         ca-certificates curl tini \
