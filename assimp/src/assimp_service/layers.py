@@ -55,17 +55,59 @@ def decode_aistring(s: object) -> str:
 
 
 def mesh_name(mesh: object) -> str:
-    """Read ``mesh.mName`` correctly, falling back to pyassimp's
-    (truncated) ``.name`` only when raw access fails."""
-    raw = getattr(mesh, "mName", None)
-    if raw is not None:
-        decoded = decode_aistring(raw)
-        if decoded:
-            return decoded
+    """Best-effort mesh name from a pyassimp ``Mesh``.
+
+    Tries (in order) the raw ``mesh.contents.mName`` decode (works for
+    pyassimp's Node struct -- broken for Mesh because pyassimp's Mesh
+    struct definition has a different layout error that puts
+    ``addressof(mName)`` at the *data* field rather than the length
+    field), then ``mesh.contents.mName.data`` (which produces the
+    8-char-truncated string for meshes), and finally
+    ``mesh.name`` (also 8-char-truncated for meshes).  Callers should
+    treat the result as "possibly a suffix of the real name" and use
+    :func:`lookup_layer` for matching against a known-good map.
+    """
+    contents = getattr(mesh, "contents", None)
+    if contents is not None:
+        raw = getattr(contents, "mName", None)
+        if raw is not None:
+            decoded = decode_aistring(raw)
+            if decoded:
+                return decoded
+            try:
+                # pyassimp's `.data` accessor returns an already-truncated
+                # bytes view; better than nothing.
+                buf = getattr(raw, "data", None)
+                if buf is not None:
+                    if isinstance(buf, bytes):
+                        return buf.decode("utf-8", errors="ignore").rstrip("\x00")
+            except Exception:
+                pass
     fallback = getattr(mesh, "name", None) or ""
     if isinstance(fallback, bytes):
         fallback = fallback.decode("utf-8", errors="ignore")
     return fallback
+
+
+def lookup_layer(layer_map: Dict[str, str], pyassimp_mesh_name: str) -> Optional[str]:
+    """Find ``layer_map[mesh_name]`` accounting for pyassimp string
+    truncation.
+
+    Tries an exact match first; falls back to a suffix-match scan because
+    pyassimp 4.1.4 returns a (4 or 8 char) suffix-cropped mesh name -- so
+    our XML-extracted key ``"da20ae4b-..."`` matches pyassimp's reported
+    ``"0ae4b-..."`` (or even ``"4b-..."`` on more-broken pyassimp
+    builds).  UUIDs make false-positive matches astronomically unlikely.
+    """
+    if not pyassimp_mesh_name or not layer_map:
+        return None
+    direct = layer_map.get(pyassimp_mesh_name)
+    if direct is not None:
+        return direct
+    for key, value in layer_map.items():
+        if key.endswith(pyassimp_mesh_name):
+            return value
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +275,7 @@ def walk_leaves(
         raw = mesh_name(mesh)
         chosen: Optional[str] = None
         if layer_map and raw:
-            chosen = layer_map.get(raw)
+            chosen = lookup_layer(layer_map, raw)
         if not chosen:
             chosen = raw or None
         layer_seg = sanitise_group_name(chosen, f"mesh_{mesh_index}")
