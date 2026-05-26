@@ -14,8 +14,10 @@ in-process Rhino 8 host.
 
 ## Install
 
-1. **Download the latest agent zip** from the [releases page](https://github.com/REBUS-ORBIT/prism/releases/latest)
+1. **Download the latest agent zip** from the [releases page](https://github.com/REBUS-ORBIT/prism-agent/releases/latest)
    (file: `PRISM.Agent-vX.Y.Z.zip`).
+   The in-app **🔄 Check for Updates** menu item polls the same repo
+   (`REBUS-ORBIT/prism-agent`).
 2. **Unblock + extract** to a temp location:
 
    ```powershell
