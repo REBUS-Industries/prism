@@ -68,17 +68,21 @@ jobs:
   deploy:
     needs: build-and-push
     # Runs on the LAN-local self-hosted runner (LXC 261, 10.0.200.61) so the
-    # SSH hop to VM 211 stays inside VLAN 200.  GitHub-hosted runners can't
-    # reach :22 on .211 because only 80/443/3000 are NAT'd outward.
+    # SSH hop to VM 211 stays inside VLAN 200.  The runner has its own ed25519
+    # deploy key (~runner/.ssh/prism_deploy_ed25519) authorized on
+    # ~rebus/.ssh/authorized_keys on VM 211, plus an ~runner/.ssh/config alias
+    # `prism-prod` -> rebus@10.0.200.211 with the right IdentityFile, so we no
+    # longer depend on the PROD_VM_HOST / PROD_VM_USER / PROD_VM_SSH_KEY
+    # secrets for this step.
     runs-on: [self-hosted, prism-deploy]
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: appleboy/ssh-action@v1
-        with:
-          host:     ${{ secrets.PROD_VM_HOST }}
-          username: ${{ secrets.PROD_VM_USER }}
-          key:      ${{ secrets.PROD_VM_SSH_KEY }}
-          script: |
+      - name: Pull + restart prism-server on VM 211
+        run: |
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod <<'REMOTE'
+            set -euo pipefail
             cd /opt/prism
             docker compose pull prism-server
             docker compose up -d prism-server
+            docker compose ps prism-server
+          REMOTE
