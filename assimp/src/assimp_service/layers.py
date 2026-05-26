@@ -85,36 +85,39 @@ def _node_meshes(node: object, scene_meshes: List[object]) -> List[Tuple[int, ob
     return out
 
 
+_IDENTITY_4X4 = tuple(float(v) for v in np.eye(4, dtype=np.float64).ravel())
+
+
 def walk_leaves(scene: object) -> Iterator[LeafRecord]:
-    """Yield one ``LeafRecord`` per (node, mesh) pair reachable from
-    ``scene.rootnode``.
+    """Yield one ``LeafRecord`` per mesh in the scene.
 
-    Internal nodes that carry meshes themselves are emitted too -- Assimp's
-    convention is that any node may own meshes regardless of whether it has
-    children, so "leaf" here means "(node, mesh) pair", not "graph leaf".
+    Implementation note (Phase 1)
+    -----------------------------
+    The converter calls ``pyassimp.load`` with
+    ``aiProcess_PreTransformVertices``, which bakes every node's world
+    transform into its meshes and collapses the hierarchy.  We therefore
+    read meshes straight off ``scene.meshes`` and use identity transforms
+    everywhere, deriving a layer name from the mesh's own ``name``
+    attribute (Assimp populates this from the source format's group /
+    object / layer name when one exists).  When the mesh name is empty,
+    fall back to ``mesh_<index>`` so the OBJ group line is still
+    deterministic.
+
+    Phase 2 will replace this with the per-node DFS that's currently
+    blocked by the pyassimp 4.1.4 ``node.transformation`` bug; the
+    ``LeafRecord`` shape is intentionally unchanged so that revert is
+    contained to this file.
     """
-    root = getattr(scene, "rootnode", None)
-    if root is None:
-        return
     scene_meshes = list(getattr(scene, "meshes", []) or [])
-
-    def _descend(node: object, parent_path: str, parent_xform: np.ndarray) -> Iterator[LeafRecord]:
-        local = np.asarray(node.transformation, dtype=np.float64).reshape(4, 4)
-        world = parent_xform @ local
-
-        seg = sanitise_group_name(getattr(node, "name", None), "node")
-        path = f"{parent_path}/{seg}" if parent_path else seg
-
-        for mesh_index, mesh in _node_meshes(node, scene_meshes):
-            material_index = int(getattr(mesh, "materialindex", 0) or 0)
-            yield LeafRecord(
-                layer_path=path,
-                mesh_index=mesh_index,
-                material_index=material_index,
-                world_transform=tuple(float(v) for v in world.ravel()),
-            )
-
-        for child in getattr(node, "children", []) or []:
-            yield from _descend(child, path, world)
-
-    yield from _descend(root, "", np.eye(4, dtype=np.float64))
+    for mesh_index, mesh in enumerate(scene_meshes):
+        material_index = int(getattr(mesh, "materialindex", 0) or 0)
+        raw_name = getattr(mesh, "name", None)
+        if isinstance(raw_name, bytes):
+            raw_name = raw_name.decode("utf-8", errors="ignore")
+        layer_seg = sanitise_group_name(raw_name, f"mesh_{mesh_index}")
+        yield LeafRecord(
+            layer_path=layer_seg,
+            mesh_index=mesh_index,
+            material_index=material_index,
+            world_transform=_IDENTITY_4X4,
+        )

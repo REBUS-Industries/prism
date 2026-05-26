@@ -72,6 +72,20 @@ def _postprocess_flags(options: PreconvertOptions) -> int:
     Imported lazily so the module is importable even when ``pyassimp`` /
     ``libassimp`` aren't installed (handy for unit tests on the API
     surface).
+
+    NOTE on ``aiProcess_PreTransformVertices``: pyassimp 4.1.4 (the only
+    PyPI release of the official bindings) has a long-standing
+    memory-layout bug where ``node.transformation`` is unreliable -- the
+    underlying numpy view of the C ``aiMatrix4x4`` struct comes back
+    shifted by a float, so even identity matrices look corrupt and
+    rotations multiply vertices by a near-degenerate matrix.  We sidestep
+    the problem by asking Assimp to bake every node's world transform
+    into the mesh vertices themselves and to flatten the node hierarchy
+    on its way out, leaving us with identity transforms everywhere.  The
+    cost is that Phase-1 layer preservation degrades to "one OBJ group
+    per scene mesh" (we lose the original Maya/Blender folder names);
+    Phase 2 will ditch pyassimp 4.1.4 for a fork that decodes matrices
+    correctly and re-enable the per-node walk.
     """
     from pyassimp import postprocess  # type: ignore
 
@@ -85,9 +99,8 @@ def _postprocess_flags(options: PreconvertOptions) -> int:
         | postprocess.aiProcess_FindInstances
         | postprocess.aiProcess_ValidateDataStructure
         | postprocess.aiProcess_FixInfacingNormals
+        | postprocess.aiProcess_PreTransformVertices
     )
-    if options.flatten_hierarchy:
-        flags |= postprocess.aiProcess_PreTransformVertices
     return flags
 
 
