@@ -4,7 +4,15 @@ import type { JobSummary } from '../../shared/api';
 import { adminApi } from '../../shared/api';
 
 const props = defineProps<{ jobs: JobSummary[] }>();
-const emit = defineEmits<{ cancelled: [id: string] }>();
+const emit = defineEmits<{
+  cancelled: [id: string];
+  /**
+   * Row click — Dashboard listens to this and pops the JobLogsModal.
+   * Emitted only when the click did NOT originate from the cancel
+   * button (handled by `.stop` on the click handler in the template).
+   */
+  selectJob: [job: JobSummary];
+}>();
 
 const CANCELLABLE = new Set(['queued', 'dispatched', 'processing', 'uploading']);
 
@@ -51,7 +59,12 @@ async function handleCancel(id: string) {
       </tr>
     </thead>
     <tbody>
-      <tr v-for="j in sorted" :key="j.id">
+      <tr
+        v-for="j in sorted"
+        :key="j.id"
+        class="clickable"
+        :title="`View logs for ${j.fileName}`"
+        @click="$emit('selectJob', j)">
         <td><span class="pill" :class="j.status">{{ j.status }}</span></td>
         <td>{{ j.fileName }} <span class="muted">{{ j.format }}</span></td>
         <td>{{ fmtSize(j.fileSize) }}</td>
@@ -72,7 +85,7 @@ async function handleCancel(id: string) {
             class="btn-cancel"
             :disabled="cancellingId === j.id"
             :title="cancellingId === j.id ? 'Cancelling…' : 'Cancel job'"
-            @click="handleCancel(j.id)"
+            @click.stop="handleCancel(j.id)"
           >{{ cancellingId === j.id ? '…' : '✕' }}</button>
         </td>
       </tr>
@@ -84,6 +97,10 @@ async function handleCancel(id: string) {
 </template>
 
 <style scoped>
+tr.clickable { cursor: pointer; }
+tr.clickable:hover { background: var(--color-bg-hover); }
+tr.clickable:hover td { color: var(--color-text); }
+
 .btn-cancel {
   padding: 2px 8px;
   font-size: 12px;

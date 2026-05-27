@@ -250,6 +250,21 @@ export interface LayersResponse {
   includeLayerDescendants: boolean;
 }
 
+/**
+ * One streaming log line attached to a job.  The backend writes these
+ * via {@link jobLogs} from both the server itself (lifecycle events,
+ * dispatcher decisions) and from agents over WebSocket (per-stage
+ * progress, IronPython output).  Returned by `GET /api/jobs/:id/logs`.
+ */
+export interface JobLogLine {
+  id: number;
+  jobId: string;
+  ts: string;            // ISO timestamp from Postgres (drizzle serialises Date -> string here)
+  level: string;         // 'debug' | 'info' | 'warn' | 'error' (free-form 8 chars)
+  source: 'server' | 'agent' | string;
+  message: string;
+}
+
 // Sugar for the common endpoints — typed responses
 export const jobsApi = {
   list:   (params?: { status?: string; limit?: number; offset?: number }) => {
@@ -268,6 +283,8 @@ export const jobsApi = {
       `/api/jobs/${id}/layers`,
       body,
     ),
+  // Per-job server + agent log lines (drives JobLogsModal in the admin UI).
+  getLogs: (id: string) => api.get<{ logs: JobLogLine[] }>(`/api/jobs/${id}/logs`),
 };
 
 export const workstationsApi = {

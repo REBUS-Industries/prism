@@ -3,6 +3,20 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { jobsApi, workstationsApi, type JobSummary, type Workstation } from '../../shared/api';
 import { adminWs } from '../../shared/ws';
 import JobTable from '../components/JobTable.vue';
+import JobLogsModal from '../components/JobLogsModal.vue';
+
+// The job whose logs are currently in the modal.  Clicking a row in
+// JobTable opens the modal; closing it clears this back to null.
+const selectedJob = ref<JobSummary | null>(null);
+
+// Keep selectedJob in sync with the live jobs[] array so the modal's
+// status pill / lastMessage stay current as WS updates arrive.  Without
+// this the modal would show a stale snapshot of the row at click time.
+function syncSelectedJob() {
+  if (!selectedJob.value) return;
+  const fresh = jobs.value.find((j) => j.id === selectedJob.value!.id);
+  if (fresh && fresh !== selectedJob.value) selectedJob.value = fresh;
+}
 
 const jobs = ref<JobSummary[]>([]);
 const workstations = ref<Workstation[]>([]);
@@ -45,6 +59,7 @@ async function refresh() {
   ]);
   jobs.value = j.jobs;
   workstations.value = w.workstations;
+  syncSelectedJob();
   loading.value = false;
   startPollIfNeeded();
 }
@@ -64,6 +79,7 @@ onMounted(async () => {
       if (typeof ev['error']            === 'string') patch.error          = ev['error'] as string;
       if (typeof ev['nodeName']         === 'string') patch.nodeName       = ev['nodeName'] as string;
       jobs.value = jobs.value.map((j, i) => (i === idx ? { ...j, ...patch } : j));
+      syncSelectedJob();
       // Re-evaluate polling need after a WS patch (job may have gone terminal).
       if (!hasActiveJobs()) stopPoll();
       else startPollIfNeeded();
@@ -101,8 +117,14 @@ const onlineCount = computed(() => workstations.value.filter((w) => w.online).le
   <div class="card mt-lg">
     <h2>Recent jobs</h2>
     <div v-if="loading" class="muted">loading…</div>
-    <JobTable v-else :jobs="jobs" @cancelled="refresh" />
+    <JobTable
+      v-else
+      :jobs="jobs"
+      @cancelled="refresh"
+      @select-job="(j) => selectedJob = j" />
   </div>
+
+  <JobLogsModal :job="selectedJob" @close="selectedJob = null" />
 </template>
 
 <style scoped>
