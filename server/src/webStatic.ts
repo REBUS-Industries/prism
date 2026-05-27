@@ -13,7 +13,7 @@
  * at /admin and /convert. Each SPA uses createWebHashHistory so all
  * client-side routing is fragment-based and no SPA-fallback is needed.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -31,6 +31,37 @@ export async function registerWebStatic(app: FastifyInstance): Promise<void> {
     prefix: '/assets/',
     decorateReply: false,
   });
+
+  // Vite copies everything in `web/public/` verbatim to `dist/` root, but
+  // we don't blanket-serve the dist root because /admin and /convert are
+  // already mounted from subdirs and the project root is full of build
+  // artefacts we don't want to expose. Whitelist the actually-public
+  // assets here (logo + favicon currently). Read them once at startup so
+  // the request path is just an in-memory buffer write.
+  const publicAssets: Array<{ name: string; type: string }> = [
+    { name: 'prism-logo.png', type: 'image/png' },
+    { name: 'favicon.png',    type: 'image/png' },
+  ];
+  for (const asset of publicAssets) {
+    const filePath = resolve(root, asset.name);
+    if (!existsSync(filePath)) {
+      app.log.warn({ filePath }, `public asset missing: ${asset.name}`);
+      continue;
+    }
+    const buf  = readFileSync(filePath);
+    const stat = statSync(filePath);
+    const etag = `"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
+    app.get(`/${asset.name}`, (req, reply) => {
+      if (req.headers['if-none-match'] === etag) {
+        return reply.code(304).send();
+      }
+      return reply
+        .type(asset.type)
+        .header('cache-control', 'public, max-age=3600')
+        .header('etag', etag)
+        .send(buf);
+    });
+  }
 
   // Admin SPA
   const adminHtmlDir = resolve(root, 'src', 'admin');

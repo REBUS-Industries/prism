@@ -153,7 +153,15 @@ function submit() {
   border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 8px;
-  background: var(--color-surface, #fff);
+  /*
+    Use the design-system input background token so the tree picks up the
+    correct surface in both themes (white in light, #191a22 in dark).
+    Previously this used `var(--color-surface, #fff)` -- there is no
+    --color-surface token, so the white fallback kicked in for dark mode
+    and gave us white-on-white layer names.
+  */
+  background: var(--color-bg-input);
+  color: var(--color-text);
 }
 .check { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--color-text-muted); }
 .footer { display: flex; gap: 8px; justify-content: flex-end; }
