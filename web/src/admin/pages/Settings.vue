@@ -26,16 +26,6 @@ const otherFields: FieldDef[] = [
 
 const workstationAgentFields: FieldDef[] = [
   {
-    key: 'workstation_agent_download_url',
-    label: 'Agent download URL',
-    placeholder: 'https://github.com/REBUS-ORBIT/prism/releases/download/v0.4.1/PRISM.Agent-v0.4.1.zip',
-  },
-  {
-    key: 'workstation_agent_version',
-    label: 'Agent version label',
-    placeholder: 'v0.4.1',
-  },
-  {
     key: 'workstation_agent_ws_url',
     label: 'WS endpoint override',
     placeholder: 'wss://prism.rebus.industries/ws/agent (leave blank to derive from request)',
@@ -242,10 +232,12 @@ onMounted(refresh);
     <p class="muted" style="font-size: 12px; margin: 0 0 8px;">
       Surfaced on the
       <RouterLink :to="{ name: 'workstations' }">Workstations</RouterLink>
-      page under <em>Node downloads</em>. The download URL points at the zip
-      produced by the <code>agent-msi</code> GitHub Action (tag a release or
-      trigger it manually); leave the WS override blank to derive
-      <code>wss://&lt;host&gt;/ws/agent</code> from the request host.
+      page under <em>Node downloads</em>. The agent download URL and version
+      are auto-resolved from the latest GitHub Release at
+      <code>REBUS-ORBIT/prism-agent</code> on every request — no admin action
+      needed. Leave the WS endpoint override blank to derive
+      <code>wss://&lt;host&gt;/ws/agent</code> from the request host; set it
+      only when the public proxy host differs from the request host.
     </p>
     <div class="card">
       <div class="row" v-for="f in workstationAgentFields" :key="f.key">
