@@ -1,6 +1,9 @@
+using System.Diagnostics;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using PRISM.Agent.Config;
 using PRISM.Agent.Pipeline;
+using PRISM.Agent.Tray;
 using PRISM.Agent.Ws;
 using PRISM.Contracts;
 
@@ -183,6 +186,136 @@ public sealed class AgentControlPlane
             RhinoVersion = null,
         }).AsTask();
     }
+
+    // ---- Remote management (restart / update) --------------------------
+
+    /// <summary>
+    /// Schedule a clean exit of the current agent process and a
+    /// self-relaunch shortly afterwards.
+    ///
+    /// The Windows Scheduled Task installed by <c>install.ps1</c> already
+    /// carries <c>RestartCount=3</c> / <c>RestartInterval=1m</c>, but
+    /// that only fires on task FAILURE (non-zero exit). To handle clean
+    /// admin-initiated restarts uniformly we spawn a tiny PowerShell
+    /// helper that waits for our PID to exit and then relaunches the
+    /// agent EXE — exactly the same pattern used by
+    /// <see cref="Updater.DownloadAndInstallAsync"/>.
+    /// </summary>
+    public Task RestartAsync(string? reason = null)
+    {
+        _log.LogWarning("restart requested (reason={Reason})", reason ?? "<none>");
+
+        var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
+        var exePath    = Path.Combine(installDir, "PRISM.Agent.exe");
+        var pid        = Environment.ProcessId;
+        var logPath    = Path.Combine(Path.GetTempPath(), "PRISM.Agent.Restart.log");
+
+        var ps = $@"
+$ErrorActionPreference = 'SilentlyContinue'
+$log = '{Esc(logPath)}'
+function W($m) {{ Add-Content -Path $log -Value (""[$([DateTime]::Now.ToString('HH:mm:ss'))] "" + $m) }}
+W 'restart helper started for pid {pid}'
+$proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
+if ($proc) {{
+    $null = $proc.WaitForExit(60000)
+    W 'agent exited'
+}} else {{
+    W 'agent already exited'
+}}
+Start-Sleep -Milliseconds 500
+if (Test-Path '{Esc(exePath)}') {{
+    W 'launching new agent'
+    Start-Process -FilePath '{Esc(exePath)}'
+    W 'launched'
+}} else {{
+    W ""ERROR: exe not found at '{Esc(exePath)}'""
+}}
+";
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(ps));
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = "powershell.exe",
+                Arguments       = $"-NoProfile -NonInteractive -EncodedCommand {encoded}",
+                UseShellExecute = false,
+                CreateNoWindow  = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "failed to schedule restart helper; exiting anyway and trusting Scheduled Task RestartCount");
+        }
+
+        // Give the WS pump a brief moment to flush any pending acks/logs,
+        // then exit. We exit with a non-zero code so the Scheduled Task's
+        // RestartCount also fires as a belt-and-braces fallback if the
+        // PowerShell helper failed to launch.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(750);
+            try { Environment.Exit(2); }
+            catch { /* best effort */ }
+        });
+
+        return Task.CompletedTask;
+    }
+
+    public sealed record UpdateOutcome(bool UpdateAvailable, string? Tag, bool Downloading, string? Error);
+
+    /// <summary>
+    /// Wire the same code path as the tray menu's "Check for updates"
+    /// into a programmatic call. If a newer release is available on
+    /// GitHub Releases, kicks off
+    /// <see cref="Updater.DownloadAndInstallAsync"/> in the background
+    /// (it self-terminates the process when extraction is scheduled).
+    /// Returns synchronously so the HTTP / WS caller can ack quickly.
+    /// </summary>
+    public async Task<UpdateOutcome> CheckAndApplyUpdateAsync(string? pinnedTag = null)
+    {
+        _log.LogInformation("update requested (tag={Tag})", pinnedTag ?? "<latest>");
+
+        Updater.UpdateInfo? info;
+        try
+        {
+            info = await Updater.CheckForUpdateAsync();
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "update check failed");
+            return new UpdateOutcome(false, null, false, ex.Message);
+        }
+
+        if (info is null)
+        {
+            _log.LogInformation("no update available (current={Version})", AgentVersion);
+            return new UpdateOutcome(false, null, false, null);
+        }
+
+        // pinnedTag is honoured advisory-only: the GitHub release latest
+        // is what Updater fetches today. If the operator pinned a tag
+        // that does not match latest we still proceed with what's
+        // available — admins generally want "give me whatever is on
+        // GitHub now", not "match exact tag or fail".
+        var captured = info;
+        _ = Task.Run(async () =>
+        {
+            var prog = new Progress<int>(_ => { /* nop on the WS path */ });
+            try
+            {
+                await Updater.DownloadAndInstallAsync(captured, prog);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "update download/install failed");
+            }
+        });
+
+        return new UpdateOutcome(true, captured.TagName, true, null);
+    }
+
+    static string Esc(string path) => path.Replace("'", "''");
 }
 
 /// <summary>

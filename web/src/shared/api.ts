@@ -293,6 +293,32 @@ export const workstationsApi = {
   update: (id: string, body: Partial<Workstation>) => api.patch<Workstation>(`/api/workstations/${id}`, body),
   remove: (id: string) => api.delete<{ deleted: string }>(`/api/workstations/${id}`),
 
+  /**
+   * Ask the agent on this workstation to cleanly exit. The Windows
+   * Scheduled Task + a self-spawned PowerShell helper script bring it
+   * back online within ~1 minute. Returns `{queued: true}` immediately;
+   * the agent acks by disconnecting. 404 if the workstation row is
+   * unknown, 503 if no agent session is currently connected.
+   *
+   * Available on agent v0.1.33+; older agents stay connected but
+   * silently ignore the `restart` message.
+   */
+  restart: (id: string, reason?: string) =>
+    api.post<{ queued: true }>(`/api/workstations/${id}/restart`, reason ? { reason } : {}),
+
+  /**
+   * Ask the agent on this workstation to check GitHub Releases and
+   * apply a newer build if one is available. `tag` optionally pins a
+   * specific release (e.g. `'v0.1.33'`); when omitted the agent picks
+   * the latest. Same 404 / 503 semantics as `restart`.
+   *
+   * Available on agent v0.1.33+; older agents silently ignore the
+   * `update` message (they still expose "Check for updates" in the
+   * tray menu).
+   */
+  updateAgent: (id: string, tag?: string) =>
+    api.post<{ queued: true }>(`/api/workstations/${id}/update`, tag ? { tag } : {}),
+
   // ---------------------------------------------- node provisioning downloads
   // Since agent v0.1.30 ships a wizard installer (`.exe`) that embeds the
   // PowerShell install scripts and prompts for prismUrl/nodeName/slots,

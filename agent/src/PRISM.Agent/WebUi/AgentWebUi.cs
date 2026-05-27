@@ -23,6 +23,8 @@ namespace PRISM.Agent.WebUi;
 ///   POST /api/config             apply <see cref="ConfigUpdate"/>
 ///   POST /api/watcher/pause      pause job acceptance
 ///   POST /api/watcher/resume     resume
+///   POST /api/agent/restart      cleanly exit and self-relaunch
+///   POST /api/agent/update       check GitHub and apply new release if available
 ///   GET  /api/logs?n=200         tail buffered log lines
 ///   GET  /api/health             liveness ping
 ///
@@ -190,6 +192,69 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                     await WriteJsonAsync(res, new { ok = true, state = BuildState() });
                     break;
 
+                case ("POST", "/api/agent/restart"):
+                    {
+                        // Read and discard body; reason field accepted but
+                        // currently only logged. Reply BEFORE scheduling
+                        // exit so the caller's fetch sees a 200.
+                        var body = await ReadBodyAsync(req);
+                        string? reason = null;
+                        if (!string.IsNullOrWhiteSpace(body))
+                        {
+                            try
+                            {
+                                var probe = JsonConvert.DeserializeObject<RestartBody>(body, _json);
+                                reason = probe?.Reason;
+                            }
+                            catch { /* tolerate junk */ }
+                        }
+                        await WriteJsonAsync(res, new { ok = true, restarting = true });
+                        _ = _plane.RestartAsync(reason);
+                        break;
+                    }
+
+                case ("POST", "/api/agent/update"):
+                    {
+                        var body = await ReadBodyAsync(req);
+                        string? tag = null;
+                        if (!string.IsNullOrWhiteSpace(body))
+                        {
+                            try
+                            {
+                                var probe = JsonConvert.DeserializeObject<UpdateBody>(body, _json);
+                                tag = probe?.Tag;
+                            }
+                            catch { /* tolerate junk */ }
+                        }
+                        var outcome = await _plane.CheckAndApplyUpdateAsync(tag);
+                        if (outcome.Error is not null)
+                        {
+                            res.StatusCode = 502;
+                            await WriteJsonAsync(res, new { ok = false, error = outcome.Error });
+                        }
+                        else if (!outcome.UpdateAvailable)
+                        {
+                            await WriteJsonAsync(res, new
+                            {
+                                ok = true,
+                                downloading = false,
+                                version = $"v{_plane.AgentVersion}",
+                                message = "already up to date",
+                            });
+                        }
+                        else
+                        {
+                            await WriteJsonAsync(res, new
+                            {
+                                ok = true,
+                                downloading = true,
+                                tag = outcome.Tag,
+                                message = "downloading update in background",
+                            });
+                        }
+                        break;
+                    }
+
                 default:
                     res.StatusCode = 404;
                     await WriteJsonAsync(res, new { error = "not_found", path });
@@ -263,4 +328,7 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
         res.ContentLength64 = bytes.Length;
         await res.OutputStream.WriteAsync(bytes, 0, bytes.Length);
     }
+
+    sealed class RestartBody { public string? Reason { get; set; } }
+    sealed class UpdateBody  { public string? Tag    { get; set; } }
 }

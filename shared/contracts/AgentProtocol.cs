@@ -32,6 +32,8 @@ public enum MessageType
     Cancel,
     PollLayers,
     Layers,
+    Restart,
+    Update,
 }
 
 [JsonConverter(typeof(StringEnumConverter), typeof(CamelCaseNamingStrategy))]
@@ -209,4 +211,29 @@ public sealed class PollLayersData
     [JsonProperty("jobId")]   public string JobId   { get; set; } = "";
     [JsonProperty("fileUrl")] public string FileUrl { get; set; } = "";
     [JsonProperty("format")]  public string Format  { get; set; } = "";
+}
+
+/// <summary>
+/// Server -> agent: cleanly exit the agent process. The Windows
+/// Scheduled Task respawns it within ~1 min, and the agent also
+/// schedules a small helper script that relaunches the EXE after
+/// the process exits.
+/// </summary>
+public sealed class RestartData
+{
+    [JsonProperty("reason", NullValueHandling = NullValueHandling.Ignore)]
+    public string? Reason { get; set; }
+}
+
+/// <summary>
+/// Server -> agent: check GitHub Releases for a new agent build and
+/// apply it if one is available. Reuses Updater.CheckForUpdateAsync +
+/// DownloadAndInstallAsync (the same code path as the tray menu's
+/// "Check for updates"). <see cref="Tag"/> optionally pins a specific
+/// release tag; when null/empty the agent picks the latest.
+/// </summary>
+public sealed class UpdateData
+{
+    [JsonProperty("tag", NullValueHandling = NullValueHandling.Ignore)]
+    public string? Tag { get; set; }
 }

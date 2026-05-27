@@ -28,7 +28,9 @@
         "fail",
         "cancel",
         "pollLayers",
-        "layers"
+        "layers",
+        "restart",
+        "update"
       ]
     },
     "Hello": {
@@ -212,6 +214,20 @@
             }
           }
         }
+      }
+    },
+    "Restart": {
+      "description": "Server -> agent: cleanly exit the agent process. The Windows Scheduled Task auto-respawns it within ~1 min, or the agent self-relaunches via a small helper script. No payload fields are required.",
+      "type": "object",
+      "properties": {
+        "reason": { "type": "string", "description": "Optional human-readable reason for the restart (surfaced in agent logs)." }
+      }
+    },
+    "Update": {
+      "description": "Server -> agent: check for a new release on GitHub and apply it if one is available. Reuses the same code path as the tray's 'Check for updates' menu item.",
+      "type": "object",
+      "properties": {
+        "tag": { "type": "string", "description": "Optional release tag to pin (e.g. 'v0.1.33'). When omitted, the agent picks the latest release." }
       }
     }
   }

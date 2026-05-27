@@ -17,7 +17,7 @@ import { agentSessions, jobLogs, jobs, workstations } from '../db/schema.js';
 import { sessionRegistry, type AgentConn } from './sessionRegistry.js';
 import {
   envelope, PROTOCOL_VERSION,
-  type AgentToServerMsg, type HelloData, type WelcomeData,
+  type AgentToServerMsg, type HelloData, type RestartData, type UpdateData, type WelcomeData,
 } from '../../../shared/contracts/agent-protocol.js';
 import { broadcastJobUpdate, broadcastWorkstationUpdate } from './adminProtocol.js';
 import { dispatchJobEvent } from '../webhooks/dispatcher.js';
@@ -339,5 +339,40 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddr: string | 
     } catch (err) {
       childLog.warn({ err }, 'post-hello dispatch sweep failed');
     }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Outbound server -> agent dispatchers (lifecycle commands)                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Dispatch a `restart` envelope to a live agent connection.
+ * Returns true if the frame was written, false if the underlying socket
+ * threw (the caller should map that to a 503).
+ */
+export function sendRestartToAgent(machineId: string, data: RestartData = {}): boolean {
+  const conn = sessionRegistry.getAgentByMachine(machineId);
+  if (!conn) return false;
+  try {
+    conn.socket.send(JSON.stringify(envelope('restart', data, randomUUID())));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Dispatch an `update` envelope to a live agent connection.
+ * Tag is optional; when omitted the agent picks the latest release.
+ */
+export function sendUpdateToAgent(machineId: string, data: UpdateData = {}): boolean {
+  const conn = sessionRegistry.getAgentByMachine(machineId);
+  if (!conn) return false;
+  try {
+    conn.socket.send(JSON.stringify(envelope('update', data, randomUUID())));
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -10,6 +10,7 @@ import { eq, desc } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { agentSessions, workstations } from '../db/schema.js';
 import { requireAdmin } from '../auth/middleware.js';
+import { sendRestartToAgent, sendUpdateToAgent } from '../ws/agentProtocol.js';
 
 const updateBody = z.object({
   nodeName:   z.string().min(1).max(128).optional(),
@@ -68,6 +69,53 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (res.length === 0) return reply.code(404).send({ error: 'not found' });
     return { deleted: res[0]!.id };
   });
+
+  // ------------------------------------------------------------------ lifecycle
+  // Both routes look up the workstation by id, confirm an active agent
+  // session exists in the in-memory registry (keyed off machineId), and
+  // dispatch the WS envelope. The agent acks the action by either
+  // disconnecting (restart) or completing the download (update).
+
+  /**
+   * POST /:id/restart — ask the agent to cleanly exit. The Windows
+   * Scheduled Task + a self-spawned PowerShell helper script
+   * relaunch the agent within ~1 minute.
+   */
+  app.post<{ Params: { id: string }; Body: { reason?: string } | undefined }>(
+    '/:id/restart',
+    async (req, reply) => {
+      const row = await db.query.workstations.findFirst({ where: eq(workstations.id, req.params.id) });
+      if (!row) return reply.code(404).send({ error: 'workstation not found' });
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+      const sent = sendRestartToAgent(row.machineId, reason ? { reason } : {});
+      if (!sent) return reply.code(503).send({ error: 'agent not connected' });
+      req.log.info({ workstationId: row.id, nodeName: row.nodeName, machineId: row.machineId, reason }, 'restart dispatched to agent');
+      return { queued: true };
+    },
+  );
+
+  /**
+   * POST /:id/update — ask the agent to check GitHub Releases and apply
+   * a new build if one is available. Optional `{tag: "v0.1.33"}` pins a
+   * specific release; default is the latest.
+   *
+   * Older agents (pre-v0.1.33) silently ignore unknown message types,
+   * so this returns 503 only when no agent is connected at all.
+   */
+  app.post<{ Params: { id: string }; Body: { tag?: string } | undefined }>(
+    '/:id/update',
+    async (req, reply) => {
+      const row = await db.query.workstations.findFirst({ where: eq(workstations.id, req.params.id) });
+      if (!row) return reply.code(404).send({ error: 'workstation not found' });
+      const tag = typeof req.body?.tag === 'string' && req.body.tag.trim().length > 0
+        ? req.body.tag.trim()
+        : undefined;
+      const sent = sendUpdateToAgent(row.machineId, tag ? { tag } : {});
+      if (!sent) return reply.code(503).send({ error: 'agent not connected' });
+      req.log.info({ workstationId: row.id, nodeName: row.nodeName, machineId: row.machineId, tag }, 'update dispatched to agent');
+      return { queued: true };
+    },
+  );
 };
 
 export default plugin;

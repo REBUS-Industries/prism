@@ -458,6 +458,26 @@ internal static class IndexHtml
   </section>
 
   <section class="card">
+    <h2>Agent lifecycle</h2>
+    <div class="body">
+      <div class="actions">
+        <button id="btnUpdate" class="primary">Check for updates</button>
+        <button id="btnRestart" class="danger">Restart agent</button>
+      </div>
+      <p class="hint">
+        <strong>Check for updates</strong> polls the
+        <code>REBUS-ORBIT/prism-agent</code> GitHub release feed; if a newer
+        version is available the agent downloads it and self-restarts (this
+        page will go offline for a few seconds while the new binary takes
+        over).
+        <strong>Restart</strong> cleanly exits the current process — the
+        Windows Scheduled Task and a self-spawned helper script relaunch
+        the agent within ~1 minute.
+      </p>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Logs (last 500)</h2>
     <div class="body">
       <pre id="logs" class="logs">loading…</pre>
@@ -660,6 +680,42 @@ internal static class IndexHtml
         : 'Saved.',
         r.restartRequired ? 'warn' : 'success');
     } catch (err) { toast('Save failed: ' + err.message, 'error'); }
+  });
+
+  $('btnUpdate').addEventListener('click', async () => {
+    const btn = $('btnUpdate');
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+    try {
+      const r = await api('/api/agent/update', { method: 'POST', body: '{}' });
+      if (r.downloading) {
+        toast(`Update ${r.tag ?? ''} downloading — the agent will restart automatically.`, 'success');
+      } else {
+        toast(r.message || `Already on the latest version (${r.version || ''}).`, 'success');
+      }
+    } catch (err) {
+      toast('Update check failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prev;
+    }
+  });
+
+  $('btnRestart').addEventListener('click', async () => {
+    if (!confirm('Restart the PRISM agent now?\n\nIn-flight jobs in this process will be cancelled. The agent will come back online within ~1 minute.')) return;
+    const btn = $('btnRestart');
+    btn.disabled = true;
+    btn.textContent = 'Restarting…';
+    try {
+      await api('/api/agent/restart', { method: 'POST', body: '{}' });
+      toast('Restart scheduled — this page will reconnect when the agent comes back.', 'warn');
+    } catch (err) {
+      // A successful restart often races the fetch — the agent exits
+      // before the response body lands, so the browser sees a network
+      // error. Treat that as success and keep watching.
+      toast('Restart issued — waiting for agent to come back online.', 'warn');
+    }
   });
 
   for (const id of ['prismUrl','nodeName','slots','rhinoVersion','logDir','webUiPort']) {

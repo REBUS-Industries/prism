@@ -9,6 +9,80 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ---
 
+## v0.1.33 — 2026-05-27
+
+Adds **remote restart** and **remote update** controls. Admins no longer
+have to RDP into a workstation to kick the agent or to make it pull the
+latest GitHub release — both actions are reachable from the PRISM admin
+Workstations page and from the agent's own web UI.
+
+### Added
+
+- **Agent protocol** (`shared/contracts/agent-protocol.{json,ts}` +
+  `shared/contracts/AgentProtocol.cs`): two new server -> agent message
+  types — `restart` (optional `reason`) and `update` (optional `tag`
+  to pin a release). Older agents (pre-v0.1.33) silently ignore them.
+
+- **Agent — local web UI** (`PRISM/agent/.../WebUi/`): new
+  `POST /api/agent/restart` and `POST /api/agent/update` endpoints,
+  surfaced as **Check for updates** + **Restart agent** buttons in a
+  new "Agent lifecycle" card at the bottom of `http://<host>:7421/`.
+  The update endpoint returns either `{ok, downloading: false,
+  version}` when already on the latest tag, or `{ok, downloading:
+  true, tag}` while it pulls the new zip in the background.
+
+- **Agent — WS handler** (`PRISM/agent/.../Ws/AgentMessageDispatcher.cs`):
+  inbound `restart` / `update` envelopes are routed to
+  `AgentControlPlane.RestartAsync` / `CheckAndApplyUpdateAsync`. The
+  same methods back both the local HTTP endpoints and the admin-driven
+  WS commands, so there is exactly one code path per action.
+
+- **Agent — `AgentControlPlane`**: `RestartAsync` schedules a tiny
+  hidden PowerShell helper that waits for the agent's PID to exit and
+  then relaunches `PRISM.Agent.exe` (same pattern as the in-app
+  updater), then exits with code 2 so the Scheduled Task's
+  `RestartCount=3` also fires as a belt-and-braces fallback.
+  `CheckAndApplyUpdateAsync` reuses
+  `Updater.CheckForUpdateAsync` + `DownloadAndInstallAsync` exactly as
+  the tray menu does — including the v0.1.32 `IsInstallDirWritable`
+  pre-flight and `%TEMP%\PRISM.Agent.Update.log` diagnostic trail.
+
+- **Server — admin API** (`PRISM/server/src/api/workstations.ts`):
+  `POST /api/workstations/:id/restart` and
+  `POST /api/workstations/:id/update` (admin session required).
+  Look the workstation up by id, find the live agent in
+  `sessionRegistry` by machineId, dispatch the WS envelope, and
+  return `{queued: true}`. 404 if the workstation row is unknown,
+  503 if no agent is currently connected. The update endpoint
+  optionally accepts `{tag: "v0.1.33"}` to pin a release.
+
+- **Server — outbound dispatchers**
+  (`PRISM/server/src/ws/agentProtocol.ts`): new `sendRestartToAgent` /
+  `sendUpdateToAgent` helpers wrap the `sessionRegistry` lookup +
+  `socket.send(JSON.stringify(envelope(...)))` pattern that the job
+  dispatcher uses, so the admin routes don't reach into WS plumbing
+  directly.
+
+- **Web — typed client** (`web/src/shared/api.ts`):
+  `workstationsApi.restart(id, reason?)` and
+  `workstationsApi.updateAgent(id, tag?)` helpers. The admin
+  Workstations page wires per-row buttons in a follow-up commit.
+
+### Notes
+
+- Existing **v0.1.32 agents** stay connected after this server deploy
+  but won't act on `restart` / `update` envelopes (unknown message
+  types are silently ignored). The admin buttons will still return
+  `{queued: true}` against them; nothing happens on the workstation
+  until that agent is upgraded to v0.1.33 (one-time, via the in-app
+  updater or the GitHub release wizard installer). Same pattern as
+  the v0.1.32 update-installer rollout documented above.
+
+- The agent's own web UI works against any agent v0.1.33+ regardless
+  of server version — the buttons hit the local HTTP listener directly.
+
+---
+
 ## v0.1.32 — 2026-05-26
 
 Fix the in-app updater silently failing on workstations whose interactive

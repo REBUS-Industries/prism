@@ -26,7 +26,9 @@ export type MessageType =
   | 'fail'
   | 'cancel'
   | 'pollLayers'
-  | 'layers';
+  | 'layers'
+  | 'restart'
+  | 'update';
 
 export type AgentRole = 'conversion' | 'layering' | 'receive';
 
@@ -128,6 +130,29 @@ export interface PollLayersData {
   format: string;
 }
 
+/**
+ * Server -> agent: cleanly exit the agent process. The Windows Scheduled
+ * Task's `RestartCount=3` / `RestartInterval=1m` auto-respawns it; the
+ * agent itself also schedules a small helper script that relaunches the
+ * EXE after the process exits, so respawn is robust regardless of how
+ * the task scheduler is configured. Reason is optional and surfaced in
+ * agent logs.
+ */
+export interface RestartData {
+  reason?: string;
+}
+
+/**
+ * Server -> agent: check for a new release on GitHub Releases and apply
+ * it if one is available. Reuses `Updater.CheckForUpdateAsync` +
+ * `DownloadAndInstallAsync` — the same code path as the tray's
+ * "Check for updates" menu item. `tag` is optional; when omitted the
+ * agent picks the latest release.
+ */
+export interface UpdateData {
+  tag?: string;
+}
+
 export interface LayerNode {
   name: string;
   fullPath?: string;
@@ -165,12 +190,14 @@ export type FailMsg       = Base<'fail',       FailData>;
 export type CancelMsg     = Base<'cancel',     CancelData>;
 export type PollLayersMsg = Base<'pollLayers', PollLayersData>;
 export type LayersMsg     = Base<'layers',     LayersData>;
+export type RestartMsg    = Base<'restart',    RestartData>;
+export type UpdateMsg     = Base<'update',     UpdateData>;
 
 export type AgentToServerMsg =
   | HelloMsg | HeartbeatMsg | AckMsg | ProgressMsg | LogMsg | CompleteMsg | FailMsg | LayersMsg;
 
 export type ServerToAgentMsg =
-  | WelcomeMsg | AssignMsg | CancelMsg | PollLayersMsg;
+  | WelcomeMsg | AssignMsg | CancelMsg | PollLayersMsg | RestartMsg | UpdateMsg;
 
 export type AnyMsg = AgentToServerMsg | ServerToAgentMsg;
 

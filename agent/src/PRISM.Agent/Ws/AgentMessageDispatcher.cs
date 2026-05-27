@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -15,13 +16,15 @@ public sealed class AgentMessageDispatcher
     readonly ILogger<AgentMessageDispatcher> _log;
     readonly WsClient _ws;
     readonly WorkerSlotPool _pool;
+    readonly IServiceProvider _sp;
 
     public string? SessionId { get; private set; }
 
-    public AgentMessageDispatcher(WsClient ws, WorkerSlotPool pool, ILogger<AgentMessageDispatcher> log)
+    public AgentMessageDispatcher(WsClient ws, WorkerSlotPool pool, IServiceProvider sp, ILogger<AgentMessageDispatcher> log)
     {
         _ws = ws;
         _pool = pool;
+        _sp = sp;
         _log = log;
         _ws.OnMessage += Handle;
     }
@@ -37,6 +40,8 @@ public sealed class AgentMessageDispatcher
                 case MessageType.Assign:     HandleAssign(rawJson);     return;
                 case MessageType.Cancel:     HandleCancel(rawJson);     return;
                 case MessageType.PollLayers: HandlePollLayers(rawJson); return;
+                case MessageType.Restart:    HandleRestart(rawJson);    return;
+                case MessageType.Update:     HandleUpdate(rawJson);     return;
                 default:
                     _log.LogDebug("dispatcher ignoring inbound type {Type}", type);
                     return;
@@ -84,6 +89,26 @@ public sealed class AgentMessageDispatcher
         // serialised against any in-flight convert (Rhino is not re-entrant).
         _ = _ws.SendAsync(MessageType.Ack, new AckData { JobId = env.Data.JobId, Accepted = true });
         _pool.EnqueuePollLayers(env.Data);
+    }
+
+    void HandleRestart(string raw)
+    {
+        var env = ParseEnvelope<RestartData>(raw);
+        var reason = env?.Data?.Reason;
+        _log.LogWarning("restart requested by server (reason={Reason})", reason ?? "<none>");
+        // Pulled lazily to keep a one-way dependency: dispatcher ->
+        // control plane, never the reverse.
+        var plane = _sp.GetRequiredService<AgentControlPlane>();
+        _ = plane.RestartAsync(reason);
+    }
+
+    void HandleUpdate(string raw)
+    {
+        var env = ParseEnvelope<UpdateData>(raw);
+        var tag = env?.Data?.Tag;
+        _log.LogInformation("update requested by server (tag={Tag})", tag ?? "<latest>");
+        var plane = _sp.GetRequiredService<AgentControlPlane>();
+        _ = plane.CheckAndApplyUpdateAsync(tag);
     }
 
     static Envelope<T>? ParseEnvelope<T>(string raw)
