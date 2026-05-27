@@ -262,7 +262,12 @@ if (Test-Path '{Esc(exePath)}') {{
         return Task.CompletedTask;
     }
 
-    public sealed record UpdateOutcome(bool UpdateAvailable, string? Tag, bool Downloading, string? Error);
+    public sealed record UpdateOutcome(
+        bool    UpdateAvailable,
+        string? Tag,
+        bool    Downloading,
+        string? Error,
+        bool    AlreadyRunning = false);
 
     /// <summary>
     /// Wire the same code path as the tray menu's "Check for updates"
@@ -272,9 +277,26 @@ if (Test-Path '{Esc(exePath)}') {{
     /// (it self-terminates the process when extraction is scheduled).
     /// Returns synchronously so the HTTP / WS caller can ack quickly.
     /// </summary>
+    /// <remarks>
+    /// v0.1.36: if a download is already in flight (local tray click
+    /// raced a remote WS update or vice versa) the second caller gets
+    /// <c>AlreadyRunning = true</c> and the in-flight attempt is left
+    /// untouched. <see cref="Updater.IsUpdateInProgress"/> short-circuits
+    /// before we even hit GitHub Releases so we don't waste a request.
+    /// </remarks>
     public async Task<UpdateOutcome> CheckAndApplyUpdateAsync(string? pinnedTag = null)
     {
         _log.LogInformation("update requested (tag={Tag})", pinnedTag ?? "<latest>");
+
+        if (Updater.IsUpdateInProgress)
+        {
+            _log.LogWarning(
+                "update request ignored — another update is already in progress on this agent");
+            return new UpdateOutcome(
+                false, null, false,
+                "Another update is already in progress on this agent.",
+                AlreadyRunning: true);
+        }
 
         Updater.UpdateInfo? info;
         try
@@ -305,6 +327,15 @@ if (Test-Path '{Esc(exePath)}') {{
             try
             {
                 await Updater.DownloadAndInstallAsync(captured, prog);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Race: another caller grabbed _updateGate between our
+                // IsUpdateInProgress probe above and the await inside
+                // DownloadAndInstallAsync. Treat as benign, not an error.
+                _log.LogWarning(
+                    "update download skipped — already running ({Reason})",
+                    ex.Message);
             }
             catch (Exception ex)
             {

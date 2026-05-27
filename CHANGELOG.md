@@ -67,6 +67,113 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ---
 
+## v0.1.36 — 2026-05-27 — Updater hotfix
+
+> **Recovery note for v0.1.34 / v0.1.35 users:** the existing in-app
+> updater **cannot** install v0.1.36 because of the same
+> `ExtractToDirectory` bug it is meant to fix. You must **manually
+> download** `PRISM.Agent-Setup-v0.1.36.exe` from
+> [GitHub Releases](https://github.com/REBUS-ORBIT/prism-agent/releases/tag/v0.1.36)
+> and run it. The installer cleanly replaces the running agent. After
+> v0.1.36 is installed, all future in-app updates (tray "Check for
+> Updates" and remote WS `update` requests) will work.
+
+### Fixed
+
+- **Critical: PowerShell extract call crashed on Windows PowerShell 5.1.**
+  The updater script embedded in `agent/src/PRISM.Agent/Tray/Updater.cs`
+  called
+  `[IO.Compression.ZipFile]::ExtractToDirectory($zip, $installDir, $true)`,
+  intending `$true` as the `overwriteFiles` argument. That 3-arg
+  `(string, string, bool)` overload only exists on .NET Core 3.0+. The
+  default `powershell.exe` (Windows PowerShell 5.1 / .NET Framework 4.x)
+  loads the older `System.IO.Compression.FileSystem.dll`, which only
+  has `(string, string, Encoding)`. PowerShell's method binder tried to
+  coerce `$true` → `System.Text.Encoding` and threw immediately
+  (`Cannot convert value "True" to type "System.Text.Encoding"`). The
+  agent then quietly relaunched the OLD binary, which on every "Update"
+  click landed back in the same broken updater. **No v0.1.34 or v0.1.35
+  in-app update has ever actually extracted anything.**
+  Replaced with `Expand-Archive -LiteralPath $zip -DestinationPath
+  $installDir -Force -ErrorAction Stop`, which has been overwrite-aware
+  since PowerShell 5.0 and ships with every supported Windows.
+- **Post-extract verification before relaunch.** The PS helper now
+  `Test-Path`s `PRISM.Agent.exe` after extraction and reads its
+  `ProductVersion` into the log so the operator can see the new version
+  stamp before the relaunch line. If the EXE is missing, the script
+  marks `$fatal = $true` and pauses the visible window so the user gets
+  a real error message instead of having the old agent silently
+  relaunched (and the next "Update" click landing in the same loop).
+
+### Added
+
+- **Concurrent-update guard** (`Updater.cs`): process-wide
+  `SemaphoreSlim _updateGate = new(1, 1)` wraps the body of
+  `DownloadAndInstallAsync`. `WaitAsync(0)` fails fast with
+  `InvalidOperationException("Another update is already in progress on
+  this agent.")` instead of queueing. Stops a remote (WS) and a local
+  (tray "Check for Updates") update from racing on the same temp zip
+  and install dir — a scenario that may have contributed to the
+  "file is being used by another process" report on top of the primary
+  `ExtractToDirectory` crash.
+- **`Updater.IsUpdateInProgress`** public read-only probe so the tray
+  menu and the WS dispatcher can short-circuit BEFORE touching GitHub
+  Releases when an update is already running.
+- **`UpdateOutcome.AlreadyRunning`** flag on
+  `AgentControlPlane.CheckAndApplyUpdateAsync`. The agent's local
+  HTTP listener (`AgentWebUi`) now returns **HTTP 409 Conflict** with
+  `{ ok: false, alreadyRunning: true }` instead of the generic 502, so
+  the server / admin UI can surface a "wait, then retry" message.
+- **WS dispatcher** (`AgentMessageDispatcher.HandleUpdate`) now
+  inspects the `UpdateOutcome` and logs `WARN` (not `ERROR`) on
+  `alreadyRunning`, so a benign collision doesn't look like a real
+  update failure in the agent log pipeline.
+- **Tray UI** (`PrismTrayContext`): the "Check for Updates" menu
+  short-circuits early when `Updater.IsUpdateInProgress` is true and
+  shows a friendly "An update is already in progress" info dialog
+  instead of racing into the GitHub fetch. `InstallUpdateAsync` also
+  catches `InvalidOperationException` separately so a collision
+  surfaces as an info dialog, not as the red `Update Error` box.
+
+### Defensive
+
+- **Stale-zip cleanup** at the top of `DownloadAndInstallCoreAsync`:
+  any leftover `%TEMP%\PRISM.Agent.Update.zip` from a previous
+  interrupted attempt is `File.Delete`d before the new download
+  opens its FileStream. Removes one cause of "file is being used by
+  another process" errors when antivirus or a partial-download
+  handle was still pinning the stale file.
+- **`FileShare.Read` on the writing FileStream**
+  (`new FileStream(tempZip, FileMode.Create, FileAccess.Write,
+  FileShare.Read)`): antivirus / Defender can stream-scan the partial
+  zip without producing a sharing-violation against our write.
+- **Tighter `await using` scope** around the network + filesystem
+  handles so they're disposed immediately after the download loop
+  ends rather than at method exit, well before the PowerShell helper
+  is spawned. Eliminates one race-condition surface from the FATAL
+  post-mortem flow.
+
+### Files touched
+
+- `agent/src/PRISM.Agent/Tray/Updater.cs` — the PowerShell here-string
+  (extract + verification), `SemaphoreSlim` gate, stale-zip delete,
+  `FileShare.Read`, scoped streams.
+- `agent/src/PRISM.Agent/AgentControlPlane.cs` — `UpdateOutcome` record
+  gains `AlreadyRunning`; `CheckAndApplyUpdateAsync` short-circuits on
+  `Updater.IsUpdateInProgress` and catches `InvalidOperationException`
+  from the background `Task.Run`.
+- `agent/src/PRISM.Agent/Ws/AgentMessageDispatcher.cs` — `HandleUpdate`
+  inspects the outcome and logs WARN for benign already-running races.
+- `agent/src/PRISM.Agent/Tray/PrismTrayContext.cs` — `OnCheckUpdate`
+  early-return + `InstallUpdateAsync` `InvalidOperationException`
+  branch.
+- `agent/src/PRISM.Agent/WebUi/AgentWebUi.cs` — `POST /api/agent/update`
+  returns 409 with `alreadyRunning: true` when a download is in flight.
+- `agent/src/PRISM.Agent/PRISM.Agent.csproj` — version bumped
+  `0.1.35` → `0.1.36` (all four fields).
+
+---
+
 ## v0.1.35 — 2026-05-27
 
 PRISM logo branding across every agent surface a user sees: Windows

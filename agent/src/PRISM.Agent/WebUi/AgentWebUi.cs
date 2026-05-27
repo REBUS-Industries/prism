@@ -233,7 +233,21 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                             catch { /* tolerate junk */ }
                         }
                         var outcome = await _plane.CheckAndApplyUpdateAsync(tag);
-                        if (outcome.Error is not null)
+                        if (outcome.AlreadyRunning)
+                        {
+                            // 409 Conflict — another update is in flight on
+                            // this agent. Friendlier to surface than the
+                            // generic 502 below so the admin UI can show a
+                            // "wait, then retry" message.
+                            res.StatusCode = 409;
+                            await WriteJsonAsync(res, new
+                            {
+                                ok            = false,
+                                alreadyRunning = true,
+                                error         = outcome.Error,
+                            });
+                        }
+                        else if (outcome.Error is not null)
                         {
                             res.StatusCode = 502;
                             await WriteJsonAsync(res, new { ok = false, error = outcome.Error });

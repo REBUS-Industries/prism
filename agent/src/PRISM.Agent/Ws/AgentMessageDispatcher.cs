@@ -108,7 +108,43 @@ public sealed class AgentMessageDispatcher
         var tag = env?.Data?.Tag;
         _log.LogInformation("update requested by server (tag={Tag})", tag ?? "<latest>");
         var plane = _sp.GetRequiredService<AgentControlPlane>();
-        _ = plane.CheckAndApplyUpdateAsync(tag);
+        // Fire-and-forget on the WS pump thread, but inspect the outcome
+        // so v0.1.36's "already-running" short-circuit surfaces as a
+        // single WARN log line on the agent (and therefore on the
+        // server's log pipeline) rather than a silent no-op.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var outcome = await plane.CheckAndApplyUpdateAsync(tag);
+                if (outcome.AlreadyRunning)
+                {
+                    _log.LogWarning(
+                        "remote update request ignored — another update is already in progress on this agent (tag={Tag})",
+                        tag ?? "<latest>");
+                }
+                else if (outcome.Error is { } err && !outcome.UpdateAvailable)
+                {
+                    _log.LogError(
+                        "remote update request failed (tag={Tag}): {Error}",
+                        tag ?? "<latest>", err);
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Belt-and-braces: if a race slipped past the
+                // IsUpdateInProgress short-circuit inside the control
+                // plane and the gate rejected us anyway, log as WARN
+                // rather than ERROR so the admin UI doesn't flag a
+                // benign collision as a real failure.
+                _log.LogWarning(ex,
+                    "remote update collided with an in-flight update on this agent");
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "remote update handler threw");
+            }
+        });
     }
 
     static Envelope<T>? ParseEnvelope<T>(string raw)

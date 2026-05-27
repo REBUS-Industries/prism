@@ -327,6 +327,21 @@ public sealed class PrismTrayContext : ApplicationContext
 
     void OnCheckUpdate(object? sender, EventArgs e)
     {
+        // v0.1.36: if a remote (WS) update is already in flight, don't
+        // even hit GitHub — tell the operator to wait. Without this
+        // short-circuit the user's click would happily fetch the
+        // release JSON, pop the "Update available" dialog, and only
+        // explode at DownloadAndInstallAsync's _updateGate.WaitAsync(0).
+        if (Updater.IsUpdateInProgress)
+        {
+            MessageBox.Show(
+                "An update is already in progress on this agent. " +
+                "Please wait for it to complete before trying again.",
+                "Update In Progress",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             Updater.UpdateInfo? info = null;
@@ -406,6 +421,21 @@ public sealed class PrismTrayContext : ApplicationContext
             // "installing" state so the user sees the handoff to
             // PowerShell.
             form?.SetInstalling();
+        }
+        catch (InvalidOperationException ex)
+        {
+            // v0.1.36: concurrent-update collision. Either a remote WS
+            // "update" message landed mid-download or the user clicked
+            // twice quickly — show a friendly modal instead of the
+            // generic "Update Error" box.
+            form?.SetFailed("An update is already in progress.");
+            _sync.BeginInvoke(() =>
+                MessageBox.Show(
+                    "An update is already in progress. " +
+                    "Please wait for it to complete before trying again.\n\n" +
+                    $"({ex.Message})",
+                    "Update In Progress",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information));
         }
         catch (Exception ex)
         {

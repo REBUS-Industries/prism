@@ -20,6 +20,24 @@ public static class Updater
     static readonly Version _currentVersion =
         typeof(Updater).Assembly.GetName().Version ?? new Version(0, 1, 0);
 
+    /// <summary>
+    /// Process-wide gate that prevents two updates from running at the
+    /// same time. v0.1.36: a remote WS-triggered update and a local
+    /// tray-triggered "Check for updates" click could both call into
+    /// <see cref="DownloadAndInstallAsync"/> concurrently, racing on the
+    /// same on-disk zip path and the same install directory; the second
+    /// caller now fails fast with <see cref="InvalidOperationException"/>
+    /// instead of silently corrupting the first attempt.
+    /// </summary>
+    static readonly SemaphoreSlim _updateGate = new SemaphoreSlim(1, 1);
+
+    /// <summary>
+    /// True when <see cref="DownloadAndInstallAsync"/> is currently
+    /// inside its critical section. UI and WS dispatchers can read this
+    /// to short-circuit before kicking off a redundant download.
+    /// </summary>
+    public static bool IsUpdateInProgress => _updateGate.CurrentCount == 0;
+
     // ------------------------------------------------------------------
 
     /// <summary>
@@ -257,6 +275,34 @@ public static class Updater
         if (string.IsNullOrEmpty(info.DownloadUrl))
             throw new InvalidOperationException("No download URL in the release.");
 
+        // v0.1.36: concurrent-update guard. WaitAsync(0) fails fast instead
+        // of queueing, so an admin clicking the WS "Update" button while a
+        // local tray "Check for updates" is mid-download (or vice versa)
+        // sees "already in progress" immediately rather than two parallel
+        // PowerShell helpers racing on the same temp zip + install dir.
+        // On the happy path Application.Exit() is scheduled at the end of
+        // the critical section and the process tears down shortly after
+        // the finally block runs; Release() in finally is therefore safe
+        // (the window between release and process death is short and the
+        // WS pump is also being shut down by Application.Exit).
+        if (!await _updateGate.WaitAsync(0))
+        {
+            throw new InvalidOperationException(
+                "Another update is already in progress on this agent.");
+        }
+
+        try
+        {
+            await DownloadAndInstallCoreAsync(info, progress);
+        }
+        finally
+        {
+            _updateGate.Release();
+        }
+    }
+
+    static async Task DownloadAndInstallCoreAsync(UpdateInfo info, IProgress<int> progress)
+    {
         // Pre-flight: verify we can actually overwrite the install dir.
         // On workstations whose interactive user is not a local admin and
         // whose install was done via the legacy install.ps1 (pre-v0.1.32,
@@ -274,27 +320,54 @@ public static class Updater
 
         var tempZip = Path.Combine(Path.GetTempPath(), "PRISM.Agent.Update.zip");
 
+        // v0.1.36: defensive cleanup of any stale zip left behind by a
+        // previous attempt (e.g. an interrupted download, or the
+        // crash-on-ExtractToDirectory loop that bit v0.1.34/v0.1.35).
+        // An orphaned file with a stale antivirus handle on it would
+        // otherwise produce a confusing "file is being used by another
+        // process" error on the FileStream open below.
+        if (File.Exists(tempZip))
+        {
+            try { File.Delete(tempZip); }
+            catch (IOException) { /* will surface on the open below */ }
+        }
+
         // --- Download ---
         using var http = new HttpClient();
         http.DefaultRequestHeaders.UserAgent.ParseAdd(
             $"PRISM.Agent/{_currentVersion} (Windows)");
 
-        using var resp = await http.GetAsync(
-            info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
-        resp.EnsureSuccessStatusCode();
-
-        var totalBytes = resp.Content.Headers.ContentLength ?? info.SizeBytes ?? 0;
-        await using var src = await resp.Content.ReadAsStreamAsync();
-        await using var dst = File.Create(tempZip);
-        var buf        = new byte[65536];
-        long downloaded = 0;
-        int  read;
-        while ((read = await src.ReadAsync(buf)) > 0)
+        // Tight scope around the network + filesystem handles so they are
+        // disposed BEFORE we hand control to the PowerShell helper. The
+        // PS helper waits for our PID to exit before touching the zip, so
+        // technically the implicit method-exit dispose order is enough,
+        // but being explicit costs nothing and removes one race-condition
+        // surface from the FATAL post-mortem flow.
         {
-            await dst.WriteAsync(buf.AsMemory(0, read));
-            downloaded += read;
-            if (totalBytes > 0)
-                progress.Report((int)(downloaded * 100 / totalBytes));
+            using var resp = await http.GetAsync(
+                info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
+            resp.EnsureSuccessStatusCode();
+
+            var totalBytes = resp.Content.Headers.ContentLength ?? info.SizeBytes ?? 0;
+            await using var src = await resp.Content.ReadAsStreamAsync();
+            // FileShare.Read so antivirus / Defender can scan the partial
+            // zip in-flight without us hitting a sharing-violation write.
+            await using var dst = new FileStream(
+                tempZip,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read);
+            var buf        = new byte[65536];
+            long downloaded = 0;
+            int  read;
+            while ((read = await src.ReadAsync(buf)) > 0)
+            {
+                await dst.WriteAsync(buf.AsMemory(0, read));
+                downloaded += read;
+                if (totalBytes > 0)
+                    progress.Report((int)(downloaded * 100 / totalBytes));
+            }
+            await dst.FlushAsync();
         }
         progress.Report(100);
 
@@ -313,10 +386,25 @@ public static class Updater
         // "Updated to vX.Y.Z" tray balloon without text-matching the log.
         try { File.WriteAllText(NewVersionMarkerPath, tag); } catch { /* nop */ }
 
-        // Single-quoted strings inside the PS script escape ' as ''.
-        // Both Write-Host (visible terminal) and Add-Content (durable log)
-        // get every step line so users see progress AND we keep the
-        // post-mortem diagnostic file the next agent boot inspects.
+        // v0.1.36 PS-side fixes:
+        //   1. Extraction uses Expand-Archive -Force instead of
+        //      [System.IO.Compression.ZipFile]::ExtractToDirectory(zip,
+        //      dir, $true). The 3-arg ExtractToDirectory overload that
+        //      takes a bool only exists on .NET Core 3.0+; the .NET
+        //      Framework 4.x assembly loaded by Windows PowerShell 5.1
+        //      only has the (string, string, Encoding) overload, so
+        //      method binding coerces $true -> Encoding and crashes
+        //      immediately ("Cannot convert value 'True' to type
+        //      'System.Text.Encoding'"). Every v0.1.34/v0.1.35 in-app
+        //      update tripped this; nothing was ever extracted.
+        //      Expand-Archive has been overwrite-aware since PS 5.0 and
+        //      ships with every supported Windows PowerShell.
+        //   2. Post-extract verification: Test-Path on PRISM.Agent.exe
+        //      and read its ProductVersion so the log includes the
+        //      newly-extracted version stamp BEFORE we relaunch. If the
+        //      EXE is missing we mark FATAL and pause the window so the
+        //      operator sees the failure instead of getting the old
+        //      agent silently relaunched.
         var ps = $@"
 $ErrorActionPreference = 'Stop'
 $log = '{Esc(logPath)}'
@@ -342,17 +430,28 @@ try {{
         W 'agent already exited'
     }}
     Start-Sleep -Milliseconds 500
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    W 'extracting {Esc(tempZip)} -> {Esc(installDir)}'
-    [IO.Compression.ZipFile]::ExtractToDirectory('{Esc(tempZip)}', '{Esc(installDir)}', $true)
+
+    $zip        = '{Esc(tempZip)}'
+    $installDir = '{Esc(installDir)}'
+    $exePath    = '{Esc(exePath)}'
+
+    W ""extracting $zip -> $installDir""
+    Expand-Archive -LiteralPath $zip -DestinationPath $installDir -Force -ErrorAction Stop
     W 'extraction complete'
-    if (Test-Path '{Esc(exePath)}') {{
-        W 'launching new agent'
-        Start-Process -FilePath '{Esc(exePath)}'
-        W 'launched'
-    }} else {{
+
+    if (-not (Test-Path $exePath)) {{
         $fatal = $true
-        W ""ERROR: exe not found at '{Esc(exePath)}'""
+        W ""FATAL: extraction did not produce $exePath""
+    }} else {{
+        try {{
+            $newVersion = (Get-Item $exePath).VersionInfo.ProductVersion
+            W ""extracted version: $newVersion""
+        }} catch {{
+            W ""WARN: could not read version stamp from $exePath ($_)""
+        }}
+        W 'launching new agent'
+        Start-Process -FilePath $exePath
+        W 'launched'
     }}
 }} catch {{
     $fatal = $true
