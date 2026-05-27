@@ -13,7 +13,16 @@ name: assimp-image
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    # Match every PRISM monorepo `v*` release tag, but exclude the
+    # Visualiser tag family (`visualiser-v*`) which has its own
+    # workflow.  Without the `!visualiser-*` guard the bare `v*` glob
+    # also matches `visualiser-v0.1.0` and friends, causing stray
+    # `prism-assimp:visualiser-v...` images to land on GHCR.  GitHub
+    # Actions requires the exclusion to come AFTER the inclusion in
+    # the same list.
+    tags:
+      - 'v*'
+      - '!visualiser-*'
     paths:
       - 'assimp/**'
       - '.github/workflows/assimp.yml'
