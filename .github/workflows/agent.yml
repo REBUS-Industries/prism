@@ -14,7 +14,16 @@ name: agent-msi
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    # Match agent semver tags only.  The leading-bang exclusion guard
+    # keeps unrelated tag families (notably `visualiser-v*`) from
+    # cross-triggering this workflow - `v*` would otherwise glob-match
+    # `visualiser-v0.1.0` because both start with the letter `v`.
+    # GitHub Actions evaluates includes first, then strips matches that
+    # also match any `!`-prefixed pattern (the exclusion MUST come after
+    # the inclusion in the same list).
+    tags:
+      - 'v*'
+      - '!visualiser-*'
     paths:
       - 'agent/**'
       - 'shared/contracts/**'
