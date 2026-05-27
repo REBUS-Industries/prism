@@ -18,11 +18,11 @@ on:
     branches: [main]
     tags: ['visualiser-v*']
     paths:
-      - 'PRISM/visualiser/**'
+      - 'visualiser/**'
       - '.github/workflows/visualiser-msi.yml'
   pull_request:
     paths:
-      - 'PRISM/visualiser/**'
+      - 'visualiser/**'
       - '.github/workflows/visualiser-msi.yml'
   workflow_dispatch:
 
@@ -34,7 +34,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: PRISM/visualiser
+        working-directory: visualiser
     steps:
       - uses: actions/checkout@v4
 
@@ -135,7 +135,7 @@ jobs:
           repository: REBUS-ORBIT/prism-visualiser
           tag_name: ${{ github.ref_name }}
           name: PRISM Visualiser ${{ github.ref_name }}
-          body_path: PRISM/visualiser/RELEASE_NOTES.md
+          body_path: visualiser/RELEASE_NOTES.md
           token: ${{ secrets.ORBIT_DEPLOY_PAT }}
           files: |
             ${{ github.workspace }}/PRISM.Visualiser-*.zip

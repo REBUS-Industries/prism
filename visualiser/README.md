@@ -43,29 +43,30 @@ visualiser/
 
 ## Build
 
-From the repo root:
+From the [`REBUS-ORBIT/prism`](https://github.com/REBUS-ORBIT/prism) repo
+root:
 
 ```powershell
-dotnet build PRISM/visualiser/PRISM.Visualiser.sln -c Release
+dotnet build visualiser/PRISM.Visualiser.sln -c Release
 ```
 
 Or just the orchestrator:
 
 ```powershell
-dotnet build PRISM/visualiser/src/PRISM.Visualiser.Orchestrator -c Release
+dotnet build visualiser/src/PRISM.Visualiser.Orchestrator -c Release
 ```
 
 ## Test
 
 ```powershell
-dotnet test PRISM/visualiser/tests/PRISM.Visualiser.Orchestrator.Tests
+dotnet test visualiser/tests/PRISM.Visualiser.Orchestrator.Tests
 ```
 
 ## Run (dry-run only — Phase B)
 
 ```powershell
 $runId = [guid]::NewGuid().ToString()
-dotnet run --project PRISM/visualiser/src/PRISM.Visualiser.Orchestrator -- `
+dotnet run --project visualiser/src/PRISM.Visualiser.Orchestrator -- `
   stream `
     --server prod `
     --project demo `
