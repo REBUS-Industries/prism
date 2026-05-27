@@ -30,6 +30,11 @@ const workstationAgentFields: FieldDef[] = [
     label: 'WS endpoint override',
     placeholder: 'wss://prism.rebus.industries/ws/agent (leave blank to derive from request)',
   },
+  {
+    key: 'workstation_dns_suffix',
+    label: 'DNS suffix for workstation Web UI links',
+    placeholder: 'ad.rebus.industries',
+  },
 ];
 
 // Reactive state for each known key: current input + original DB value.
@@ -65,12 +70,36 @@ function isDirty(key: string): boolean {
   return !!v && v.value !== v.original;
 }
 
+/**
+ * Per-key client-side normalisation applied just before save. Currently
+ * only `workstation_dns_suffix` needs cleanup -- it's surfaced verbatim
+ * in browser URLs by the Workstations / Pipeline pages so we strip any
+ * accidental scheme prefix, leading dots, trailing slashes, port, and
+ * surrounding whitespace before persisting.
+ */
+function sanitizeValue(key: string, raw: string): string {
+  let v = (raw ?? '').trim();
+  if (key === 'workstation_dns_suffix') {
+    v = v
+      .replace(/^[a-z]+:\/\//i, '')   // strip http:// / https:// / ws:// etc.
+      .replace(/^\.+/, '')             // strip leading dots
+      .replace(/\/.*$/, '')            // strip trailing path
+      .replace(/:\d+$/, '');           // strip trailing :port
+  }
+  return v;
+}
+
 async function save(key: string) {
   error.value = null;
   saving[key] = true;
   try {
-    await settingsApi.set(key, values[key].value);
-    values[key].original = values[key].value;
+    const cleaned = sanitizeValue(key, values[key].value);
+    // Reflect any normalisation back into the input so the operator
+    // can see what was actually persisted (e.g. ".ad.rebus.industries"
+    // becomes "ad.rebus.industries").
+    values[key].value = cleaned;
+    await settingsApi.set(key, cleaned);
+    values[key].original = cleaned;
     status.value = `Saved ${key}`;
     setTimeout(() => (status.value = null), 1500);
   } catch (err) {
@@ -238,6 +267,18 @@ onMounted(refresh);
       needed. Leave the WS endpoint override blank to derive
       <code>wss://&lt;host&gt;/ws/agent</code> from the request host; set it
       only when the public proxy host differs from the request host.
+    </p>
+    <p class="muted" style="font-size: 12px; margin: 0 0 8px;">
+      The <em>DNS suffix</em> is appended to each workstation's
+      <code>nodeName</code> when the admin SPA builds the
+      <em>Open Web UI ↗</em> link on the Workstations and Pipeline pages
+      (<code>http://&lt;nodeName&gt;.&lt;suffix&gt;:7421/</code>). Leave
+      blank if your network resolves bare hostnames; set to e.g.
+      <code>ad.rebus.industries</code> when opening the admin UI from a
+      browser whose DNS search list does not include the workstation's
+      domain. Hard-reload the admin SPA after changing this. The link
+      auto-strips a leading dot, scheme prefix, trailing path, and
+      <code>:port</code> on save.
     </p>
     <div class="card">
       <div class="row" v-for="f in workstationAgentFields" :key="f.key">

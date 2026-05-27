@@ -24,6 +24,14 @@ export type SettingKey =
   // Optional override for the WSS endpoint baked into the per-node agent
   // config template. Falls back to wss://<request host>/ws/agent.
   | 'workstation_agent_ws_url'
+  // Optional DNS suffix appended to each workstation's `nodeName` when the
+  // admin SPA builds an "Open Web UI" link (http://<host>:7421/). Useful
+  // for browsers in subnets whose DNS search list does not include the
+  // workstation's domain (e.g. opening the admin UI from a workstation
+  // outside the AD-joined VLAN). Leave blank to keep the bare `nodeName`
+  // behaviour. Stored as e.g. `ad.rebus.industries` -- no leading dot,
+  // no protocol, no port.
+  | 'workstation_dns_suffix'
   // Persisted Vue Flow node positions for the admin Pipeline page. Stored
   // as a JSON string of shape:
   //   { "<pipelineId>": { "<nodeId>": { "x": number, "y": number } } }

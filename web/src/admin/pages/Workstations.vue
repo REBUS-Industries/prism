@@ -2,12 +2,14 @@
 import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import {
+  settingsApi,
   workstationsApi,
   type AgentBuildInfo,
   type ApiError,
   type Workstation,
 } from '../../shared/api';
 import { adminWs } from '../../shared/ws';
+import { workstationWebUiHost, workstationWebUiUrl } from '../../shared/workstationUrl';
 
 const rows = ref<Workstation[]>([]);
 const loading = ref(true);
@@ -29,11 +31,11 @@ const lifecycleStatus = reactive(new Map<string, LifecycleStatus>());
 // auto-clear instead of stomping a fresher message.
 const lifecycleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-// Default port for the agent's local web UI (since v0.1.31; bindAll defaults
-// to true so the LAN can reach it). `webUiPort` is not surfaced via the
-// workstations API yet, so we hard-code 7421 here -- it matches every
-// install we control. See AGENT_INSTALL.md.
-const AGENT_WEB_UI_PORT = 7421;
+// Optional DNS suffix to append to `nodeName` when building the
+// "Open Web UI ↗" link, sourced from the `workstation_dns_suffix` admin
+// setting. Fetched once on mount; rarely changes, so we don't re-fetch
+// on every WS event. Operators must hard-reload after changing it.
+const dnsSuffix = ref<string>('');
 
 let unsubscribeWs: (() => void) | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -101,17 +103,17 @@ async function remove(w: Workstation) {
 // ---------------------------------------------------------------- lifecycle
 /** Best-effort hostname for the agent's local web UI link. The DB doesn't
  *  carry a dedicated host column yet -- `nodeName` is the only stable
- *  identifier the row exposes, so we lean on the LAN to resolve it. Works
- *  out-of-the-box on AD-joined networks and any LAN with mDNS or a hosts
- *  file entry; manual IP overrides are a server-side TODO. */
+ *  identifier the row exposes, so we lean on the LAN to resolve it. When
+ *  the `workstation_dns_suffix` admin setting is configured (e.g.
+ *  `ad.rebus.industries`), it's appended here so browsers in subnets
+ *  whose DNS search list lacks the workstation's domain can still resolve
+ *  the link. Manual IP overrides remain a server-side TODO. */
 function webUiHost(w: Workstation): string {
-  // `nodeName` is required and length-limited (varchar(128)); strip
-  // whitespace defensively so the URL stays well-formed.
-  return w.nodeName.trim();
+  return workstationWebUiHost(w.nodeName, dnsSuffix.value);
 }
 
 function webUiUrl(w: Workstation): string {
-  return `http://${webUiHost(w)}:${AGENT_WEB_UI_PORT}/`;
+  return workstationWebUiUrl(w.nodeName, dnsSuffix.value);
 }
 
 function setLifecycleStatus(workstationId: string, status: LifecycleStatus): void {
@@ -207,8 +209,19 @@ function agentVersionState(w: Workstation): AgentVersionState {
   return compareSemver(ws, latest) < 0 ? 'outdated' : 'latest';
 }
 
+async function refreshDnsSuffix() {
+  // Best-effort: a failure here just means the bare-nodeName fallback
+  // is used. Don't block the page on it.
+  try {
+    const all = (await settingsApi.list()).settings;
+    dnsSuffix.value = (all['workstation_dns_suffix'] ?? '').trim();
+  } catch {
+    dnsSuffix.value = '';
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([refresh(), refreshAgentInfo()]);
+  await Promise.all([refresh(), refreshAgentInfo(), refreshDnsSuffix()]);
 
   // 1) Live updates: refresh whenever the WS reports a workstation event.
   //    Matches the Dashboard pattern (see Dashboard.vue).

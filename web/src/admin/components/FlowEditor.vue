@@ -25,30 +25,31 @@
  * (with a partial patch) mutates only the listed fields, both leaving
  * the live position untouched.
  */
-import { computed, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { VueFlow, MarkerType, Handle, Position, useVueFlow, type Edge, type Node, type NodeDragEvent } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
-import type { JobSummary, PipelineTopology, Workstation } from '../../shared/api';
+import { settingsApi, type JobSummary, type PipelineTopology, type Workstation } from '../../shared/api';
+import { workstationWebUiHost, workstationWebUiUrl } from '../../shared/workstationUrl';
 
 interface NodePos { x: number; y: number; }
 
-// The agent serves its tray Web UI on a fixed port (`webUiPort`, default
-// 7421, `webUiBindAll` defaults to true since v0.1.31). The DB does not
-// carry a dedicated host column for workstation rows yet, so — matching
-// the pattern in pages/Workstations.vue — we lean on `nodeName` as a
-// LAN-resolvable hostname (works on AD-joined networks / mDNS / hosts
-// file). A dedicated host field is a server-side TODO.
-const AGENT_WEB_UI_PORT = 7421;
+// Optional DNS suffix appended to each workstation's `nodeName` when
+// building the "Web UI ↗" link below; sourced from the
+// `workstation_dns_suffix` admin setting. Fetched once on mount so
+// frequent WS-driven re-renders don't churn the network. Operators
+// must hard-reload after changing it in Settings. See
+// shared/workstationUrl.ts for the URL format.
+const dnsSuffix = ref<string>('');
 
 function webUiHost(name: string): string {
-  return name.trim();
+  return workstationWebUiHost(name, dnsSuffix.value);
 }
 function webUiUrl(name: string): string {
-  return `http://${webUiHost(name)}:${AGENT_WEB_UI_PORT}/`;
+  return workstationWebUiUrl(name, dnsSuffix.value);
 }
 
 const props = defineProps<{
@@ -254,16 +255,30 @@ function applyLiveData() {
   }
 }
 
-// React to live changes (jobs / workstations). The watcher fires only
-// after Vue Flow's store has already absorbed baseNodes, so updateNode
-// can find the targets. On initial render we also call applyLiveData()
-// from the @init handler below to paint the first frame.
-watch([stageJobs, () => props.workstations], () => applyLiveData(), { deep: true });
+// React to live changes (jobs / workstations / dnsSuffix). The watcher
+// fires only after Vue Flow's store has already absorbed baseNodes, so
+// updateNode can find the targets. On initial render we also call
+// applyLiveData() from the @init handler below to paint the first frame.
+// `dnsSuffix` is included so the Web UI links update once the setting
+// is fetched (it loads asynchronously on mount).
+watch([stageJobs, () => props.workstations, dnsSuffix], () => applyLiveData(), { deep: true });
 watch(() => props.topology, () => applyLiveData(), { flush: 'post' });
 
 function onInit() {
   applyLiveData();
 }
+
+// Best-effort fetch of the optional DNS suffix admin setting. A failure
+// (e.g. unauthenticated viewer of a public-embeddable pipeline view)
+// just means we fall back to the bare-`nodeName` URL.
+onMounted(async () => {
+  try {
+    const all = (await settingsApi.list()).settings;
+    dnsSuffix.value = (all['workstation_dns_suffix'] ?? '').trim();
+  } catch {
+    dnsSuffix.value = '';
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Edges — animate any edge whose source OR target is currently "active",
