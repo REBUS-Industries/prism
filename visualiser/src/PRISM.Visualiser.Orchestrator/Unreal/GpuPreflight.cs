@@ -213,7 +213,7 @@ public sealed class GpuPreflight
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 };
-                using var proc = Process.Start(psi);
+                using var proc = System.Diagnostics.Process.Start(psi);
                 if (proc is null) return null;
                 var stdout = proc.StandardOutput.ReadToEnd();
                 if (!proc.WaitForExit(10_000)) return null;
@@ -238,7 +238,7 @@ public sealed class GpuPreflight
         public IReadOnlyList<string> GetRunningEditorProcessNames(string namePrefix)
         {
             var hits = new List<string>();
-            foreach (var p in Process.GetProcesses())
+            foreach (var p in System.Diagnostics.Process.GetProcesses())
             {
                 try
                 {
