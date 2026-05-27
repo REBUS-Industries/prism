@@ -83,6 +83,161 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.1.39 — 2026-05-27 — Visualiser Phase H: coturn TURN server + env wiring
+
+> **Phase H of the Visualiser feature.** Stands up the WebRTC media
+> relay (`coturn` on VM 211, public DNS
+> `visualiser.rebus.industries`) and wires the real `TURN_SECRET` +
+> `JWT_SIGNALLING_SECRET` + `VISUALISER_START_TIMEOUT_MS` through PRISM
+> server's env. With this in place the Phase G "turn: null" sentinel
+> is replaced by real RFC 7635 credentials and a browser anywhere on
+> the public internet can connect to a Pixel Streaming player URL
+> backed by a workstation behind PRISM.
+>
+> Co-released with `v0.1.39` of the agent. The agent has **no code
+> change** in this release — it ships only the csproj version bump so
+> the agent + server release tags stay in lockstep.
+
+### Added
+
+- **TURN deployment artifacts** (outside the PRISM repo, under
+  `D:\Documents\Claude\REBUS System\TURN\`):
+    - `docker-compose.yml` — `coturn/coturn:4.6`, `network_mode: host`
+      (required for the wide UDP relay range — initially `49152-65535`,
+      narrowed to `52000-56999` post-merge to avoid the WireGuard
+      `51820/udp` listener; see "Updated" section below), volume-mounts
+      for `turnserver.conf` and `/etc/letsencrypt`.
+    - `turnserver.conf` — `use-auth-secret` (RFC 7635), realm
+      `visualiser.rebus.industries`, `external-ip=185.48.165.165/10.0.200.211`,
+      relay range `52000-56999/udp` (was `49152-65535/udp` at initial
+      Phase H merge — see "Updated" section below for the WireGuard
+      collision rationale), denied-peer-ip ranges for every
+      RFC-1918 / loopback / link-local / documentation block with
+      narrow `allowed-peer-ip` exceptions for the REBUS workstation
+      VLANs (`10.0.10.200-250`, `10.0.200.200-250`). The
+      `static-auth-secret` line carries a `<TURN_SECRET_PLACEHOLDER>`
+      string that the operator sed-replaces at deploy time. **No real
+      secret is committed**; secret generation is gated on operator
+      action.
+    - `SETUP_NOTES.md` — ten-step deploy runbook covering secret
+      generation, SCP to VM 211, sed-replace, PRISM `.env` update,
+      `docker compose up -d`, public + internal DNS, certbot for the
+      `turns://` TLS cert on port 5349, certbot deploy-hook to
+      `docker restart coturn` on renewal, and smoke tests against the
+      WebRTC Trickle ICE sample page.
+    - `UNIFI_RULES.md` — copy-pasteable port-forward table for the
+      UniFi gateway: `coturn-stun-udp` 3478/udp, `coturn-stun-tcp`
+      3478/tcp, `coturn-tls` 5349/tcp, `coturn-relay-udp`
+      52000-56999/udp (narrowed from `49152-65535/udp` post-merge —
+      see "Updated" section below), all targeting `10.0.200.211`.
+      Includes the "until these rules are applied" symptom matrix for
+      diagnosing no-relay-candidates failures.
+
+- **Caddy proxy block for `visualiser.rebus.industries`**
+  (`D:\Documents\Claude\REBUS System\proxy\Caddyfile`). Caddy serves
+  only the ACME HTTP-01 challenge + a friendly `200` health response;
+  TURN traffic is **not** proxied (TURN is not HTTP and `turns://`
+  TLS must be terminated by coturn itself on VM 211:5349). Documented
+  in `proxy/SETUP_NOTES.md` so the next operator does not assume the
+  TURN traffic actually flows through the proxy pair.
+
+- **PRISM server env passthrough** (`infra/docker-compose.yml` +
+  `infra/.env.example`):
+    - `TURN_SECRET` — shared with coturn's `static-auth-secret`.
+      Empty → `turn: null` sentinel (Phase G behaviour); set →
+      `turnCredentials.ts` mints real RFC 7635 credentials.
+    - `TURN_REALM` — default `visualiser.rebus.industries`.
+    - `JWT_SIGNALLING_SECRET` — HS256 signing key for the 5-minute
+      WS-signalling tokens. Independent of `TURN_SECRET`.
+    - `VISUALISER_START_TIMEOUT_MS` — default `180000` (180s),
+      matches the measured first-cold-start envelope.
+  No code change in the server itself — `turnCredentials.ts` already
+  read these vars in Phase G; this PR just wires them through the
+  container env in production.
+
+- **`infra/SETUP_NOTES.md`** (new) — companion to `DEPLOY.md`
+  documenting the adjacent infra dependencies PRISM relies on but
+  does not own (coturn, Caddy, UniFi). Includes the full
+  `infra/.env.example → /opt/prism/.env → compose → process.env →
+  turnCredentials.ts` wiring diagram and the recommended deploy
+  ordering for first-time stand-up.
+
+### Notes
+
+- **No code change on the server.** Phase G's `turnCredentials.ts`,
+  `signallingToken.ts`, `dispatcher.ts`, `signallingProxy.ts`, etc.
+  already implement the full credential + signalling surface — Phase
+  H is purely the operational config that lets that surface produce
+  real (rather than sentinel) values in production.
+- **No code change on the agent** beyond the version bump. The agent
+  release tag is held in lockstep with the server image tag, so a
+  Phase H deploy produces a `prism-agent-v0.1.39` MSI that is a
+  byte-identical mirror of `v0.1.38` apart from
+  `AssemblyInformationalVersion`. Acceptable trade — keeps the
+  release matrix simple.
+- The TURN secret itself is intentionally **not** generated by the
+  Phase H PR. Secret generation is gated on operator authorization
+  per the workspace's deploy convention. The runbook in
+  `TURN/SETUP_NOTES.md` is the deploy artifact.
+
+### Pending follow-ups
+
+- **Phase I** lands the real Pixel Streaming embed in
+  `VisualiserViewer.vue` and the agent-side bridge that forwards
+  `signallingFrame` envelopes to the orchestrator's local Cirrus.
+- **Phase J** adds MVR/GDTF detection + the project attachments
+  endpoint.
+- **Phase K** wires the bandwidth-monitor / `max_active_streams`
+  admin control mentioned as a v1 risk in the plan.
+
+### Operator runbook (post-merge)
+
+1. Generate `TURN_SECRET` and `JWT_SIGNALLING_SECRET`
+   (`openssl rand -hex 32` — two independent values).
+2. Stage `D:\Documents\Claude\REBUS System\TURN\{docker-compose.yml,turnserver.conf}`
+   onto VM 211 at `~rebus/coturn/`. Sed-replace the placeholder.
+3. Edit `/opt/prism/.env`: add `TURN_SECRET`, `TURN_REALM`,
+   `JWT_SIGNALLING_SECRET`, `VISUALISER_START_TIMEOUT_MS`.
+4. `cd ~/coturn && docker compose up -d`. Verify
+   `IPv4. Listener opened on : 0.0.0.0:3478` in logs.
+5. `cd /opt/prism && docker compose restart prism-server`.
+6. Apply UniFi rules per `TURN/UNIFI_RULES.md`.
+7. Add public A record `visualiser.rebus.industries →
+   185.48.165.165` at the registrar (✅ live as of 2026-05-27) and
+   an internal A record `visualiser.rebus.industries → 10.0.200.211`
+   on DC1.
+8. Issue the TLS cert via `certbot certonly --standalone` on VM 211.
+   Uncomment the `cert=` / `pkey=` lines in `turnserver.conf` and
+   restart coturn.
+9. Smoke-test using the WebRTC Trickle ICE page from a cellular
+   connection — expect `relay` candidates from `185.48.165.165` to
+   appear within ~2 s.
+
+### Updated post-merge (2026-05-27)
+
+- **Public DNS A record `visualiser.rebus.industries →
+  185.48.165.165` is ✅ live as of 2026-05-27.** Step 7 of the
+  operator runbook is therefore complete on the public-DNS side; the
+  internal AD DNS record (DC1) and the certbot/TLS step still need
+  operator attention.
+- **coturn relay range narrowed from `49152-65535/udp` to
+  `52000-56999/udp`** in
+  `D:\Documents\Claude\REBUS System\TURN\turnserver.conf` and
+  `D:\Documents\Claude\REBUS System\TURN\UNIFI_RULES.md` (and the
+  matching comments in `docker-compose.yml` and `SETUP_NOTES.md`).
+  Rationale: the original IANA-default range `49152-65535` straddles
+  WireGuard's `51820/udp`, which is forwarded elsewhere on the
+  REBUS network. The new `52000-56999` window is well above
+  `51820`, well inside the IANA Dynamic / Ephemeral block, and
+  5000 ports is far more than the realistic concurrency ceiling
+  (~20 simultaneous Pixel Streaming sessions, since each one needs
+  a GPU on the workstation side). **Operator action**: on VM 211,
+  re-SCP the updated `turnserver.conf`, then
+  `cd ~/coturn && docker compose up -d coturn --force-recreate`,
+  and re-apply the updated UniFi rule for `coturn-relay-udp`.
+
+---
+
 ## v0.1.38 — 2026-05-27 — Visualiser Phase G: server API + WS signalling proxy + admin UI
 
 > **Phase G of the Visualiser feature.** Wires up the portal-facing
