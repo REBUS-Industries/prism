@@ -1,0 +1,142 @@
+name: visualiser-msi
+
+# Builds the PRISM.Visualiser orchestrator (.NET 8, win-x64, framework-
+# dependent multi-file publish) and publishes the framework-dependent
+# exe + xUnit test results to GH Releases on a tag push.
+#
+# Tag convention: visualiser-v<VisualiserVersion> (see
+# PRISM/visualiser/Directory.Build.props). Plain v* tags from the agent
+# release cycle are intentionally ignored — pipelines are independent.
+#
+# The orchestrator runs on Windows workstations alongside the PRISM
+# Agent and Unreal Engine. Self-contained publish would balloon the
+# release artifact to ~80MB; the workstations already ship .NET 8 with
+# the agent, so framework-dependent keeps the asset small.
+
+on:
+  push:
+    branches: [main]
+    tags: ['visualiser-v*']
+    paths:
+      - 'PRISM/visualiser/**'
+      - '.github/workflows/visualiser-msi.yml'
+  pull_request:
+    paths:
+      - 'PRISM/visualiser/**'
+      - '.github/workflows/visualiser-msi.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # for softprops/action-gh-release to upload assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: PRISM/visualiser
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore PRISM.Visualiser.sln
+
+      - name: Build (Release)
+        run: dotnet build PRISM.Visualiser.sln -c Release --no-restore -warnaserror
+
+      - name: Test
+        run: |
+          dotnet test tests/PRISM.Visualiser.Orchestrator.Tests/PRISM.Visualiser.Orchestrator.Tests.csproj `
+            -c Release `
+            --no-build `
+            --logger "trx;LogFileName=visualiser-tests.trx" `
+            --results-directory ${{ runner.temp }}\test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visualiser-test-results
+          path: ${{ runner.temp }}\test-results\*.trx
+          if-no-files-found: warn
+
+      - name: Publish (framework-dependent, win-x64)
+        run: |
+          dotnet publish src/PRISM.Visualiser.Orchestrator/PRISM.Visualiser.Orchestrator.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained false `
+            --no-restore `
+            -o ${{ runner.temp }}\publish
+
+      - name: Stage release payload
+        shell: pwsh
+        run: |
+          $stage = "${env:RUNNER_TEMP}\stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "${env:RUNNER_TEMP}\publish\*" $stage -Recurse -Force
+          Get-ChildItem $stage | Format-Table Name,Length
+
+      - name: Zip publish dir
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag -or -not $tag.StartsWith("visualiser-v")) {
+            $tag = "visualiser-dev-${{ github.sha }}".Substring(0, 24)
+          }
+          Compress-Archive `
+            -Path "${env:RUNNER_TEMP}\stage\*" `
+            -DestinationPath "${{ github.workspace }}\PRISM.Visualiser-$tag.zip" `
+            -Force
+          Get-ChildItem "${{ github.workspace }}\PRISM.Visualiser-*.zip" | Format-Table Name,Length
+        working-directory: ${{ github.workspace }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prism-visualiser
+          path: PRISM.Visualiser-*.zip
+          if-no-files-found: error
+
+      - name: Extract release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/visualiser-v')
+        id: notes
+        shell: bash
+        # Pulls the section for the current tag out of CHANGELOG.md.
+        # Tag visualiser-vX.Y.Z is matched to a `## vX.Y.Z` heading.
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          # "visualiser-v0.1.0" -> "v0.1.0"
+          SEMVER_TAG="${TAG#visualiser-}"
+          if [[ -f CHANGELOG.md ]]; then
+            awk -v tag="$SEMVER_TAG" '
+              $0 ~ "^## " tag " " || $0 == "## " tag { found=1; next }
+              found && /^## v/ { exit }
+              found { print }
+            ' CHANGELOG.md > RELEASE_NOTES.md
+            if [[ ! -s RELEASE_NOTES.md ]]; then
+              echo "No CHANGELOG entry found for $SEMVER_TAG." > RELEASE_NOTES.md
+            fi
+          else
+            echo "No PRISM/visualiser/CHANGELOG.md present." > RELEASE_NOTES.md
+          fi
+          echo "----- RELEASE_NOTES.md -----"
+          cat RELEASE_NOTES.md
+          echo "----- end -----"
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/visualiser-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: REBUS-ORBIT/prism-visualiser
+          tag_name: ${{ github.ref_name }}
+          name: PRISM Visualiser ${{ github.ref_name }}
+          body_path: PRISM/visualiser/RELEASE_NOTES.md
+          token: ${{ secrets.ORBIT_DEPLOY_PAT }}
+          files: |
+            ${{ github.workspace }}/PRISM.Visualiser-*.zip
+          make_latest: true
