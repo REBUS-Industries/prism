@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Phase B scaffold. The orchestrator is Windows-only because the
+      Phase E/F worker spawns Cirrus + UE child processes and assigns
+      them to a Win32 Job Object for KILL_ON_JOB_CLOSE semantics.
+    -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RootNamespace>PRISM.Visualiser.Orchestrator</RootNamespace>
+    <AssemblyName>prism-visualiser</AssemblyName>
+
+    <!--
+      PublishAot-ready means we intentionally keep dependencies that are
+      compatible with the trim+AOT toolchain so a future `dotnet publish
+      -p:PublishAot=true` becomes a config flip rather than a rewrite.
+      Serilog file/console sinks are reflection-light and trim-safe;
+      System.CommandLine emits AOT-friendly parsers as of 2.0-beta4.
+      We leave PublishAot off in CI for now because the win-x64 AOT
+      toolchain still costs ~3min and we don't need the size win yet.
+    -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <PublishAot>false</PublishAot>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageReference Include="Serilog" Version="4.0.2" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+  </ItemGroup>
+
+  <!--
+    System.CommandLine 2.0-beta4 emits IL2026/IL2104 trim warnings via
+    its System.Reflection.NullabilityInfoContext lookups. The Phase B
+    scaffold sticks to its public, statically-typed API so these
+    warnings never fire from our code, but the analyzer is conservative
+    enough to flag them anyway when IsTrimmable=true. Suppress the
+    specific IDs at the project level rather than blanket disabling the
+    analyzer; revisit when System.CommandLine cuts a stable release.
+  -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);IL2026;IL2104;IL3050</NoWarn>
+  </PropertyGroup>
+
+</Project>

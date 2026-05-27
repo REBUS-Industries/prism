@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Common properties inherited by every project in PRISM.Visualiser.sln.
+    Mirrors the convention used in orbit-connectors so the orchestrator and
+    its test project share a single version source of truth.
+
+    Bump VisualiserVersion here when cutting a new release; the CI tag
+    convention is `visualiser-v<VisualiserVersion>`.
+  -->
+  <PropertyGroup>
+    <VisualiserVersion>0.1.0</VisualiserVersion>
+    <Version>$(VisualiserVersion)</Version>
+    <AssemblyVersion>$(VisualiserVersion).0</AssemblyVersion>
+    <FileVersion>$(VisualiserVersion).0</FileVersion>
+    <InformationalVersion>$(VisualiserVersion)</InformationalVersion>
+
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsAsErrors />
+
+    <Product>PRISM Visualiser</Product>
+    <Company>REBUS-ORBIT</Company>
+    <Copyright>Copyright (c) REBUS-ORBIT</Copyright>
+  </PropertyGroup>
+
+</Project>
