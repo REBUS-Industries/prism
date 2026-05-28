@@ -25,6 +25,62 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.6 — 2026-05-28 — Fix UE 5.7 Interchange API drift + drop Slate-bound AssetImportTask fallback
+
+> **Fixes the visualiser run failing at the import phase with UE
+> exit code 3 after v0.3.5 unblocked the commandlet. Two cascading
+> bugs in `import_orbit.py.in`, both previously masked by the v0.3.5
+> commandlet flag bug because the script never started.**
+
+See `visualiser/CHANGELOG.md::v0.5.4` for the full details. In short:
+
+### Fixed
+
+- **`Unreal/PythonScripts/import_orbit.py.in`** — switched the
+  Interchange singleton accessor from the pre-5.5
+  `unreal.InterchangeManager.get_interchange_manager()` (removed in UE
+  5.7, surfaced as `AttributeError: type object 'InterchangeManager'
+  has no attribute 'get_interchange_manager'`) to the canonical 5.5+
+  name `get_interchange_manager_scripted()`. The legacy name is kept
+  as a best-effort fallback for older 5.x point releases.
+- **`Unreal/PythonScripts/import_orbit.py.in`** — `import_asset` is
+  now called with the correct UE 5.5+ signature
+  `import_asset(content_path, source_data, import_asset_parameters)`:
+  source data is built explicitly via
+  `unreal.InterchangeManager.create_source_data(file_name)` and the
+  destination content path is passed as the FIRST positional argument
+  rather than as a non-existent field on `ImportAssetParameters`. The
+  speculative `import_asset_with_params` branch is gone — that method
+  was never present on the 5.5+ binding.
+- **`Unreal/PythonScripts/import_orbit.py.in`** — dropped the
+  `AssetImportTask` fallback path (`_import_via_asset_task`). The
+  fallback was Slate-bound: `AssetImportTask` routes through the
+  import-settings dialog even with `automated=True`, and Slate is
+  NOT initialised when the editor runs as `PythonScriptCommandlet`
+  under `-NullRHI`. Hitting the fallback crashed UE on
+  `Assertion failed: CurrentApplication.IsValid()
+  [SlateApplication.h:321]` and the commandlet exited with code 3.
+  Any Interchange failure now bubbles up to the existing
+  `_emit_error("import_failed", ...)` path, which is the correct
+  surface for the orchestrator's structured `failed/v1` event.
+- **`Unreal/PythonScripts/import_orbit.py`** — the lintable twin is
+  kept in sync with the `.py.in` template so artists who lint the
+  script outside the UE editor see the same body.
+
+### Notes
+
+- Closes [#21](https://github.com/REBUS-ORBIT/prism/issues/21).
+- v0.3.5 fixed the commandlet flag (`-ExecutePythonScript` →
+  `-script`) so the python script starts; v0.3.6 fixes the very
+  next failure mode the script hits when it does. Failure-mode
+  progression so far: `exit=-1` (no commandlet)
+  → `exit=3` (commandlet ran, hit Interchange/Slate gap)
+  → expected next is either `ready/v1` end-to-end or a Phase F
+  bring-up failure now that import lands.
+- No agent / orchestrator C# changes — the UE invocation,
+  ready-marker contract, and Cirrus signalling supervisor are
+  untouched. Server image is unchanged at the v0.3.5 build.
+
 ## v0.3.5 — 2026-05-28 — Fix `-ExecutePythonScript` rejected by UE commandlet
 
 > **Fixes the visualiser run failing at the import phase with

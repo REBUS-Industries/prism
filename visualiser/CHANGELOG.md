@@ -4,6 +4,132 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.4 — Fix UE 5.7 Interchange API drift + drop Slate-bound AssetImportTask fallback
+
+> **Fixes the Phase E UE import on PC01 (and any other UE 5.7
+> workstation) failing with `ue_import_failed: UE exited without a
+> ready marker (exit=3)`. With v0.5.3, `import_orbit.py` finally
+> starts inside `PythonScriptCommandlet`; v0.5.4 fixes the very next
+> bug the script hits — two cascading UE-API regressions previously
+> masked because the commandlet never started.**
+
+### Root cause
+
+#### Bug 1 — `InterchangeManager.get_interchange_manager()` removed in 5.7
+
+`_import_via_interchange` in `import_orbit.py.in` called
+`unreal.InterchangeManager.get_interchange_manager()`, which was the
+pre-5.5 name for the scripted singleton accessor. UE 5.5 renamed it
+to `get_interchange_manager_scripted()` and dropped the old name; on
+5.7 the call surfaces as:
+
+```text
+LogPython: Warning: Interchange import failed; falling back to
+  AssetImportTask: type object 'InterchangeManager' has no attribute
+  'get_interchange_manager'
+```
+
+The first-line warning then drove execution into the
+`AssetImportTask` fallback branch (Bug 2).
+
+#### Bug 2 — `AssetImportTask` is Slate-bound, crashes under `-NullRHI`
+
+The `_import_via_asset_task` fallback used
+`unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])`.
+Even with `task.set_editor_property("automated", True)`,
+`AssetImportTask` internally routes through Slate (the
+import-settings dialog still constructs Slate widgets so the
+factory can read the user's last choices). Slate is NOT initialised
+when UE runs as `PythonScriptCommandlet` with `-NullRHI` — the very
+next line in the per-run `REBUSVis.log` is the assertion:
+
+```text
+LogWindows: Error: appError called: Assertion failed:
+  CurrentApplication.IsValid()
+  [File:Slate/Public/Framework/Application/SlateApplication.h]
+  [Line: 321]
+```
+
+UE then `RequestExit(1, 3, ...)`'s out, the orchestrator's
+`UnrealLauncher.SafeExitCode` reports `3`, and the failure surfaces
+as `ue_import_failed: UE exited without a ready marker (exit=3)`.
+
+#### Bug 3 (latent) — `ImportAssetParameters.destination_path`
+
+`_build_import_parameters` set
+`params.destination_path = target_folder`. That field doesn't exist
+on UE 5.5+'s `ImportAssetParameters` (`reimport_asset`,
+`reimport_source_index`, `is_automated`, `follow_redirectors`,
+`override_pipelines`, `import_level`, `destination_name`,
+`replace_existing`, plus the `on_*_done` callbacks — that's the full
+shape). Setting an unknown attribute on an `unreal.Object` subclass
+raises `AttributeError` on 5.7. Even if Bugs 1 + 2 had been fixed,
+the parameter object would have failed to construct.
+
+The destination content path is conveyed as the first positional
+argument to `InterchangeManager.import_asset(...)`, NOT as a field
+on the parameters object.
+
+### Fixed
+
+- **`Unreal/PythonScripts/import_orbit.py.in::_get_interchange_manager`**
+  (new) — try `get_interchange_manager_scripted` first; fall back to
+  the legacy `get_interchange_manager` name on older 5.x point
+  releases for diagnostic value; raise a `RuntimeError` with a
+  user-actionable message if neither attribute exists.
+- **`Unreal/PythonScripts/import_orbit.py.in::_import_via_interchange`**
+  — built `source_data` explicitly via
+  `unreal.InterchangeManager.create_source_data(gltf_path)`, called
+  `manager.import_asset(target_folder, source_data, params)` with
+  the canonical 5.5+ signature, and removed the speculative
+  `import_asset_with_params` branch (that method was never on the
+  binding).
+- **`Unreal/PythonScripts/import_orbit.py.in::_build_import_parameters`**
+  — removed the bogus `destination_path` attribute set; kept
+  `is_automated`, `replace_existing`, added `follow_redirectors`.
+  The destination content path is now exclusively the first
+  positional argument to `import_asset`.
+- **`Unreal/PythonScripts/import_orbit.py.in::main`** — dropped the
+  `try/except` that wrapped `_import_via_interchange` and the
+  `_import_via_asset_task` fallback it called. Removed the entire
+  `_import_via_asset_task` function. Interchange is now required;
+  any Interchange failure bubbles up to the outer try/except, which
+  already emits `PRISM_VISUALISER_ERROR ... import_failed` and
+  `sys.exit(1)` — the canonical structured failure surface for the
+  orchestrator. The orchestrator's `UnrealLauncher.WaitForReadyMarker`
+  treats this as `ue_import_failed` with exit code 6.
+- **`Unreal/PythonScripts/import_orbit.py`** — lintable twin updated
+  in lock-step with the template so the body matches exactly.
+
+### Not in scope
+
+- **`prism-visualiser.exe` is unsigned** (no Authenticode signature
+  on the framework-dependent publish), so first-run SmartScreen /
+  Defender may show a one-time warning on a fresh workstation. This
+  is the same posture as v0.5.3 — separate ticket if a UAC prompt
+  recurs across sessions.
+- **MVR / GDTF Phase J import script (`import_mvr.py.in`)** —
+  intentionally untouched. The MVR DMX-plugin path uses
+  `AssetImportTask` (DMX factory class) but is invoked under a
+  separate UE pass for which the `-NullRHI` constraint may need to
+  be re-evaluated as part of a future Phase J PR. Out of scope for
+  issue #21.
+
+### Tests
+
+- No new unit tests — the fix lives entirely in the Python script
+  and exercises UE-side behaviour that requires a real UE 5.7
+  install. Existing C# orchestrator + scaffolder tests
+  (`UnrealEnvironmentTests`, `MvrGdtfDetectorTests`,
+  `ProjectScaffolderTests`) all pass unchanged: the
+  `ProjectScaffolder` template-rendering contract
+  (`{{RUN_ID}}` / `{{GLTF_PATH}}` / `{{TARGET_FOLDER}}` /
+  `{{LEVEL_NAME}}`) is unchanged in this PR.
+- End-to-end verification: dispatch a visualiser stream against PC01
+  after installing the v0.3.6 agent MSI — the per-run
+  `REBUSVis.log` should reach `PRISM_VISUALISER_READY` instead of
+  stopping at `Assertion failed: CurrentApplication.IsValid()`.
+
 ## v0.5.3 — Fix `ue_import_failed: UE exited without a ready marker (exit=-1)`
 
 > **Fixes the Phase E UE import on PC01 (and any other UE 5.7 workstation):
