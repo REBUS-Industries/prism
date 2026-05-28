@@ -25,6 +25,31 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.4 — 2026-05-28 — Fix `scaffold_failed: 404 on version REST endpoint`
+
+> **Fixes `scaffold_failed: GET api/v1/projects/.../versions/... failed with HTTP 404`
+> when the visualiser orchestrator tries to fetch version metadata from ORBIT.**
+
+### Fixed
+
+- **Visualiser orchestrator** (`OrbitApi/HttpOrbitApi.cs`): the orchestrator was
+  calling `GET /api/v1/projects/{projectId}/versions/{versionId}` to resolve a
+  version's root object id. This REST endpoint does not exist in the ORBIT server
+  (which is GraphQL-first). The call now uses the ORBIT GraphQL endpoint
+  (`POST /graphql` with `query Version { project { version { referencedObject … } } }`)
+  which returns the same data correctly.
+- **Orchestrator object endpoint** (`EndpointTemplates.Object`): corrected from
+  `api/v1/projects/{0}/objects/{1}` to `objects/{0}/{1}/single` (the actual Speckle
+  object REST API path served by the ORBIT server).
+- **Orchestrator blob endpoint** (`EndpointTemplates.Blob`): corrected from
+  `api/v1/projects/{0}/blobs/{1}` to `blobs/{0}/{1}` (verified against live ORBIT).
+
+These three paths were all placeholders from the initial scaffold that were never
+reconciled against the live ORBIT server API. The version endpoint fix is the
+blocker; the object and blob path fixes prevent the next two 404s in the pipeline.
+
+---
+
 ## v0.3.3 — 2026-05-28 — Fix `scaffold_failed: versionId empty string`
 
 > **Fixes `scaffold_failed: The value cannot be an empty string or composed entirely

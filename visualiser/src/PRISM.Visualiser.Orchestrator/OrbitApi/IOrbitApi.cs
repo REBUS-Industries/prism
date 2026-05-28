@@ -11,8 +11,9 @@ namespace PRISM.Visualiser.Orchestrator.OrbitApi;
 public interface IOrbitApi
 {
     /// <summary>
-    /// Resolve a single <see cref="VersionDescriptor"/>. Hits
-    /// <c>GET /api/v1/projects/{projectId}/versions/{versionId}</c>.
+    /// Resolve a single <see cref="VersionDescriptor"/> by querying
+    /// the ORBIT GraphQL endpoint (<c>POST /graphql</c>). The ORBIT
+    /// server exposes no REST route for version metadata.
     /// </summary>
     Task<VersionDescriptor> GetVersionAsync(
         string projectId,

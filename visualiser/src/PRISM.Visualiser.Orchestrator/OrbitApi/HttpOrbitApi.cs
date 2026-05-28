@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -14,7 +15,9 @@ namespace PRISM.Visualiser.Orchestrator.OrbitApi;
 /// <summary>
 /// HTTP-backed <see cref="IOrbitApi"/>. Stays narrow on purpose:
 ///
-///   * GET requests only (Phase C is a pure receive flow).
+///   * GET requests only for objects / blobs; version metadata
+///     is resolved via a single GraphQL query (no REST endpoint
+///     for versions exists in the ORBIT server).
 ///   * Bearer token resolved <em>once</em> per <c>HttpOrbitApi</c>
 ///     instance via <see cref="IOrbitTokenSource"/>; rotation is
 ///     a Phase F concern.
@@ -22,21 +25,21 @@ namespace PRISM.Visualiser.Orchestrator.OrbitApi;
 ///     (200ms, 400ms, 800ms) — anything else propagates to the
 ///     caller as a typed <see cref="OrbitApiException"/>.
 ///
-/// REST shape (per the receive-pipeline spec):
+/// Actual ORBIT REST shapes (verified against orbit.rebus.industries):
 /// <code>
-///   GET /api/v1/projects/{projectId}/versions/{versionId}
-///   GET /api/v1/objects/{objectId}
-///   GET /api/v1/projects/{projectId}/blobs/{blobHash}
+///   POST /graphql                              — version metadata
+///   GET  /objects/{projectId}/{objectId}/single — object JSON body
+///   GET  /blobs/{projectId}/{blobHash}          — binary blob
 /// </code>
 ///
 /// All endpoint shapes are kept in one place (<see cref="EndpointTemplates"/>)
-/// so Phase D can swap them for the canonical Speckle-server shape
-/// (<c>/objects/{streamId}/{id}/single</c>) with a single edit.
+/// so they can be updated with a single edit if the server moves them.
 /// </summary>
 public sealed class HttpOrbitApi : IOrbitApi, IDisposable
 {
     private readonly HttpClient _http;
     private readonly bool _ownsHttpClient;
+    private readonly string _graphqlUrl;
     private readonly AsyncRetryPolicy<HttpResponseMessage> _retryPolicy;
 
     public HttpOrbitApi(HttpClient http, ServerConfig server, string bearerToken,
@@ -48,6 +51,7 @@ public sealed class HttpOrbitApi : IOrbitApi, IDisposable
 
         _http = http;
         _ownsHttpClient = ownsHttpClient;
+        _graphqlUrl = server.GraphqlUrl;
         _http.BaseAddress ??= new Uri(server.BaseUrl + "/", UriKind.Absolute);
         _http.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", bearerToken);
@@ -72,41 +76,80 @@ public sealed class HttpOrbitApi : IOrbitApi, IDisposable
         return new HttpOrbitApi(http, server, bearerToken, ownsHttpClient: true);
     }
 
+    /// <summary>GraphQL query used to resolve a version → root object id.</summary>
+    private const string VersionQuery =
+        """
+        query Version($projectId: String!, $versionId: String!) {
+          project(id: $projectId) {
+            version(id: $versionId) {
+              id
+              referencedObject
+              message
+              authorUser { id }
+              createdAt
+              model { id }
+            }
+          }
+        }
+        """;
+
     public async Task<VersionDescriptor> GetVersionAsync(
         string projectId, string versionId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
         ArgumentException.ThrowIfNullOrWhiteSpace(versionId);
 
-        var url = string.Format(
-            System.Globalization.CultureInfo.InvariantCulture,
-            EndpointTemplates.Version, Uri.EscapeDataString(projectId),
-            Uri.EscapeDataString(versionId));
+        var requestBody = new GqlRequest(
+            Query: VersionQuery,
+            Variables: new GqlVersionVariables(projectId, versionId));
 
-        using var response = await SendWithRetriesAsync(url, ct).ConfigureAwait(false);
+        var requestJson = JsonSerializer.Serialize(
+            requestBody, OrbitApiJsonContext.Default.GqlRequest);
+
+        using var response = await _retryPolicy.ExecuteAsync(async token =>
+        {
+            var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+            content.Headers.Add("apollo-require-preflight", "true");
+            return await _http.PostAsync(_graphqlUrl, content, token).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            throw new OrbitApiException(
+                $"GraphQL version query failed HTTP {(int)response.StatusCode} for " +
+                $"{projectId}/{versionId}. Body: {Truncate(errBody, 512)}");
+        }
+
         var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
         try
         {
-            var dto = JsonSerializer.Deserialize(
-                json, OrbitApiJsonContext.Default.VersionResponseDto)
+            var gql = JsonSerializer.Deserialize(
+                json, OrbitApiJsonContext.Default.GqlVersionResponse)
                 ?? throw new OrbitApiException(
-                    $"Empty version response for {projectId}/{versionId}.");
+                    $"Empty GraphQL response for {projectId}/{versionId}.");
+
+            var node = gql.Data?.Project?.Version
+                ?? throw new OrbitApiException(
+                    $"GraphQL response has no version node for {projectId}/{versionId}. " +
+                    $"Raw: {Truncate(json, 256)}");
+
             return new VersionDescriptor(
                 ProjectId: projectId,
-                ModelId: dto.ModelId ?? string.Empty,
+                ModelId: node.Model?.Id ?? string.Empty,
                 VersionId: versionId,
-                RootObjectId: dto.RootObjectId
+                RootObjectId: node.ReferencedObject
                     ?? throw new OrbitApiException(
-                        $"Version {projectId}/{versionId} has no rootObjectId."),
-                Message: dto.Message,
-                AuthorId: dto.AuthorId,
-                CreatedAt: dto.CreatedAt);
+                        $"Version {projectId}/{versionId} has no referencedObject."),
+                Message: node.Message,
+                AuthorId: node.AuthorUser?.Id,
+                CreatedAt: node.CreatedAt);
         }
         catch (JsonException ex)
         {
             throw new OrbitApiException(
-                $"Invalid version response JSON for {projectId}/{versionId}.", ex);
+                $"Invalid GraphQL response JSON for {projectId}/{versionId}.", ex);
         }
     }
 
@@ -178,20 +221,53 @@ public sealed class HttpOrbitApi : IOrbitApi, IDisposable
         if (_ownsHttpClient) _http.Dispose();
     }
 
-    /// <summary>REST endpoint templates. Indices match <see cref="string.Format(string,object?[])"/>.</summary>
+    /// <summary>
+    /// REST endpoint templates for object and blob fetches.
+    /// Version metadata is resolved via GraphQL — see <see cref="VersionQuery"/>.
+    /// </summary>
     internal static class EndpointTemplates
     {
-        public const string Version = "api/v1/projects/{0}/versions/{1}";
-        public const string Object = "api/v1/projects/{0}/objects/{1}";
-        public const string Blob = "api/v1/projects/{0}/blobs/{1}";
+        /// <summary>GET /objects/{projectId}/{objectId}/single</summary>
+        public const string Object = "objects/{0}/{1}/single";
+
+        /// <summary>GET /blobs/{projectId}/{blobHash}</summary>
+        public const string Blob = "blobs/{0}/{1}";
     }
 
-    internal sealed record VersionResponseDto(
-        [property: JsonPropertyName("rootObjectId")] string? RootObjectId,
-        [property: JsonPropertyName("modelId")] string? ModelId,
+    // ----------------------------------------------------------------
+    // GraphQL DTOs
+    // ----------------------------------------------------------------
+
+    internal sealed record GqlRequest(
+        [property: JsonPropertyName("query")] string Query,
+        [property: JsonPropertyName("variables")] GqlVersionVariables Variables);
+
+    internal sealed record GqlVersionVariables(
+        [property: JsonPropertyName("projectId")] string ProjectId,
+        [property: JsonPropertyName("versionId")] string VersionId);
+
+    internal sealed record GqlVersionResponse(
+        [property: JsonPropertyName("data")] GqlVersionData? Data);
+
+    internal sealed record GqlVersionData(
+        [property: JsonPropertyName("project")] GqlVersionProject? Project);
+
+    internal sealed record GqlVersionProject(
+        [property: JsonPropertyName("version")] GqlVersionNode? Version);
+
+    internal sealed record GqlVersionNode(
+        [property: JsonPropertyName("id")] string? Id,
+        [property: JsonPropertyName("referencedObject")] string? ReferencedObject,
         [property: JsonPropertyName("message")] string? Message,
-        [property: JsonPropertyName("authorId")] string? AuthorId,
-        [property: JsonPropertyName("createdAt")] DateTimeOffset? CreatedAt);
+        [property: JsonPropertyName("authorUser")] GqlAuthorUser? AuthorUser,
+        [property: JsonPropertyName("createdAt")] DateTimeOffset? CreatedAt,
+        [property: JsonPropertyName("model")] GqlVersionModel? Model);
+
+    internal sealed record GqlAuthorUser(
+        [property: JsonPropertyName("id")] string? Id);
+
+    internal sealed record GqlVersionModel(
+        [property: JsonPropertyName("id")] string? Id);
 }
 
 /// <summary>
@@ -201,7 +277,8 @@ public sealed class HttpOrbitApi : IOrbitApi, IDisposable
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-[JsonSerializable(typeof(HttpOrbitApi.VersionResponseDto))]
+[JsonSerializable(typeof(HttpOrbitApi.GqlRequest))]
+[JsonSerializable(typeof(HttpOrbitApi.GqlVersionResponse))]
 internal sealed partial class OrbitApiJsonContext : JsonSerializerContext { }
 
 /// <summary>Typed wrapper for any orchestrator-side ORBIT REST failure.</summary>
