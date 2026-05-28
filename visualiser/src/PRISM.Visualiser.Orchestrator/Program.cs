@@ -558,8 +558,15 @@ internal static class Program
         }
         catch (SignallingNotFoundException ex)
         {
-            logger.Error(ex, "cirrus script missing under UE root");
+            logger.Error(ex, "signalling-server entrypoint missing under UE root");
             EmitFailedEvent(manifest.RunId, FailedEvent.CodeSignallingNotFound, ex.Message);
+            EmitFailedReady(manifest, ex.Message);
+            return ExitCodes.Failure;
+        }
+        catch (SignallingBootstrapException ex)
+        {
+            logger.Error(ex, "auto-bootstrap of PixelStreaming2 signalling stack failed");
+            EmitFailedEvent(manifest.RunId, FailedEvent.CodeSignallingBootstrapFailed, ex.Message);
             EmitFailedReady(manifest, ex.Message);
             return ExitCodes.Failure;
         }

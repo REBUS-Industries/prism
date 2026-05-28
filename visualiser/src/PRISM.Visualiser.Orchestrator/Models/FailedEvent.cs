@@ -25,7 +25,9 @@ namespace PRISM.Visualiser.Orchestrator.Models;
 ///   <item><term><c>ue_import_failed</c></term>
 ///         <description>Python emitted an error marker, or UE exited non-zero.</description></item>
 ///   <item><term><c>signalling_not_found</c></term>
-///         <description>Cirrus script isn't installed under the UE root (PixelStreaming2 plugin missing).</description></item>
+///         <description>Signalling server entrypoint missing from the UE root AFTER the auto-bootstrap ran (PixelStreaming2 plugin likely uninstalled).</description></item>
+///   <item><term><c>signalling_bootstrap_failed</c></term>
+///         <description>The first-run bootstrap that runs <c>get_ps_servers.bat</c> + the wilbur TypeScript build failed; check the <c>ps-bootstrap</c> log channel for the underlying npm / curl error.</description></item>
 ///   <item><term><c>node_not_found</c></term>
 ///         <description>UE's bundled <c>node.exe</c> doesn't exist (partial install).</description></item>
 ///   <item><term><c>signalling_start_timeout</c></term>
@@ -54,6 +56,7 @@ public sealed record FailedEvent(
 
     // Phase F — Pixel Streaming 2 bring-up.
     public const string CodeSignallingNotFound = "signalling_not_found";
+    public const string CodeSignallingBootstrapFailed = "signalling_bootstrap_failed";
     public const string CodeNodeNotFound = "node_not_found";
     public const string CodeSignallingStartTimeout = "signalling_start_timeout";
     public const string CodeUeGameStartTimeout = "ue_game_start_timeout";

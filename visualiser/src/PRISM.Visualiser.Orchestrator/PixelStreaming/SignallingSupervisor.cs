@@ -11,31 +11,51 @@ using PRISM.Visualiser.Orchestrator.Process;
 namespace PRISM.Visualiser.Orchestrator.PixelStreaming;
 
 /// <summary>
-/// Locates the PixelStreaming 2 Cirrus signalling server under a UE
-/// install, spawns it via Node, and parses its stdout for the "ready"
-/// line that announces the WebSocket listener has come up.
+/// Locates the PixelStreaming signalling server under a UE install,
+/// spawns it via Node, and parses its stdout for the "ready" line
+/// that announces the WebSocket listener has come up.
+///
+/// <para>
+/// PS2 (UE 5.5+) replaced the original "Cirrus" signalling server
+/// with "Wilbur" (<c>@epicgames-ps/wilbur</c>), a TypeScript app
+/// compiled to <c>SignallingWebServer\dist\index.js</c>. The old
+/// Cirrus path (a single top-level <c>cirrus.js</c>) is kept as a
+/// fallback for older PS1 plugin variants we don't formally support
+/// but might still encounter on customer workstations.
+/// </para>
 ///
 /// <para>
 /// Layout the supervisor expects under the UE root:
 /// <list type="bullet">
 ///   <item><description>
-///     Cirrus script:
+///     <b>Wilbur (preferred — PS2, UE 5.5+):</b>
+///     <c>Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\dist\index.js</c>
+///     populated by <see cref="SignallingBootstrap"/> running
+///     <c>get_ps_servers.bat</c> + <c>start.bat</c>.
+///   </description></item>
+///   <item><description>
+///     <b>Cirrus (fallback — pre-5.5):</b>
 ///     <c>Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\</c>
 ///     containing one of <c>Cirrus.js</c> / <c>cirrus.js</c> /
 ///     <c>main.js</c> / <c>server.js</c> / <c>index.js</c>.
 ///   </description></item>
 ///   <item><description>
-///     Bundled Node runtime:
+///     <b>Bundled Node runtime (Wilbur):</b>
+///     <c>Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\platform_scripts\cmd\node\node.exe</c>
+///     downloaded by <c>start.bat</c> during bootstrap.
+///   </description></item>
+///   <item><description>
+///     <b>Bundled Node runtime (Cirrus fallback):</b>
 ///     <c>Engine\Binaries\ThirdParty\Node\Win64\node.exe</c>.
 ///   </description></item>
 /// </list>
 /// </para>
 ///
 /// <para>
-/// Both paths can be overridden via env vars for local smoke testing
-/// without a full UE install:
+/// All four paths can be overridden via env vars for local smoke
+/// testing without a full UE install:
 /// <list type="bullet">
-///   <item><description><c>PRISM_VISUALISER_CIRRUS_SCRIPT</c> — absolute path to the JS entrypoint.</description></item>
+///   <item><description><c>PRISM_VISUALISER_CIRRUS_SCRIPT</c> — absolute path to the JS entrypoint (wilbur OR cirrus).</description></item>
 ///   <item><description><c>PRISM_VISUALISER_NODE_EXE</c> — absolute path to <c>node.exe</c>.</description></item>
 /// </list>
 /// </para>
@@ -46,23 +66,41 @@ namespace PRISM.Visualiser.Orchestrator.PixelStreaming;
 /// (<c>WebSocketServer started, listening on port 8888</c>,
 /// <c>Listening on :8888</c>, <c>HTTP server listening on port 8888</c>).
 /// We accept any line that contains a "listen" verb and a port number
-/// matching the one we asked Cirrus to bind to.
+/// matching the one we asked Wilbur to bind to.
 /// </para>
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class SignallingSupervisor
 {
-    /// <summary>Default budget for Cirrus to log its ready line.</summary>
+    /// <summary>Default budget for the signalling server to log its ready line.</summary>
     public static readonly TimeSpan DefaultReadyTimeout = TimeSpan.FromSeconds(30);
 
-    /// <summary>Serilog channel used for forwarded Cirrus stdout / stderr.</summary>
+    /// <summary>Serilog channel used for forwarded signalling stdout / stderr.</summary>
     public const string LogChannel = "cirrus";
 
     /// <summary>Sub-path under the UE root that holds the signalling server.</summary>
     public const string SignallingWebServerRelative =
         @"Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer";
 
-    /// <summary>Sub-path under the UE root for the bundled Node runtime.</summary>
+    /// <summary>
+    /// Sub-path under the UE root of the Wilbur signalling-server
+    /// entrypoint (UE 5.5+). Produced by
+    /// <see cref="SignallingBootstrap"/> on first run.
+    /// </summary>
+    public const string WilburEntrypointRelative =
+        @"Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\dist\index.js";
+
+    /// <summary>
+    /// Sub-path under the UE root of the Node runtime downloaded by
+    /// <c>start.bat</c> during the Wilbur bootstrap. We prefer this
+    /// over the engine-bundled Node (which may not exist on UE 5.7
+    /// launcher installs) so that <c>node --version</c> on disk
+    /// matches the version that built wilbur.
+    /// </summary>
+    public const string WilburNodeExeRelative =
+        @"Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\platform_scripts\cmd\node\node.exe";
+
+    /// <summary>Sub-path under the UE root for the bundled Node runtime (legacy PS1).</summary>
     public const string NodeExeRelative =
         @"Engine\Binaries\ThirdParty\Node\Win64\node.exe";
 
@@ -72,7 +110,11 @@ public sealed class SignallingSupervisor
     /// <summary>Env var the smoke test uses to point at a custom Node binary.</summary>
     public const string EnvVarNodeExe = "PRISM_VISUALISER_NODE_EXE";
 
-    /// <summary>Candidate filenames for the Cirrus entrypoint, in resolution order.</summary>
+    /// <summary>
+    /// Candidate filenames for the legacy Cirrus entrypoint, in
+    /// resolution order. Only consulted when the Wilbur entrypoint at
+    /// <see cref="WilburEntrypointRelative"/> is missing.
+    /// </summary>
     public static readonly IReadOnlyList<string> CirrusScriptCandidates = new[]
     {
         "Cirrus.js",
@@ -84,22 +126,34 @@ public sealed class SignallingSupervisor
 
     /// <summary>
     /// Permissive ready-line regex. Captures the listening port so the
-    /// caller can sanity-check the port Cirrus actually bound to (in
-    /// case it ignored the <c>--HttpPort</c> flag).
+    /// caller can sanity-check the port the signalling server actually
+    /// bound to (in case it ignored the port flag).
+    ///
+    /// <para>
+    /// Wilbur (UE 5.5+) typically logs lines such as
+    /// <c>HTTP webserver listening on port 8080</c> or
+    /// <c>Started listening on port 8888</c>; the legacy Cirrus shape
+    /// (<c>Listening on :8888</c>, <c>WebSocketServer started, listening on port 8888</c>)
+    /// is also covered for back-compat.
+    /// </para>
     /// </summary>
     public static readonly Regex ReadyLinePattern = new(
         @"(?ix)
-          (?:listening\s+on(?:\s+port)?[\s:]*|started.*listening.*?port\s*)
+          (?:listening\s+on(?:\s+port)?[\s:]*|started.*listening.*?port\s*|listen\s+on(?:\s+port)?[\s:]*)
           (?<port>\d{2,5})\b",
         RegexOptions.Compiled);
 
     /// <summary>
-    /// Regex matching the "streamer connected" log line Cirrus prints
-    /// once UE's WebRTC streamer registers. Captures the streamer id.
+    /// Regex matching the "streamer connected" log line wilbur / cirrus
+    /// prints once UE's WebRTC streamer registers. Captures the
+    /// streamer id. Wilbur shapes seen on UE 5.7:
+    /// <c>Streamer connected: orbit_abc123</c> /
+    /// <c>streamer registered with id orbit_abc123</c>.
     /// </summary>
     public static readonly Regex StreamerConnectedPattern = new(
         @"(?ix)
-          streamer\s+(?:connected|registered)[\s:]+(?<id>[\w\-]+)",
+          (?:streamer\s+(?:connected|registered)(?:\s+with\s+id)?[\s:]+)
+          (?<id>[\w\-]+)",
         RegexOptions.Compiled);
 
     private readonly ILogger _log;
@@ -112,12 +166,19 @@ public sealed class SignallingSupervisor
     }
 
     /// <summary>
-    /// Resolve the Cirrus script + Node binary the supervisor will
-    /// invoke. Env-var overrides take precedence over the canonical UE
-    /// install paths. Returns <see langword="null"/> for either part
-    /// the supervisor can't locate; the caller maps that to a
+    /// Resolve the signalling-server script + Node binary the
+    /// supervisor will invoke. Env-var overrides take precedence over
+    /// the canonical UE install paths. Resolution order:
+    /// <list type="number">
+    ///   <item><description>Env override (<see cref="EnvVarCirrusScript"/>).</description></item>
+    ///   <item><description>Wilbur <c>dist\index.js</c> (PS2, UE 5.5+).</description></item>
+    ///   <item><description>Legacy Cirrus candidates (pre-5.5 / community plugins).</description></item>
+    /// </list>
+    /// Returns <see langword="null"/> for either part the supervisor
+    /// can't locate; the caller maps that to a
     /// <c>signalling_not_found</c> / <c>node_not_found</c> failure
-    /// event.
+    /// event. The returned <see cref="SignallingResolveResult.IsWilbur"/>
+    /// flag tells the caller which CLI dialect to use when launching.
     /// </summary>
     public static SignallingResolveResult Resolve(string ueRoot)
     {
@@ -127,22 +188,45 @@ public sealed class SignallingSupervisor
         var nodeOverride = Environment.GetEnvironmentVariable(EnvVarNodeExe);
 
         string? script = null;
+        bool isWilbur = false;
+        var probedPaths = new List<string>(capacity: 8);
+
         if (!string.IsNullOrWhiteSpace(scriptOverride) && File.Exists(scriptOverride))
         {
             script = scriptOverride;
+            // The override is treated as Wilbur if it lives under a
+            // SignallingWebServer\dist tree — otherwise we assume the
+            // legacy Cirrus CLI dialect.
+            isWilbur = scriptOverride.Replace('/', '\\')
+                .Contains(@"\dist\", StringComparison.OrdinalIgnoreCase);
         }
         else
         {
-            var webServerDir = Path.Combine(ueRoot, SignallingWebServerRelative);
-            if (Directory.Exists(webServerDir))
+            // 1. Prefer Wilbur (UE 5.5+) over legacy Cirrus candidates.
+            var wilburPath = Path.Combine(ueRoot, WilburEntrypointRelative);
+            probedPaths.Add(wilburPath);
+            if (File.Exists(wilburPath))
             {
-                foreach (var candidate in CirrusScriptCandidates)
+                script = wilburPath;
+                isWilbur = true;
+            }
+            else
+            {
+                // 2. Fall back to top-level Cirrus candidates for pre-5.5
+                //    plugin variants.
+                var webServerDir = Path.Combine(ueRoot, SignallingWebServerRelative);
+                if (Directory.Exists(webServerDir))
                 {
-                    var path = Path.Combine(webServerDir, candidate);
-                    if (File.Exists(path))
+                    foreach (var candidate in CirrusScriptCandidates)
                     {
-                        script = path;
-                        break;
+                        var path = Path.Combine(webServerDir, candidate);
+                        probedPaths.Add(path);
+                        if (File.Exists(path))
+                        {
+                            script = path;
+                            isWilbur = false;
+                            break;
+                        }
                     }
                 }
             }
@@ -155,23 +239,51 @@ public sealed class SignallingSupervisor
         }
         else
         {
-            var bundled = Path.Combine(ueRoot, NodeExeRelative);
-            if (File.Exists(bundled)) node = bundled;
+            // Prefer the wilbur-bundled Node when present (it matches
+            // the version that built wilbur). Fall back to the engine
+            // ThirdParty Node only when the wilbur node tree isn't
+            // there (legacy Cirrus path).
+            var wilburNode = Path.Combine(ueRoot, WilburNodeExeRelative);
+            if (File.Exists(wilburNode))
+            {
+                node = wilburNode;
+            }
+            else
+            {
+                var bundled = Path.Combine(ueRoot, NodeExeRelative);
+                if (File.Exists(bundled)) node = bundled;
+            }
         }
 
         return new SignallingResolveResult(
             CirrusScriptPath: script,
-            NodeExePath: node);
+            NodeExePath: node,
+            IsWilbur: isWilbur,
+            ProbedPaths: probedPaths);
     }
 
     /// <summary>
-    /// Spawn Cirrus and wait for its ready line. The returned handle
-    /// owns the child process; <see cref="SignallingHandle.Kill"/> or
+    /// Spawn the signalling server (Wilbur on PS2, Cirrus on legacy
+    /// PS1) and wait for its ready line. The returned handle owns the
+    /// child process; <see cref="SignallingHandle.Kill"/> or
     /// <see cref="SignallingHandle.DisposeAsync"/> tears it down.
     /// </summary>
+    /// <param name="resolved">Output of <see cref="Resolve"/>.</param>
+    /// <param name="playerPort">
+    ///   TCP port for client / player traffic (HTTP + player WS). On
+    ///   Wilbur this is the <c>--player_port</c> argument; on legacy
+    ///   Cirrus this is the single <c>--HttpPort</c> the supervisor
+    ///   pinned. Surfaced to the agent as the loopback player URL.
+    /// </param>
+    /// <param name="streamerPort">
+    ///   TCP port the UE streamer process connects to. Required for
+    ///   Wilbur (<c>--streamer_port</c>); ignored on legacy Cirrus
+    ///   where the streamer and player traffic share one port.
+    /// </param>
     public async Task<SignallingHandle> StartAsync(
         SignallingResolveResult resolved,
-        int tcpPort,
+        int playerPort,
+        int streamerPort,
         TimeSpan? readyTimeout = null,
         CancellationToken ct = default)
     {
@@ -179,24 +291,32 @@ public sealed class SignallingSupervisor
         if (resolved.CirrusScriptPath is null)
         {
             throw new SignallingNotFoundException(
-                "Cirrus signalling script could not be located under the UE root " +
-                "(expected PixelStreaming2 plugin to ship it).");
+                "PixelStreaming signalling server entrypoint could not be located. " +
+                "Expected wilbur at " +
+                $"'{WilburEntrypointRelative}' under the UE root, or a legacy " +
+                $"Cirrus script under '{SignallingWebServerRelative}'.");
         }
         if (resolved.NodeExePath is null)
         {
             throw new NodeNotFoundException(
-                "node.exe not found under the UE root " +
-                $"({NodeExeRelative}); the bundled UE node runtime is missing.");
+                "node.exe not found under the UE root. Probed " +
+                $"'{WilburNodeExeRelative}' (wilbur bundle) and " +
+                $"'{NodeExeRelative}' (legacy engine bundle).");
         }
-        if (tcpPort is < 1 or > 65535)
-            throw new ArgumentOutOfRangeException(nameof(tcpPort));
+        if (playerPort is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(playerPort));
+        if (streamerPort is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(streamerPort));
 
         readyTimeout ??= DefaultReadyTimeout;
 
-        var psi = BuildStartInfo(resolved, tcpPort);
+        var psi = BuildStartInfo(resolved, playerPort, streamerPort);
         _log.Information(
-            "cirrus launch script={Script} node={Node} port={Port} timeoutMs={TimeoutMs}",
-            resolved.CirrusScriptPath, resolved.NodeExePath, tcpPort,
+            "signalling launch flavour={Flavour} script={Script} node={Node} " +
+            "playerPort={PlayerPort} streamerPort={StreamerPort} timeoutMs={TimeoutMs}",
+            resolved.IsWilbur ? "wilbur" : "cirrus",
+            resolved.CirrusScriptPath, resolved.NodeExePath,
+            playerPort, streamerPort,
             (int)readyTimeout.Value.TotalMilliseconds);
 
         var process = new System.Diagnostics.Process { StartInfo = psi };
@@ -261,13 +381,15 @@ public sealed class SignallingSupervisor
             var port = await AwaitReadyAsync(
                 ReadChannelLines(lineChannel.Reader, timeoutCts.Token),
                 timeoutCts.Token).ConfigureAwait(false);
-            if (port > 0 && port != tcpPort)
+            // Wilbur logs lines for both player_port AND streamer_port;
+            // we only care that the player_port we asked for showed up.
+            if (port > 0 && port != playerPort && port != streamerPort)
             {
                 _log.Warning(
-                    "cirrus ready: requested port={Requested} but log reported port={Logged}",
-                    tcpPort, port);
+                    "signalling ready: requested player={Player} streamer={Streamer} but log reported port={Logged}",
+                    playerPort, streamerPort, port);
             }
-            return new SignallingHandle(_log, process, lineChannel, tcpPort);
+            return new SignallingHandle(_log, process, lineChannel, playerPort, streamerPort);
         }
         catch (OperationCanceledException) when (
             timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
@@ -362,10 +484,55 @@ public sealed class SignallingSupervisor
         return true;
     }
 
-    private static ProcessStartInfo BuildStartInfo(SignallingResolveResult resolved, int tcpPort)
+    /// <summary>
+    /// Build the <see cref="ProcessStartInfo"/> the supervisor uses to
+    /// spawn the signalling server. Two CLI dialects are supported:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <b>Wilbur (PS2):</b> uses <c>commander</c>-style
+    ///     <c>--player_port N --streamer_port M --serve
+    ///     --console_messages verbose --log_config</c>. Working
+    ///     directory must be the wilbur package root
+    ///     (<c>SignallingWebServer\</c>) so <c>config.json</c> is
+    ///     picked up.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Legacy Cirrus (PS1):</b> uses <c>--HttpPort=N</c>. The
+    ///     streamer port is implicit (single port for player + streamer).
+    ///   </description></item>
+    /// </list>
+    /// Public so tests can pin the exact ArgumentList shape per
+    /// dialect without spawning a real process.
+    /// </summary>
+    public static ProcessStartInfo BuildStartInfo(
+        SignallingResolveResult resolved, int playerPort, int streamerPort)
     {
-        var workingDir = Path.GetDirectoryName(resolved.CirrusScriptPath!)
-            ?? AppContext.BaseDirectory;
+        ArgumentNullException.ThrowIfNull(resolved);
+        if (resolved.CirrusScriptPath is null)
+        {
+            throw new InvalidOperationException(
+                "BuildStartInfo called with a null CirrusScriptPath; the " +
+                "Resolve probe should have surfaced signalling_not_found first.");
+        }
+
+        // Wilbur lives at <pkg-root>\dist\index.js; we want the cwd
+        // set to <pkg-root> so relative paths in wilbur's config.json
+        // (e.g. <c>"http_root": "www"</c>) resolve correctly.
+        string workingDir;
+        if (resolved.IsWilbur)
+        {
+            // dist\index.js → parent is "dist", grandparent is the
+            // wilbur package root (SignallingWebServer).
+            var dist = Path.GetDirectoryName(resolved.CirrusScriptPath);
+            workingDir = (dist is not null
+                ? Path.GetDirectoryName(dist)
+                : null) ?? AppContext.BaseDirectory;
+        }
+        else
+        {
+            workingDir = Path.GetDirectoryName(resolved.CirrusScriptPath)
+                ?? AppContext.BaseDirectory;
+        }
 
         var psi = new ProcessStartInfo
         {
@@ -377,11 +544,29 @@ public sealed class SignallingSupervisor
             WorkingDirectory = workingDir,
         };
         psi.ArgumentList.Add(resolved.CirrusScriptPath!);
-        // Cirrus accepts --HttpPort=8888 (and --StreamerPort=8889, etc.).
-        // We only pin the HTTP/WS port; the other side falls back to
-        // the defaults baked into the PS2 server config.
-        psi.ArgumentList.Add(string.Format(
-            CultureInfo.InvariantCulture, "--HttpPort={0}", tcpPort));
+
+        if (resolved.IsWilbur)
+        {
+            // Wilbur (UE 5.5+) CLI shape — see
+            // SignallingWebServer/src/index.ts.
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "--player_port={0}", playerPort));
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "--streamer_port={0}", streamerPort));
+            psi.ArgumentList.Add("--serve");
+            psi.ArgumentList.Add("--console_messages");
+            psi.ArgumentList.Add("verbose");
+            psi.ArgumentList.Add("--log_config");
+        }
+        else
+        {
+            // Legacy Cirrus (pre-5.5) CLI shape. Cirrus accepts
+            // --HttpPort=8888 (and --StreamerPort=8889, etc.). We
+            // only pin the HTTP/WS port; the other side falls back
+            // to the defaults baked into the PS2 server config.
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "--HttpPort={0}", playerPort));
+        }
         return psi;
     }
 
@@ -413,10 +598,30 @@ public sealed class SignallingSupervisor
     }
 }
 
-/// <summary>Result of <see cref="SignallingSupervisor.Resolve"/>.</summary>
+/// <summary>
+/// Result of <see cref="SignallingSupervisor.Resolve"/>.
+/// </summary>
+/// <param name="CirrusScriptPath">
+///   Absolute path of the signalling-server entrypoint (wilbur
+///   <c>dist\index.js</c> when <see cref="IsWilbur"/> is true; a
+///   legacy Cirrus JS file otherwise). Null when neither path probed.
+/// </param>
+/// <param name="NodeExePath">Absolute path to the Node binary we'll launch the script with.</param>
+/// <param name="IsWilbur">
+///   True when the resolved script is wilbur (UE 5.5+ PS2). Selects
+///   the CLI dialect <see cref="SignallingSupervisor.BuildStartInfo"/>
+///   emits.
+/// </param>
+/// <param name="ProbedPaths">
+///   Absolute paths the resolver inspected, in probe order, for
+///   diagnostic logging when both branches missed. Empty when an
+///   env-var override short-circuited the resolution.
+/// </param>
 public sealed record SignallingResolveResult(
     string? CirrusScriptPath,
-    string? NodeExePath)
+    string? NodeExePath,
+    bool IsWilbur = false,
+    IReadOnlyList<string>? ProbedPaths = null)
 {
     /// <summary>True when both the script and node binary were found.</summary>
     public bool IsComplete => CirrusScriptPath is not null && NodeExePath is not null;
@@ -440,16 +645,29 @@ public sealed class SignallingHandle : IAsyncDisposable
         ILogger log,
         System.Diagnostics.Process process,
         Channel<string> lineChannel,
-        int tcpPort)
+        int playerPort,
+        int streamerPort)
     {
         _log = log;
         _process = process;
         _lineChannel = lineChannel;
-        TcpPort = tcpPort;
+        TcpPort = playerPort;
+        StreamerPort = streamerPort;
     }
 
-    /// <summary>The TCP port Cirrus was told to bind to.</summary>
+    /// <summary>
+    /// The TCP port the player (browser / HTTP / player-WS) side
+    /// listens on. Alias of <see cref="PlayerPort"/>, kept for
+    /// back-compat with the pre-Wilbur supervisor where this was the
+    /// single port the server bound to.
+    /// </summary>
     public int TcpPort { get; }
+
+    /// <summary>The TCP port the player (browser / HTTP) connects to.</summary>
+    public int PlayerPort => TcpPort;
+
+    /// <summary>The TCP port UE's WebRTC streamer connects to.</summary>
+    public int StreamerPort { get; }
 
     /// <summary>PID of the running Cirrus child process.</summary>
     public int ProcessId => _process.Id;
