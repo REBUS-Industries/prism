@@ -16,6 +16,25 @@
 #     but every line is forwarded to the orchestrator's Serilog under
 #     the "ue-editor" channel.
 #
+# UE 5.7 API note (issue #21):
+#   * The singleton accessor is `InterchangeManager.get_interchange_manager_scripted()`.
+#     The pre-5.5 name `get_interchange_manager()` was removed; calling it
+#     raises AttributeError under 5.7.
+#   * `import_asset` takes (content_path, source_data, import_asset_parameters)
+#     — `content_path` is the first positional argument, NOT a field on
+#     `ImportAssetParameters`. `ImportAssetParameters` has no
+#     `destination_path` field; setting it on a fresh instance is a no-op
+#     pre-5.7 and a hard AttributeError on 5.7.
+#   * Source data is built explicitly via
+#     `InterchangeManager.create_source_data(file_name)`.
+#   * The legacy `AssetImportTask` fallback is removed: `AssetImportTask`
+#     is Slate-bound (it routes through the import-settings dialog even
+#     with `automated=True`) and Slate is NOT initialised when the editor
+#     runs as `PythonScriptCommandlet` under `-NullRHI`. Hitting the
+#     fallback path crashed UE on `Assertion failed: CurrentApplication
+#     .IsValid() [SlateApplication.h:321]` and the commandlet
+#     `RequestExit(1, 3, ...)`'d out with exit code 3.
+#
 # Phase E note: BP_OrbitImporter.uasset (the Blueprint wrapper Phase D
 # would have shipped) does not yet exist in the v0.1.0-ue5.7-scaffold
 # template. We therefore use the Interchange Python API directly. Once
@@ -72,69 +91,59 @@ def _ensure_directory(editor_asset, target_folder):
         editor_asset.make_directory(target_folder)
 
 
-def _build_import_parameters(target_folder):
-    # UE 5.7's Interchange exposes ImportAssetParameters on the
-    # AssetTools surface. Construct a default parameters object and
-    # tighten the fields we care about.
+def _build_import_parameters():
+    # `ImportAssetParameters` carries the per-import options. The
+    # destination path is conveyed as the first positional argument to
+    # `InterchangeManager.import_asset(...)`, NOT as a field on this
+    # object — the field doesn't exist on UE 5.7's binding.
     params = unreal.ImportAssetParameters()
-    setattr(params, "is_automated", True)
-    setattr(params, "replace_existing", True)
-    setattr(params, "destination_path", target_folder)
+    params.is_automated = True
+    params.replace_existing = True
+    params.follow_redirectors = True
     return params
 
 
-def _import_via_interchange(gltf_path, target_folder):
-    # InterchangeManager.import_asset handles the source-data
-    # construction internally given a file path; some 5.7 point
-    # releases expose `import_asset_with_params` with a separate
-    # parameters object, which we prefer when present for explicit
-    # is_automated / replace_existing semantics.
-    interchange_manager = unreal.InterchangeManager.get_interchange_manager()
+def _get_interchange_manager():
+    # UE 5.7 renamed the scripted singleton accessor. The pre-5.5 name
+    # `get_interchange_manager` is gone; calling it on 5.7 raises
+    # `AttributeError: type object 'InterchangeManager' has no attribute
+    # 'get_interchange_manager'`. Be tolerant of the old name on legacy
+    # 5.x point releases (best-effort) so this script can still help
+    # diagnose mismatched UE installs.
+    if hasattr(unreal.InterchangeManager, "get_interchange_manager_scripted"):
+        return unreal.InterchangeManager.get_interchange_manager_scripted()
+    if hasattr(unreal.InterchangeManager, "get_interchange_manager"):
+        return unreal.InterchangeManager.get_interchange_manager()
+    raise RuntimeError(
+        "InterchangeManager has neither get_interchange_manager_scripted "
+        "nor get_interchange_manager — the Interchange editor plugin is "
+        "missing or this UE build is older than 5.0."
+    )
 
-    if hasattr(interchange_manager, "import_asset_with_params"):
-        params = _build_import_parameters(target_folder)
-        result = interchange_manager.import_asset_with_params(gltf_path, params)
-    else:
-        # Fall back to the older API. The destination_path is conveyed
-        # via the source data's destination convention.
-        params = _build_import_parameters(target_folder)
-        result = interchange_manager.import_asset(gltf_path, params)
 
-    # The Interchange API returns an iterable of imported assets in
-    # most builds; some return a single result object with an
-    # `imported_assets` property. Normalise.
+def _normalise_imported_assets(result):
+    # `InterchangeManager.import_asset` returns
+    # `Array[Object] or None` per the 5.5+ docs, but real UE builds have
+    # been seen returning a single object or a result wrapper with an
+    # `imported_assets` property. Normalise to a list[Object].
+    if result is None:
+        return []
     if hasattr(result, "imported_assets"):
         return list(result.imported_assets)
     if isinstance(result, list):
         return result
-    if result is None:
-        return []
     return [result]
 
 
-def _import_via_asset_task(gltf_path, target_folder):
-    # Fallback path used when InterchangeManager is unavailable (e.g.
-    # the engine build was compiled without the Interchange editor
-    # plugin). Drives the legacy AssetImportTask + AssetTools pipeline.
-    asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
-    task = unreal.AssetImportTask()
-    task.set_editor_property("filename", gltf_path)
-    task.set_editor_property("destination_path", target_folder)
-    task.set_editor_property("automated", True)
-    task.set_editor_property("replace_existing", True)
-    task.set_editor_property("save", True)
-    asset_tools.import_asset_tasks([task])
-    imported_paths = list(task.get_editor_property("imported_object_paths") or [])
-    editor_asset = _get_editor_asset_library()
-    out = []
-    for path in imported_paths:
-        try:
-            obj = editor_asset.load_asset(path)
-            if obj is not None:
-                out.append(obj)
-        except Exception:  # noqa: BLE001 - tolerate per-asset load failures
-            continue
-    return out
+def _import_via_interchange(gltf_path, target_folder):
+    manager = _get_interchange_manager()
+    source_data = unreal.InterchangeManager.create_source_data(gltf_path)
+    params = _build_import_parameters()
+    # First positional argument is the content-path destination
+    # (e.g. /Game/REBUS/Imported_<runId>); the source file is conveyed
+    # through `source_data`.
+    result = manager.import_asset(target_folder, source_data, params)
+    return _normalise_imported_assets(result)
 
 
 def _spawn_meshes_into_level(imported_assets):
@@ -192,14 +201,11 @@ def main():
                 pass
             editor_asset.make_directory(TARGET_FOLDER)
 
-        try:
-            imported_assets = _import_via_interchange(GLTF_PATH, TARGET_FOLDER)
-        except Exception as interchange_ex:  # noqa: BLE001
-            unreal.log_warning(
-                "Interchange import failed; falling back to AssetImportTask: %s"
-                % str(interchange_ex)
-            )
-            imported_assets = _import_via_asset_task(GLTF_PATH, TARGET_FOLDER)
+        # Interchange is required: the only fallback (AssetImportTask)
+        # is Slate-bound and crashes a `-NullRHI` commandlet. Any
+        # Interchange failure bubbles up to the structured-error emit
+        # below, which is the correct surface for the orchestrator.
+        imported_assets = _import_via_interchange(GLTF_PATH, TARGET_FOLDER)
 
         level_path = "/Game/REBUS/Maps/" + LEVEL_NAME
         if editor_asset.does_asset_exist(level_path):
