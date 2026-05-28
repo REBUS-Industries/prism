@@ -7,7 +7,7 @@
 # The orchestrator invokes the rendered version via:
 #
 #     UnrealEditor-Cmd.exe REBUSVis.uproject -run=PythonScript \
-#         -ExecutePythonScript=<path-to-rendered-import_orbit.py>
+#         -script="<path-to-rendered-import_orbit.py>"
 #
 # Contract with the orchestrator:
 #   * Emit exactly one PRISM_VISUALISER_READY <json> line on success.

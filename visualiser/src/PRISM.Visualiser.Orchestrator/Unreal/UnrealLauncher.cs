@@ -13,8 +13,8 @@ namespace PRISM.Visualiser.Orchestrator.Unreal;
 /// <summary>
 /// Spawns <c>UnrealEditor-Cmd.exe</c> against a scaffolded per-run
 /// project, runs the rendered <c>import_orbit.py</c> via
-/// <c>-run=PythonScript</c>, and parses the ready / error marker lines
-/// the python script emits to stdout.
+/// <c>-run=PythonScript -script=&lt;path&gt;</c>, and parses the ready / error
+/// marker lines the python script emits to stdout.
 ///
 /// <para>
 /// Marker contract (mirrors <c>import_orbit.py</c>'s end-of-script
@@ -245,13 +245,26 @@ public sealed class UnrealLauncher
         };
 
         // Argument order matches the canonical UE 5.7 commandlet form:
-        //   UnrealEditor-Cmd.exe <project.uproject> -run=PythonScript -ExecutePythonScript=<script.py>
+        //   UnrealEditor-Cmd.exe <project.uproject> -run=PythonScript -script="<script.py>"
+        //
+        // CRITICAL: when -run=PythonScript is present, UE enters the
+        // PythonScriptCommandlet code path. That commandlet reads the
+        // Python source path from the -script=<path> token. The
+        // -ExecutePythonScript=<path> token is only honoured by the
+        // *editor-startup* PythonScript path (non-commandlet); when the
+        // editor is launched as a commandlet it explicitly rejects it:
+        //   LogEditorPythonExecuter: Error: -ExecutePythonScript cannot
+        //   be used by a commandlet. Use -run=PythonScript instead?
+        // That diagnostic surfaced on PC01 (v0.3.4) and meant the
+        // import_orbit.py never ran. Using -script=<path> here matches
+        // the canonical UE 5.7 docs and the upstream
+        // PythonScriptCommandlet implementation.
         // Headless / unattended flags suppress splash + interactive prompts.
         psi.ArgumentList.Add(scaffold.UprojectPath);
         psi.ArgumentList.Add("-run=PythonScript");
         psi.ArgumentList.Add(string.Format(
             CultureInfo.InvariantCulture,
-            "-ExecutePythonScript={0}", scaffold.PythonScriptPath));
+            "-script={0}", scaffold.PythonScriptPath));
         psi.ArgumentList.Add("-Unattended");
         psi.ArgumentList.Add("-NoSplash");
         psi.ArgumentList.Add("-NoPause");
@@ -741,11 +754,15 @@ public sealed class UnrealLauncher
             CreateNoWindow = true,
             WorkingDirectory = scaffold.ProjectRoot,
         };
+        // Same -script=<path> rationale as BuildStartInfoCore — see the
+        // comment there for the full explanation of why
+        // -ExecutePythonScript is rejected when -run=PythonScript puts
+        // the editor into commandlet mode.
         psi.ArgumentList.Add(scaffold.UprojectPath);
         psi.ArgumentList.Add("-run=PythonScript");
         psi.ArgumentList.Add(string.Format(
             CultureInfo.InvariantCulture,
-            "-ExecutePythonScript={0}", mvrPythonPath));
+            "-script={0}", mvrPythonPath));
         psi.ArgumentList.Add("-Unattended");
         psi.ArgumentList.Add("-NoSplash");
         psi.ArgumentList.Add("-NoPause");
