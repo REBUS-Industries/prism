@@ -54,8 +54,22 @@ public sealed class PixelStreamingSession : IAsyncDisposable
         _shutdownGrace = shutdownGrace ?? DefaultShutdownGrace;
     }
 
-    /// <summary>Cirrus signalling server's local TCP port.</summary>
-    public int SignallingPort => _cirrusHandle.TcpPort;
+    /// <summary>
+    /// The signalling server's player-facing TCP port. Wilbur listens
+    /// on this port for HTTP + the player WebSocket; legacy Cirrus
+    /// listens on this port for both player + streamer traffic. The
+    /// agent publishes the loopback URLs derived from this port via
+    /// <see cref="PlayerUrl"/> / <see cref="SignallingUrl"/>.
+    /// </summary>
+    public int SignallingPort => _cirrusHandle.PlayerPort;
+
+    /// <summary>
+    /// The signalling server's streamer-facing TCP port. On Wilbur
+    /// this is a SEPARATE port from <see cref="SignallingPort"/>; UE's
+    /// <c>-PixelStreamingURL</c> flag must point here. On legacy
+    /// Cirrus this equals <see cref="SignallingPort"/>.
+    /// </summary>
+    public int StreamerPort => _cirrusHandle.StreamerPort;
 
     /// <summary>Streamer id UE was told to register as.</summary>
     public string StreamerId => _ueHandle.StreamerId;

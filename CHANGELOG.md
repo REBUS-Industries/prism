@@ -25,6 +25,97 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.8 — 2026-05-28 — Auto-bootstrap PixelStreaming2 / Wilbur (UE 5.5+) on first run
+
+> **Removes the `signalling_not_found` hard-stop the v0.3.7 PC01 run
+> hit at Phase F. UE 5.5+ ships the PixelStreaming2 C++ plugin with
+> every launcher install, but the Node.js + TypeScript signalling
+> server ("Wilbur") is fetch-on-demand via the engine's
+> `Resources\WebServers\get_ps_servers.bat` helper. Until that helper
+> ran once the `SignallingWebServer\` tree was empty and the
+> orchestrator surfaced a manual-remediation error. The orchestrator
+> now runs the helper itself and falls through to a clean Phase F.**
+
+See `visualiser/CHANGELOG.md::v0.5.6` for the full details. In short:
+
+### Added
+
+- **`visualiser/src/PRISM.Visualiser.Orchestrator/PixelStreaming/SignallingBootstrap.cs`**
+  — new first-run installer that probes for
+  `Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\dist\index.js`,
+  and when absent runs `get_ps_servers.bat` (downloads the
+  EpicGamesExt/PixelStreamingInfrastructure sources) followed by
+  `SignallingWebServer\platform_scripts\cmd\start.bat` (downloads
+  Node.js, runs `npm install` across the workspace, compiles the
+  TypeScript packages, then briefly starts wilbur — killed by the
+  bootstrap the moment it logs a listening line). All stdout / stderr
+  is forwarded to Serilog under the `ps-bootstrap` channel so the
+  full ~1-3 min install transcript is captured in the agent log.
+- **`SignallingBootstrap`** writes a marker under
+  `%LOCALAPPDATA%\PRISM.Visualiser\state\signalling_ready_<sha>.flag`
+  per UE-root SHA. The canonical readiness check is still a disk
+  probe of `dist\index.js`; the marker is informational.
+
+### Changed
+
+- **`Pipeline/VisualiserPipeline.cs::StartStreamingAsync`** — Phase F
+  now calls `SignallingBootstrap.EnsureReadyAsync(install)` before
+  `SignallingSupervisor.Resolve`. On already-built engines the
+  bootstrap is a single `File.Exists` check and returns
+  `AlreadyReady` immediately.
+- **`PixelStreaming/SignallingSupervisor.cs`** — `Resolve` now
+  prefers `SignallingWebServer\dist\index.js` (Wilbur, UE 5.5+) over
+  the legacy top-level Cirrus candidates and surfaces the probed
+  paths via `SignallingResolveResult.ProbedPaths` so a future
+  `signalling_not_found` error message can name the files it
+  actually looked at. The bundled Node binary resolution now prefers
+  the wilbur-shipped Node under
+  `SignallingWebServer\platform_scripts\cmd\node\node.exe` over the
+  legacy `Engine\Binaries\ThirdParty\Node\Win64\node.exe`.
+- **`PixelStreaming/SignallingSupervisor.cs::BuildStartInfo`** — emits
+  wilbur's `commander`-style CLI shape
+  (`--player_port=N --streamer_port=M --serve --console_messages
+  verbose --log_config`) when the resolved script is wilbur; falls
+  back to legacy Cirrus `--HttpPort=N` for pre-5.5 plugin variants.
+- **`PixelStreaming/SignallingSupervisor.cs`** — ready-line + streamer-
+  connected regexes now also match Wilbur log shapes
+  (`Listening on :N`, `HTTP webserver listening on port N`,
+  `Streamer registered with id orbit_xxx`).
+- **`Pipeline/VisualiserPipeline.cs`** — allocates two distinct
+  loopback TCP ports for Wilbur (player + streamer) so UE's
+  `-PixelStreamingURL=ws://127.0.0.1:<streamer_port>` points at the
+  right port. Legacy Cirrus still gets one port.
+- **`PixelStreaming/SignallingHandle`** + **`PixelStreamingSession`**
+  — both expose `PlayerPort` and `StreamerPort` separately. The
+  player-facing port (the one surfaced as `PlayerUrl` / `SignallingUrl`
+  to the agent) keeps the legacy `TcpPort` alias.
+- **`Models/FailedEvent.cs`** — adds
+  `signalling_bootstrap_failed` for the new auto-bootstrap failure
+  mode (network outage, npm install failure, `get_ps_servers.bat`
+  missing — i.e. a partially-installed PixelStreaming2 plugin).
+  Existing `signalling_not_found` error message now also names the
+  probed file paths so the next operator failure is debuggable
+  without going back to source.
+
+### Notes
+
+- Closes [#25](https://github.com/REBUS-ORBIT/prism/issues/25).
+- The orbit-ue-template's `.uproject` was already correctly
+  declaring `"PixelStreaming2": { "Enabled": true }` (`v0.1.0-ue5.7-scaffold`),
+  so no template repo bump was needed. Option B from the original
+  investigation directive was a no-op.
+- Bootstrap cost on a fresh PC01-class workstation: ~30 s for the
+  `get_ps_servers.bat` clone (≈12 MB), then 60-180 s for the
+  `start.bat` Node.js download (≈30 MB) + npm install (≈150 MB) +
+  TypeScript compile. Steady-state cost: one `File.Exists` probe.
+  Total disk footprint after bootstrap: ~250 MB inside the UE plugin
+  tree (not duplicated under `%LOCALAPPDATA%`).
+- The bootstrap probes `start.bat` for the first listening line and
+  kills the process tree — the build artefacts (`dist/`, `node/`,
+  `node_modules/`) survive the kill, so subsequent Phase F runs can
+  launch wilbur directly via the supervisor without going through
+  start.bat again.
+
 ## v0.3.7 — 2026-05-28 — Fix orchestrator missing UE marker because of `[ts][ch]LogPython:` prefix
 
 > **Fixes the visualiser run still reporting `ue_import_failed: UE

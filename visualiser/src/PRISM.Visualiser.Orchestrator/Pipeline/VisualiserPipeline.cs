@@ -315,57 +315,102 @@ public sealed class VisualiserPipeline
         var streamerConnectBudget = streamerConnectTimeout
             ?? PixelStreamingSession.DefaultStreamerConnectTimeout;
 
-        // 1. Resolve Cirrus + node.exe before we allocate ports —
-        //    fail-fast keeps the error event surface clean.
+        // 1. Ensure the PixelStreaming2 signalling server is installed
+        //    + built. On a fresh UE 5.7 launcher install the wilbur
+        //    TypeScript and the Node.js runtime are fetched on demand
+        //    via Resources\WebServers\get_ps_servers.bat — until that
+        //    runs at least once the SignallingWebServer tree is empty
+        //    and Resolve below would surface signalling_not_found.
+        //    The bootstrap is idempotent (probes for dist\index.js
+        //    before doing any work), so the steady-state cost is one
+        //    File.Exists check.
+        var bootstrap = new SignallingBootstrap(_log, _job);
+        await bootstrap.EnsureReadyAsync(install, ct: ct).ConfigureAwait(false);
+
+        // 2. Resolve signalling-server script + node.exe before we
+        //    allocate ports — fail-fast keeps the error event surface
+        //    clean.
         var resolved = SignallingSupervisor.Resolve(install.Root);
         if (resolved.CirrusScriptPath is null)
         {
+            var probed = resolved.ProbedPaths is { Count: > 0 }
+                ? string.Join("; ", resolved.ProbedPaths)
+                : $"{install.Root}\\{SignallingSupervisor.WilburEntrypointRelative}";
             throw new SignallingNotFoundException(
-                "Cirrus signalling script could not be located under " +
-                $"'{install.Root}\\{SignallingSupervisor.SignallingWebServerRelative}'. " +
-                "Is the PixelStreaming2 plugin installed?");
+                "PixelStreaming signalling server entrypoint could not be located. " +
+                $"Probed: {probed}. The auto-bootstrap completed but did not " +
+                "produce the expected file — re-run with a clean " +
+                "Resources\\WebServers\\SignallingWebServer\\ directory, or " +
+                "consult the ps-bootstrap log channel for the underlying error.");
         }
         if (resolved.NodeExePath is null)
         {
             throw new NodeNotFoundException(
-                "UE-bundled node.exe could not be located at " +
-                $"'{install.Root}\\{SignallingSupervisor.NodeExeRelative}'.");
+                "node.exe could not be located. Probed " +
+                $"'{install.Root}\\{SignallingSupervisor.WilburNodeExeRelative}' (wilbur bundle) and " +
+                $"'{install.Root}\\{SignallingSupervisor.NodeExeRelative}' (legacy engine bundle).");
         }
         _log.Information(
-            "phase-f: resolved cirrus={Cirrus} node={Node}",
+            "phase-f: resolved flavour={Flavour} signalling={Script} node={Node}",
+            resolved.IsWilbur ? "wilbur" : "cirrus",
             resolved.CirrusScriptPath, resolved.NodeExePath);
 
-        // 2. Allocate the signalling port (honour the agent's hint
-        //    opportunistically) and a UDP range for WebRTC. The UDP
-        //    range isn't passed to UE today — PS2's WebRTC stack
-        //    auto-allocates ports inside the system ephemeral range —
-        //    but we reserve them for observability + future flag
-        //    plumbing.
-        var signallingPort = PortAllocator
-            .AllocateTcpPortHonouringHint(manifest.SignallingPortHint);
+        // 3. Allocate the signalling ports. Wilbur listens on two
+        //    separate TCP ports (player vs streamer); legacy Cirrus
+        //    listens on one. Allocate distinct pairs so the kernel
+        //    guarantees uniqueness even when the hinted port is
+        //    bindable. The UDP range is reserved for observability;
+        //    PS2's WebRTC stack auto-allocates ports inside the
+        //    system ephemeral range and ignores any hint we pass.
+        int playerPort;
+        int streamerPort;
+        if (resolved.IsWilbur)
+        {
+            playerPort = PortAllocator
+                .AllocateTcpPortHonouringHint(manifest.SignallingPortHint);
+            var pair = PortAllocator.AllocateDistinctTcpPorts(1);
+            streamerPort = pair[0];
+            // Microscopic chance the OS handed out the same number
+            // for the streamer that we already pinned for the player.
+            // Re-roll until distinct.
+            while (streamerPort == playerPort)
+            {
+                streamerPort = PortAllocator.AllocateTcpPort();
+            }
+        }
+        else
+        {
+            playerPort = PortAllocator
+                .AllocateTcpPortHonouringHint(manifest.SignallingPortHint);
+            streamerPort = playerPort;
+        }
         var webrtcPorts = PortAllocator.AllocateUdpPortRange();
         _log.Information(
-            "phase-f: allocated signallingPort={Port} webrtcPorts=[{WebRtc}]",
-            signallingPort, string.Join(",", webrtcPorts));
+            "phase-f: allocated playerPort={Player} streamerPort={Streamer} webrtcPorts=[{WebRtc}]",
+            playerPort, streamerPort, string.Join(",", webrtcPorts));
 
-        // 3. Spawn Cirrus + wait for its ready line. On failure the
-        //    supervisor kills the process before throwing, so we
-        //    don't need a try/finally here.
+        // 4. Spawn the signalling server + wait for its ready line.
+        //    On failure the supervisor kills the process before
+        //    throwing, so we don't need a try/finally here.
         var cirrusSupervisor = new SignallingSupervisor(_log, _job);
         var cirrusHandle = await cirrusSupervisor
-            .StartAsync(resolved, signallingPort, signallingReadyTimeout, ct)
+            .StartAsync(resolved, playerPort, streamerPort, signallingReadyTimeout, ct)
             .ConfigureAwait(false);
 
-        // 4. Spawn UE -game and watch Cirrus stdout for the
-        //    "Streamer connected" line. We dispose Cirrus on any
-        //    failure here so we don't leak the supervisor.
+        // 5. Spawn UE -game and watch the signalling stdout for the
+        //    "Streamer connected" line. We dispose the signalling
+        //    server on any failure here so we don't leak the
+        //    supervisor.
         UnrealGameHandle? ueHandle = null;
         try
         {
             var streamerId = "orbit_" + ShortId(manifest.RunId);
+            // UE's -PixelStreamingURL must point at the STREAMER
+            // port. On wilbur that's a different port from the
+            // player-facing one; on legacy cirrus they're equal.
             var signallingUrl = string.Format(
                 System.Globalization.CultureInfo.InvariantCulture,
-                "ws://127.0.0.1:{0}", signallingPort);
+                "ws://127.0.0.1:{0}", streamerPort);
 
             var launcher = new UnrealLauncher(install, _job, _log);
             ueHandle = launcher.LaunchGameMode(
@@ -376,8 +421,8 @@ public sealed class VisualiserPipeline
                 .ConfigureAwait(false);
 
             _log.Information(
-                "phase-f: streamer connected pid={Pid} streamerId={StreamerId} port={Port}",
-                ueHandle.ProcessId, streamerId, signallingPort);
+                "phase-f: streamer connected pid={Pid} streamerId={StreamerId} player={Player} streamer={Streamer}",
+                ueHandle.ProcessId, streamerId, playerPort, streamerPort);
 
             return new PixelStreamingSession(_log, ueHandle, cirrusHandle);
         }

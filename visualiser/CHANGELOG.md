@@ -4,6 +4,158 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.6 — Auto-bootstrap PixelStreaming2 / Wilbur on first run (UE 5.5+)
+
+> **Closes [REBUS-ORBIT/prism#25](https://github.com/REBUS-ORBIT/prism/issues/25).**
+>
+> The v0.3.7 PC01 run passed Phase E (UE import) cleanly and hit
+> Phase F with `signalling_not_found: Cirrus signalling script could
+> not be located under 'C:\Program Files\Epic Games\UE_5.7\Engine\
+> Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer'.
+> Is the PixelStreaming2 plugin installed?`. The PixelStreaming2 C++
+> plugin **was** installed — but the Node.js signalling server it
+> needs is fetched on demand via `get_ps_servers.bat`, and that
+> script hadn't been run yet. v0.5.6 makes the orchestrator do the
+> bootstrap itself.
+
+### Root cause
+
+PS2 (UE 5.5+) split the signalling server out of the C++ plugin:
+
+- **Stays with the engine launcher install (✅)**: the C++
+  PixelStreaming2 plugin under `Engine\Plugins\Media\PixelStreaming2\`
+  and its launch script `get_ps_servers.bat`.
+- **Fetched on demand (✗ until v0.5.6)**: the `SignallingWebServer\`
+  TypeScript sources (cloned by `get_ps_servers.bat` from
+  `github.com/EpicGamesExt/PixelStreamingInfrastructure`), `node.exe`
+  (downloaded by `start.bat`), and the compiled
+  `SignallingWebServer\dist\index.js` (built by `npm run build`).
+
+The previous orchestrator probed for `cirrus.js` / `Cirrus.js` /
+`main.js` / `server.js` / `index.js` directly under
+`SignallingWebServer\` — the *pre-5.5* layout — and surfaced
+`signalling_not_found` when none existed. Even after running
+`get_ps_servers.bat` manually the probe would still miss, because
+PS2's signalling server is named "Wilbur" and lives at
+`SignallingWebServer\dist\index.js`.
+
+### Added
+
+- **`PixelStreaming/SignallingBootstrap.cs`** — new first-run
+  installer. `EnsureReadyAsync(UnrealInstall, …)`:
+  1. probes for `dist\index.js` and short-circuits when present;
+  2. runs `Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\get_ps_servers.bat /v 5.7`
+     to download the EpicGamesExt PixelStreamingInfrastructure
+     UE5.7 branch into the engine plugin tree;
+  3. runs `SignallingWebServer\platform_scripts\cmd\start.bat
+     --publicip 127.0.0.1 -- --player_port 65000 --streamer_port 65001
+     --serve --console_messages verbose --log_config`, watches stdout
+     for the first listening-line / "starting" log, then kills the
+     entire process tree — the build artefacts (`dist/`, `node/`,
+     `node_modules/`, `Common/dist`, `Signalling/dist`, …) survive
+     the kill;
+  4. writes a marker under
+     `%LOCALAPPDATA%\PRISM.Visualiser\state\signalling_ready_<sha>.flag`
+     keyed by the SHA of the UE root path so multiple parallel UE
+     installs (e.g. 5.6 + 5.7) don't share a marker.
+  Bootstrap stdout / stderr is forwarded to Serilog under the
+  `ps-bootstrap` channel. Total budget: 8 minutes; the npm / tsc
+  pass on a fresh disk typically takes 60-180 s. Throws
+  `SignallingBootstrapException` (mapped to the new
+  `signalling_bootstrap_failed` failed/v1 code) on partial-install /
+  network failures.
+
+### Changed
+
+- **`Pipeline/VisualiserPipeline.cs::StartStreamingAsync`** — Phase F
+  now calls `SignallingBootstrap.EnsureReadyAsync` before
+  `SignallingSupervisor.Resolve`. On steady state this is a single
+  `File.Exists` check (~µs).
+- **`PixelStreaming/SignallingSupervisor.cs::Resolve`** — probes
+  `SignallingWebServer\dist\index.js` first (Wilbur, UE 5.5+);
+  falls back to the legacy top-level Cirrus candidates only if
+  Wilbur isn't there. The new `IsWilbur` flag on
+  `SignallingResolveResult` selects which CLI dialect
+  `BuildStartInfo` emits. Probed paths are surfaced via
+  `ProbedPaths` so a future `signalling_not_found` event can list
+  the exact files inspected.
+- **`PixelStreaming/SignallingSupervisor.cs::BuildStartInfo`** —
+  emits wilbur's `commander`-style CLI:
+  `node dist\index.js --player_port=N --streamer_port=M --serve
+  --console_messages verbose --log_config`. Working directory is
+  set to the wilbur package root (`SignallingWebServer\`) so
+  wilbur's `config.json` + relative `http_root` paths resolve.
+  Legacy Cirrus `--HttpPort=N` still emitted when `IsWilbur` is
+  false (pre-5.5 plugin variants we don't formally support but
+  might still encounter on customer workstations).
+- **`PixelStreaming/SignallingSupervisor.cs`** — `StartAsync` now
+  takes separate `playerPort` + `streamerPort` arguments. Ready-
+  line + streamer-connected regexes extended to also match wilbur
+  log shapes (`HTTP webserver listening on port N`,
+  `Listening on :N`, `Streamer registered with id orbit_xxx`).
+- **`PixelStreaming/SignallingSupervisor.cs::NodeExeRelative`** is
+  joined by **`WilburNodeExeRelative`**: the resolver prefers the
+  wilbur-bundled Node (`SignallingWebServer\platform_scripts\cmd\
+  node\node.exe`) so the runtime version matches the one that
+  built wilbur's `dist/`. Falls back to the legacy
+  `Engine\Binaries\ThirdParty\Node\Win64\node.exe` only when the
+  wilbur bundle isn't there.
+- **`PixelStreaming/PixelStreamingSession.cs`** — exposes
+  `StreamerPort` alongside `SignallingPort`. The player-facing
+  `PlayerUrl` / `SignallingUrl` still derive from the player port,
+  so the ready/v1 wire format is unchanged.
+- **`Pipeline/VisualiserPipeline.cs`** — allocates two distinct
+  TCP ports on the Wilbur path; UE's `-PixelStreamingURL` now
+  points at the streamer port (was: the player port, which Wilbur
+  doesn't accept streamer connections on).
+- **`Models/FailedEvent.cs`** — adds
+  `CodeSignallingBootstrapFailed = "signalling_bootstrap_failed"`.
+  The `signalling_not_found` message string now lists the actual
+  probed paths.
+
+### Trade-off
+
+The bootstrap pre-builds and momentarily starts wilbur on a pair of
+loopback-only ports (65000 / 65001 by default), then kills the
+process tree. There's a few-second window where a wilbur instance
+is listening on those ports; if some other process on the
+workstation happens to also try to bind 65000 or 65001 in that
+window, the bootstrap doesn't conflict (kernel hands out ports
+exclusive-by-default) but they'll see EADDRINUSE while wilbur is
+alive. Documented inline; the chosen ports are deep in the
+ephemeral range so collisions are exceedingly rare on a PRISM
+workstation.
+
+### Tests
+
+- **`SignallingBootstrapTests`** — pure-function surface coverage:
+  `IsReady` disk probe, marker path stability across UE-root casing
+  variation, marker uniqueness across UE versions, `WilburReadyPattern`
+  matches against five known shapes + three negatives, arg
+  tokeniser handles quoted paths, hard-pinned canonical relative
+  paths.
+- **`SignallingSupervisorTests`** — adds three new cases:
+  `Resolve_PrefersWilburEntrypoint_OverLegacyCirrusCandidates`,
+  `Resolve_FallsBackToLegacyCirrus_WhenWilburMissing`, and
+  `BuildStartInfo_Wilbur_EmitsCommanderStyleArgs` /
+  `BuildStartInfo_LegacyCirrus_EmitsHttpPortArg` to pin the CLI
+  dialect contract per flavour.
+
+### Notes
+
+- Closes [#25](https://github.com/REBUS-ORBIT/prism/issues/25).
+- The orbit-ue-template's `.uproject` was already correctly
+  declaring `"PixelStreaming2": { "Enabled": true }`
+  (verified on `v0.1.0-ue5.7-scaffold`), so no template repo bump
+  was needed.
+- Failure-mode progression so far:
+  `exit=-1` (no commandlet) → `exit=3` (Interchange/Slate gap) →
+  `exit=0 + no marker` (parse miss) → `signalling_not_found`
+  (wilbur not bootstrapped) → expected next is either
+  `ready/v1` end-to-end or a downstream Phase F failure
+  (UE -game registration, TURN handshake) that we'll document in
+  a v0.5.7+ follow-up.
+
 ## v0.5.5 — Fix marker parser stripped by UE `[ts][ch]LogPython:` log prefix
 
 > **Closes [REBUS-ORBIT/prism#23](https://github.com/REBUS-ORBIT/prism/issues/23).**

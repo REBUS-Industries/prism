@@ -180,6 +180,119 @@ public class SignallingSupervisorTests
         }
     }
 
+    [Fact]
+    public void Resolve_PrefersWilburEntrypoint_OverLegacyCirrusCandidates()
+    {
+        // PS2 (UE 5.5+) ships wilbur at SignallingWebServer\dist\index.js.
+        // The legacy index.js Cirrus candidate sits one level up; the
+        // resolver must always prefer wilbur when both exist.
+        var tmpDir = Path.Combine(
+            Path.GetTempPath(),
+            "phase-f-wilbur-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var wilburPath = Path.Combine(tmpDir, SignallingSupervisor.WilburEntrypointRelative);
+            var legacyDir = Path.Combine(tmpDir, SignallingSupervisor.SignallingWebServerRelative);
+            var legacyPath = Path.Combine(legacyDir, "index.js");
+            var nodePath = Path.Combine(tmpDir, SignallingSupervisor.WilburNodeExeRelative);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(wilburPath)!);
+            Directory.CreateDirectory(legacyDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(nodePath)!);
+
+            File.WriteAllText(wilburPath, "// wilbur\n");
+            File.WriteAllText(legacyPath, "// legacy cirrus\n");
+            File.WriteAllBytes(nodePath, new byte[] { 0x4D, 0x5A });
+
+            var result = SignallingSupervisor.Resolve(tmpDir);
+
+            Assert.Equal(wilburPath, result.CirrusScriptPath);
+            Assert.Equal(nodePath, result.NodeExePath);
+            Assert.True(result.IsWilbur);
+            Assert.True(result.IsComplete);
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public void Resolve_FallsBackToLegacyCirrus_WhenWilburMissing()
+    {
+        var tmpDir = Path.Combine(
+            Path.GetTempPath(),
+            "phase-f-cirrus-fb-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var legacyDir = Path.Combine(tmpDir, SignallingSupervisor.SignallingWebServerRelative);
+            var legacyPath = Path.Combine(legacyDir, "Cirrus.js");
+            var nodePath = Path.Combine(tmpDir, SignallingSupervisor.NodeExeRelative);
+
+            Directory.CreateDirectory(legacyDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(nodePath)!);
+
+            File.WriteAllText(legacyPath, "// legacy cirrus\n");
+            File.WriteAllBytes(nodePath, new byte[] { 0x4D, 0x5A });
+
+            var result = SignallingSupervisor.Resolve(tmpDir);
+
+            Assert.Equal(legacyPath, result.CirrusScriptPath);
+            Assert.Equal(nodePath, result.NodeExePath);
+            Assert.False(result.IsWilbur);
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public void BuildStartInfo_Wilbur_EmitsCommanderStyleArgs()
+    {
+        var resolved = new SignallingResolveResult(
+            CirrusScriptPath: @"C:\fake\SignallingWebServer\dist\index.js",
+            NodeExePath: @"C:\fake\node.exe",
+            IsWilbur: true);
+
+        var psi = SignallingSupervisor.BuildStartInfo(resolved, playerPort: 65000, streamerPort: 65001);
+
+        Assert.Equal(@"C:\fake\node.exe", psi.FileName);
+        // Working directory should be the wilbur package root (one
+        // level above dist\index.js), so wilbur's config.json /
+        // relative paths resolve correctly.
+        Assert.Equal(@"C:\fake\SignallingWebServer", psi.WorkingDirectory);
+        var args = psi.ArgumentList.ToArray();
+        Assert.Equal(@"C:\fake\SignallingWebServer\dist\index.js", args[0]);
+        Assert.Contains("--player_port=65000", args);
+        Assert.Contains("--streamer_port=65001", args);
+        Assert.Contains("--serve", args);
+        Assert.Contains("--console_messages", args);
+        Assert.Contains("verbose", args);
+        Assert.Contains("--log_config", args);
+        // Legacy --HttpPort= must NOT appear — wilbur doesn't
+        // understand it and prints a "Unknown option" complaint.
+        Assert.DoesNotContain(args, a => a.StartsWith("--HttpPort", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BuildStartInfo_LegacyCirrus_EmitsHttpPortArg()
+    {
+        var resolved = new SignallingResolveResult(
+            CirrusScriptPath: @"C:\legacy\SignallingWebServer\cirrus.js",
+            NodeExePath: @"C:\legacy\node.exe",
+            IsWilbur: false);
+
+        var psi = SignallingSupervisor.BuildStartInfo(resolved, playerPort: 8888, streamerPort: 8888);
+
+        Assert.Equal(@"C:\legacy\node.exe", psi.FileName);
+        Assert.Equal(@"C:\legacy\SignallingWebServer", psi.WorkingDirectory);
+        var args = psi.ArgumentList.ToArray();
+        Assert.Equal(@"C:\legacy\SignallingWebServer\cirrus.js", args[0]);
+        Assert.Contains("--HttpPort=8888", args);
+        Assert.DoesNotContain(args, a => a.StartsWith("--player_port", StringComparison.Ordinal));
+    }
+
     private static async IAsyncEnumerable<string> ToAsync(IEnumerable<string> lines)
     {
         foreach (var line in lines)
