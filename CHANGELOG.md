@@ -25,6 +25,47 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.5 — 2026-05-28 — Fix `-ExecutePythonScript` rejected by UE commandlet
+
+> **Fixes the visualiser run failing at the import phase with
+> `LogEditorPythonExecuter: Error: -ExecutePythonScript cannot be used by a
+> commandlet. Use -run=PythonScript instead?` and the orchestrator timing out
+> at the 180 s ready-marker poll (`exit=-1 / no ready marker`).**
+
+### Fixed
+
+- **Visualiser orchestrator** (`Unreal/UnrealLauncher.cs`,
+  `BuildStartInfoCore` + `BuildMvrStartInfoCore`): the commandlet
+  invocation for the Phase E (glTF) and Phase J (MVR/GDTF) import passes
+  combined `-run=PythonScript` with `-ExecutePythonScript=<path>`. UE 5.7
+  enters `PythonScriptCommandlet` mode whenever `-run=PythonScript` is on
+  the command line, and that commandlet only accepts `-script=<path>` —
+  `-ExecutePythonScript` is the editor-startup (non-commandlet) form and
+  the commandlet explicitly rejects it at startup with the
+  `LogEditorPythonExecuter: Error:` line above. The result was that
+  `import_orbit.py` (and `import_mvr.py`) never ran, the Python
+  `PRISM_VISUALISER_READY` marker never emitted, and the orchestrator
+  timed out and reported `failed { code: "no_marker", exit: -1 }`. Both
+  call sites now emit `-run=PythonScript -script="<absolute/path>"` per
+  the canonical UE 5.7 PythonScriptCommandlet docs.
+
+### Notes
+
+- The streaming (Phase F) launch path (`BuildGameStartInfoCore` /
+  `LaunchGameMode`) was already correct — it never passes `-run=` or
+  `-NullRHI` and uses the `-game -RenderOffScreen -PixelStreamingURL=…`
+  PS2 form, so the D3D12 RHI + NVENC pipeline lights up normally once
+  the import phase succeeds.
+- No changes to the orchestrator/agent protocol, the ready-marker
+  contract, the Cirrus signalling supervisor, or the v0.3.4 ORBIT API
+  fixes (`HttpOrbitApi.cs`).
+- The user-visible UE log signature for v0.3.5 should be:
+  `[VisualiserJob] orchestrator stderr … -run=PythonScript -script=…`
+  followed by `LogPython: …` and (in Phase F) `LogPixelStreaming2:
+  Streamer started`.
+
+---
+
 ## v0.3.4 — 2026-05-28 — Fix `scaffold_failed: 404 on version REST endpoint`
 
 > **Fixes `scaffold_failed: GET api/v1/projects/.../versions/... failed with HTTP 404`
