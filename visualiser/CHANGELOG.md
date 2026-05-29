@@ -4,6 +4,67 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.8 — Light + frame the imported scene so the stream isn't black
+
+> The v0.3.9 PC01 run reached a fully healthy Pixel Streaming state —
+> UE registered with Wilbur, the browser connected, WebRTC offer/answer
+> completed, and both video+audio tracks went `State=[Active]` with a
+> live data channel — but the admin player page showed a **solid black**
+> viewport. Transport was never the problem; the *rendered scene* was
+> black.
+
+### Root cause
+
+`import_orbit.py` built the streamed `Imported_<runId>` map with
+`LevelEditorSubsystem.new_level()`, which creates a **completely blank**
+UE level: no Directional Light, no Sky Light, no Sky Atmosphere, no
+PostProcessVolume, no PlayerStart, and no camera. It then spawned the
+imported static meshes at the world origin and saved. The Phase F
+`-game` launch streams the default player camera, which spawns at world
+origin with default orientation into an unlit void — so every streamed
+frame is black even though the encoder, WebRTC tracks, and data channel
+are all live. UE also logged `LogGameMode: FindPlayerStart: PATHS NOT
+DEFINED or NO PLAYERSTART with positive rating` for the same reason
+(no PlayerStart in the blank level). Two missing pieces — **lighting**
+and **camera framing** — combined to produce the black frame.
+
+### Changed
+
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** — after the Interchange
+  glTF import the driver now makes the level actually viewable:
+  - **Bounds** — `_compute_bounds()` unions the imported `StaticMesh`
+    asset bounding boxes (CPU-side, reliable under `-NullRHI`; meshes are
+    spawned at origin with identity transform so world bounds == local
+    box). Falls back to `Actor.get_actor_bounds()` if an asset can't
+    report a box. Logged as `imported bounds center=(…) radius=…`.
+  - **Lighting** — `_add_lighting()` spawns a movable **Directional
+    Light** (atmosphere sun, intensity 10), a **Sky Atmosphere**, and a
+    movable **Sky Light** (real-time capture, intensity 1) — the UE
+    "Basic" daylight set, which exposes correctly under default
+    auto-exposure.
+  - **Exposure safety net** — `_add_post_process()` spawns an unbound
+    **PostProcessVolume** with auto-exposure clamped
+    (`auto_exposure_min/max_brightness` 0.5–2.0, bias 1.0) so an
+    empty/dark frame can't crush to black and a bright sky can't blow the
+    model out. Override flags are set best-effort across naming
+    conventions; the lit scene already guarantees a visible frame so this
+    is belt-and-suspenders.
+  - **Framing** — `_frame_view()` places a `CameraActor` at
+    `center + normalize(1,-1,0.6) * radius * 2.5` looking at the centre
+    (FOV 50, `auto_activate_for_player = PLAYER0`,
+    `find_camera_component_when_view_target = True`) so the streamed
+    `-game` view uses it, **and** a coincident `APlayerStart` at the same
+    transform so the default pawn also spawns framed on the model and the
+    `NO PLAYERSTART` warning disappears.
+  - Everything is **model-agnostic**: framing is driven by the computed
+    bounds, with a ~2 m fallback for degenerate/empty bounds. Each spawn
+    is individually `try`/`except`-guarded so a UE-API drift on one actor
+    can't abort the whole import; failures are logged on the `ue-editor`
+    channel.
+
+This is a Python-driver-only change; the Phase F streamer-connected path
+(v0.5.7) is untouched.
+
 ## v0.5.7 — Recognise UE 5.7 / Wilbur "streamer registered" log shapes
 
 > The v0.5.6 PC01 run got past the `signalling_not_found` hard-stop and

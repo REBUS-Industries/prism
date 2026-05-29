@@ -25,6 +25,42 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.10 — 2026-05-29 — Light + frame the imported scene so the stream isn't black
+
+> **Fixes the v0.3.9 PC01 symptom: Pixel Streaming reached a fully
+> healthy state (streamer registered with Wilbur, browser connected,
+> WebRTC offer/answer done, video+audio tracks `State=[Active]`, data
+> channel live) but the admin player page showed a SOLID BLACK viewport.
+> Transport was fine — the rendered scene was black.**
+
+### Root cause
+
+`import_orbit.py` built the streamed `Imported_<runId>` map with
+`LevelEditorSubsystem.new_level()`, which produces a **blank** UE level:
+no lights, no sky, no post-process, no PlayerStart, no camera. Meshes
+were spawned at the world origin and the level saved. The `-game` launch
+streams the default player camera, which spawns at world origin facing
+the default direction into an unlit void → every frame is black even
+though the encoder + WebRTC tracks are live. UE also logged
+`FindPlayerStart: PATHS NOT DEFINED or NO PLAYERSTART with positive
+rating`. Both **lighting** and **camera framing** were missing.
+
+### Fixed
+
+- **`visualiser` → `import_orbit.py(.in)`** now, after import, computes
+  the imported geometry bounds, spawns a Directional Light + Sky Light +
+  Sky Atmosphere (UE "Basic" daylight set), an unbound PostProcessVolume
+  with auto-exposure clamped (anti-black-crush safety net), a framing
+  `CameraActor` (auto-activated for player 0, so the streamed `-game`
+  view uses it) positioned at an orbit distance from the bounds centre,
+  and a coincident `APlayerStart` (eliminates the `NO PLAYERSTART`
+  warning and frames the default pawn on the model). Framing is driven
+  by the computed bounds — model-agnostic, nothing hardcoded. See
+  `visualiser/CHANGELOG.md::v0.5.8` for the full breakdown.
+
+Ships as visualiser-v0.5.8 (orchestrator EXE + bundled python templates).
+The v0.3.9 streamer-connected fix is untouched.
+
 ## v0.3.9 — 2026-05-29 — Recognise UE 5.7 / Wilbur "streamer registered" log shapes
 
 > **Removes the `ue_game_start_timeout` 120 s timeout the v0.3.8 PC01

@@ -35,6 +35,25 @@
 #     .IsValid() [SlateApplication.h:321]` and the commandlet
 #     `RequestExit(1, 3, ...)`'d out with exit code 3.
 #
+# Scene-framing + lighting note (v0.3.10 / visualiser-v0.5.8):
+#   * `_new_level()` creates a *blank* UE level: no lights, no sky, no
+#     post-process, no PlayerStart, no camera. The Phase F `-game` launch
+#     streams the default player camera, which spawns at world origin with
+#     default orientation into an unlit void — producing a SOLID BLACK
+#     frame even though Pixel Streaming transport is fully healthy (the
+#     v0.3.9 symptom: streamer Active, video+audio tracks live, viewport
+#     black). UE also logs `FindPlayerStart: PATHS NOT DEFINED or NO
+#     PLAYERSTART with positive rating` for the same reason.
+#   * After importing geometry we therefore (a) compute the union bounds of
+#     the imported meshes, (b) spawn a Directional Light + Sky Light +
+#     Sky Atmosphere so the scene is lit, (c) spawn an unbound
+#     PostProcessVolume with auto-exposure clamped so an empty/dark or
+#     very bright frame can't crush to black / blow out, and (d) spawn a
+#     framing CameraActor (auto-activated for player 0) plus a PlayerStart
+#     at the same orbit transform so the streamed view shows the model
+#     lit and in frame. This is model-agnostic — bounds drive the framing,
+#     nothing is hardcoded for a specific import.
+#
 # Phase E note: BP_OrbitImporter.uasset (the Blueprint wrapper Phase D
 # would have shipped) does not yet exist in the v0.1.0-ue5.7-scaffold
 # template. We therefore use the Interchange Python API directly. Once
@@ -43,6 +62,7 @@
 # entrypoint; the public stdout contract is unchanged.
 
 import json
+import math
 import sys
 import time
 
@@ -67,6 +87,12 @@ def _emit_ready(level_path, asset_count, elapsed_s):
 def _emit_error(code, message):
     payload = {"code": code, "message": message}
     print("PRISM_VISUALISER_ERROR " + json.dumps(payload), flush=True)
+
+
+def _log(message):
+    # Plain stdout line — forwarded to Serilog's ue-editor channel. Not a
+    # marker, so the launcher's parser ignores it.
+    print("import_orbit: " + message, flush=True)
 
 
 def _get_editor_asset_library():
@@ -146,25 +172,293 @@ def _import_via_interchange(gltf_path, target_folder):
     return _normalise_imported_assets(result)
 
 
-def _spawn_meshes_into_level(imported_assets):
-    actor_count = 0
-    static_mesh_cls = getattr(unreal, "StaticMesh", None)
-    spawner_subsystem = None
+def _get_actor_spawner():
+    # EditorActorSubsystem is the 5.x-preferred way to spawn actors into
+    # the active editor world; EditorLevelLibrary is the legacy fallback.
     if hasattr(unreal, "EditorActorSubsystem"):
-        spawner_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        if sub is not None:
+            return sub
+    return None
 
-    for asset in imported_assets:
-        if static_mesh_cls is not None and not isinstance(asset, static_mesh_cls):
-            continue
+
+def _spawn_actor_from_class(actor_class, location, rotation):
+    sub = _get_actor_spawner()
+    if sub is not None and hasattr(sub, "spawn_actor_from_class"):
+        return sub.spawn_actor_from_class(actor_class, location, rotation)
+    return unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, rotation)
+
+
+def _static_meshes(imported_assets):
+    static_mesh_cls = getattr(unreal, "StaticMesh", None)
+    if static_mesh_cls is None:
+        return list(imported_assets)
+    return [a for a in imported_assets if isinstance(a, static_mesh_cls)]
+
+
+def _spawn_meshes_into_level(static_meshes):
+    # Every mesh is spawned at the world origin with identity transform,
+    # so a mesh's *world* bounds equal its asset-local bounding box. That
+    # keeps `_compute_bounds` reliable even under -NullRHI (the local box
+    # is CPU-side data and doesn't need a rendered frame).
+    spawned = []
+    sub = _get_actor_spawner()
+    for asset in static_meshes:
         location = unreal.Vector(0.0, 0.0, 0.0)
         rotation = unreal.Rotator(0.0, 0.0, 0.0)
-        if spawner_subsystem is not None and hasattr(spawner_subsystem, "spawn_actor_from_object"):
-            actor = spawner_subsystem.spawn_actor_from_object(asset, location, rotation)
+        if sub is not None and hasattr(sub, "spawn_actor_from_object"):
+            actor = sub.spawn_actor_from_object(asset, location, rotation)
         else:
             actor = unreal.EditorLevelLibrary.spawn_actor_from_object(asset, location, rotation)
         if actor is not None:
-            actor_count += 1
-    return actor_count
+            spawned.append(actor)
+    return spawned
+
+
+def _compute_bounds(static_meshes, spawned_actors):
+    # Prefer the StaticMesh asset bounding boxes (always available, even
+    # under -NullRHI). Fall back to actor bounds if an asset can't report
+    # a box. Returns (center: Vector, radius: float) or None when empty.
+    have = False
+    min_x = min_y = min_z = 0.0
+    max_x = max_y = max_z = 0.0
+
+    def _accumulate(bmin, bmax):
+        nonlocal have, min_x, min_y, min_z, max_x, max_y, max_z
+        if not have:
+            min_x, min_y, min_z = bmin.x, bmin.y, bmin.z
+            max_x, max_y, max_z = bmax.x, bmax.y, bmax.z
+            have = True
+        else:
+            min_x = min(min_x, bmin.x)
+            min_y = min(min_y, bmin.y)
+            min_z = min(min_z, bmin.z)
+            max_x = max(max_x, bmax.x)
+            max_y = max(max_y, bmax.y)
+            max_z = max(max_z, bmax.z)
+
+    for mesh in static_meshes:
+        try:
+            box = mesh.get_bounding_box()
+        except Exception:  # noqa: BLE001
+            box = None
+        if box is None:
+            continue
+        try:
+            _accumulate(box.min, box.max)
+        except Exception:  # noqa: BLE001
+            continue
+
+    if not have:
+        # Asset boxes unavailable — fall back to actor world bounds.
+        for actor in spawned_actors:
+            try:
+                origin, extent = actor.get_actor_bounds(False)
+            except Exception:  # noqa: BLE001
+                continue
+            bmin = unreal.Vector(origin.x - extent.x, origin.y - extent.y, origin.z - extent.z)
+            bmax = unreal.Vector(origin.x + extent.x, origin.y + extent.y, origin.z + extent.z)
+            _accumulate(bmin, bmax)
+
+    if not have:
+        return None
+
+    center = unreal.Vector(
+        (min_x + max_x) * 0.5,
+        (min_y + max_y) * 0.5,
+        (min_z + max_z) * 0.5,
+    )
+    dx = (max_x - min_x) * 0.5
+    dy = (max_y - min_y) * 0.5
+    dz = (max_z - min_z) * 0.5
+    radius = math.sqrt(dx * dx + dy * dy + dz * dz)
+    return center, radius
+
+
+def _set_movable(actor):
+    try:
+        root = actor.root_component
+        if root is not None and hasattr(root, "set_mobility"):
+            root.set_mobility(unreal.ComponentMobility.MOVABLE)
+    except Exception as ex:  # noqa: BLE001
+        _log("set_mobility failed: %s" % ex)
+
+
+def _set_props(target, props):
+    for name, value in props:
+        try:
+            target.set_editor_property(name, value)
+        except Exception:  # noqa: BLE001
+            # Property name drifts across UE point releases; tolerate.
+            pass
+
+
+def _add_lighting():
+    # Directional sun + Sky Atmosphere + ambient Sky Light. This mirrors
+    # the UE "Basic" daylight template, which is correctly exposed under
+    # default auto-exposure. The previously-blank Imported_<runId> level
+    # had zero lights, so the streamed frame was black regardless of
+    # camera framing.
+    added = []
+
+    # Directional light (sun). Movable so the -game launch lights the
+    # scene without a baked lighting build.
+    try:
+        sun = _spawn_actor_from_class(
+            unreal.DirectionalLight,
+            unreal.Vector(0.0, 0.0, 1000.0),
+            unreal.Rotator(-48.0, -30.0, 0.0))
+        if sun is not None:
+            _set_movable(sun)
+            comp = None
+            try:
+                comp = sun.get_component_by_class(unreal.DirectionalLightComponent)
+            except Exception:  # noqa: BLE001
+                comp = getattr(sun, "directional_light_component", None)
+            if comp is not None:
+                _set_props(comp, [
+                    ("intensity", 10.0),
+                    ("atmosphere_sun_light", True),
+                ])
+            added.append("DirectionalLight")
+    except Exception as ex:  # noqa: BLE001
+        _log("directional light spawn failed: %s" % ex)
+
+    # Sky atmosphere — gives a bright sky so auto-exposure always has a
+    # well-lit reference and the sun reads as daylight.
+    try:
+        if hasattr(unreal, "SkyAtmosphere"):
+            atmo = _spawn_actor_from_class(
+                unreal.SkyAtmosphere,
+                unreal.Vector(0.0, 0.0, 0.0),
+                unreal.Rotator(0.0, 0.0, 0.0))
+            if atmo is not None:
+                added.append("SkyAtmosphere")
+    except Exception as ex:  # noqa: BLE001
+        _log("sky atmosphere spawn failed: %s" % ex)
+
+    # Sky light (ambient fill). Real-time capture so it re-captures the
+    # atmosphere at runtime (movable, no baked capture needed).
+    try:
+        sky = _spawn_actor_from_class(
+            unreal.SkyLight,
+            unreal.Vector(0.0, 0.0, 1000.0),
+            unreal.Rotator(0.0, 0.0, 0.0))
+        if sky is not None:
+            _set_movable(sky)
+            comp = None
+            try:
+                comp = sky.get_component_by_class(unreal.SkyLightComponent)
+            except Exception:  # noqa: BLE001
+                comp = getattr(sky, "sky_light_component", None)
+            if comp is not None:
+                _set_props(comp, [
+                    ("real_time_capture", True),
+                    ("intensity", 1.0),
+                ])
+            added.append("SkyLight")
+    except Exception as ex:  # noqa: BLE001
+        _log("sky light spawn failed: %s" % ex)
+
+    return added
+
+
+def _add_post_process():
+    # Unbound PostProcessVolume that clamps auto-exposure adaptation so an
+    # empty/dark frame can't crush to black and a bright sky can't blow the
+    # model out. The min/max band is sane whether the project expresses
+    # exposure in EV100 (Extend Default Luminance Range on) or cd/m2 (off).
+    # Best-effort: if the override flags aren't bindable on this UE build,
+    # the lit scene + default auto-exposure already produces a visible
+    # frame, so this is a safety net rather than the primary fix.
+    try:
+        ppv = _spawn_actor_from_class(
+            unreal.PostProcessVolume,
+            unreal.Vector(0.0, 0.0, 0.0),
+            unreal.Rotator(0.0, 0.0, 0.0))
+        if ppv is None:
+            return False
+        _set_props(ppv, [("unbound", True)])
+        try:
+            settings = ppv.get_editor_property("settings")
+            _set_props(settings, [
+                ("auto_exposure_min_brightness", 0.5),
+                ("auto_exposure_max_brightness", 2.0),
+                ("auto_exposure_bias", 1.0),
+            ])
+            # Enable the corresponding override flags so the volume
+            # actually applies the clamped values. Property naming varies
+            # across UE point releases; try both conventions.
+            for flag in (
+                "override_auto_exposure_min_brightness",
+                "override_auto_exposure_max_brightness",
+                "override_auto_exposure_bias",
+                "b_override_auto_exposure_min_brightness",
+                "b_override_auto_exposure_max_brightness",
+                "b_override_auto_exposure_bias",
+            ):
+                try:
+                    settings.set_editor_property(flag, True)
+                except Exception:  # noqa: BLE001
+                    pass
+            ppv.set_editor_property("settings", settings)
+        except Exception as ex:  # noqa: BLE001
+            _log("post-process exposure tune skipped: %s" % ex)
+        return True
+    except Exception as ex:  # noqa: BLE001
+        _log("post-process volume spawn failed: %s" % ex)
+        return False
+
+
+def _frame_view(center, radius):
+    # Place a camera at an orbit distance from the bounds centre, looking
+    # at it, and a PlayerStart at the same transform. The CameraActor is
+    # auto-activated for player 0 so the Phase F `-game` launch streams it;
+    # the PlayerStart eliminates the `NO PLAYERSTART` warning and gives the
+    # default pawn a sane spawn pointing at the model if camera
+    # auto-activation is ever unavailable.
+    if radius is None or radius <= 1.0:
+        # Degenerate / empty bounds — frame a ~2 m sphere at the centre.
+        radius = 200.0
+
+    # Orbit offset direction in UE space (X forward, Y right, Z up).
+    dx, dy, dz = 1.0, -1.0, 0.6
+    dlen = math.sqrt(dx * dx + dy * dy + dz * dz)
+    dx, dy, dz = dx / dlen, dy / dlen, dz / dlen
+    dist = radius * 2.5
+
+    cam_loc = unreal.Vector(
+        center.x + dx * dist,
+        center.y + dy * dist,
+        center.z + dz * dist,
+    )
+    try:
+        cam_rot = unreal.MathLibrary.find_look_at_rotation(cam_loc, center)
+    except Exception:  # noqa: BLE001
+        cam_rot = unreal.Rotator(-20.0, 135.0, 0.0)
+
+    try:
+        cam = _spawn_actor_from_class(unreal.CameraActor, cam_loc, cam_rot)
+        if cam is not None:
+            _set_props(cam, [
+                ("find_camera_component_when_view_target", True),
+                ("auto_activate_for_player", unreal.AutoReceiveInput.PLAYER0),
+            ])
+            try:
+                cc = cam.camera_component
+                if cc is not None:
+                    _set_props(cc, [("field_of_view", 50.0)])
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as ex:  # noqa: BLE001
+        _log("camera spawn failed: %s" % ex)
+
+    try:
+        _spawn_actor_from_class(unreal.PlayerStart, cam_loc, cam_rot)
+    except Exception as ex:  # noqa: BLE001
+        _log("player start spawn failed: %s" % ex)
+
+    return cam_loc, cam_rot
 
 
 def _new_level(level_path):
@@ -206,6 +500,7 @@ def main():
         # Interchange failure bubbles up to the structured-error emit
         # below, which is the correct surface for the orchestrator.
         imported_assets = _import_via_interchange(GLTF_PATH, TARGET_FOLDER)
+        static_meshes = _static_meshes(imported_assets)
 
         level_path = "/Game/REBUS/Maps/" + LEVEL_NAME
         if editor_asset.does_asset_exist(level_path):
@@ -215,7 +510,29 @@ def main():
                 pass
 
         level_subsystem = _new_level(level_path)
-        actor_count = _spawn_meshes_into_level(imported_assets)
+        spawned = _spawn_meshes_into_level(static_meshes)
+        actor_count = len(spawned)
+
+        # Make the streamed frame show a lit, in-frame model. The level
+        # created above is blank (no lights / sky / camera / PlayerStart),
+        # which is why the v0.3.9 stream rendered solid black.
+        lights = _add_lighting()
+        _add_post_process()
+
+        bounds = _compute_bounds(static_meshes, spawned)
+        if bounds is not None:
+            center, radius = bounds
+            _log("imported bounds center=(%.1f,%.1f,%.1f) radius=%.1f meshes=%d actors=%d"
+                 % (center.x, center.y, center.z, radius, len(static_meshes), actor_count))
+        else:
+            center, radius = unreal.Vector(0.0, 0.0, 0.0), None
+            _log("no mesh/actor bounds available; framing camera at origin fallback")
+
+        cam_loc, cam_rot = _frame_view(center, radius)
+        _log("framing camera loc=(%.1f,%.1f,%.1f) rot=(pitch=%.1f,yaw=%.1f,roll=%.1f) lights=[%s]"
+             % (cam_loc.x, cam_loc.y, cam_loc.z,
+                cam_rot.pitch, cam_rot.yaw, cam_rot.roll, ",".join(lights)))
+
         _save_current_level(level_subsystem)
 
         elapsed = time.time() - start
