@@ -4,6 +4,37 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.11 — Persist the imported mesh to disk (game launch couldn't find it)
+
+> With v0.5.10's mesh spawning cleanly, the import finally reached
+> `PRISM_VISUALISER_READY` with `assetCount: 1`, real bounds
+> (`center=(2170803,0,-495081) radius=989724 meshes=1 actors=1`) and a
+> framing camera positioned off-origin at the model — no crash. But the
+> Phase F `-game` launch then logged:
+>
+>     LoadErrors: Warning: While trying to load package
+>       /Game/REBUS/Maps/Imported_<run>, a dependent package
+>       .../scene/StaticMeshes/scene was not available ...
+>     FPackageName: Skipped package ... does not exist on disk ...
+>
+> so the streamed scene was lit + framed but **model-less** — the level
+> referenced a mesh package that wasn't on disk.
+
+### Root cause
+
+Interchange imports the `StaticMesh` into an **in-memory** package under the
+`PythonScriptCommandlet`; it isn't flushed to disk automatically.
+`_save_current_level()` only persists the **map**, which then references a
+mesh package the Phase F `-game` process can't load.
+
+### Changed
+
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** — new
+  `_save_imported_assets()` calls `save_directory(TARGET_FOLDER, only_if_is_dirty=False, recursive=True)`
+  to flush the imported asset(s) to disk **before** `_save_current_level()`,
+  so the saved map's geometry dependency actually exists on disk for the
+  game launch. Logged as `saved imported assets under <folder>`.
+
 ## v0.5.10 — Headless-safe mesh spawn (object-spawn helper crashed UE)
 
 > v0.5.9's discovery worked — the PC01 run logged `discovered 1 static mesh
