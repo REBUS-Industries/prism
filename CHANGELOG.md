@@ -25,6 +25,26 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.13 — 2026-05-29 — Persist the imported mesh to disk (game launch couldn't find it)
+
+> **Follow-up to v0.3.12.** v0.3.12 spawned the mesh cleanly and reached
+> `PRISM_VISUALISER_READY` (assetCount=1, real bounds, framing camera
+> off-origin), but the Phase F `-game` launch logged `LoadErrors: ...
+> dependent package .../scene/StaticMeshes/scene ... does not exist on
+> disk` — the level referenced a mesh package that was never flushed.
+
+### Root cause
+
+Interchange imports the `StaticMesh` into an in-memory package under the
+commandlet; `_save_current_level()` saves only the map, not the asset, so
+the game process can't load the geometry.
+
+### Fixed
+
+- **`import_orbit.py(.in)`** — `_save_imported_assets()` flushes the imported
+  asset directory to disk (`save_directory(TARGET_FOLDER, only_if_is_dirty=False, recursive=True)`)
+  before saving the level. See `visualiser/CHANGELOG.md` v0.5.11.
+
 ## v0.3.12 — 2026-05-29 — Headless-safe mesh spawn (object-spawn helper crashed UE)
 
 > **Follow-up to v0.3.11.** v0.3.11's discovery worked (`discovered 1 static

@@ -35,6 +35,18 @@
 #     .IsValid() [SlateApplication.h:321]` and the commandlet
 #     `RequestExit(1, 3, ...)`'d out with exit code 3.
 #
+# Asset-persistence note (v0.3.13 / visualiser-v0.5.11):
+#   * With the mesh spawning cleanly, the import reached
+#     PRISM_VISUALISER_READY (assetCount=1, real bounds, framing camera off
+#     origin) — but the Phase F `-game` launch then logged
+#     `LoadErrors: ... dependent package .../scene/StaticMeshes/scene was
+#     not available ... does not exist on disk`. Interchange imports the
+#     StaticMesh into an in-memory package under the commandlet but does
+#     NOT flush it to disk; `_save_current_level()` only persists the map,
+#     which then references a mesh package that isn't on disk for the game
+#     process. We now `save_directory(TARGET_FOLDER)` to flush the imported
+#     asset(s) before saving the level.
+#
 # Headless mesh-spawn note (v0.3.12 / visualiser-v0.5.10):
 #   * Once v0.3.11 actually discovered a mesh to place, spawning it via
 #     `EditorActorSubsystem.spawn_actor_from_object(mesh, …)` crashed UE
@@ -568,6 +580,26 @@ def _new_level(level_path):
     return None
 
 
+def _save_imported_assets(editor_asset, target_folder):
+    # Interchange imports the StaticMesh into an in-memory package under the
+    # commandlet but does NOT flush it to disk. The level we save references
+    # that package by path, so the Phase F `-game` launch then fails to load
+    # the geometry:
+    #   LoadErrors: ... dependent package .../scene/StaticMeshes/scene was
+    #   not available ... does not exist on disk ...
+    # and the streamed scene is lit + framed but model-less. Explicitly save
+    # every asset under TARGET_FOLDER to disk before we save the level so the
+    # map's mesh dependency actually exists for the game process to load.
+    try:
+        if hasattr(editor_asset, "save_directory"):
+            editor_asset.save_directory(target_folder, False, True)
+        else:
+            unreal.EditorAssetLibrary.save_directory(target_folder, False, True)
+        _log("saved imported assets under %s" % target_folder)
+    except Exception as ex:  # noqa: BLE001
+        _log("save_directory failed for %s: %s" % (target_folder, ex))
+
+
 def _save_current_level(level_subsystem):
     if level_subsystem is not None and hasattr(level_subsystem, "save_current_level"):
         level_subsystem.save_current_level()
@@ -635,6 +667,10 @@ def main():
              % (cam_loc.x, cam_loc.y, cam_loc.z,
                 cam_rot.pitch, cam_rot.yaw, cam_rot.roll, ",".join(lights)))
 
+        # Flush the imported StaticMesh package(s) to disk BEFORE saving the
+        # level, otherwise the level's geometry dependency is missing when
+        # the Phase F `-game` process loads the map (lit but model-less).
+        _save_imported_assets(editor_asset, TARGET_FOLDER)
         _save_current_level(level_subsystem)
 
         elapsed = time.time() - start
