@@ -4,6 +4,25 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.14 — deterministic .uproject selection (fixes stray MyProject.uproject shadowing)
+
+> Follow-up fix to the fixed-project visualiser path. The local template cache is
+> a persistent robocopy `/E /XO` mirror (no `/PURGE`), so a stale
+> `MyProject.uproject` left over from the engine's initial scaffold lingers next
+> to the real `REBUS_Visualiser.uproject` forever. The old
+> `EnumerateFiles("*.uproject").FirstOrDefault()` returned the alphabetically
+> first descriptor, so `MyProject.uproject` (no PixelStreaming2 / no code module)
+> shadowed the real project and the orchestrator timed out waiting for a streamer
+> that never registered (`ue_game_start_timeout`).
+
+### Changed
+
+- **`Pipeline/TemplateProjectProvider.cs`** — new `SelectUproject(dest, name, source)`
+  prefers the descriptor whose name matches the template/source directory
+  (`REBUS_Visualiser`), falls back to the most recently modified, and logs a
+  loud warning about any extra descriptors so the cache/source can be cleaned up.
+  Selection is now deterministic regardless of alphabetical ordering. (#33)
+
 ## v0.5.13 — OrbitConnector.UE5 import path (fixed project + connector pull)
 
 > Adds a third import mechanism to the streaming pipeline: instead of pulling
