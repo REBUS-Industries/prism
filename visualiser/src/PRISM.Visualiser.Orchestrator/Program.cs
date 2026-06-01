@@ -43,6 +43,90 @@ internal static class Program
     /// </summary>
     private static JobObject? _processJob;
 
+    /// <summary>
+    /// Environment variable that opts the <c>-game</c> streaming pass
+    /// into a VISIBLE windowed UE process (equivalent to passing
+    /// <c>--debug-window</c>). Lets an operator toggle the debug window
+    /// on PC01 without rebuilding or changing the agent's CLI args.
+    /// Truthy values: <c>1</c>, <c>true</c>, <c>yes</c>, <c>on</c>
+    /// (case-insensitive). Anything else (or unset) keeps the default
+    /// headless / off-screen behaviour.
+    /// </summary>
+    internal const string DebugWindowEnvVar = "PRISM_VISUALISER_DEBUG_WINDOW";
+
+    /// <summary>
+    /// True when <see cref="DebugWindowEnvVar"/> is set to a truthy
+    /// value. Kept lenient so an operator setting <c>=1</c> or
+    /// <c>=true</c> in a shell gets the same behaviour.
+    /// </summary>
+    private static bool DebugWindowEnvEnabled()
+    {
+        var raw = Environment.GetEnvironmentVariable(DebugWindowEnvVar);
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Environment variable that opts the streaming pass into launching the
+    /// FULL Unreal Editor GUI (<c>UnrealEditor.exe</c>) against the imported
+    /// map for visual inspection, instead of the headless / game-window
+    /// streaming pass (equivalent to passing <c>--full-editor</c>). This is
+    /// an inspection-only debug mode: no browser Pixel Streaming is brought
+    /// up. When set (truthy) it SUPERSEDES the debug-window setting. Truthy
+    /// values: <c>1</c>, <c>true</c>, <c>yes</c>, <c>on</c> (case-insensitive).
+    /// </summary>
+    internal const string FullEditorEnvVar = "PRISM_VISUALISER_FULL_EDITOR";
+
+    /// <summary>
+    /// True when <see cref="FullEditorEnvVar"/> is set to a truthy value.
+    /// </summary>
+    private static bool FullEditorEnvEnabled()
+    {
+        var raw = Environment.GetEnvironmentVariable(FullEditorEnvVar);
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Environment variable controlling whether the streaming pass imports the
+    /// ORBIT model via the bundled <c>OrbitConnector.UE5</c> plug-in (the model
+    /// is pulled + loaded inside the streamed UE instance at runtime) instead of
+    /// the built-in Interchange importer (orchestrator stages glTF, UE editor
+    /// runs <c>import_orbit.py</c>). Truthy enables the connector path,
+    /// falsey forces the Interchange path. When UNSET the orchestrator
+    /// auto-detects: it uses the connector when a fixed template project is
+    /// configured (<see cref="TemplateProjectProvider.TemplateSourceEnvVar"/>)
+    /// AND that project ships the connector plug-in + <c>orbit-cli</c>;
+    /// otherwise it falls back to Interchange. Honoured via the
+    /// <c>--connector-import</c> / <c>--no-connector-import</c> CLI flags too.
+    /// </summary>
+    internal const string ConnectorImportEnvVar = "PRISM_VISUALISER_CONNECTOR_IMPORT";
+
+    /// <summary>
+    /// Tri-state read of <see cref="ConnectorImportEnvVar"/>:
+    /// <c>true</c> = force connector, <c>false</c> = force Interchange,
+    /// <c>null</c> = unset (auto-detect).
+    /// </summary>
+    private static bool? ConnectorImportEnvValue()
+    {
+        var raw = Environment.GetEnvironmentVariable(ConnectorImportEnvVar);
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            "0" or "false" or "no" or "off" => false,
+            _ => null,
+        };
+    }
+
     public static async Task<int> Main(string[] args)
     {
         _processJob = JobObject.CreateAndAssignSelf();
@@ -210,6 +294,31 @@ internal static class Program
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Skip fetch / import / spawn and emit a synthetic ready event.");
+        var debugWindowOption = new Option<bool>(
+            aliases: new[] { "--debug-window", "--no-headless" },
+            description:
+                "DEBUG: launch the -game streaming pass in a VISIBLE windowed UE process " +
+                "(drops -RenderOffScreen/-Unattended, adds -windowed) instead of headless " +
+                "off-screen rendering. Pixel Streaming stays active. Also honoured via the " +
+                $"{DebugWindowEnvVar} environment variable. Default: headless (off).");
+        var fullEditorOption = new Option<bool>(
+            aliases: new[] { "--full-editor" },
+            description:
+                "DEBUG: open the FULL Unreal Editor GUI (UnrealEditor.exe) on the imported map " +
+                "for visual inspection of the scene/actors/lighting/materials, instead of the " +
+                "headless or game-window streaming pass. INSPECTION-ONLY: no browser Pixel " +
+                "Streaming. SUPERSEDES --debug-window when both are set. Also honoured via the " +
+                $"{FullEditorEnvVar} environment variable. Default: off.");
+        var connectorImportOption = new Option<bool?>(
+            name: "--connector-import",
+            description:
+                "Import the ORBIT model via the bundled OrbitConnector.UE5 plug-in (pulled + " +
+                "loaded inside the streamed UE instance at runtime) instead of the built-in " +
+                "Interchange importer. Pass '--connector-import true' to force it on, " +
+                "'--connector-import false' to force the legacy Interchange path. Also honoured " +
+                $"via the {ConnectorImportEnvVar} environment variable. When unset, auto-detects: " +
+                "uses the connector when the fixed template project is configured AND ships the " +
+                "connector plug-in + orbit-cli, else falls back to Interchange.");
 
         var cmd = new Command("stream",
             "Launch a Pixel-Streaming session for an ORBIT model version.")
@@ -222,6 +331,9 @@ internal static class Program
             portHintOption,
             jsonOption,
             dryRunOption,
+            debugWindowOption,
+            fullEditorOption,
+            connectorImportOption,
         };
 
         cmd.SetHandler(async (InvocationContext ctx) =>
@@ -234,6 +346,18 @@ internal static class Program
             var portHint = ctx.ParseResult.GetValueForOption(portHintOption);
             var json = ctx.ParseResult.GetValueForOption(jsonOption);
             var dryRun = ctx.ParseResult.GetValueForOption(dryRunOption);
+            // Debug-window mode is opt-in via either the CLI flag or the
+            // env var, so it can be toggled on PC01 without a rebuild.
+            var debugWindow = ctx.ParseResult.GetValueForOption(debugWindowOption)
+                || DebugWindowEnvEnabled();
+            // Full-editor mode (inspection-only) is similarly opt-in and
+            // SUPERSEDES debug-window when on.
+            var fullEditor = ctx.ParseResult.GetValueForOption(fullEditorOption)
+                || FullEditorEnvEnabled();
+            // Connector-import is tri-state: CLI flag wins, else env var, else
+            // null (auto-detect from the configured fixed project's plug-in).
+            var connectorImport = ctx.ParseResult.GetValueForOption(connectorImportOption)
+                ?? ConnectorImportEnvValue();
 
             if (!json)
             {
@@ -277,7 +401,7 @@ internal static class Program
                     // static JobObject/KillOnJobClose handle being finalised,
                     // and the async SetHandler state machine never unwinds.
                     var phaseFExit = await RunPhaseFAsync(
-                            manifest, logger, ctx.GetCancellationToken())
+                            manifest, logger, debugWindow, fullEditor, connectorImport, ctx.GetCancellationToken())
                         .ConfigureAwait(false);
                     ctx.ExitCode = phaseFExit;
                     return;
@@ -409,7 +533,8 @@ internal static class Program
     /// </para>
     /// </summary>
     private static async Task<int> RunPhaseFAsync(
-        RunManifest manifest, Serilog.ILogger logger, CancellationToken ct)
+        RunManifest manifest, Serilog.ILogger logger, bool debugWindow, bool fullEditor,
+        bool? connectorImport, CancellationToken ct)
     {
         // 1. Resolve UE install BEFORE running the (slow) receive
         //    pipeline. If UNREAL_ENGINE_ROOT is set but invalid, we
@@ -464,87 +589,186 @@ internal static class Program
         var fetcher = TemplateFetcher.CreateDefault(logger);
         var scaffolder = ProjectScaffolder.CreateDefault(logger);
         var pipeline = new VisualiserPipeline(
-            tokenSource, fetcher, scaffolder, _processJob!, logger);
-
-        // 3. Receive + stage. Emits the staged/v1 event so the agent
-        //    has progress visibility even if UE later fails.
-        StageOutcome stage;
-        try
+            tokenSource, fetcher, scaffolder, _processJob!, logger,
+            debugWindow: debugWindow);
+        if (fullEditor)
         {
-            stage = await pipeline.ReceiveAndStageAsync(manifest, ct).ConfigureAwait(false);
+            logger.Warning(
+                "full-editor mode ENABLED ({EnvVar}/--full-editor): opening the FIXED template project " +
+                "({TemplateSource}) in the FULL Unreal Editor GUI AND auto-streaming the level-editor " +
+                "viewport to the browser viewer (SUPERSEDES debug-window). The ORBIT receive/stage/import " +
+                "pipeline is BYPASSED in this baseline mode. The operator controls UE on the workstation; " +
+                "remote viewers watch the streamed viewport. The editor window is only visible if this " +
+                "orchestrator runs in the operator's interactive desktop session (NOT when the PRISM " +
+                "agent runs as a session-0 Windows service).",
+                FullEditorEnvVar, TemplateProjectProvider.ResolveSource());
         }
-        catch (Exception ex)
+        else if (debugWindow)
         {
-            logger.Error(ex, "receive+stage failed");
-            EmitFailedEvent(manifest.RunId, FailedEvent.CodeScaffoldFailed, ex.Message);
-            return ExitCodes.Failure;
-        }
-
-        Console.Out.Write(stage.StagedEvent.ToJsonLine());
-        Console.Out.Write('\n');
-        Console.Out.Flush();
-        logger.Information(
-            "staged event emitted runId={RunId} stagePath={StagePath} meshCount={MeshCount} textureCount={TextureCount}",
-            manifest.RunId, stage.StagedEvent.StagePath,
-            stage.StagedEvent.MeshCount, stage.StagedEvent.TextureCount);
-
-        // 4. Phase E + J: template fetch + scaffold + UE editor import.
-        //    Pass the staged scene + run stage dir so the Phase J
-        //    MvrGdtfDetector can also scan for lighting files.
-        var templateTag = TemplateFetcher.DefaultTag;
-        ImportResult imported;
-        try
-        {
-            imported = await pipeline
-                .ImportAsync(
-                    manifest, install, templateTag, stage.GltfPath, ct,
-                    stagedScene: stage.StagedScene,
-                    runStageDir: stage.StagePath)
-                .ConfigureAwait(false);
-        }
-        catch (TemplateNotFoundException ex)
-        {
-            logger.Error(ex, "template not found tag={Tag}", templateTag);
-            EmitFailedEvent(manifest.RunId, FailedEvent.CodeTemplateNotFound, ex.Message);
-            return ExitCodes.Failure;
-        }
-        catch (TemplateFetchException ex)
-        {
-            logger.Error(ex, "template fetch failed tag={Tag}", templateTag);
-            EmitFailedEvent(manifest.RunId, FailedEvent.CodeTemplateFetchFailed, ex.Message);
-            return ExitCodes.Failure;
-        }
-        catch (UnrealLaunchTimeoutException ex)
-        {
-            logger.Error(ex, "ue import timed out");
-            EmitFailedEvent(manifest.RunId, FailedEvent.CodeUeTimeout, ex.Message);
-            return ExitCodes.UeTimeout;
-        }
-        catch (UnrealLaunchException ex)
-        {
-            logger.Error(ex, "ue import failed");
-            EmitFailedEvent(manifest.RunId, FailedEvent.CodeUeImportFailed, ex.Message);
-            return ExitCodes.UeImportFailed;
-        }
-        catch (Exception ex)
-        {
-            logger.Error(ex, "phase E failed");
-            EmitFailedEvent(manifest.RunId, FailedEvent.CodeScaffoldFailed, ex.Message);
-            return ExitCodes.Failure;
+            logger.Warning(
+                "debug-window mode ENABLED ({EnvVar}/--debug-window): UE -game will run WINDOWED. " +
+                "The window is only visible if this orchestrator runs in the operator's interactive " +
+                "desktop session (NOT when the PRISM agent runs as a session-0 Windows service).",
+                DebugWindowEnvVar);
         }
 
-        Console.Out.Write(imported.ImportedEvent.ToJsonLine());
-        Console.Out.Write('\n');
-        Console.Out.Flush();
-        logger.Information(
-            "imported event emitted runId={RunId} project={Project} level={Level} assets={Assets} importMs={ImportMs}",
-            manifest.RunId,
-            imported.ImportedEvent.ProjectPath,
-            imported.ImportedEvent.LevelPath,
-            imported.ImportedEvent.AssetCount,
-            imported.ImportedEvent.ImportDurationMs);
+        // 3+4. Resolve the project to stream.
+        //   - Full-editor baseline: BYPASS ORBIT receive/stage/import and
+        //     copy the fixed template project (REBUS_TEMPLATE) locally.
+        //   - Connector-import: copy the fixed project locally and let the
+        //     bundled OrbitConnector.UE5 plug-in pull + load the model at
+        //     runtime inside the streamed -game instance (no orchestrator-side
+        //     glTF stage / Interchange python pass).
+        //   - Interchange (legacy fallback): receive + stage + UE editor import.
+        ScaffoldResult scaffold;
+        // Non-null on the connector path; threaded to the -game launch so the
+        // connector's headless auto-import knows which model to pull.
+        OrbitImportParams? orbitImport = null;
+        if (fullEditor)
+        {
+            try
+            {
+                scaffold = await pipeline
+                    .PrepareTemplateProjectAsync(manifest, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (TemplateProjectException ex)
+            {
+                logger.Error(ex, "full-editor template prepare failed");
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeScaffoldFailed, ex.Message);
+                EmitFailedReady(manifest, ex.Message);
+                return ExitCodes.Failure;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                logger.Information("full-editor template prepare cancelled");
+                return ExitCodes.Success;
+            }
+            catch (Exception ex)
+            {
+                logger.Error(ex, "full-editor template prepare failed");
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeScaffoldFailed, ex.Message);
+                EmitFailedReady(manifest, ex.Message);
+                return ExitCodes.Failure;
+            }
+            logger.Information(
+                "full-editor template ready runId={RunId} project={Project} root={Root} level={Level}",
+                manifest.RunId, scaffold.UprojectPath, scaffold.ProjectRoot,
+                string.IsNullOrEmpty(scaffold.LevelPath) ? "(project startup map)" : scaffold.LevelPath);
+        }
+        else if (await TryPrepareConnectorImportAsync(
+                     pipeline, manifest, connectorImport, logger, ct) is { } connectorScaffold)
+        {
+            // Connector-import path: the fixed visualiser project (with the
+            // OrbitConnector.UE5 plug-in) was prepared locally. The model is
+            // pulled + loaded by the connector at runtime inside the streamed
+            // -game instance — no glTF stage / Interchange python pass here.
+            scaffold = connectorScaffold;
+            var token = await pipeline.ResolveOrbitTokenAsync(manifest, ct).ConfigureAwait(false);
+            orbitImport = new OrbitImportParams(
+                Server: manifest.Server.Name,
+                ProjectId: manifest.ProjectId,
+                ModelId: manifest.ModelId,
+                VersionId: manifest.VersionId,
+                Token: token,
+                Target: manifest.Server.Name);
+            logger.Information(
+                "connector-import: streaming fixed project root={Root} level={Level}; " +
+                "OrbitConnector will pull server={Server} project={Project} model={Model} version={Version} at runtime",
+                scaffold.ProjectRoot,
+                string.IsNullOrEmpty(scaffold.LevelPath) ? "(project startup map)" : scaffold.LevelPath,
+                manifest.Server.Name, manifest.ProjectId, manifest.ModelId, manifest.VersionId);
 
-        // 5. Phase F: Cirrus + UE -game bring-up. The session owns
+            // Informational progress event for the agent log (schema is logged,
+            // not part of the agent<->server contract — the agent forwards only
+            // ready/failed). Mirrors the staged/v1 emission on the legacy path
+            // so operators see the import mechanism that was chosen.
+            EmitConnectorImportEvent(manifest, scaffold.ProjectRoot);
+        }
+        else
+        {
+            // 3. Receive + stage. Emits the staged/v1 event so the agent
+            //    has progress visibility even if UE later fails.
+            StageOutcome stage;
+            try
+            {
+                stage = await pipeline.ReceiveAndStageAsync(manifest, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger.Error(ex, "receive+stage failed");
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeScaffoldFailed, ex.Message);
+                return ExitCodes.Failure;
+            }
+
+            Console.Out.Write(stage.StagedEvent.ToJsonLine());
+            Console.Out.Write('\n');
+            Console.Out.Flush();
+            logger.Information(
+                "staged event emitted runId={RunId} stagePath={StagePath} meshCount={MeshCount} textureCount={TextureCount}",
+                manifest.RunId, stage.StagedEvent.StagePath,
+                stage.StagedEvent.MeshCount, stage.StagedEvent.TextureCount);
+
+            // 4. Phase E + J: template fetch + scaffold + UE editor import.
+            //    Pass the staged scene + run stage dir so the Phase J
+            //    MvrGdtfDetector can also scan for lighting files.
+            var templateTag = TemplateFetcher.DefaultTag;
+            ImportResult imported;
+            try
+            {
+                imported = await pipeline
+                    .ImportAsync(
+                        manifest, install, templateTag, stage.GltfPath, ct,
+                        stagedScene: stage.StagedScene,
+                        runStageDir: stage.StagePath)
+                    .ConfigureAwait(false);
+            }
+            catch (TemplateNotFoundException ex)
+            {
+                logger.Error(ex, "template not found tag={Tag}", templateTag);
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeTemplateNotFound, ex.Message);
+                return ExitCodes.Failure;
+            }
+            catch (TemplateFetchException ex)
+            {
+                logger.Error(ex, "template fetch failed tag={Tag}", templateTag);
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeTemplateFetchFailed, ex.Message);
+                return ExitCodes.Failure;
+            }
+            catch (UnrealLaunchTimeoutException ex)
+            {
+                logger.Error(ex, "ue import timed out");
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeUeTimeout, ex.Message);
+                return ExitCodes.UeTimeout;
+            }
+            catch (UnrealLaunchException ex)
+            {
+                logger.Error(ex, "ue import failed");
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeUeImportFailed, ex.Message);
+                return ExitCodes.UeImportFailed;
+            }
+            catch (Exception ex)
+            {
+                logger.Error(ex, "phase E failed");
+                EmitFailedEvent(manifest.RunId, FailedEvent.CodeScaffoldFailed, ex.Message);
+                return ExitCodes.Failure;
+            }
+
+            Console.Out.Write(imported.ImportedEvent.ToJsonLine());
+            Console.Out.Write('\n');
+            Console.Out.Flush();
+            logger.Information(
+                "imported event emitted runId={RunId} project={Project} level={Level} assets={Assets} importMs={ImportMs}",
+                manifest.RunId,
+                imported.ImportedEvent.ProjectPath,
+                imported.ImportedEvent.LevelPath,
+                imported.ImportedEvent.AssetCount,
+                imported.ImportedEvent.ImportDurationMs);
+
+            scaffold = imported.Scaffold;
+        }
+
+        // 5. Phase F: Cirrus + UE bring-up. The session owns
         //    both child processes; on any error here we DO emit a
         //    typed failed/v1 event AND a ready/v1 status=failed line
         //    (the agent reads both, but the ready event is what the
@@ -553,7 +777,9 @@ internal static class Program
         try
         {
             session = await pipeline
-                .StartStreamingAsync(manifest, install, imported.Scaffold, ct: ct)
+                .StartStreamingAsync(
+                    manifest, install, scaffold,
+                    fullEditor: fullEditor, orbitImport: orbitImport, ct: ct)
                 .ConfigureAwait(false);
         }
         catch (SignallingNotFoundException ex)
@@ -654,6 +880,126 @@ internal static class Program
             logger.Error("phase F: {Message}", msg);
             EmitFailedEvent(manifest.RunId, FailedEvent.CodeUeGameCrashed, msg);
             return ExitCodes.UeGameStartFailure;
+        }
+    }
+
+    /// <summary>
+    /// Decide whether the streaming pass should use the connector-import path
+    /// and, if so, prepare the fixed visualiser project locally and return its
+    /// scaffold. Returns <c>null</c> to mean "fall through to the legacy
+    /// Interchange path" — either because connector-import was forced off, the
+    /// fixed project / plug-in isn't present (auto-detect), or preparing the
+    /// project failed (resilience: a misconfig must not fully regress the
+    /// working visualiser).
+    ///
+    /// <para>Decision matrix on <paramref name="connectorImport"/>:</para>
+    /// <list type="bullet">
+    ///   <item><description><c>false</c> — forced Interchange; returns null immediately.</description></item>
+    ///   <item><description><c>true</c> — forced connector; uses it as long as the fixed project exists (warns if the plug-in isn't detected).</description></item>
+    ///   <item><description><c>null</c> — auto: uses the connector only when the fixed project exists AND ships the connector plug-in + orbit-cli.</description></item>
+    /// </list>
+    /// </summary>
+    private static async Task<ScaffoldResult?> TryPrepareConnectorImportAsync(
+        VisualiserPipeline pipeline,
+        RunManifest manifest,
+        bool? connectorImport,
+        Serilog.ILogger logger,
+        CancellationToken ct)
+    {
+        if (connectorImport == false)
+        {
+            logger.Information(
+                "connector-import: disabled ({EnvVar}/--connector-import false) — using the Interchange importer.",
+                ConnectorImportEnvVar);
+            return null;
+        }
+
+        var source = TemplateProjectProvider.ResolveSource();
+        var detection = OrbitConnectorLocator.Detect(source);
+
+        if (connectorImport == true)
+        {
+            // Forced on: require the project to exist (can't stream a missing
+            // project), but tolerate a non-detected plug-in with a warning —
+            // the operator explicitly asked for the connector path.
+            if (!Directory.Exists(source))
+            {
+                logger.Warning(
+                    "connector-import: FORCED ON but the configured fixed project '{Source}' " +
+                    "({EnvVar}) does not exist — falling back to the Interchange importer.",
+                    source, TemplateProjectProvider.TemplateSourceEnvVar);
+                return null;
+            }
+            if (!detection.IsUsable)
+            {
+                logger.Warning(
+                    "connector-import: FORCED ON; proceeding with fixed project '{Source}' even though " +
+                    "the connector plug-in was not fully detected ({Reason}). The import will fail inside " +
+                    "UE if the OrbitConnector plug-in + orbit-cli are not actually present.",
+                    source, detection.Reason);
+            }
+        }
+        else
+        {
+            // Auto-detect: only take the connector path when the project ships
+            // a usable connector. Otherwise stay on the proven Interchange path.
+            if (!detection.IsUsable)
+            {
+                logger.Information(
+                    "connector-import: auto-detect declined for '{Source}' ({Reason}) — using the Interchange importer. " +
+                    "Set {EnvVar}=1 to force, or install the OrbitConnector.UE5 plug-in into the project.",
+                    source, detection.Reason ?? "not usable", ConnectorImportEnvVar);
+                return null;
+            }
+            logger.Information(
+                "connector-import: auto-detected connector plug-in in '{Source}' (uplugin={Uplugin} cli={Cli}).",
+                source, detection.UpluginPath, detection.CliPath);
+        }
+
+        try
+        {
+            return await pipeline.PrepareTemplateProjectAsync(manifest, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.Warning(ex,
+                "connector-import: failed to prepare fixed project '{Source}' — falling back to the Interchange importer.",
+                source);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Emit an informational <c>prism-visualiser/connector-import/v1</c> stdout
+    /// line so the per-run agent log records that the connector path was chosen.
+    /// The agent forwards only ready/failed envelopes, so unknown schemas are
+    /// merely logged — this stays backward-compatible with older agents.
+    /// </summary>
+    private static void EmitConnectorImportEvent(RunManifest manifest, string projectRoot)
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                schema = "prism-visualiser/connector-import/v1",
+                runId = manifest.RunId,
+                projectId = manifest.ProjectId,
+                modelId = manifest.ModelId,
+                versionId = manifest.VersionId,
+                server = manifest.Server.Name,
+                projectRoot,
+            });
+            Console.Out.Write(json);
+            Console.Out.Write('\n');
+            Console.Out.Flush();
+        }
+        catch
+        {
+            // stdout closed — the on-disk log already recorded the decision.
         }
     }
 
