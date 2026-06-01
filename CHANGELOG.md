@@ -43,6 +43,20 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.15 — 2026-06-01 — Hardened in-app updater (locked-DLL update failures)
+
+### Fixed
+
+- **In-app updater** now stops every lingering `PRISM.Agent.exe` / `prism-visualiser.exe` / `UnrealEditor*` holder before extracting, then retries `Expand-Archive` with backoff (5 attempts). Previously the updater waited only for the single spawning agent PID; a second agent instance (a scheduled-task relaunch race) or a live orchestrator/UE child kept install DLLs memory-mapped, so the first locked file (e.g. `Accessibility.dll`) aborted the whole update with "Access to the path … is denied" (observed updating RB-DA2-PC01 to v0.3.14).
+
+### Notes
+
+- Bundles PRISM Visualiser orchestrator **v0.5.14** (deterministic `.uproject` selection).
+
+## v0.3.14 — 2026-06-01 — Rebundle orchestrator v0.5.14 (deterministic .uproject selection)
+
+- Agent runtime unchanged from v0.3.13; rebuilt to bundle orchestrator **v0.5.14**, which deterministically picks `<TemplateName>.uproject` — fixing a stale `MyProject.uproject` shadowing `REBUS_Visualiser.uproject` and causing `ue_game_start_timeout` / no PixelStreaming2.
+
 ## v0.3.13 — 2026-05-29 — Persist the imported mesh to disk (game launch couldn't find it)
 
 > **Follow-up to v0.3.12.** v0.3.12 spawned the mesh cleanly and reached
