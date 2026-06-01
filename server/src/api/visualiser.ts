@@ -226,6 +226,12 @@ const plugin: FastifyPluginAsync = async (app) => {
       const status =
         dispatch.error === 'no_workstation_available' || dispatch.error === 'all_workstations_busy' ? 503
         : dispatch.error === 'misconfigured' ? 500
+        // The caller asked for a project/model/version that ORBIT can't
+        // resolve (bad id, wrong target, not shared, or no committed
+        // version). 422 = well-formed request, unresolvable reference —
+        // distinct from 500 so the portal stops reporting "PRISM
+        // misconfigured / check the workstations" for a bad project id.
+        : dispatch.error === 'version_unavailable' ? 422
         : 502;
       return reply.code(status).send({
         schema: FAILED_SCHEMA_VERSION,

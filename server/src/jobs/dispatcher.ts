@@ -263,6 +263,7 @@ export type VisualiserDispatchOutcome =
   | { dispatched: false; error: 'all_workstations_busy';    reason: string }
   | { dispatched: false; error: 'agent_send_failed';        reason: string }
   | { dispatched: false; error: 'misconfigured';            reason: string }
+  | { dispatched: false; error: 'version_unavailable';      reason: string }
   | { dispatched: false; error: 'invalid_state';            reason: string };
 
 /**
@@ -405,14 +406,17 @@ export async function tryDispatchVisualisation(
       );
       if (!latestId) {
         await releaseVisualiserSlot(reserved.workstationId).catch(() => null);
-        log.error(
-          { runId: run.id, projectId: run.projectId, modelId: run.modelId },
+        log.warn(
+          { runId: run.id, projectId: run.projectId, modelId: run.modelId, target: run.orbitTarget },
           'visualiser dispatch: model has no versions yet',
         );
+        // Caller-data problem, NOT a server misconfiguration: the model
+        // exists but has no committed version to stream. Surface a precise
+        // code so the portal doesn't think PRISM itself is broken.
         return {
           dispatched: false,
-          error: 'misconfigured',
-          reason: `model ${run.modelId} in project ${run.projectId} has no versions`,
+          error: 'version_unavailable',
+          reason: `model ${run.modelId} in project ${run.projectId} has no versions on ORBIT ${run.orbitTarget} yet`,
         };
       }
       resolvedVersionId = latestId;
@@ -430,6 +434,41 @@ export async function tryDispatchVisualisation(
       const msg = err instanceof OrbitClientError
         ? err.message
         : (err as Error).message ?? 'failed to resolve latest version';
+
+      if (err instanceof OrbitClientError) {
+        // Classify by the status the ORBIT client attached:
+        //   400/404 → the caller's projectId/modelId doesn't resolve in
+        //             ORBIT for this target (bad id, wrong server, or the
+        //             project isn't shared with PRISM's service token).
+        //             This is a CALLER-DATA error, not a PRISM/workstation
+        //             fault — emit a distinct code so the portal shows an
+        //             actionable "check your project/model id" message
+        //             instead of "server misconfigured".
+        //   401/412 → ORBIT credentials are missing or were rejected; that
+        //             genuinely IS a server-side misconfiguration the admin
+        //             must fix (set/repair orbit_token / orbit_*_server_url).
+        if (err.status === 400 || err.status === 404) {
+          log.warn(
+            { err, runId: run.id, projectId: run.projectId, modelId: run.modelId, target: run.orbitTarget },
+            'visualiser dispatch: ORBIT could not resolve project/model (caller-supplied id)',
+          );
+          return {
+            dispatched: false,
+            error: 'version_unavailable',
+            reason: `ORBIT ${run.orbitTarget} could not resolve project ${run.projectId} / model ${run.modelId}: ${msg}`,
+          };
+        }
+        if (err.status === 401 || err.status === 412) {
+          log.error({ err, runId: run.id }, 'visualiser dispatch: ORBIT credentials missing/rejected');
+          return {
+            dispatched: false,
+            error: 'misconfigured',
+            reason: `ORBIT ${run.orbitTarget} credentials missing or rejected: ${msg}`,
+          };
+        }
+      }
+
+      // Unknown / upstream failure (ORBIT unreachable, 5xx, non-JSON, …).
       log.error({ err, runId: run.id }, 'visualiser dispatch: failed to resolve latest versionId');
       return { dispatched: false, error: 'misconfigured', reason: msg };
     }

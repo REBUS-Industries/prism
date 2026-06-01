@@ -215,8 +215,9 @@ follow-up lands (which will return the existing run on conflict).
 | 400    | -                            | No       | Validation failed (missing `projectId`, malformed UUID, etc.).                                                                      |
 | 401    | -                            | No       | Missing/invalid `X-API-Key`.                                                                                                        |
 | 403    | -                            | No       | Key lacks the `visualiser:create_stream` scope.                                                                                     |
+| 422    | `version_unavailable`        | No       | The `projectId`/`modelId`/`versionId` you sent cannot be resolved on ORBIT for this `orbitTarget` (bad/wrong-format id, wrong target, project not shared with PRISM's service token, or the model has no committed version yet). Verify the ids against ORBIT; do not retry unchanged. |
 | 429    | -                            | Yes, backoff | Per-key rate limit. Honour `X-RateLimit-Reset`.                                                                                  |
-| 500    | `misconfigured`              | No       | Server is missing required env (ORBIT URL, TURN secret, JWT secret). Alert your ops contact.                                        |
+| 500    | `misconfigured`              | No       | Server-side config is incomplete (missing ORBIT URL/token for the target, rejected ORBIT credentials, TURN/JWT secret). Alert your ops contact.                                        |
 | 502    | `agent_failed`               | Maybe    | Workstation tried but failed (GPU pre-flight, UE crash, import error). The `message` field carries detail. Retry once after 30 s.   |
 | 503    | `no_workstation_available`   | Yes, backoff | No visualiser-capable workstation is online. Retry after 60 s.                                                                  |
 | 503    | `all_workstations_busy`      | Yes, backoff | Every workstation is at its single-tenant slot cap. Retry after 60 s.                                                            |
@@ -630,7 +631,8 @@ but cross-internet WebRTC will fail. Alert your ops contact.
 | POST returns 503 (`no_workstation_available`) | Wait 60 s, retry. After 3 failures, surface "no workstation available" to the user.                 |
 | POST returns 504 (`start_timeout`)   | Retry **once** after 30 s. If it fails again, the workstation is likely wedged — alert your ops contact.|
 | POST returns 502 (`agent_failed`)    | Inspect `message`. GPU pre-flight failures (`gpu_preflight_failed`) are recoverable on a different workstation; retry with `preferredWorkstationId` unset. |
-| POST returns 500 (`misconfigured`)   | Do not retry. Alert your ops contact.                                                                   |
+| POST returns 422 (`version_unavailable`) | Do not retry unchanged. The `projectId`/`modelId` (or explicit `versionId`) doesn't resolve on ORBIT for this `orbitTarget`. Confirm you're sending the **ORBIT project id** (10-char Speckle id, e.g. `932088aa79`) for the correct target, that the project is shared with PRISM's service account, and that the model has at least one committed version. The `message` field carries the ORBIT detail (e.g. "Project not found"). |
+| POST returns 500 (`misconfigured`)   | Do not retry. Genuine server-side config gap — alert your ops contact.                                  |
 | Stream goes dark mid-session         | Call `GET /streams/{runId}`. If `status` is still `streaming`, reconnect the PeerConnection with a fresh token + TURN bundle. If `status` is `failed`/`ended`, the workstation is gone — start a new stream. |
 | Workstation goes offline mid-stream  | The run transitions to `failed`. Your portal should `DELETE` the run (no-op if already terminal) and start a fresh one. |
 | Pixel Streaming player shows a black frame for >5 s | Usually a TURN/ICE failure. Check the browser console for ICE-failed errors; the PS lib surfaces them via `onWebRtcDisconnected`. Fall back to a fresh `runId`. |

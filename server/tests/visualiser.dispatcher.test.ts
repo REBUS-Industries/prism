@@ -38,6 +38,10 @@ const state = {
   /** Captured UPDATE visualiser_runs payloads. */
   runUpdates: [] as { set: unknown; where: unknown }[],
   settings: { orbit_server_url: 'https://orbit.example.com', orbit_token: 't' } as Record<string, string | undefined>,
+  /** Version id the mocked getLatestVersionId resolves with (null = model has no versions). */
+  latestVersion: 'v-latest' as string | null,
+  /** When set, the mocked getLatestVersionId throws this instead of resolving. */
+  latestVersionError: null as Error | null,
 };
 
 vi.mock('../src/db/client.js', () => {
@@ -136,6 +140,28 @@ vi.mock('../src/db/settings.js', () => ({
   getSetting: vi.fn(async (k: string) => state.settings[k]),
 }));
 
+vi.mock('../src/orbit/client.js', () => {
+  // Mirror the real OrbitClientError shape (status-carrying) so the
+  // dispatcher's `instanceof` + `.status` classification can be exercised.
+  class OrbitClientError extends Error {
+    status: number;
+    detail?: unknown;
+    constructor(status: number, message: string, detail?: unknown) {
+      super(message);
+      this.name = 'OrbitClientError';
+      this.status = status;
+      this.detail = detail;
+    }
+  }
+  return {
+    OrbitClientError,
+    getLatestVersionId: vi.fn(async () => {
+      if (state.latestVersionError) throw state.latestVersionError;
+      return state.latestVersion;
+    }),
+  };
+});
+
 vi.mock('../src/ws/sessionRegistry.js', () => ({
   sessionRegistry: {
     allAgents: () => state.agents,
@@ -155,6 +181,7 @@ vi.mock('../src/api/internal.js', () => ({
 // SUT (imported after mocks so the mocks win)
 // -----------------------------------------------------------------------------
 import { tryDispatchVisualisation, releaseVisualiserSlot, loadAttachmentRefs } from '../src/jobs/dispatcher.js';
+import { OrbitClientError } from '../src/orbit/client.js';
 
 function makeAgent(opts: Partial<{ sessionId: string; machineId: string; workstationId: string; slots: number; connectedAtMs: number }> = {}) {
   return {
@@ -188,7 +215,10 @@ function makeRun(overrides: Record<string, unknown> = {}) {
     orbitTarget: 'prod',
     projectId: 'p-1',
     modelId:   'm-1',
-    versionId: null,
+    // Default to a concrete version so the common-case tests skip the
+    // ORBIT "resolve latest version" round-trip; the version-resolution
+    // tests below explicitly pass `versionId: null` to exercise it.
+    versionId: 'v-existing',
     templateTag: null,
     signallingUrl: null,
     ttlSeconds: null,
@@ -207,6 +237,8 @@ beforeEach(() => {
   state.workstationUpdates = [];
   state.runUpdates = [];
   state.settings = { orbit_server_url: 'https://orbit.example.com', orbit_token: 't' };
+  state.latestVersion = 'v-latest';
+  state.latestVersionError = null;
   vi.clearAllMocks();
 });
 
@@ -306,6 +338,50 @@ describe('tryDispatchVisualisation', () => {
     const out = await tryDispatchVisualisation('run-1', log);
     expect(out).toMatchObject({ dispatched: false, error: 'misconfigured' });
     // Reservation must have been rolled back.
+    expect(state.workstationUpdates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('returns version_unavailable (not misconfigured) when ORBIT cannot resolve the caller project/model', async () => {
+    // Reproduces the portal bug: a projectId ORBIT prod doesn't have →
+    // ORBIT returns a GraphQL "Project not found" error (HTTP 200 →
+    // OrbitClientError status 400). This is a caller-data fault, NOT a
+    // server misconfiguration, so the dispatcher must classify it as
+    // `version_unavailable` (HTTP 422) rather than `misconfigured` (500).
+    state.run = makeRun({ versionId: null, projectId: 'BmauRpEHytu8RKdQKsNz', modelId: '70f979efcd' });
+    state.workstations = [makeWs({ id: 'ws-1', machineId: 'mach-1' })];
+    state.agents = [makeAgent({ slots: 1 })];
+    state.reservationOutcomes = [[{ id: 'ws-1', currentVisualiserLoad: 1 }]];
+    state.latestVersionError = new OrbitClientError(400, 'Project not found');
+
+    const out = await tryDispatchVisualisation('run-1', log);
+    expect(out).toMatchObject({ dispatched: false, error: 'version_unavailable' });
+    if (!out.dispatched) expect(out.reason).toContain('Project not found');
+    // Reservation must have been rolled back so the slot isn't leaked.
+    expect(state.workstationUpdates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('returns version_unavailable when the model exists but has no committed versions', async () => {
+    state.run = makeRun({ versionId: null });
+    state.workstations = [makeWs({ id: 'ws-1', machineId: 'mach-1' })];
+    state.agents = [makeAgent({ slots: 1 })];
+    state.reservationOutcomes = [[{ id: 'ws-1', currentVisualiserLoad: 1 }]];
+    state.latestVersion = null; // model has no versions yet
+
+    const out = await tryDispatchVisualisation('run-1', log);
+    expect(out).toMatchObject({ dispatched: false, error: 'version_unavailable' });
+    expect(state.workstationUpdates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('returns misconfigured when ORBIT credentials are missing/rejected (412/401)', async () => {
+    // A genuine server-side config gap stays `misconfigured` (500).
+    state.run = makeRun({ versionId: null });
+    state.workstations = [makeWs({ id: 'ws-1', machineId: 'mach-1' })];
+    state.agents = [makeAgent({ slots: 1 })];
+    state.reservationOutcomes = [[{ id: 'ws-1', currentVisualiserLoad: 1 }]];
+    state.latestVersionError = new OrbitClientError(412, 'ORBIT prod credentials not configured');
+
+    const out = await tryDispatchVisualisation('run-1', log);
+    expect(out).toMatchObject({ dispatched: false, error: 'misconfigured' });
     expect(state.workstationUpdates.length).toBeGreaterThanOrEqual(2);
   });
 
