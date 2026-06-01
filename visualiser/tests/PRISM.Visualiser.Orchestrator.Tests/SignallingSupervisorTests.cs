@@ -370,7 +370,8 @@ public class SignallingSupervisorTests
             NodeExePath: @"C:\fake\node.exe",
             IsWilbur: true);
 
-        var psi = SignallingSupervisor.BuildStartInfo(resolved, playerPort: 65000, streamerPort: 65001);
+        var psi = SignallingSupervisor.BuildStartInfo(
+            resolved, playerPort: 65000, streamerPort: 65001, sfuPort: 65002);
 
         Assert.Equal(@"C:\fake\node.exe", psi.FileName);
         // Working directory should be the wilbur package root (one
@@ -381,6 +382,10 @@ public class SignallingSupervisorTests
         Assert.Equal(@"C:\fake\SignallingWebServer\dist\index.js", args[0]);
         Assert.Contains("--player_port=65000", args);
         Assert.Contains("--streamer_port=65001", args);
+        // SFU port MUST be pinned — leaving it unset makes wilbur fall back
+        // to the config.json default (8889), which collides across runs and
+        // crashes the node process with an unhandled EADDRINUSE.
+        Assert.Contains("--sfu_port=65002", args);
         Assert.Contains("--serve", args);
         Assert.Contains("--console_messages", args);
         Assert.Contains("verbose", args);

@@ -4,6 +4,109 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.13 — OrbitConnector.UE5 import path (fixed project + connector pull)
+
+> Adds a third import mechanism to the streaming pipeline: instead of pulling
+> ORBIT over the orchestrator's own REST receive, writing glTF to disk, and
+> importing it with the Interchange Python script (`import_orbit.py`), the
+> orchestrator can now launch the operator's **fixed visualiser project** and let
+> the **`OrbitConnector.UE5` plug-in** pull + load the model inside the same
+> `-game` + PixelStreaming instance via its headless auto-import.
+>
+> **The Interchange path is NOT removed.** Connector-import is selected only when
+> a usable fixed project (plug-in + bundled `orbit-cli.exe`) is present and the
+> path is not explicitly disabled; otherwise the proven Interchange pipeline runs
+> exactly as before. This is intentional so a misconfigured fixed project can't
+> regress the working visualiser.
+
+### How a path is chosen (precedence)
+
+1. `--full-editor` (or `PRISM_VISUALISER_FULL_EDITOR=1`) — unchanged; opens the
+   fixed project in the editor and uses editor-driven streaming.
+2. **Connector import** (new) — used when **either** `--connector-import true` /
+   `PRISM_VISUALISER_CONNECTOR_IMPORT=1` is set, **or** (auto-detect, the env/flag
+   unset) the fixed template project resolves and contains a usable
+   `OrbitConnector.UE5` plug-in + `orbit-cli.exe`. Explicit `--connector-import
+   false` / `=0` forces it off.
+3. **Interchange** (existing default) — the fallback whenever connector import is
+   off, the fixed project is absent, or preparing it throws.
+
+### Added
+
+- **`Unreal/OrbitConnectorLocator.cs`** — `Detect(projectRoot)` reports whether a
+  project carries the built `OrbitConnector.UE5` plug-in (`OrbitConnector.uplugin`
+  under `Plugins/OrbitConnector/`) and the bundled `orbit-cli.exe`. Returns
+  `IsUsable` + a human `Reason` when not.
+- **`Unreal/OrbitImportParams.cs`** — record carrying
+  `{Server, ProjectId, ModelId, VersionId, Token, Target}` for the headless
+  launch.
+- **`Program.cs`** — `--connector-import` option (`bool?`, tri-state) +
+  `PRISM_VISUALISER_CONNECTOR_IMPORT` env; `TryPrepareConnectorImportAsync`
+  (decision + fixed-project prep + token resolution) and a
+  `prism-visualiser/connector-import/v1` stdout event so the agent/log can see
+  which path was taken.
+- **`Pipeline/VisualiserPipeline.cs`** — `StartStreamingAsync` accepts
+  `OrbitImportParams?`; `ResolveOrbitTokenAsync` exposes the bearer token for the
+  connector launch.
+- **`Unreal/UnrealLauncher.cs`** — the `-game` launch appends
+  `-OrbitServer= -OrbitProject= -OrbitModel= [-OrbitVersion=] [-OrbitToken=]
+  [-OrbitTarget=]` when import params are supplied, and now omits the level
+  positional arg when the fixed project has no recorded startup map (so UE boots
+  the project's own `GameDefaultMap`). The connector's `FOrbitHeadlessAutoImport`
+  consumes these tokens. Requires connector **v0.1.24+** in the fixed project.
+
+### Project-path config
+
+- The fixed project comes from `PRISM_VISUALISER_TEMPLATE_PROJECT`
+  (agent `AgentConfig.VisualiserTemplateProjectPath`, e.g.
+  `C:\PRISM\Templates\REBUS_Visualiser`). The agent now **always** forwards this
+  env to the orchestrator (previously full-editor only), so it drives the
+  connector-import path too.
+
+### Tests
+
+- `ConnectorImportTests.cs` — locator detect (usable / cli-missing /
+  project-missing) and `-game` start-info arg surface (tokens present/absent,
+  empty-level omission). 130 → 136 tests, all green.
+
+## v0.5.12 — Allocate a distinct Wilbur SFU port (fixes editor-stream auto-start)
+
+> Full-editor Pixel Streaming auto-start was firing correctly but the browser
+> never received a stream. The editor log looked like the streamer simply
+> couldn't reach signalling:
+>
+>     LogEpicRtcWebsocket: Failed to connect to ws://127.0.0.1:54168 -
+>       signalling server may not be up yet. Message: "socket connect failed"
+>     LogPixelStreaming2: Streamer reconnecting... Attempt 74
+>
+> (74 attempts over ~3 min, never connected). This is NOT a project/plugin
+> problem — the editor cvars (`EditorStartOnLaunch`, `EditorSource`,
+> `EditorUseRemoteSignallingServer`) were read correctly from `DefaultGame.ini`
+> this time and `StartStreaming` fired (`Streamer is already streaming...`).
+
+### Root cause
+
+Wilbur binds the player port AND the streamer port from our CLI overrides, but
+its SFU port was left unset so it fell back to the value baked into the engine
+`config.json` (`sfu_port: 8889`). On this workstation 8889 was already in use,
+so Wilbur logged its ready line (`Listening for streamer connections on port
+54168` — which our ready-line matcher accepted, letting the orchestrator launch
+UE) and then **threw an unhandled `Error: listen EADDRINUSE :::8889` and the
+node process died**. By the time the editor's streamer tried to connect, the
+signalling server it was told to use was already gone.
+
+### Changed
+
+- **`VisualiserPipeline`** — allocate a distinct, free `sfuPort` (different from
+  both player and streamer) for Wilbur runs and forward it to the supervisor.
+- **`SignallingSupervisor.BuildStartInfo` / `StartAsync`** — accept `sfuPort`
+  and emit `--sfu_port=<port>` so Wilbur never falls back to the fixed 8889.
+- **`SignallingSupervisor.StartAsync`** — defense-in-depth: after the ready
+  line, give the process a 750 ms grace window and fail fast with a clear error
+  if it exited (catches any future post-ready bind crash instead of handing back
+  a handle to a dead server).
+- Tests updated to assert `--sfu_port` is emitted for Wilbur.
+
 ## v0.5.11 — Persist the imported mesh to disk (game launch couldn't find it)
 
 > With v0.5.10's mesh spawning cleanly, the import finally reached

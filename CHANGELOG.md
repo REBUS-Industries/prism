@@ -25,6 +25,24 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## Unreleased
+
+### Visualiser — OrbitConnector.UE5 import path (feature branch, not yet tagged)
+
+- **Agent `AgentConfig.VisualiserConnectorImport`** (`bool?`, tri-state): `true`
+  forces the connector-import path, `false` forces the legacy Interchange path,
+  `null` (default) lets the orchestrator auto-detect based on whether the fixed
+  visualiser project carries a usable `OrbitConnector.UE5` plug-in + `orbit-cli`.
+- **`VisualiserJob`** now always forwards `PRISM_VISUALISER_TEMPLATE_PROJECT`
+  (from `VisualiserTemplateProjectPath`) to the orchestrator — previously
+  full-editor only — and forwards `PRISM_VISUALISER_CONNECTOR_IMPORT` when the
+  config is set. It also recognises the orchestrator's
+  `prism-visualiser/connector-import/v1` stdout event.
+- Orchestrator + connector details: see `PRISM/visualiser/CHANGELOG.md`
+  (v0.5.13), `orbit-connectors` CHANGELOG (v0.1.24), and
+  `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
+- Agent↔server protocol is unchanged (backward-compatible).
+
 ## v0.3.13 — 2026-05-29 — Persist the imported mesh to disk (game launch couldn't find it)
 
 > **Follow-up to v0.3.12.** v0.3.12 spawned the mesh cleanly and reached

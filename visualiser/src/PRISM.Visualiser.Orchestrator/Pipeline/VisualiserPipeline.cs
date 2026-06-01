@@ -35,6 +35,7 @@ public sealed class VisualiserPipeline
     private readonly JobObject _job;
     private readonly ILogger _log;
     private readonly TimeSpan _ueTimeout;
+    private readonly bool _debugWindow;
 
     public VisualiserPipeline(
         CompositeOrbitTokenSource tokenSource,
@@ -42,7 +43,8 @@ public sealed class VisualiserPipeline
         ProjectScaffolder scaffolder,
         JobObject job,
         ILogger log,
-        TimeSpan? ueTimeout = null)
+        TimeSpan? ueTimeout = null,
+        bool debugWindow = false)
     {
         _tokenSource = tokenSource ?? throw new ArgumentNullException(nameof(tokenSource));
         _templateFetcher = templateFetcher ?? throw new ArgumentNullException(nameof(templateFetcher));
@@ -50,6 +52,50 @@ public sealed class VisualiserPipeline
         _job = job ?? throw new ArgumentNullException(nameof(job));
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _ueTimeout = ueTimeout ?? UnrealLauncher.DefaultTimeout;
+        _debugWindow = debugWindow;
+    }
+
+    /// <summary>
+    /// Full-editor baseline: copy the FIXED template project (REBUS_TEMPLATE
+    /// on the AD share by default, overridable via
+    /// <see cref="TemplateProjectProvider.TemplateSourceEnvVar"/>) to a local
+    /// working directory and return a scaffold pointing at the local copy.
+    /// Bypasses ORBIT receive/stage/import entirely — this opens the fixed
+    /// project's startup map in the full editor with auto-streaming.
+    /// </summary>
+    public Task<ScaffoldResult> PrepareTemplateProjectAsync(
+        RunManifest manifest, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        var provider = new TemplateProjectProvider(_log);
+        return Task.Run(() => provider.Prepare(source: null, ct), ct);
+    }
+
+    /// <summary>
+    /// Resolve the ORBIT bearer token for the manifest's target environment via
+    /// the same composite token source the receive path uses. Used by the
+    /// connector-import path to hand a PAT to the UE process (which forwards it
+    /// to the bundled <c>orbit-cli</c>) without the orchestrator itself doing a
+    /// receive. Returns an empty string when no token is configured — the
+    /// connector then falls back to <c>ORBIT_TOKEN</c> / a cached CLI login.
+    /// </summary>
+    public async Task<string> ResolveOrbitTokenAsync(RunManifest manifest, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        try
+        {
+            return await _tokenSource.RequireTokenAsync(manifest.Server, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: the connector can still authenticate via ORBIT_TOKEN on
+            // the UE process or a cached CLI login. Log and pass empty through.
+            _log.Warning(ex,
+                "connector-import: no ORBIT token resolved for server={Server}; " +
+                "the connector will fall back to ORBIT_TOKEN / cached login.",
+                manifest.Server.Name);
+            return string.Empty;
+        }
     }
 
     /// <summary>
@@ -306,14 +352,25 @@ public sealed class VisualiserPipeline
         ScaffoldResult scaffold,
         TimeSpan? signallingReadyTimeout = null,
         TimeSpan? streamerConnectTimeout = null,
+        bool fullEditor = false,
+        OrbitImportParams? orbitImport = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(install);
         ArgumentNullException.ThrowIfNull(scaffold);
 
+        // Full-editor streaming opens the heavyweight editor and, on a COLD
+        // first open of the cached C++ project, compiles shaders + builds the
+        // DDC before the level-editor viewport (and thus the streamer) comes
+        // up. That can take several minutes, so give the streamer-connected
+        // handshake a generous 600 s budget vs. the lean -game pass. This must
+        // stay <= the server-side VISUALISER_START_TIMEOUT_MS (now 600 s) or
+        // the run is failed before the editor finishes its first open.
         var streamerConnectBudget = streamerConnectTimeout
-            ?? PixelStreamingSession.DefaultStreamerConnectTimeout;
+            ?? (fullEditor
+                ? TimeSpan.FromSeconds(600)
+                : PixelStreamingSession.DefaultStreamerConnectTimeout);
 
         // 1. Ensure the PixelStreaming2 signalling server is installed
         //    + built. On a fresh UE 5.7 launcher install the wilbur
@@ -364,6 +421,13 @@ public sealed class VisualiserPipeline
         //    system ephemeral range and ignores any hint we pass.
         int playerPort;
         int streamerPort;
+        // SFU (Selective Forwarding Unit) WebSocket port. We never use the
+        // SFU, but Wilbur ALWAYS binds it; left unset it defaults to the
+        // value baked into config.json (8889), which collides across
+        // back-to-back runs and kills the whole node process with an
+        // unhandled EADDRINUSE — see SignallingSupervisor.BuildStartInfo.
+        // Allocate a distinct free port so Wilbur never falls back to 8889.
+        int sfuPort = 0;
         if (resolved.IsWilbur)
         {
             playerPort = PortAllocator
@@ -377,6 +441,12 @@ public sealed class VisualiserPipeline
             {
                 streamerPort = PortAllocator.AllocateTcpPort();
             }
+            // Allocate the SFU port distinct from BOTH player and streamer.
+            sfuPort = PortAllocator.AllocateTcpPort();
+            while (sfuPort == playerPort || sfuPort == streamerPort)
+            {
+                sfuPort = PortAllocator.AllocateTcpPort();
+            }
         }
         else
         {
@@ -386,15 +456,15 @@ public sealed class VisualiserPipeline
         }
         var webrtcPorts = PortAllocator.AllocateUdpPortRange();
         _log.Information(
-            "phase-f: allocated playerPort={Player} streamerPort={Streamer} webrtcPorts=[{WebRtc}]",
-            playerPort, streamerPort, string.Join(",", webrtcPorts));
+            "phase-f: allocated playerPort={Player} streamerPort={Streamer} sfuPort={Sfu} webrtcPorts=[{WebRtc}]",
+            playerPort, streamerPort, sfuPort, string.Join(",", webrtcPorts));
 
         // 4. Spawn the signalling server + wait for its ready line.
         //    On failure the supervisor kills the process before
         //    throwing, so we don't need a try/finally here.
         var cirrusSupervisor = new SignallingSupervisor(_log, _job);
         var cirrusHandle = await cirrusSupervisor
-            .StartAsync(resolved, playerPort, streamerPort, signallingReadyTimeout, ct)
+            .StartAsync(resolved, playerPort, streamerPort, sfuPort, signallingReadyTimeout, ct)
             .ConfigureAwait(false);
 
         // 5. Spawn UE -game and watch the signalling stdout for the
@@ -413,8 +483,29 @@ public sealed class VisualiserPipeline
                 "ws://127.0.0.1:{0}", streamerPort);
 
             var launcher = new UnrealLauncher(install, _job, _log);
-            ueHandle = launcher.LaunchGameMode(
-                scaffold, signallingUrl, streamerId);
+            if (fullEditor)
+            {
+                // Full-editor mode: open the interactive editor AND stream the
+                // level-editor viewport to the same signalling server. The
+                // operator drives UE on the workstation; remote viewers watch
+                // the streamed viewport. Reuses the streamerId/URL bring-up
+                // above so the browser viewer connects identically to -game.
+                ueHandle = launcher.LaunchFullEditorStreaming(
+                    scaffold, signallingUrl, streamerId);
+            }
+            else
+            {
+                // Debug-window mode launches UE -game windowed at 720p so a
+                // visible window fits comfortably on the operator's desktop;
+                // headless/production keeps the full 1080p offscreen target.
+                var (gameResX, gameResY) = _debugWindow
+                    ? (UnrealLauncher.DefaultDebugResX, UnrealLauncher.DefaultDebugResY)
+                    : (UnrealLauncher.DefaultGameResX, UnrealLauncher.DefaultGameResY);
+                ueHandle = launcher.LaunchGameMode(
+                    scaffold, signallingUrl, streamerId,
+                    resX: gameResX, resY: gameResY, debugWindow: _debugWindow,
+                    orbitImport: orbitImport);
+            }
 
             var match = await WaitForStreamerConnectedAsync(
                     cirrusHandle, ueHandle, streamerConnectBudget, _log, ct)
@@ -437,6 +528,30 @@ public sealed class VisualiserPipeline
             await cirrusHandle.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Phase F (debug, inspection-only): launch the FULL Unreal Editor GUI
+    /// against the already-imported per-run project, opening directly into
+    /// the imported map so the operator can inspect the scene, the spawned
+    /// geometry actor, lighting and materials on the workstation's
+    /// interactive desktop.
+    ///
+    /// <para>
+    /// Unlike <see cref="StartStreamingAsync"/> this brings up neither
+    /// Cirrus nor a <c>-game</c> streamer — there is no browser Pixel
+    /// Streaming in this mode. The caller emits a ready event (with empty
+    /// signalling/player URLs) so the run is marked live rather than
+    /// failed, then blocks on the returned handle until the editor exits
+    /// or the run is cancelled.
+    /// </para>
+    /// </summary>
+    public UnrealGameHandle StartFullEditor(UnrealInstall install, ScaffoldResult scaffold)
+    {
+        ArgumentNullException.ThrowIfNull(install);
+        ArgumentNullException.ThrowIfNull(scaffold);
+        var launcher = new UnrealLauncher(install, _job, _log);
+        return launcher.LaunchFullEditor(scaffold);
     }
 
     /// <summary>

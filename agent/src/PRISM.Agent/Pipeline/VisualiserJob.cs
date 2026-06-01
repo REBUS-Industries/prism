@@ -98,6 +98,56 @@ public sealed class VisualiserJob
     public const string OrchestratorPathEnvVar = "PRISM_VISUALISER_ORCHESTRATOR_PATH";
 
     /// <summary>
+    /// DEBUG opt-in env var. When set (truthy) on the agent's
+    /// environment it is forwarded to the orchestrator child process,
+    /// which then launches the UE <c>-game</c> streaming pass in a
+    /// VISIBLE windowed process instead of headless off-screen
+    /// rendering. The orchestrator parses the value itself
+    /// (<c>1</c>/<c>true</c>/<c>yes</c>/<c>on</c>); the agent only
+    /// gates the forward on non-empty so toggling it doesn't require an
+    /// agent rebuild. Honoured only when the agent runs in the
+    /// operator's interactive desktop session — see <see cref="StartAsync"/>.
+    /// </summary>
+    public const string VisualiserDebugWindowEnvVar = "PRISM_VISUALISER_DEBUG_WINDOW";
+
+    /// <summary>
+    /// DEBUG opt-in env var. When set (truthy) it is forwarded to the
+    /// orchestrator child process, which then opens the FULL Unreal Editor
+    /// GUI (<c>UnrealEditor.exe</c>) on the imported map AND streams the
+    /// level-editor viewport to the browser viewer (the operator controls UE
+    /// on the workstation; remote viewers watch the streamed viewport),
+    /// instead of the headless / game-window streaming pass. SUPERSEDES
+    /// <see cref="VisualiserDebugWindowEnvVar"/> when both are set. The
+    /// orchestrator parses the value itself
+    /// (<c>1</c>/<c>true</c>/<c>yes</c>/<c>on</c>); the agent only gates the
+    /// forward on non-empty so toggling it doesn't require an agent rebuild.
+    /// Honoured only when the agent runs in the operator's interactive
+    /// desktop session — see <see cref="StartAsync"/>.
+    /// </summary>
+    public const string VisualiserFullEditorEnvVar = "PRISM_VISUALISER_FULL_EDITOR";
+
+    /// <summary>
+    /// Env var forwarded to the orchestrator (full-editor mode) naming the
+    /// template Unreal project to open. Mirrors
+    /// <see cref="Config.AgentConfig.VisualiserTemplateProjectPath"/>; an
+    /// externally-set env var overrides the config value. Defaults inside the
+    /// orchestrator to the REBUS_TEMPLATE UNC share when unset.
+    /// </summary>
+    public const string VisualiserTemplateProjectEnvVar = "PRISM_VISUALISER_TEMPLATE_PROJECT";
+
+    /// <summary>
+    /// Env var forwarded to the orchestrator selecting the streaming import
+    /// mechanism: <c>1</c> = use the OrbitConnector.UE5 plug-in (pull + load
+    /// inside the streamed UE instance), <c>0</c> = use the legacy Interchange
+    /// importer. Only forwarded when
+    /// <see cref="Config.AgentConfig.VisualiserConnectorImport"/> is non-null (or
+    /// an external env var is set); when absent the orchestrator auto-detects
+    /// from the fixed project's plug-in. Mirrors the orchestrator's
+    /// <c>PRISM_VISUALISER_CONNECTOR_IMPORT</c> / <c>--connector-import</c>.
+    /// </summary>
+    public const string VisualiserConnectorImportEnvVar = "PRISM_VISUALISER_CONNECTOR_IMPORT";
+
+    /// <summary>
     /// Suggested signalling port the orchestrator's
     /// <c>PortAllocator</c> uses as a starting hint. The orchestrator
     /// will pick a different free port if this one is in use.
@@ -233,6 +283,94 @@ public sealed class VisualiserJob
                 _     => "ORBIT_PAT_PROD",
             };
             psi.Environment[envKey] = data.OrbitToken;
+        }
+
+        // DEBUG: opt the orchestrator into a VISIBLE windowed UE -game pass.
+        // Source of truth is the persisted VisualiserDebugWindow setting
+        // (tray + web UI), read here at job-launch time so toggling it takes
+        // effect on the NEXT run with no agent restart. We OR it with any
+        // externally-set env var so the env-var/CLI override still works and
+        // nothing regresses. When enabled we set the env var to "1" on the
+        // child (the orchestrator parses 1/true/yes/on). NB: the UE window is
+        // only visible if THIS agent runs in the operator's interactive
+        // desktop session — when the agent runs as a session-0 Windows
+        // service the window lands on the hidden session-0 desktop. Pixel
+        // Streaming works regardless.
+        var envDebugWindow = Environment.GetEnvironmentVariable(VisualiserDebugWindowEnvVar);
+        var debugWindow = _cfg.VisualiserDebugWindow || IsTruthy(envDebugWindow);
+        if (debugWindow)
+        {
+            psi.Environment[VisualiserDebugWindowEnvVar] = "1";
+            _log.LogWarning(
+                "visualiser job: debug window ENABLED (config={CfgValue} env={EnvValue}) — orchestrator will launch UE -game WINDOWED. " +
+                "The window is only visible if the PRISM agent runs interactively (not as a session-0 service).",
+                _cfg.VisualiserDebugWindow, envDebugWindow ?? "<unset>");
+        }
+
+        // DEBUG: opt the orchestrator into opening the FULL Unreal Editor GUI
+        // on the imported map for inspection. Same persisted-config + env-var
+        // OR pattern as debug-window; read at job-launch so toggling it takes
+        // effect on the NEXT run with no agent restart. This SUPERSEDES the
+        // debug-window mode in the orchestrator and is INSPECTION-ONLY (no
+        // browser Pixel Streaming). The editor window is only visible if THIS
+        // agent runs in the operator's interactive desktop session.
+        var envFullEditor = Environment.GetEnvironmentVariable(VisualiserFullEditorEnvVar);
+        var fullEditor = _cfg.VisualiserFullEditor || IsTruthy(envFullEditor);
+        if (fullEditor)
+        {
+            psi.Environment[VisualiserFullEditorEnvVar] = "1";
+            _log.LogWarning(
+                "visualiser job: FULL EDITOR ENABLED (config={CfgValue} env={EnvValue}) — orchestrator will open the FIXED template project " +
+                "in the full Unreal Editor GUI AND stream the level-editor viewport to the browser viewer (supersedes debug-window; " +
+                "ORBIT import is bypassed in this baseline). The operator controls UE on the workstation; remote viewers watch the " +
+                "streamed viewport. The editor window is only visible if the PRISM agent runs interactively (not as a session-0 service).",
+                _cfg.VisualiserFullEditor, envFullEditor ?? "<unset>");
+        }
+
+        // Forward the fixed template/visualiser project path the orchestrator
+        // should open. This drives BOTH the full-editor baseline AND the new
+        // connector-import streaming path (where the orchestrator launches this
+        // project in -game + PixelStreaming and the bundled OrbitConnector.UE5
+        // plug-in pulls + loads the model). Always forwarded (harmless on the
+        // legacy Interchange path, which ignores it). Honour an externally-set
+        // env var (override), else the persisted config value. Read at
+        // job-launch so a config change applies next run.
+        var envTemplate = Environment.GetEnvironmentVariable(VisualiserTemplateProjectEnvVar);
+        var template = !string.IsNullOrWhiteSpace(envTemplate)
+            ? envTemplate
+            : _cfg.VisualiserTemplateProjectPath;
+        if (!string.IsNullOrWhiteSpace(template))
+        {
+            psi.Environment[VisualiserTemplateProjectEnvVar] = template;
+            _log.LogInformation(
+                "visualiser job: template project path -> {Path} (config={CfgValue} env={EnvValue})",
+                template, _cfg.VisualiserTemplateProjectPath ?? "<unset>", envTemplate ?? "<unset>");
+        }
+
+        // Forward the connector-import selector to the orchestrator. Tri-state:
+        //   - external env var (any value) wins and is passed through verbatim;
+        //   - else the persisted config bool? maps true->"1", false->"0";
+        //   - else (null) we forward NOTHING so the orchestrator auto-detects
+        //     from whether the fixed project ships the OrbitConnector plug-in.
+        var envConnector = Environment.GetEnvironmentVariable(VisualiserConnectorImportEnvVar);
+        if (!string.IsNullOrWhiteSpace(envConnector))
+        {
+            psi.Environment[VisualiserConnectorImportEnvVar] = envConnector;
+            _log.LogInformation(
+                "visualiser job: connector-import -> {Value} (from env override)", envConnector);
+        }
+        else if (_cfg.VisualiserConnectorImport is bool connectorPref)
+        {
+            psi.Environment[VisualiserConnectorImportEnvVar] = connectorPref ? "1" : "0";
+            _log.LogInformation(
+                "visualiser job: connector-import -> {Value} (config)",
+                connectorPref ? "on" : "off (Interchange)");
+        }
+        else
+        {
+            _log.LogInformation(
+                "visualiser job: connector-import unset (config=auto) — orchestrator will auto-detect " +
+                "the OrbitConnector plug-in in the fixed project and fall back to Interchange if absent.");
         }
 
         if (!string.IsNullOrWhiteSpace(_cfg.UnrealEngineRoot))
@@ -477,6 +615,7 @@ public sealed class VisualiserJob
                     break;
                 case "prism-visualiser/staged/v1":
                 case "prism-visualiser/imported/v1":
+                case "prism-visualiser/connector-import/v1":
                 case "prism-visualiser/mvr-ready/v1":
                     // Phase-progress events. Useful for diagnostics but
                     // not part of the agent <-> server contract yet.
@@ -654,6 +793,22 @@ public sealed class VisualiserJob
     {
         var offset = Math.Max(0, slot) % 20;
         return DefaultSignallingPortHint + (offset * 10);
+    }
+
+    /// <summary>
+    /// Lenient truthy test for the <see cref="VisualiserDebugWindowEnvVar"/>
+    /// override. Matches the orchestrator's own parser
+    /// (<c>1</c>/<c>true</c>/<c>yes</c>/<c>on</c>, case-insensitive); any
+    /// other value (or null/empty) is false.
+    /// </summary>
+    public static bool IsTruthy(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            _ => false,
+        };
     }
 
     /// <summary>

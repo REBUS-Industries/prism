@@ -87,6 +87,89 @@ public sealed class AgentConfig
     public bool VisualiserGpuCheck { get; set; } = true;
 
     /// <summary>
+    /// DEBUG: when true, the orchestrator launches the UE <c>-game</c>
+    /// Pixel-Streaming pass in a VISIBLE windowed process instead of
+    /// headless off-screen rendering, so an operator can watch the scene /
+    /// viewport / logs on PC01 while a run streams. Pixel Streaming stays
+    /// active either way. Default <c>false</c> (headless) so production
+    /// behaviour is unchanged. Read at job-launch time, so toggling it takes
+    /// effect on the NEXT visualiser run with no agent restart. The window
+    /// is only visible if the agent runs in the operator's interactive
+    /// desktop session (not as a session-0 Windows service). An externally
+    /// set <c>PRISM_VISUALISER_DEBUG_WINDOW</c> env var still works as an
+    /// override (OR'd with this flag) — see <c>VisualiserJob</c>.
+    /// </summary>
+    public bool VisualiserDebugWindow { get; set; } = false;
+
+    /// <summary>
+    /// DEBUG: when true, the orchestrator opens the FULL Unreal Editor GUI
+    /// (<c>UnrealEditor.exe</c>) on the imported map AND streams the
+    /// level-editor viewport to the browser viewer at the same time, instead
+    /// of the headless or game-window streaming pass. The operator controls
+    /// UE on PC01's interactive desktop (full editor panels) while remote
+    /// viewers watch the streamed viewport. SUPERSEDES
+    /// <see cref="VisualiserDebugWindow"/> when both are set. Default
+    /// <c>false</c> so production behaviour is unchanged. Read at job-launch
+    /// time, so toggling it takes effect on the NEXT visualiser run with no
+    /// agent restart. The editor window is only visible if the agent runs in
+    /// the operator's interactive desktop session (not as a session-0
+    /// Windows service). An externally set <c>PRISM_VISUALISER_FULL_EDITOR</c>
+    /// env var still works as an override (OR'd with this flag) — see
+    /// <c>VisualiserJob</c>.
+    /// </summary>
+    public bool VisualiserFullEditor { get; set; } = false;
+
+    /// <summary>
+    /// Full-editor baseline: the template Unreal project the orchestrator
+    /// opens (and copies locally) when <see cref="VisualiserFullEditor"/> is
+    /// on. Defaults to the MINIMAL_CUBE baseline project on PC01 (a tiny
+    /// Blueprint-only project: cube + floor + directional/sky light +
+    /// PlayerStart, plugins = PixelStreaming2 + PythonScriptPlugin) so the
+    /// Pixel Streaming auto-start path can be proven without C++ binaries or
+    /// heavyweight plugin interference. The ORBIT import pipeline is bypassed
+    /// in this mode, so the editor opens this fixed project's startup map and
+    /// auto-streams its level-editor viewport. Forwarded to the orchestrator
+    /// as <c>PRISM_VISUALISER_TEMPLATE_PROJECT</c>.
+    ///
+    /// <para>
+    /// Set to <c>\\fs.ad.rebus.industries\REBUS_Admin\Software\Unreal\REBUS_TEMPLATE</c>
+    /// (or its locally-staged copy <c>C:\PRISM\Templates\REBUS_TEMPLATE</c>)
+    /// to use the full REBUS template instead.
+    /// </para>
+    /// </summary>
+    public string VisualiserTemplateProjectPath { get; set; } =
+        @"C:\PRISM\Templates\MINIMAL_CUBE";
+
+    /// <summary>
+    /// Controls how the streaming (NON full-editor) path imports the ORBIT
+    /// model:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>null</c> (default) — <b>auto</b>: the orchestrator uses the
+    ///     bundled <c>OrbitConnector.UE5</c> plug-in to pull + load the model
+    ///     inside the streamed UE instance when the configured fixed project
+    ///     (<see cref="VisualiserTemplateProjectPath"/>) ships the connector
+    ///     plug-in + <c>orbit-cli</c>; otherwise it falls back to the built-in
+    ///     Interchange importer (receive → glTF → <c>import_orbit.py</c>).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>true</c> — force the connector path (warns + still attempts it if
+    ///     the plug-in isn't detected; the import fails inside UE if it's truly
+    ///     absent).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>false</c> — force the legacy Interchange path regardless of the
+    ///     project.
+    ///   </description></item>
+    /// </list>
+    /// Forwarded to the orchestrator as <c>PRISM_VISUALISER_CONNECTOR_IMPORT</c>
+    /// (<c>1</c>/<c>0</c>) only when non-null; when null the orchestrator
+    /// auto-detects. Read at job-launch time so a change applies on the next run
+    /// with no agent restart. An externally-set env var overrides this value.
+    /// </summary>
+    public bool? VisualiserConnectorImport { get; set; } = null;
+
+    /// <summary>
     /// Optional override for the on-disk path of
     /// <c>PRISM.Visualiser.Orchestrator.exe</c>. When set, takes
     /// precedence over the agent installer's bundled copy at

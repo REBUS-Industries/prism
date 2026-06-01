@@ -286,6 +286,12 @@ public sealed class UnrealLauncher
     /// <summary>Default resolution the game-mode launcher requests.</summary>
     public const int DefaultGameResY = 1080;
 
+    /// <summary>Default window width used by the debug-window (-windowed) launch.</summary>
+    public const int DefaultDebugResX = 1280;
+
+    /// <summary>Default window height used by the debug-window (-windowed) launch.</summary>
+    public const int DefaultDebugResY = 720;
+
     /// <summary>
     /// Launch UE in <c>-game</c> mode with PixelStreaming flags. Returns
     /// a handle wrapping the started <see cref="System.Diagnostics.Process"/>
@@ -335,16 +341,28 @@ public sealed class UnrealLauncher
         string signallingUrl,
         string streamerId,
         int resX = DefaultGameResX,
-        int resY = DefaultGameResY)
+        int resY = DefaultGameResY,
+        bool debugWindow = false,
+        OrbitImportParams? orbitImport = null)
     {
         ArgumentNullException.ThrowIfNull(scaffold);
         ArgumentException.ThrowIfNullOrWhiteSpace(signallingUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(streamerId);
 
-        var psi = BuildGameStartInfoCore(_install, scaffold, signallingUrl, streamerId, resX, resY);
+        var psi = BuildGameStartInfoCore(_install, scaffold, signallingUrl, streamerId, resX, resY, debugWindow, orbitImport);
         _log.Information(
-            "ue game launch project={Project} level={Level} signallingUrl={SignallingUrl} streamerId={StreamerId} res={ResX}x{ResY}",
-            scaffold.UprojectPath, scaffold.LevelPath, signallingUrl, streamerId, resX, resY);
+            "ue game launch project={Project} level={Level} signallingUrl={SignallingUrl} streamerId={StreamerId} res={ResX}x{ResY} debugWindow={DebugWindow} connectorImport={ConnectorImport}",
+            scaffold.UprojectPath, scaffold.LevelPath, signallingUrl, streamerId, resX, resY, debugWindow,
+            orbitImport is null ? "off" : $"{orbitImport.Server}/{orbitImport.ProjectId}/{orbitImport.ModelId}");
+        if (debugWindow)
+        {
+            _log.Warning(
+                "ue game launch: DEBUG WINDOW enabled — launching UE -game WINDOWED (not -RenderOffScreen). " +
+                "A visible UE window will only appear if this orchestrator (and the PRISM agent that spawned it) " +
+                "runs in the operator's INTERACTIVE desktop session. When the agent runs as a Windows service " +
+                "(session 0) the window is created on the hidden session-0 desktop and is NOT visible over RDP. " +
+                "Pixel Streaming remains active either way.");
+        }
 
         var process = new System.Diagnostics.Process { StartInfo = psi };
 
@@ -412,11 +430,13 @@ public sealed class UnrealLauncher
         string signallingUrl,
         string streamerId,
         int resX = DefaultGameResX,
-        int resY = DefaultGameResY)
+        int resY = DefaultGameResY,
+        bool debugWindow = false,
+        OrbitImportParams? orbitImport = null)
     {
         ArgumentNullException.ThrowIfNull(install);
         ArgumentNullException.ThrowIfNull(scaffold);
-        return BuildGameStartInfoCore(install, scaffold, signallingUrl, streamerId, resX, resY);
+        return BuildGameStartInfoCore(install, scaffold, signallingUrl, streamerId, resX, resY, debugWindow, orbitImport);
     }
 
     private static ProcessStartInfo BuildGameStartInfoCore(
@@ -425,7 +445,9 @@ public sealed class UnrealLauncher
         string signallingUrl,
         string streamerId,
         int resX,
-        int resY)
+        int resY,
+        bool debugWindow,
+        OrbitImportParams? orbitImport = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -433,11 +455,15 @@ public sealed class UnrealLauncher
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            CreateNoWindow = true,
+            // Debug mode: don't suppress the child's own window. (UE's
+            // Slate render window is created independently of this flag,
+            // but leaving it false keeps behaviour intuitive when an
+            // operator runs the orchestrator interactively.)
+            CreateNoWindow = !debugWindow,
             WorkingDirectory = scaffold.ProjectRoot,
         };
 
-        // Canonical UE 5.7 PixelStreaming 2 -game invocation:
+        // Canonical UE 5.7 PixelStreaming 2 -game invocation (production / headless):
         //   UnrealEditor-Cmd.exe <project>.uproject <levelPath> -game \
         //     -RenderOffScreen -ResX=1920 -ResY=1080 \
         //     -PixelStreamingURL=ws://localhost:<port> \
@@ -448,24 +474,586 @@ public sealed class UnrealLauncher
         // -PixelStreamingPort pair in favour of -PixelStreamingURL.
         // The plan §Risks calls this out and the UE 5.7 docs are
         // explicit: do NOT mix the two forms.
+        //
+        // DEBUG WINDOW mode (debugWindow == true): drop -RenderOffScreen
+        // and -Unattended and request a real -windowed swapchain so a
+        // visible UE window appears on PC01's interactive desktop. Pixel
+        // Streaming is unaffected — it only needs the real GPU RHI (we
+        // never pass -NullRHI here) plus -PixelStreamingURL/-ID, all of
+        // which stay. -RenderOffScreen merely bypasses window
+        // presentation; removing it lets the same rendered frames also
+        // hit a window while still being captured by the PS2 encoder.
+        // -Unattended is dropped too: it marks the run non-interactive
+        // and can suppress the window / swallow on-screen prompts that
+        // are useful while debugging.
         psi.ArgumentList.Add(scaffold.UprojectPath);
-        psi.ArgumentList.Add(scaffold.LevelPath);
+        // Open the per-run level explicitly when we know it (the Interchange
+        // scaffolder always sets one). On the connector-import path the fixed
+        // project may have no EditorStartupMap recorded — pass no map token so
+        // UE boots the project's own GameDefaultMap instead of an empty arg.
+        if (!string.IsNullOrWhiteSpace(scaffold.LevelPath))
+        {
+            psi.ArgumentList.Add(scaffold.LevelPath);
+        }
         psi.ArgumentList.Add("-game");
-        psi.ArgumentList.Add("-RenderOffScreen");
+        if (debugWindow)
+        {
+            psi.ArgumentList.Add("-windowed");
+        }
+        else
+        {
+            psi.ArgumentList.Add("-RenderOffScreen");
+        }
         psi.ArgumentList.Add(string.Format(CultureInfo.InvariantCulture, "-ResX={0}", resX));
         psi.ArgumentList.Add(string.Format(CultureInfo.InvariantCulture, "-ResY={0}", resY));
         psi.ArgumentList.Add(string.Format(
             CultureInfo.InvariantCulture, "-PixelStreamingURL={0}", signallingUrl));
         psi.ArgumentList.Add(string.Format(
             CultureInfo.InvariantCulture, "-PixelStreamingID={0}", streamerId));
-        psi.ArgumentList.Add("-Unattended");
+        if (!debugWindow)
+        {
+            psi.ArgumentList.Add("-Unattended");
+        }
         psi.ArgumentList.Add("-NoSplash");
         psi.ArgumentList.Add("-NoPause");
         psi.ArgumentList.Add("-stdout");
         psi.ArgumentList.Add("-FullStdOutLogOutput");
         psi.ArgumentList.Add("-log");
 
+        // Connector-import path: hand the ORBIT target to the bundled
+        // OrbitConnector.UE5 plug-in. FOrbitHeadlessAutoImport reads these
+        // -Orbit* tokens at module init and fires UOrbitImportSubsystem::
+        // OrbitImport once the game world begins play, so the model is pulled
+        // + loaded by the connector inside this same streamed UE instance
+        // (no orchestrator-side glTF stage / Interchange python pass).
+        if (orbitImport is not null)
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitServer={0}", orbitImport.Server));
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitProject={0}", orbitImport.ProjectId));
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitModel={0}", orbitImport.ModelId));
+            if (!string.IsNullOrWhiteSpace(orbitImport.VersionId))
+            {
+                psi.ArgumentList.Add(string.Format(
+                    CultureInfo.InvariantCulture, "-OrbitVersion={0}", orbitImport.VersionId));
+            }
+            if (!string.IsNullOrWhiteSpace(orbitImport.Token))
+            {
+                psi.ArgumentList.Add(string.Format(
+                    CultureInfo.InvariantCulture, "-OrbitToken={0}", orbitImport.Token));
+            }
+            if (!string.IsNullOrWhiteSpace(orbitImport.Target))
+            {
+                psi.ArgumentList.Add(string.Format(
+                    CultureInfo.InvariantCulture, "-OrbitTarget={0}", orbitImport.Target));
+            }
+        }
+
         return psi;
+    }
+
+    // ----------------------------------------------------------------
+    // Debug — FULL EDITOR launch (inspection-only)
+    // ----------------------------------------------------------------
+
+    /// <summary>
+    /// Launch the FULL Unreal Editor GUI (<c>UnrealEditor.exe</c>, the
+    /// Win32-GUI sibling of the <c>-Cmd</c> binary) against the already-
+    /// scaffolded per-run project, opening directly into the imported map
+    /// so the operator lands in the scene with the World Outliner /
+    /// Details / Content Browser / viewport panels for debugging.
+    ///
+    /// <para>
+    /// This is an INSPECTION-ONLY debug mode (the <c>FullEditor</c> debug
+    /// option): unlike <see cref="LaunchGameMode"/> it brings up neither
+    /// <c>-game</c> nor Pixel Streaming, so there is no browser stream —
+    /// the operator inspects the editor directly on the workstation's
+    /// interactive desktop. Streaming the editor would require launching
+    /// Play-In-Editor with the Pixel Streaming plugin, which is out of
+    /// scope for this debug path.
+    /// </para>
+    ///
+    /// <para>
+    /// Session-0 caveat (same as the game-window debug mode): the editor
+    /// window only appears when the orchestrator (and the PRISM agent that
+    /// spawned it) runs in the operator's INTERACTIVE desktop session. A
+    /// process launched from a session-0 Windows service draws on the
+    /// hidden session-0 desktop and is invisible over RDP.
+    /// </para>
+    /// </summary>
+    public UnrealGameHandle LaunchFullEditor(ScaffoldResult scaffold)
+    {
+        ArgumentNullException.ThrowIfNull(scaffold);
+
+        var psi = BuildFullEditorStartInfoCore(_install, scaffold);
+        var editorExe = psi.FileName;
+        if (!File.Exists(editorExe))
+        {
+            throw new UnrealLaunchException(
+                $"Full editor binary not found at '{editorExe}'. Expected UnrealEditor.exe " +
+                $"alongside UnrealEditor-Cmd.exe ('{_install.EditorCmdPath}').");
+        }
+
+        var mapPackage = ExtractMapPackagePath(scaffold.LevelPath);
+        _log.Information(
+            "ue FULL EDITOR launch editor={Editor} project={Project} map={Map}",
+            editorExe, scaffold.UprojectPath, mapPackage);
+        _log.Warning(
+            "ue full-editor: opening the Unreal Editor GUI for inspection. The editor window " +
+            "only appears on the operator's INTERACTIVE desktop session; when the agent runs as a " +
+            "session-0 Windows service it is invisible. Pixel Streaming to the browser is NOT active " +
+            "in full-editor mode (inspection only).");
+
+        var process = new System.Diagnostics.Process { StartInfo = psi };
+
+        var lineChannel = Channel.CreateUnbounded<string>(
+            new UnboundedChannelOptions { SingleReader = false, SingleWriter = true });
+        var ueChannel = _log.ForContext("channel", "ue-editor-gui");
+        process.OutputDataReceived += (_, e) =>
+        {
+            var line = e.Data;
+            if (line is null) return;
+            ueChannel.Information("{Line}", line);
+            lineChannel.Writer.TryWrite(line);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            var line = e.Data;
+            if (line is null) return;
+            ueChannel.Warning("{Line}", line);
+            lineChannel.Writer.TryWrite(line);
+        };
+        process.Exited += (_, _) =>
+        {
+            try { lineChannel.Writer.TryComplete(); } catch { /* already completed */ }
+        };
+        process.EnableRaisingEvents = true;
+
+        if (!process.Start())
+        {
+            throw new UnrealLaunchException(
+                $"Failed to start UnrealEditor.exe (full editor) at '{editorExe}'.");
+        }
+
+        try
+        {
+            _job.AddProcess(process.Id);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex,
+                "ue full-editor: failed to add UE pid={Pid} to JobObject; " +
+                "KILL_ON_JOB_CLOSE will not cover it.", process.Id);
+        }
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        return new UnrealGameHandle(_log, process, "fulleditor", lineChannel);
+    }
+
+    /// <summary>
+    /// Build the <see cref="ProcessStartInfo"/> the full-editor launcher
+    /// uses. Public + static so tests can assert the argument string
+    /// without spawning UE.
+    /// </summary>
+    public static ProcessStartInfo BuildFullEditorStartInfoForTest(
+        UnrealInstall install, ScaffoldResult scaffold)
+    {
+        ArgumentNullException.ThrowIfNull(install);
+        ArgumentNullException.ThrowIfNull(scaffold);
+        return BuildFullEditorStartInfoCore(install, scaffold);
+    }
+
+    private static ProcessStartInfo BuildFullEditorStartInfoCore(
+        UnrealInstall install, ScaffoldResult scaffold)
+    {
+        var editorExe = ResolveFullEditorExePath(install);
+        var psi = new ProcessStartInfo
+        {
+            FileName = editorExe,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            // Full IDE: don't suppress the window. UE creates its Slate
+            // editor window regardless, but keep this false for clarity.
+            CreateNoWindow = false,
+            WorkingDirectory = scaffold.ProjectRoot,
+        };
+
+        // Canonical full-editor invocation:
+        //   UnrealEditor.exe <project>.uproject <MapPackagePath> -log
+        //
+        // Passing the map's package path as the first positional token
+        // after the project tells UE to LoadMap that level on startup, so
+        // the operator lands directly in the imported scene. We pass the
+        // PACKAGE path (/Game/REBUS/Maps/Imported_<runId>), not the object
+        // path (…Imported_<runId>.Imported_<runId>) the streaming pass
+        // uses, because the editor's startup-map arg expects the package.
+        // No -game / -RenderOffScreen / -Unattended / -NullRHI: this is the
+        // interactive IDE, not a headless or game-window run. -log opens
+        // the separate UE log console which is handy while debugging.
+        psi.ArgumentList.Add(scaffold.UprojectPath);
+        psi.ArgumentList.Add(ExtractMapPackagePath(scaffold.LevelPath));
+        psi.ArgumentList.Add("-log");
+
+        return psi;
+    }
+
+    // ----------------------------------------------------------------
+    // Debug — FULL EDITOR + PIXEL STREAMING (interactive + browser stream)
+    // ----------------------------------------------------------------
+
+    /// <summary>
+    /// Launch the FULL Unreal Editor GUI (<c>UnrealEditor.exe</c>) against
+    /// the scaffolded per-run project AND start the PixelStreaming2 EDITOR
+    /// streamer so the level-editor viewport is streamed to the browser
+    /// viewer at the same time. The operator drives the editor on the
+    /// workstation's interactive desktop (full panels: World Outliner,
+    /// Details, Content Browser, viewport gizmos) while remote viewers watch
+    /// the streamed 3D viewport.
+    ///
+    /// <para>
+    /// Reuses the exact same signalling bring-up as
+    /// <see cref="LaunchGameMode"/>: the caller (see
+    /// <see cref="PixelStreaming.PixelStreamingSession"/> /
+    /// <c>VisualiserPipeline.StartStreamingAsync</c>) stands up Cirrus/Wilbur
+    /// and allocates ports, then passes the streamer port URL + id here. The
+    /// editor streamer registers with that signalling server exactly like
+    /// the <c>-game</c> streamer, so the existing streamer-connected
+    /// detection, ready event, and server/browser endpoints all work
+    /// unchanged.
+    /// </para>
+    ///
+    /// <para>
+    /// Auto-start is driven by writing the editor-streamer settings into the
+    /// project's <c>Config\DefaultGame.ini</c> (see
+    /// <see cref="WriteEditorStreamingConfig"/>) — NOT via <c>-ExecCmds</c>,
+    /// which fire too early to take effect. The PS2 settings class is
+    /// <c>UCLASS(config = Game)</c>, so these are read at module init and the
+    /// engine's own deferred hook (<c>OnMainFrameCreationFinished</c>) starts
+    /// streaming once the editor window is up:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>EditorSource=LevelEditorViewport</c> — stream just the
+    ///     level-editor 3D viewport (vs. <c>Editor</c> = the whole editor UI).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>EditorUseRemoteSignallingServer=True</c> — connect to OUR
+    ///     Cirrus/Wilbur instead of spinning up the plugin's own embedded
+    ///     signalling server (which the browser viewer wouldn't see).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>ConnectionURL=&lt;url&gt;</c> + <c>-PixelStreamingURL=&lt;url&gt;</c>
+    ///     — point the streamer at the allocated streamer port.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>EditorStartOnLaunch=True</c> — engine auto-starts the editor
+    ///     streamer from <c>OnMainFrameCreationFinished</c> (no toolbar click).
+    ///   </description></item>
+    /// </list>
+    /// If auto-start ever fails to engage, the editor is still fully open and
+    /// the operator can start streaming with one click from the Pixel Streaming
+    /// toolbar (Stream Level Editor) — the rest of the pipeline then connects
+    /// normally.
+    /// </para>
+    ///
+    /// <para>
+    /// Interactive: NO <c>-game</c> / <c>-RenderOffScreen</c> /
+    /// <c>-Unattended</c> / <c>-NullRHI</c>. The editor needs a real RHI for
+    /// the encoder anyway. Same session-0 caveat as the other debug modes —
+    /// the editor window only appears in the operator's interactive session.
+    /// </para>
+    /// </summary>
+    public UnrealGameHandle LaunchFullEditorStreaming(
+        ScaffoldResult scaffold,
+        string signallingUrl,
+        string streamerId)
+    {
+        ArgumentNullException.ThrowIfNull(scaffold);
+        ArgumentException.ThrowIfNullOrWhiteSpace(signallingUrl);
+        ArgumentException.ThrowIfNullOrWhiteSpace(streamerId);
+
+        // Persist the PS2 editor-streamer settings into the project's
+        // Config\DefaultGame.ini BEFORE launch. This is the reliable
+        // auto-start mechanism, and it is the ENGINE's own deferred trigger:
+        //
+        //   UPixelStreaming2PluginSettings is UCLASS(config = Game), so its
+        //   EditorStartOnLaunch / EditorSource / EditorUseRemoteSignallingServer
+        //   properties are read from DefaultGame.ini at module init. The PS2
+        //   editor module then hooks IMainFrameModule::OnMainFrameCreationFinished
+        //   (see Engine\Plugins\Media\PixelStreaming2 …\PixelStreaming2EditorModule.cpp
+        //   InitEditorStreaming, ~L205) and, ONCE THE EDITOR MAIN WINDOW IS UP,
+        //   checks CVarEditorStartOnLaunch and calls StartStreaming(CVarEditorSource)
+        //   — the exact same call the "Stream Level Editor" toolbar button makes.
+        //   That fires after the UI + viewport are initialised, which is why it
+        //   works where the early `-ExecCmds` did not.
+        //
+        // Root cause of the earlier failure: we wrote these keys to
+        // DefaultEngine.ini, but the settings class is config = Game, so the
+        // values were never read (UE logged EditorStartOnLaunch=false "from
+        // Property" at init) and the toolbar click was still required.
+        WriteEditorStreamingConfig(ResolveDefaultGameIniPath(scaffold), signallingUrl);
+
+        var psi = BuildFullEditorStreamingStartInfoCore(_install, scaffold, signallingUrl, streamerId);
+        var editorExe = psi.FileName;
+        if (!File.Exists(editorExe))
+        {
+            throw new UnrealLaunchException(
+                $"Full editor binary not found at '{editorExe}'. Expected UnrealEditor.exe " +
+                $"alongside UnrealEditor-Cmd.exe ('{_install.EditorCmdPath}').");
+        }
+
+        var mapPackage = ExtractMapPackagePath(scaffold.LevelPath);
+        _log.Information(
+            "ue FULL EDITOR + STREAM launch editor={Editor} project={Project} map={Map} signallingUrl={SignallingUrl} streamerId={StreamerId}",
+            editorExe, scaffold.UprojectPath, mapPackage, signallingUrl, streamerId);
+        _log.Warning(
+            "ue full-editor-stream: opening the Unreal Editor GUI AND streaming the level-editor viewport. " +
+            "The editor window only appears on the operator's INTERACTIVE desktop session (session-0 service = invisible). " +
+            "The browser viewer receives the streamed viewport once the editor streamer registers.");
+
+        var process = new System.Diagnostics.Process { StartInfo = psi };
+
+        // Same line-channel wiring as LaunchGameMode: UE stdout/stderr feed
+        // both Serilog and the channel the streamer-connected watcher reads
+        // (the canonical RoomSignallingContextObserver::OnJoined line lives
+        // only in UE's own log).
+        var lineChannel = Channel.CreateUnbounded<string>(
+            new UnboundedChannelOptions { SingleReader = false, SingleWriter = true });
+        var ueChannel = _log.ForContext("channel", "ue-editor-stream");
+        process.OutputDataReceived += (_, e) =>
+        {
+            var line = e.Data;
+            if (line is null) return;
+            ueChannel.Information("{Line}", line);
+            lineChannel.Writer.TryWrite(line);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            var line = e.Data;
+            if (line is null) return;
+            ueChannel.Warning("{Line}", line);
+            lineChannel.Writer.TryWrite(line);
+        };
+        process.Exited += (_, _) =>
+        {
+            try { lineChannel.Writer.TryComplete(); } catch { /* already completed */ }
+        };
+        process.EnableRaisingEvents = true;
+
+        if (!process.Start())
+        {
+            throw new UnrealLaunchException(
+                $"Failed to start UnrealEditor.exe (full editor + stream) at '{editorExe}'.");
+        }
+
+        try
+        {
+            _job.AddProcess(process.Id);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex,
+                "ue full-editor-stream: failed to add UE pid={Pid} to JobObject; " +
+                "KILL_ON_JOB_CLOSE will not cover it.", process.Id);
+        }
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        return new UnrealGameHandle(_log, process, streamerId, lineChannel);
+    }
+
+    /// <summary>
+    /// Build the <see cref="ProcessStartInfo"/> the full-editor-streaming
+    /// launcher uses. Public + static so tests can assert the argument
+    /// string without spawning UE.
+    /// </summary>
+    public static ProcessStartInfo BuildFullEditorStreamingStartInfoForTest(
+        UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId)
+    {
+        ArgumentNullException.ThrowIfNull(install);
+        ArgumentNullException.ThrowIfNull(scaffold);
+        return BuildFullEditorStreamingStartInfoCore(install, scaffold, signallingUrl, streamerId);
+    }
+
+    private static ProcessStartInfo BuildFullEditorStreamingStartInfoCore(
+        UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId)
+    {
+        var editorExe = ResolveFullEditorExePath(install);
+        var psi = new ProcessStartInfo
+        {
+            FileName = editorExe,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = false,
+            WorkingDirectory = scaffold.ProjectRoot,
+        };
+
+        psi.ArgumentList.Add(scaffold.UprojectPath);
+        // Open the level explicitly when we know it; otherwise let UE open the
+        // project's own EditorStartupMap (the template baseline relies on this).
+        if (!string.IsNullOrWhiteSpace(scaffold.LevelPath))
+        {
+            psi.ArgumentList.Add(ExtractMapPackagePath(scaffold.LevelPath));
+        }
+
+        // Point the streamer at OUR signalling server (the streamer port the
+        // pipeline allocated + Cirrus/Wilbur is already listening on).
+        // -PixelStreamingURL sets the streamer ConnectionURL (UE logs
+        // "ConnectionURL … from command line"); -PixelStreamingID sets the
+        // editor streamer id (InitEditorStreaming reads PixelStreamingID=).
+        psi.ArgumentList.Add(string.Format(
+            CultureInfo.InvariantCulture, "-PixelStreamingURL={0}", signallingUrl));
+        psi.ArgumentList.Add(string.Format(
+            CultureInfo.InvariantCulture, "-PixelStreamingID={0}", streamerId));
+
+        // NOTE: we deliberately do NOT pass `-ExecCmds=PixelStreaming2.Editor.*`.
+        // Those fire during early engine init — before the PS2 editor module
+        // and the level-editor viewport exist — so they no-op (confirmed on
+        // PC01: all four editor cvars stayed at their defaults at module init).
+        // Auto-start is driven entirely by the DefaultGame.ini block written in
+        // WriteEditorStreamingConfig, which the engine consumes at the correct
+        // time via OnMainFrameCreationFinished.
+
+        // Forward UE log to stdout so the streamer-connected watcher sees the
+        // OnJoined line. NO -game / -RenderOffScreen / -Unattended: keep the
+        // editor interactive and windowed on the operator's desktop.
+        psi.ArgumentList.Add("-stdout");
+        psi.ArgumentList.Add("-FullStdOutLogOutput");
+        psi.ArgumentList.Add("-log");
+        psi.ArgumentList.Add("-NoSplash");
+
+        return psi;
+    }
+
+    // PRISM-managed block guards in DefaultGame.ini. We rewrite the block
+    // on every launch so the per-run ConnectionURL (ws:// port) stays fresh
+    // and the section never accumulates duplicates across runs.
+    private const string EditorStreamCfgBegin = "; >>> PRISM auto-stream (managed) >>>";
+    private const string EditorStreamCfgEnd   = "; <<< PRISM auto-stream (managed) <<<";
+
+    /// <summary>
+    /// Resolve the project's <c>Config\DefaultGame.ini</c> — the file
+    /// <see cref="UPixelStreaming2PluginSettings"/> (UCLASS(config = Game))
+    /// actually reads its editor-streamer properties from. Derived as the
+    /// sibling of the scaffold's <c>DefaultEngine.ini</c> so it works for both
+    /// the ORBIT scaffolder and the fixed-template provider.
+    /// </summary>
+    public static string ResolveDefaultGameIniPath(ScaffoldResult scaffold)
+    {
+        ArgumentNullException.ThrowIfNull(scaffold);
+        var configDir = Path.GetDirectoryName(scaffold.DefaultEngineIniPath);
+        if (string.IsNullOrEmpty(configDir))
+        {
+            // Fall back to <ProjectRoot>\Config when the ini path is unusual.
+            configDir = Path.Combine(scaffold.ProjectRoot, "Config");
+        }
+        return Path.Combine(configDir, "DefaultGame.ini");
+    }
+
+    /// <summary>
+    /// Write the confirmed PixelStreaming2 5.7 editor-streamer settings into
+    /// the project's <c>Config/DefaultGame.ini</c> under
+    /// <c>[/Script/PixelStreaming2Settings.PixelStreaming2PluginSettings]</c>.
+    /// The settings class is <c>UCLASS(config = Game)</c>, so this is the file
+    /// UE reads at module init (writing to <c>DefaultEngine.ini</c> is silently
+    /// ignored). Config keys (verified against
+    /// <c>UnrealEditor-PixelStreaming2Settings.dll</c> + the plugin headers):
+    /// <list type="bullet">
+    ///   <item><description><c>EditorSource=LevelEditorViewport</c> — stream the level-editor 3D viewport.</description></item>
+    ///   <item><description><c>EditorStartOnLaunch=True</c> — engine auto-starts the editor streamer from OnMainFrameCreationFinished.</description></item>
+    ///   <item><description><c>EditorUseRemoteSignallingServer=True</c> — connect to OUR Cirrus, not the plugin's embedded server.</description></item>
+    ///   <item><description><c>ConnectionURL=ws://127.0.0.1:&lt;port&gt;</c> — the allocated streamer port.</description></item>
+    /// </list>
+    /// </summary>
+    private void WriteEditorStreamingConfig(string iniPath, string signallingUrl)
+    {
+        try
+        {
+            var block = string.Join("\n", new[]
+            {
+                EditorStreamCfgBegin,
+                "[/Script/PixelStreaming2Settings.PixelStreaming2PluginSettings]",
+                "EditorSource=LevelEditorViewport",
+                "EditorStartOnLaunch=True",
+                "EditorUseRemoteSignallingServer=True",
+                string.Format(CultureInfo.InvariantCulture, "ConnectionURL={0}", signallingUrl),
+                EditorStreamCfgEnd,
+            });
+
+            var existing = File.Exists(iniPath) ? File.ReadAllText(iniPath) : string.Empty;
+            existing = StripManagedBlock(existing);
+
+            var sb = string.IsNullOrWhiteSpace(existing)
+                ? block + "\n"
+                : existing.TrimEnd() + "\n\n" + block + "\n";
+
+            var dir = Path.GetDirectoryName(iniPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(iniPath, sb);
+            _log.Information(
+                "ue full-editor-stream: wrote PS2 editor-stream settings (Source=LevelEditorViewport, " +
+                "StartOnLaunch, UseRemoteSignallingServer, ConnectionURL={Url}) to {Ini}",
+                signallingUrl, iniPath);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: the editor still opens and the operator can click
+            // "Stream Level Editor" on the PS2 toolbar manually.
+            _log.Warning(ex,
+                "ue full-editor-stream: failed to write PS2 settings to {Ini}; " +
+                "auto-start may not engage (manual toolbar click still works).", iniPath);
+        }
+    }
+
+    private static string StripManagedBlock(string content)
+    {
+        if (string.IsNullOrEmpty(content)) return content;
+        var begin = content.IndexOf(EditorStreamCfgBegin, StringComparison.Ordinal);
+        if (begin < 0) return content;
+        var endMarker = content.IndexOf(EditorStreamCfgEnd, begin, StringComparison.Ordinal);
+        if (endMarker < 0) return content[..begin]; // truncated block — drop the tail
+        var endOfLine = content.IndexOf('\n', endMarker);
+        var cut = endOfLine < 0 ? content.Length : endOfLine + 1;
+        return content[..begin] + content[cut..];
+    }
+
+    /// <summary>
+    /// Resolve <c>UnrealEditor.exe</c> (the full GUI editor) as the sibling
+    /// of the resolved <c>UnrealEditor-Cmd.exe</c> in the same
+    /// <c>Engine\Binaries\Win64\</c> folder.
+    /// </summary>
+    public static string ResolveFullEditorExePath(UnrealInstall install)
+    {
+        ArgumentNullException.ThrowIfNull(install);
+        var dir = Path.GetDirectoryName(install.EditorCmdPath);
+        if (string.IsNullOrEmpty(dir))
+        {
+            throw new UnrealLaunchException(
+                $"Cannot derive UnrealEditor.exe directory from '{install.EditorCmdPath}'.");
+        }
+        return Path.Combine(dir, "UnrealEditor.exe");
+    }
+
+    /// <summary>
+    /// Strip the object-name suffix from a Speckle/UE level path so it can
+    /// be passed as the editor's startup-map argument. The scaffolder
+    /// produces an object path of the form
+    /// <c>/Game/REBUS/Maps/Imported_&lt;runId&gt;.Imported_&lt;runId&gt;</c>;
+    /// the editor wants the package path
+    /// <c>/Game/REBUS/Maps/Imported_&lt;runId&gt;</c> (everything before
+    /// the first dot). Returns the input unchanged when there is no dot.
+    /// </summary>
+    public static string ExtractMapPackagePath(string levelPath)
+    {
+        if (string.IsNullOrWhiteSpace(levelPath)) return levelPath;
+        var dot = levelPath.IndexOf('.', StringComparison.Ordinal);
+        return dot >= 0 ? levelPath[..dot] : levelPath;
     }
 
     // ----------------------------------------------------------------

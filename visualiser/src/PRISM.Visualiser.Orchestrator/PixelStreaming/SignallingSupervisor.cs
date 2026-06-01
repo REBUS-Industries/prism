@@ -392,6 +392,7 @@ public sealed class SignallingSupervisor
         SignallingResolveResult resolved,
         int playerPort,
         int streamerPort,
+        int sfuPort = 0,
         TimeSpan? readyTimeout = null,
         CancellationToken ct = default)
     {
@@ -415,16 +416,18 @@ public sealed class SignallingSupervisor
             throw new ArgumentOutOfRangeException(nameof(playerPort));
         if (streamerPort is < 1 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(streamerPort));
+        if (sfuPort is < 0 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(sfuPort));
 
         readyTimeout ??= DefaultReadyTimeout;
 
-        var psi = BuildStartInfo(resolved, playerPort, streamerPort);
+        var psi = BuildStartInfo(resolved, playerPort, streamerPort, sfuPort);
         _log.Information(
             "signalling launch flavour={Flavour} script={Script} node={Node} " +
-            "playerPort={PlayerPort} streamerPort={StreamerPort} timeoutMs={TimeoutMs}",
+            "playerPort={PlayerPort} streamerPort={StreamerPort} sfuPort={SfuPort} timeoutMs={TimeoutMs}",
             resolved.IsWilbur ? "wilbur" : "cirrus",
             resolved.CirrusScriptPath, resolved.NodeExePath,
-            playerPort, streamerPort,
+            playerPort, streamerPort, sfuPort,
             (int)readyTimeout.Value.TotalMilliseconds);
 
         var process = new System.Diagnostics.Process { StartInfo = psi };
@@ -497,6 +500,24 @@ public sealed class SignallingSupervisor
                     "signalling ready: requested player={Player} streamer={Streamer} but log reported port={Logged}",
                     playerPort, streamerPort, port);
             }
+
+            // Defense-in-depth: Wilbur logs each listen line as it binds,
+            // but a LATER bind (e.g. the SFU port) can still throw an
+            // unhandled EADDRINUSE and kill the whole node process a few ms
+            // after the streamer-port ready line we just matched. If we
+            // returned a handle for an already-dead server, UE would loop
+            // forever on `socket connect failed`. Give the process a short
+            // grace window to surface such a crash and fail fast instead.
+            await Task.Delay(TimeSpan.FromMilliseconds(750), timeoutCts.Token)
+                .ConfigureAwait(false);
+            if (process.HasExited)
+            {
+                throw new SignallingStartException(
+                    $"Signalling server logged a ready line but exited (code={SafeExitCode(process)}) " +
+                    "immediately after — most likely an unhandled EADDRINUSE while binding a " +
+                    "secondary port (player/streamer/sfu). Check the 'cirrus' channel log lines.");
+            }
+
             return new SignallingHandle(_log, process, lineChannel, playerPort, streamerPort);
         }
         catch (OperationCanceledException) when (
@@ -628,7 +649,7 @@ public sealed class SignallingSupervisor
     /// dialect without spawning a real process.
     /// </summary>
     public static ProcessStartInfo BuildStartInfo(
-        SignallingResolveResult resolved, int playerPort, int streamerPort)
+        SignallingResolveResult resolved, int playerPort, int streamerPort, int sfuPort = 0)
     {
         ArgumentNullException.ThrowIfNull(resolved);
         if (resolved.CirrusScriptPath is null)
@@ -676,6 +697,23 @@ public sealed class SignallingSupervisor
                 CultureInfo.InvariantCulture, "--player_port={0}", playerPort));
             psi.ArgumentList.Add(string.Format(
                 CultureInfo.InvariantCulture, "--streamer_port={0}", streamerPort));
+            // CRITICAL: also pin the SFU port. Wilbur ALWAYS binds an SFU
+            // WebSocket server (even when no SFU is used) and, if left
+            // unset, falls back to the config.json default (8889). On a
+            // workstation that runs back-to-back streams that fixed port
+            // collides — Wilbur logs `Listening for streamer connections
+            // on port <streamerPort>` (so our ready-line matcher fires and
+            // the orchestrator launches UE), then immediately throws an
+            // UNHANDLED `Error: listen EADDRINUSE :::8889` and the whole
+            // node process dies. The UE editor streamer then loops forever
+            // with `socket connect failed` because the signalling server it
+            // was told to use (streamer_port) is already gone. Allocating a
+            // distinct free SFU port per run removes that fixed collision.
+            if (sfuPort > 0)
+            {
+                psi.ArgumentList.Add(string.Format(
+                    CultureInfo.InvariantCulture, "--sfu_port={0}", sfuPort));
+            }
             psi.ArgumentList.Add("--serve");
             psi.ArgumentList.Add("--console_messages");
             psi.ArgumentList.Add("verbose");
@@ -704,6 +742,12 @@ public sealed class SignallingSupervisor
                 yield return line;
             }
         }
+    }
+
+    private static int SafeExitCode(System.Diagnostics.Process process)
+    {
+        try { return process.ExitCode; }
+        catch { return -1; }
     }
 
     private static async Task KillProcessQuietlyAsync(System.Diagnostics.Process process)
