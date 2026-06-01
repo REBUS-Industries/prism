@@ -104,11 +104,7 @@ public sealed class TemplateProjectProvider
 
         CopyTemplate(source, dest, ct);
 
-        var uproject = Directory
-            .EnumerateFiles(dest, "*.uproject", SearchOption.TopDirectoryOnly)
-            .FirstOrDefault()
-            ?? throw new TemplateProjectException(
-                $"No .uproject found in the copied template at '{dest}' (source '{source}').");
+        var uproject = SelectUproject(dest, name, source);
 
         var iniPath = Path.Combine(dest, "Config", "DefaultEngine.ini");
         var levelPath = ReadEditorStartupMap(iniPath);
@@ -124,6 +120,71 @@ public sealed class TemplateProjectProvider
             PythonScriptPath: string.Empty,
             LevelPath: levelPath,
             DescriptionRewritten: false);
+    }
+
+    /// <summary>
+    /// Deterministically choose the project descriptor to launch from the
+    /// working copy.
+    ///
+    /// <para>
+    /// The local cache is a persistent robocopy <c>/E /XO</c> mirror with no
+    /// <c>/PURGE</c>, so files that once existed in the source but were later
+    /// removed/renamed are NOT deleted from the cache. The classic offender is
+    /// the engine's default <c>MyProject.uproject</c> left over from when the
+    /// template was first scaffolded (UE names new projects "MyProject"): it
+    /// lingers next to the real <c>&lt;TemplateName&gt;.uproject</c> forever.
+    /// </para>
+    ///
+    /// <para>
+    /// The old code did <c>EnumerateFiles("*.uproject").FirstOrDefault()</c>,
+    /// which returns the alphabetically-first descriptor — so a stale
+    /// <c>MyProject.uproject</c> shadowed <c>REBUS_Visualiser.uproject</c> and
+    /// UE launched a project that did not enable the PixelStreaming2 plugin,
+    /// causing the orchestrator to time out waiting for a streamer that the
+    /// engine never tried to register. We now prefer the descriptor whose name
+    /// matches the template/source directory, fall back to the most recently
+    /// modified, and loudly warn about the extras so the cache/source can be
+    /// cleaned up.
+    /// </para>
+    /// </summary>
+    private string SelectUproject(string dest, string templateName, string source)
+    {
+        var candidates = Directory
+            .EnumerateFiles(dest, "*.uproject", SearchOption.TopDirectoryOnly)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            throw new TemplateProjectException(
+                $"No .uproject found in the copied template at '{dest}' (source '{source}').");
+        }
+
+        if (candidates.Count == 1)
+            return candidates[0];
+
+        // Multiple descriptors — pick the one matching the template directory
+        // name; otherwise the newest. Never silently take the alphabetical first.
+        var byName = candidates.FirstOrDefault(p =>
+            string.Equals(
+                Path.GetFileNameWithoutExtension(p), templateName,
+                StringComparison.OrdinalIgnoreCase));
+
+        var chosen = byName ?? candidates
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .First();
+
+        var ignored = string.Join(
+            ", ", candidates.Where(p => !string.Equals(p, chosen, StringComparison.OrdinalIgnoreCase))
+                            .Select(Path.GetFileName));
+
+        _log.Warning(
+            "template project: {Count} .uproject files present in working copy {Dest}; " +
+            "selected '{Chosen}' (matched template name: {MatchedByName}). Ignored stale " +
+            "descriptor(s): {Ignored}. Remove the stale file(s) from the source/cache so " +
+            "the correct project is unambiguous.",
+            candidates.Count, dest, Path.GetFileName(chosen), byName is not null, ignored);
+
+        return chosen;
     }
 
     private void CopyTemplate(string source, string dest, CancellationToken ct)
