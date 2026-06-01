@@ -435,9 +435,56 @@ try {{
     $installDir = '{Esc(installDir)}'
     $exePath    = '{Esc(exePath)}'
 
+    # Hardening: the spawning agent pid exiting is necessary but NOT
+    # sufficient.  A second PRISM.Agent.exe instance (a scheduled-task
+    # relaunch race) or a live child the visualiser job spawned
+    # (prism-visualiser.exe / UnrealEditor*) keeps its modules memory-mapped,
+    # so the very first locked DLL (classically Accessibility.dll) makes
+    # Expand-Archive -Force abort the entire update with 'Access to the path
+    # ... is denied'.  Stop every such holder — gracefully, then forcibly —
+    # and wait for the handles to drop before extracting.
+    $holderNames = @('PRISM.Agent','prism-visualiser','UnrealEditor','UnrealEditor-Cmd','UnrealEditor-Win64-DebugGame','CrashReportClient')
+    W 'stopping any lingering agent/orchestrator/UE processes that could lock install files'
+    foreach ($n in $holderNames) {{
+        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {{
+            W (""  closing "" + $n + "" pid "" + $_.Id)
+            try {{ $_.CloseMainWindow() | Out-Null }} catch {{ }}
+        }}
+    }}
+    Start-Sleep -Seconds 1
+    foreach ($n in $holderNames) {{
+        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {{
+            try {{ Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }} catch {{ }}
+        }}
+    }}
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {{
+        $alive = @($holderNames | ForEach-Object {{ Get-Process -Name $_ -ErrorAction SilentlyContinue }})
+        if ($alive.Count -eq 0) {{ break }}
+        Start-Sleep -Seconds 1
+    }}
+    $alive = @($holderNames | ForEach-Object {{ Get-Process -Name $_ -ErrorAction SilentlyContinue }})
+    if ($alive.Count -gt 0) {{ W (""WARN: "" + $alive.Count + "" holder process(es) still alive after stop; will retry extraction anyway"") }}
+    else {{ W 'all holder processes stopped' }}
+
     W ""extracting $zip -> $installDir""
-    Expand-Archive -LiteralPath $zip -DestinationPath $installDir -Force -ErrorAction Stop
-    W 'extraction complete'
+    # Retry-with-backoff: rides out transient locks (a handle being released
+    # slightly after the process exits, or antivirus mid-scan of a freshly
+    # written DLL) instead of failing the whole update on the first sharing
+    # violation.
+    $maxAttempts = 5
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {{
+        try {{
+            Expand-Archive -LiteralPath $zip -DestinationPath $installDir -Force -ErrorAction Stop
+            W ""extraction complete (attempt $attempt)""
+            break
+        }} catch {{
+            if ($attempt -ge $maxAttempts) {{ throw }}
+            $delay = 2 * $attempt
+            W ""extract attempt $attempt failed: $($_.Exception.Message); retrying in $delay s""
+            Start-Sleep -Seconds $delay
+        }}
+    }}
 
     if (-not (Test-Path $exePath)) {{
         $fatal = $true
