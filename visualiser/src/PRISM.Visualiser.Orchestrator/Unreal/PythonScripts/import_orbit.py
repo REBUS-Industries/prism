@@ -96,6 +96,7 @@
 
 import json
 import math
+import os
 import sys
 import time
 
@@ -105,6 +106,32 @@ RUN_ID = "{{RUN_ID}}"
 GLTF_PATH = r"{{GLTF_PATH}}"
 TARGET_FOLDER = "{{TARGET_FOLDER}}"
 LEVEL_NAME = "{{LEVEL_NAME}}"
+
+# --- Orientation correction -------------------------------------------------
+#
+# ORBIT/Speckle models arrive (after the orchestrator's Speckle->UE coordinate
+# conversion in Staging/CoordinateTransform.cs: scale x100 + Y-mirror for
+# handedness, NO rotation) yawed 90 degrees from the orientation the visualiser
+# expects, so we rotate the imported model root 90 degrees ANTICLOCKWISE
+# (counter-clockwise) about the vertical Z axis.
+#
+# SIGN REASONING — Unreal is LEFT-handed, Z-up, and a POSITIVE yaw turns
+# +X (forward / "north") toward +Y (right / "east"), which reads as CLOCKWISE
+# when viewed top-down (plan view). A 90 degree ANTICLOCKWISE turn is therefore
+# a NEGATIVE yaw, i.e. -90 degrees. (Cross-check: yaw +90 would rotate the model
+# clockwise — the opposite of what was asked.)
+#
+# This is the single knob for import orientation. Override it on a workstation
+# without rebuilding via the env var PRISM_VISUALISER_IMPORT_YAW_DEG, e.g.
+# "90" to flip the direction, "0" to disable the correction, "180" to reverse.
+_DEFAULT_IMPORT_YAW_DEGREES = -90.0
+_yaw_env = os.environ.get("PRISM_VISUALISER_IMPORT_YAW_DEG")
+try:
+    ORBIT_IMPORT_YAW_DEGREES = (
+        float(_yaw_env) if _yaw_env not in (None, "") else _DEFAULT_IMPORT_YAW_DEGREES
+    )
+except (TypeError, ValueError):
+    ORBIT_IMPORT_YAW_DEGREES = _DEFAULT_IMPORT_YAW_DEGREES
 
 
 def _emit_ready(level_path, asset_count, elapsed_s):
@@ -294,7 +321,15 @@ def _spawn_meshes_into_level(static_meshes):
     smc_cls = getattr(unreal, "StaticMeshComponent", None)
     for asset in static_meshes:
         location = unreal.Vector(0.0, 0.0, 0.0)
+        # Yaw the imported model root about the vertical Z axis to correct its
+        # orientation (see ORBIT_IMPORT_YAW_DEGREES). The mesh vertices carry
+        # absolute (origin-relative) UE coordinates, and the actor sits at the
+        # world origin, so a yaw on the actor rotates the whole assembly about
+        # the world Z axis consistently. Set the .yaw field explicitly (rather
+        # than rely on Rotator's positional arg order) to avoid any
+        # pitch/yaw/roll ambiguity across UE Python builds.
         rotation = unreal.Rotator(0.0, 0.0, 0.0)
+        rotation.yaw = ORBIT_IMPORT_YAW_DEGREES
         try:
             actor = _spawn_actor_from_class(unreal.StaticMeshActor, location, rotation)
         except Exception as ex:  # noqa: BLE001
@@ -319,6 +354,21 @@ def _spawn_meshes_into_level(static_meshes):
                 _log("set_static_mesh failed: %s" % ex)
         spawned.append(actor)
     return spawned
+
+
+def _rotate_yaw_about_z(vec, yaw_degrees):
+    # Rotate a point about the world Z axis using UE's yaw convention, so a
+    # value computed from UNROTATED mesh bounds tracks the yaw we applied to
+    # the spawned actors. UE yaw maps (x, y) -> (x*cos - y*sin, x*sin + y*cos);
+    # using the identical angle + formula keeps the camera framing aligned with
+    # the rotated model for ANY yaw value (including env overrides).
+    rad = math.radians(yaw_degrees)
+    cos_a, sin_a = math.cos(rad), math.sin(rad)
+    return unreal.Vector(
+        vec.x * cos_a - vec.y * sin_a,
+        vec.x * sin_a + vec.y * cos_a,
+        vec.z,
+    )
 
 
 def _compute_bounds(static_meshes, spawned_actors):
@@ -661,6 +711,14 @@ def main():
         else:
             center, radius = unreal.Vector(0.0, 0.0, 0.0), None
             _log("no mesh/actor bounds available; framing camera at origin fallback")
+
+        # The meshes were spawned with an ORBIT_IMPORT_YAW_DEGREES yaw about Z,
+        # but `center` was computed from the UNROTATED asset bounds — rotate it
+        # by the same yaw so the framing camera still points at the model.
+        center = _rotate_yaw_about_z(center, ORBIT_IMPORT_YAW_DEGREES)
+        _log("import yaw=%.1f deg about Z applied to model root "
+             "(negative = anticlockwise top-down); framed center=(%.1f,%.1f,%.1f)"
+             % (ORBIT_IMPORT_YAW_DEGREES, center.x, center.y, center.z))
 
         cam_loc, cam_rot = _frame_view(center, radius)
         _log("framing camera loc=(%.1f,%.1f,%.1f) rot=(pitch=%.1f,yaw=%.1f,roll=%.1f) lights=[%s]"

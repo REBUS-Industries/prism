@@ -193,6 +193,38 @@ on the command line for it to read.
 
 ---
 
+## Imported model orientation
+
+The imported model needs a **90° anticlockwise (counter-clockwise) yaw about the
+vertical Z axis** to be correctly oriented in the visualiser. The two import
+paths apply this in different places:
+
+- **Interchange path (this repo, fixed in visualiser v0.5.18):** the importer
+  `Unreal/PythonScripts/import_orbit.py` yaws the spawned model root by the
+  named constant `ORBIT_IMPORT_YAW_DEGREES` (default **`-90.0`**). The value is
+  negative because UE is left-handed / Z-up and a *positive* yaw is **clockwise**
+  when viewed top-down, so the requested **anticlockwise** turn is a negative
+  yaw. Override per workstation (no rebuild) with the env var
+  **`PRISM_VISUALISER_IMPORT_YAW_DEG`** (`90` flips it, `0` disables, `180`
+  reverses). Note this is independent of `Staging/CoordinateTransform.cs`, which
+  only scales (×100) and mirrors Y for handedness — it applies **no** rotation,
+  so the importer yaw is not stacked on an existing correction.
+
+- **Connector-import path (`orbit-connectors` repo — NOT vendored here):** the
+  model is loaded by **glTFRuntime** inside the `-game` instance via
+  `FOrbitHeadlessAutoImport`, so the orientation is governed by the connector's
+  glTFRuntime load config / spawned-actor rotation, **not** by this orchestrator.
+  The orchestrator's staged glTF (`GltfWriter` / `CoordinateTransform`) does **not**
+  feed this path — `orbit-cli pull` produces its own glTF — so the Interchange
+  fix above does not affect it. **Recommended companion change (in the connector
+  repo):** apply the same +90° CCW (i.e. `Yaw = -90`) about Z where the connector
+  configures the glTFRuntime load — e.g. set the actor/scene `Rotation` on the
+  `FglTFRuntimeStaticMeshConfig` / spawn transform in `FOrbitHeadlessAutoImport`
+  (or expose a matching `OrbitImportYawDegrees` knob). Use the same sign + naming
+  so the two paths stay consistent.
+
+---
+
 ## Prerequisite the operator MUST satisfy
 
 The fixed project (default `C:\PRISM\Templates\<ProjectName>`, e.g.

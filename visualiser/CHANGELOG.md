@@ -4,6 +4,38 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.18 — fix imported model orientation (90° anticlockwise yaw about Z)
+
+> Models imported via the **Interchange** path came in yawed 90° from the
+> correct orientation. The importer now rotates the imported model root 90°
+> anticlockwise (counter-clockwise) about the vertical Z axis.
+
+### Fixed
+
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** — the spawned `StaticMeshActor`
+  model root is now yawed by a single named constant `ORBIT_IMPORT_YAW_DEGREES`
+  (default **`-90.0`**). Sign reasoning: UE is left-handed, Z-up, and a *positive*
+  yaw turns +X→+Y (clockwise top-down), so a 90° **anticlockwise** turn is a
+  **negative** yaw. The framing camera's bounds center is rotated by the same
+  yaw (`_rotate_yaw_about_z`) so the model stays in frame. There was **no prior
+  rotation** anywhere (the meshes spawned at identity; `CoordinateTransform.cs`
+  only scales ×100 and mirrors Y for handedness), so this is not stacked on top
+  of an existing correction.
+- Overridable per workstation without a rebuild via the env var
+  **`PRISM_VISUALISER_IMPORT_YAW_DEG`** (e.g. `90` to flip direction, `0` to
+  disable, `180` to reverse).
+
+### Connector-import path — handoff (NOT fixed here)
+
+- The connector-import path (orbit-cli pull → glTFRuntime runtime load inside the
+  `-game` instance) applies its own load transform in the **`OrbitConnector.UE5`**
+  plugin (C++ in the separate `orbit-connectors` repo), which is **not vendored
+  into this checkout** — so it is not changed here. If that path shows the same
+  90° error, add the equivalent +90° CCW (−90° yaw) about Z where glTFRuntime's
+  load transform / the spawned actor rotation is configured (e.g. the
+  `FglTFRuntimeStaticMeshConfig` / actor `Rotation`, or `FOrbitHeadlessAutoImport`
+  spawn). See `docs/VISUALISER_CONNECTOR_IMPORT.md` → "Imported model orientation".
+
 ## v0.5.17 — expose the ORBIT project/model/version on the UE command line for ALL plugins
 
 > The ORBIT session identity (`-OrbitServer=` / `-OrbitProject=` / `-OrbitModel=`
