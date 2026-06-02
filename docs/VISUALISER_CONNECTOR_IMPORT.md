@@ -243,14 +243,14 @@ fails with:
 GitHub API rate limit exceeded (HTTP 403) … Set PRISM_GITHUB_TOKEN … Limit resets at <time>.
 ```
 
-**Fix: configure `PRISM_GITHUB_TOKEN`** (a GitHub PAT — scope `public_repo`,
-or `repo` if `orbit-ue-template` / `orbit-connectors` are private; generate at
+**Fix: configure a GitHub token** (a GitHub PAT — scope `public_repo`, or `repo`
+if `orbit-ue-template` / `orbit-connectors` are private; generate at
 <https://github.com/settings/tokens>). An authenticated token lifts the limit
 to **5000 requests/hour**. Set it in **both** places that call GitHub:
 
 | Component | Where to set it | Applies after |
 | --- | --- | --- |
-| **Agent** (workstation — runs the pull) | A **System** (or the agent service's user) environment variable `PRISM_GITHUB_TOKEN` on the workstation. (`GITHUB_TOKEN` is also accepted.) | Restart the PRISM agent so the new process inherits the env var. |
+| **Agent** (workstation — runs the pull) | **Preferred (agent v0.3.26+): the agent web UI** — the *GitHub token* field in the Visualiser/Template card (write-only; shows "token set" once saved). It is stored in the agent config and **read at pull time, so no restart is needed**. Alternatively a `PRISM_GITHUB_TOKEN` (or `GITHUB_TOKEN`) **environment variable** on the workstation. The configured token takes **precedence** over the env vars. | Web UI: immediately (next pull). Env var: restart the agent. |
 | **Server** (admin version dropdown) | `infra/.env` → `PRISM_GITHUB_TOKEN=…` (passed through by `infra/docker-compose.yml`). | Recreate the `prism-server` container. |
 
 Call-volume safeguards already in place: the agent and server release-list

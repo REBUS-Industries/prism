@@ -392,7 +392,7 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
             // 304 keeps the cached list and doesn't count against the limit).
             var sameRepo = string.Equals(_releasesRepo, repo, StringComparison.OrdinalIgnoreCase);
             var conditionalEtag = sameRepo ? _releasesEtag : null;
-            var result = await Visualiser.TemplatePuller.ListReleasesAsync(repo, conditionalEtag, _log, ct);
+            var result = await Visualiser.TemplatePuller.ListReleasesAsync(repo, conditionalEtag, _cfg.GitHubToken, _log, ct);
             _releasesRepo = repo;
             _releasesFetchedAt = DateTime.UtcNow;
             if (!result.NotModified)
@@ -452,6 +452,7 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 // the UI can show a placeholder without leaking the value.
                 portalUrl     = cfg.PortalUrl,
                 rebusApiKeySet = !string.IsNullOrWhiteSpace(cfg.RebusApiKey),
+                gitHubTokenSet = !string.IsNullOrWhiteSpace(cfg.GitHubToken),
             },
             templatePull = new
             {

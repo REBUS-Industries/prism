@@ -262,6 +262,14 @@ public sealed class AgentControlPlane
         if (!string.IsNullOrWhiteSpace(update.RebusApiKey))
             _cfg.RebusApiKey = update.RebusApiKey.Trim();
 
+        // GitHub token (SECRET) — identical update-or-keep semantics as
+        // RebusApiKey: a null OR blank/whitespace value LEAVES THE STORED TOKEN
+        // UNCHANGED (the web UI only knows gitHubTokenSet and can't round-trip
+        // the value), so an unrelated save never wipes it. Only a non-blank
+        // value replaces it. Read at pull time, so it applies with no restart.
+        if (!string.IsNullOrWhiteSpace(update.GitHubToken))
+            _cfg.GitHubToken = update.GitHubToken.Trim();
+
         _cfg.Save();
         _log.LogInformation("config saved (restartRequired={Restart})", restart);
 
@@ -503,6 +511,7 @@ if (Test-Path '{Esc(exePath)}') {{
                     pullConnector:  _cfg.VisualiserPullConnector,
                     compileProject: _cfg.VisualiserCompileProject,
                     engineRoot:     _cfg.UnrealEngineRoot,
+                    gitHubToken:    _cfg.GitHubToken,
                     progress:       progress,
                     log:            _log,
                     ct:             CancellationToken.None).ConfigureAwait(false);
@@ -622,6 +631,7 @@ public sealed class ConfigUpdate
     public bool?        VisualiserFullEditor    { get; set; }
     public string?      VisualiserTemplateProjectPath { get; set; }
     // Portal (external app the UE plug-ins connect to).
+    public string?      GitHubToken  { get; set; }
     public string?      PortalUrl    { get; set; }
     // SECRET — blank/omitted leaves the stored key unchanged (see ApplyAsync).
     public string?      RebusApiKey  { get; set; }

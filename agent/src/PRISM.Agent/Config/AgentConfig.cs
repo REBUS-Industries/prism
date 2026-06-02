@@ -273,6 +273,33 @@ public sealed class AgentConfig
     public string RebusApiKey { get; set; } = "";
 
     /// <summary>
+    /// GitHub token (PAT) the agent uses to authenticate its GitHub REST API
+    /// calls for the "pull latest UE template" feature (resolve the template +
+    /// <c>OrbitConnector.UE5</c> releases/assets, and list releases for the
+    /// version picker). Authenticated calls raise GitHub's rate limit from 60
+    /// to 5000 requests/hour and are required for private template/connector
+    /// repos. <b>Takes precedence over</b> the <c>PRISM_GITHUB_TOKEN</c> /
+    /// <c>GITHUB_TOKEN</c> environment variables (which remain as a fallback),
+    /// so an operator can fix a rate-limit without touching OS env vars — it is
+    /// read at pull time from config, no agent restart needed.
+    ///
+    /// <para>
+    /// This is a SECRET: it is persisted to the local agent-config.json but is
+    /// NEVER echoed back in the web UI / WS state (the UI only sees a
+    /// <c>gitHubTokenSet</c> boolean) and is NEVER written to any log — exactly
+    /// mirroring <see cref="RebusApiKey"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// Update semantics (see <see cref="AgentControlPlane.ApplyAsync"/>): a
+    /// <c>null</c> or blank/whitespace value in a <see cref="ConfigUpdate"/>
+    /// LEAVES THE STORED TOKEN UNCHANGED (the web UI never receives the value
+    /// back and so cannot round-trip it). Only a non-blank value replaces it.
+    /// </para>
+    /// </summary>
+    public string GitHubToken { get; set; } = "";
+
+    /// <summary>
     /// Optional override for the on-disk path of
     /// <c>PRISM.Visualiser.Orchestrator.exe</c>. When set, takes
     /// precedence over the agent installer's bundled copy at

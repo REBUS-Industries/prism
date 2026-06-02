@@ -60,6 +60,37 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.26 — 2026-06-03 — Set the GitHub token from the agent web UI
+
+### Added
+
+- **`AgentConfig.GitHubToken`** — the GitHub PAT for the template/connector
+  pull + version picker can now be set from the **agent web UI** (Visualiser/
+  Template card → *GitHub token* field), not just the
+  `PRISM_GITHUB_TOKEN` / `GITHUB_TOKEN` environment variables. It is read at
+  pull time, so fixing a rate-limit needs **no OS env var and no restart**.
+- **Token precedence:** the configured `GitHubToken` wins; if blank, the agent
+  falls back to `PRISM_GITHUB_TOKEN` then `GITHUB_TOKEN` (existing env behaviour
+  preserved). Threaded through **every** agent GitHub call path:
+  `TemplatePuller.CreateHttpClient` → the pull (`PullAsync` → template release
+  resolve + connector resolve/merge) and the version-picker
+  (`AgentWebUi` → `ListReleasesAsync`).
+
+### Security
+
+- **`GitHubToken` is a secret, handled exactly like `RebusApiKey`:** persisted
+  to `agent-config.json`, **never logged**, and **never echoed back** in
+  `/api/config` state (the UI sees only a `gitHubTokenSet` boolean). The web-UI
+  field is write-only — populated from `gitHubTokenSet` (placeholder
+  "token set" / "not set"), sent only when the operator types a value, and
+  cleared after save. A null/blank update **leaves the stored token unchanged**
+  (so an unrelated save never wipes it); only a non-blank value replaces it.
+
+### Changed
+
+- The actionable rate-limit error now also points operators at the agent web
+  UI's *GitHub token* field (in addition to the env var).
+
 ## v0.3.25 — 2026-06-03 — Authenticate GitHub API calls + actionable rate-limit errors
 
 ### Fixed

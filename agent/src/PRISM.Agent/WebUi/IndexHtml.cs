@@ -483,6 +483,22 @@ internal static class IndexHtml
       </p>
       <div class="row">
         <label class="field">
+          <span>GitHub token (for template/connector pulls)</span>
+          <input type="password" id="gitHubToken" autocomplete="off" placeholder="not set" />
+        </label>
+      </div>
+      <p class="hint">
+        Used to authenticate the GitHub API calls the <em>Pull latest UE
+        template</em> action makes (resolve releases/assets + the version
+        picker). A token raises GitHub's API rate limit from
+        <strong>60 → 5000 requests/hour</strong> and is required for private
+        template/connector repos. Read at pull time — no restart needed. This
+        takes precedence over the <code>PRISM_GITHUB_TOKEN</code> /
+        <code>GITHUB_TOKEN</code> environment variables. Write-only: leave blank
+        to keep the existing token; type a new value to replace it.
+      </p>
+      <div class="row">
+        <label class="field">
           <span>Max concurrent sessions (1–4)</span>
           <input type="number" id="visualiserMaxConcurrent" min="1" max="4" />
         </label>
@@ -792,6 +808,12 @@ internal static class IndexHtml
       if (document.activeElement !== keyInput && !keyInput.value) {
         keyInput.placeholder = s.config.rebusApiKeySet ? 'key set — leave blank to keep' : 'not set';
       }
+      // GitHub token: same write-only treatment — server returns only
+      // gitHubTokenSet, never the value.
+      const ghInput = $('gitHubToken');
+      if (document.activeElement !== ghInput && !ghInput.value) {
+        ghInput.placeholder = s.config.gitHubTokenSet ? 'token set — leave blank to keep' : 'not set';
+      }
     }
 
     renderTemplatePull(s.templatePull);
@@ -885,6 +907,12 @@ internal static class IndexHtml
     const rebusApiKey = $('rebusApiKey').value;
     if (rebusApiKey && rebusApiKey.trim().length > 0) {
       update.rebusApiKey = rebusApiKey.trim();
+    }
+    // GitHub token (SECRET): same as rebusApiKey — only send when typed, so an
+    // unrelated save never wipes the stored token.
+    const gitHubToken = $('gitHubToken').value;
+    if (gitHubToken && gitHubToken.trim().length > 0) {
+      update.gitHubToken = gitHubToken.trim();
     }
     return update;
   }
@@ -1004,6 +1032,7 @@ internal static class IndexHtml
       // Clear the write-only API key field so it isn't resent on the next
       // save and the placeholder can reflect the new "key set" state.
       $('rebusApiKey').value = '';
+      $('gitHubToken').value = '';
       applyState(r.state);
       toast(r.restartRequired
         ? 'Saved. Restart the agent to apply server URL / Rhino / web UI changes.'
@@ -1072,7 +1101,7 @@ internal static class IndexHtml
     'prismUrl','nodeName','slots','rhinoVersion','logDir','webUiPort',
     'unrealEngineRoot','visualiserMaxConcurrent',
     'visualiserTemplateRoot','unrealTemplateRepo',
-    'orbitConnectorRepo','portalUrl','rebusApiKey',
+    'orbitConnectorRepo','portalUrl','rebusApiKey','gitHubToken',
   ]) {
     $(id).addEventListener('input', markDirty);
   }

@@ -91,6 +91,7 @@ public static class TemplatePuller
     /// <param name="pullConnector">When false the connector merge is skipped (project pulled as-is).</param>
     /// <param name="compileProject">When true (default) the installed project's Editor target is compiled via UnrealBuildTool so the headless <c>-game</c> launch has module binaries. Requires a valid <paramref name="engineRoot"/>.</param>
     /// <param name="engineRoot">Unreal Engine install root (holds <c>Engine\Build\BatchFiles\Build.bat</c>); used to compile the project. Required when <paramref name="compileProject"/> is true.</param>
+    /// <param name="gitHubToken">Configured GitHub token (<c>AgentConfig.GitHubToken</c>); takes precedence over the <c>PRISM_GITHUB_TOKEN</c>/<c>GITHUB_TOKEN</c> env vars. Null/blank → fall back to env, else anonymous.</param>
     /// <param name="progress">Optional human-readable progress sink (web UI status line).</param>
     public static async Task<PullResult> PullAsync(
         string repoSlug,
@@ -102,6 +103,7 @@ public static class TemplatePuller
         bool pullConnector,
         bool compileProject,
         string? engineRoot,
+        string? gitHubToken,
         IProgress<string>? progress,
         ILogger log,
         CancellationToken ct)
@@ -116,13 +118,13 @@ public static class TemplatePuller
         var requested = (requestedTag ?? "").Trim();
         var configured = (configuredTag ?? "").Trim();
 
-        using var http = CreateHttpClient();
+        using var http = CreateHttpClient(gitHubToken);
 
         // 1. Resolve the release.
         var effective = requested.Length > 0 ? requested : configured;
         progress?.Report(effective.Length > 0 ? $"resolving release {effective}…" : "resolving latest release…");
         var (resolvedTag, archiveUrl) = await ResolveReleaseAsync(
-                http, repoSlug, requested, configured, progress, log, ct)
+                http, repoSlug, requested, configured, gitHubToken, progress, log, ct)
             .ConfigureAwait(false);
         log.LogInformation(
             "template pull: repo={Repo} tag={Tag} archive={Archive}",
@@ -161,7 +163,7 @@ public static class TemplatePuller
             if (pullConnector)
             {
                 (connectorResolvedTag, connectorPlugins) = await MergeConnectorAsync(
-                        http, connectorRepo, connectorTag, projectRoot, workDir, progress, log, ct)
+                        http, connectorRepo, connectorTag, projectRoot, workDir, gitHubToken, progress, log, ct)
                     .ConfigureAwait(false);
             }
 
@@ -224,14 +226,14 @@ public static class TemplatePuller
     /// "no releases").
     /// </summary>
     public static async Task<ReleaseListResult> ListReleasesAsync(
-        string repoSlug, string? etag, ILogger log, CancellationToken ct)
+        string repoSlug, string? etag, string? gitHubToken, ILogger log, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(repoSlug) || !repoSlug.Contains('/'))
             throw new TemplatePullException(
                 $"Invalid template repo slug '{repoSlug}'. Expected 'owner/repo'.");
         repoSlug = repoSlug.Trim().Trim('/');
 
-        using var http = CreateHttpClient();
+        using var http = CreateHttpClient(gitHubToken);
         var apiUrl = $"https://api.github.com/repos/{repoSlug}/releases?per_page=50";
         // Conditional request: a 304 (cache still valid) does NOT count against
         // the GitHub rate limit, so polling the picker is effectively free.
@@ -245,7 +247,7 @@ public static class TemplatePuller
         if (resp.StatusCode == HttpStatusCode.NotFound)
             return new ReleaseListResult(Array.Empty<ReleaseInfo>(), null, NotModified: false);
         if (!resp.IsSuccessStatusCode)
-            throw HttpFailure(resp, apiUrl);
+            throw HttpFailure(resp, apiUrl, gitHubToken);
 
         var newEtag = resp.Headers.ETag?.Tag;
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -288,12 +290,27 @@ public static class TemplatePuller
     }
 
     /// <summary>
-    /// Build the GitHub HTTP client shared by every call: 10-min timeout,
-    /// JSON accept header, PRISM user-agent, and a bearer token from
-    /// <c>PRISM_GITHUB_TOKEN</c>/<c>GITHUB_TOKEN</c> when set (so private
-    /// repos resolve). Caller owns disposal.
+    /// Resolve the effective GitHub token: the agent-configured
+    /// <paramref name="configuredToken"/> (from <c>AgentConfig.GitHubToken</c>,
+    /// settable in the web UI) takes precedence, then the
+    /// <c>PRISM_GITHUB_TOKEN</c> / <c>GITHUB_TOKEN</c> environment variables.
+    /// Returns null when none is set (anonymous, 60 req/hr).
     /// </summary>
-    static HttpClient CreateHttpClient()
+    static string? ResolveToken(string? configuredToken)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredToken)) return configuredToken.Trim();
+        var env = Environment.GetEnvironmentVariable("PRISM_GITHUB_TOKEN")
+                  ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+        return string.IsNullOrWhiteSpace(env) ? null : env.Trim();
+    }
+
+    /// <summary>
+    /// Build the GitHub HTTP client shared by every call: 10-min timeout,
+    /// JSON accept header, PRISM user-agent, and a bearer token resolved via
+    /// <see cref="ResolveToken"/> (configured token wins over env). Caller owns
+    /// disposal.
+    /// </summary>
+    static HttpClient CreateHttpClient(string? configuredToken = null)
     {
         var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true })
         {
@@ -301,18 +318,14 @@ public static class TemplatePuller
         };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("PRISM.Agent (+https://github.com/REBUS-ORBIT/prism)");
         http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
-        var token = Environment.GetEnvironmentVariable("PRISM_GITHUB_TOKEN")
-                    ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN");
-        if (!string.IsNullOrWhiteSpace(token))
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
+        var token = ResolveToken(configuredToken);
+        if (token is not null)
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return http;
     }
 
-    /// <summary>True when a GitHub token is configured in the agent's environment.</summary>
-    static bool HasGitHubToken() =>
-        !string.IsNullOrWhiteSpace(
-            Environment.GetEnvironmentVariable("PRISM_GITHUB_TOKEN")
-            ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN"));
+    /// <summary>True when a GitHub token is available (configured token or env var).</summary>
+    static bool HasGitHubToken(string? configuredToken) => ResolveToken(configuredToken) is not null;
 
     /// <summary>
     /// Build a <see cref="TemplatePullException"/> for a non-success GitHub
@@ -320,7 +333,7 @@ public static class TemplatePuller
     /// as a <b>rate limit</b> (not a generic failure) and the message tells the
     /// operator to set <c>PRISM_GITHUB_TOKEN</c> and when the limit resets.
     /// </summary>
-    static TemplatePullException HttpFailure(HttpResponseMessage resp, string apiUrl)
+    static TemplatePullException HttpFailure(HttpResponseMessage resp, string apiUrl, string? configuredToken)
     {
         var status = (int)resp.StatusCode;
         var remaining = FirstHeader(resp, "x-ratelimit-remaining");
@@ -328,12 +341,13 @@ public static class TemplatePuller
                             string.Equals(remaining, "0", StringComparison.Ordinal);
         if (isRateLimited)
         {
-            var advice = HasGitHubToken()
-                ? "A PRISM_GITHUB_TOKEN is set but the limit was still hit — the token may be invalid/expired, " +
+            var advice = HasGitHubToken(configuredToken)
+                ? "A GitHub token is set but the limit was still hit — the token may be invalid/expired, " +
                   "or authenticated usage is unusually high."
-                : "The agent is making UNAUTHENTICATED GitHub requests (60/hour per IP). Set PRISM_GITHUB_TOKEN " +
-                  "(a GitHub PAT with public_repo scope; repo scope if the template/connector repos are private) " +
-                  "in the agent's environment to raise the limit to 5000/hour.";
+                : "The agent is making UNAUTHENTICATED GitHub requests (60/hour per IP). Set a GitHub token " +
+                  "(a PAT with public_repo scope; repo scope if the template/connector repos are private) to " +
+                  "raise the limit to 5000/hour — enter it in the agent web UI's \"GitHub token\" field (no " +
+                  "restart needed), or set the PRISM_GITHUB_TOKEN / GITHUB_TOKEN environment variable.";
             return new TemplatePullException(
                 $"GitHub API rate limit exceeded (HTTP {status}) for {apiUrl}. {advice}{DescribeReset(resp)}");
         }
@@ -381,12 +395,12 @@ public static class TemplatePuller
     /// </summary>
     static async Task<(string Tag, string ArchiveUrl)> ResolveReleaseAsync(
         HttpClient http, string repoSlug, string requestedTag, string configuredTag,
-        IProgress<string>? progress, ILogger log, CancellationToken ct)
+        string? gitHubToken, IProgress<string>? progress, ILogger log, CancellationToken ct)
     {
         var explicitTag = requestedTag.Length > 0;
         var tag = explicitTag ? requestedTag : configuredTag;
 
-        var hit = await TryGetReleaseAsync(http, repoSlug, tag.Length > 0 ? tag : null, log, ct)
+        var hit = await TryGetReleaseAsync(http, repoSlug, tag.Length > 0 ? tag : null, gitHubToken, log, ct)
             .ConfigureAwait(false);
         if (hit is { } found) return found;
 
@@ -405,7 +419,7 @@ public static class TemplatePuller
                 "template pull: configured tag '{Tag}' not found in {Repo}; falling back to the latest release",
                 tag, repoSlug);
             progress?.Report($"tag {tag} not found — falling back to latest…");
-            var latest = await TryGetReleaseAsync(http, repoSlug, null, log, ct).ConfigureAwait(false);
+            var latest = await TryGetReleaseAsync(http, repoSlug, null, gitHubToken, log, ct).ConfigureAwait(false);
             if (latest is { } l) return l;
         }
 
@@ -422,7 +436,7 @@ public static class TemplatePuller
     /// or when a found release exposes no downloadable archive.
     /// </summary>
     static async Task<(string Tag, string ArchiveUrl)?> TryGetReleaseAsync(
-        HttpClient http, string repoSlug, string? tag, ILogger log, CancellationToken ct)
+        HttpClient http, string repoSlug, string? tag, string? gitHubToken, ILogger log, CancellationToken ct)
     {
         var apiUrl = tag is { Length: > 0 }
             ? $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag)}"
@@ -431,7 +445,7 @@ public static class TemplatePuller
         using var resp = await http.GetAsync(apiUrl, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         if (!resp.IsSuccessStatusCode)
-            throw HttpFailure(resp, apiUrl);
+            throw HttpFailure(resp, apiUrl, gitHubToken);
 
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
@@ -494,7 +508,7 @@ public static class TemplatePuller
     /// </summary>
     static async Task<(string Tag, IReadOnlyList<string> Plugins)> MergeConnectorAsync(
         HttpClient http, string? connectorRepo, string? connectorTag,
-        string projectRoot, string workDir,
+        string projectRoot, string workDir, string? gitHubToken,
         IProgress<string>? progress, ILogger log, CancellationToken ct)
     {
         var repo = string.IsNullOrWhiteSpace(connectorRepo)
@@ -509,7 +523,7 @@ public static class TemplatePuller
             ? $"resolving connector {pinned}…"
             : "resolving latest connector…");
         var (tag, assetUrl, assetName) = await ResolveConnectorAssetAsync(
-                http, repo, pinned.Length > 0 ? pinned : null, log, ct)
+                http, repo, pinned.Length > 0 ? pinned : null, gitHubToken, log, ct)
             .ConfigureAwait(false);
         log.LogInformation(
             "template pull: connector repo={Repo} tag={Tag} asset={Asset}", repo, tag, assetName);
@@ -563,7 +577,7 @@ public static class TemplatePuller
     /// contain the built plug-in + bundled CLI).
     /// </summary>
     static async Task<(string Tag, string AssetUrl, string AssetName)> ResolveConnectorAssetAsync(
-        HttpClient http, string repoSlug, string? tag, ILogger log, CancellationToken ct)
+        HttpClient http, string repoSlug, string? tag, string? gitHubToken, ILogger log, CancellationToken ct)
     {
         var apiUrl = tag is { Length: > 0 }
             ? $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag)}"
@@ -579,7 +593,7 @@ public static class TemplatePuller
                   "If the repo is private, set PRISM_GITHUB_TOKEN.");
         }
         if (!resp.IsSuccessStatusCode)
-            throw HttpFailure(resp, apiUrl);
+            throw HttpFailure(resp, apiUrl, gitHubToken);
 
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
