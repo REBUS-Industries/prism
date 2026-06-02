@@ -18,7 +18,7 @@ import { sessionRegistry, type AgentConn } from './sessionRegistry.js';
 import {
   envelope, PROTOCOL_VERSION,
   type AgentToServerMsg, type HelloData, type RestartData, type UpdateData, type WelcomeData,
-  type SignallingFrameData,
+  type SignallingFrameData, type SignallingViewerCloseData, type SetViewerControlData,
 } from '../../../shared/contracts/agent-protocol.js';
 import { broadcastJobUpdate, broadcastWorkstationUpdate } from './adminProtocol.js';
 import { dispatchJobEvent } from '../webhooks/dispatcher.js';
@@ -430,6 +430,39 @@ export function sendSignallingFrameToAgent(agentSessionId: string, frame: Signal
   if (!conn || conn.socket.readyState !== conn.socket.OPEN) return false;
   try {
     conn.socket.send(JSON.stringify(envelope('signallingFrame', frame, randomUUID())));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Tell the agent a browser viewer disconnected so it can tear down that
+ * viewer's dedicated local Cirrus/Wilbur player WS (otherwise stale
+ * Wilbur players accumulate as tabs open/close). Best-effort.
+ */
+export function sendSignallingViewerCloseToAgent(agentSessionId: string, data: SignallingViewerCloseData): boolean {
+  const conn = sessionRegistry.getAgent(agentSessionId);
+  if (!conn || conn.socket.readyState !== conn.socket.OPEN) return false;
+  try {
+    conn.socket.send(JSON.stringify(envelope('signallingViewerClose', data, randomUUID())));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Push the authoritative single-controller lock state for one viewer to
+ * the agent, which gates that viewer's browser→Cirrus input frames.
+ * Best-effort — the agent also stores the last value so a bridge created
+ * after this call still picks it up.
+ */
+export function sendSetViewerControlToAgent(agentSessionId: string, data: SetViewerControlData): boolean {
+  const conn = sessionRegistry.getAgent(agentSessionId);
+  if (!conn || conn.socket.readyState !== conn.socket.OPEN) return false;
+  try {
+    conn.socket.send(JSON.stringify(envelope('setViewerControl', data, randomUUID())));
     return true;
   } catch {
     return false;

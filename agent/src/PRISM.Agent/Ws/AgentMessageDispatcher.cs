@@ -50,6 +50,8 @@ public sealed class AgentMessageDispatcher
                 case MessageType.StartVisualisation:  HandleStartVisualisation(rawJson);  return;
                 case MessageType.CancelVisualisation: HandleCancelVisualisation(rawJson); return;
                 case MessageType.SignallingFrame:     HandleSignallingFrame(rawJson);     return;
+                case MessageType.SignallingViewerClose: HandleSignallingViewerClose(rawJson); return;
+                case MessageType.SetViewerControl:    HandleSetViewerControl(rawJson);    return;
                 default:
                     _log.LogDebug("dispatcher ignoring inbound type {Type}", type);
                     return;
@@ -239,16 +241,18 @@ public sealed class AgentMessageDispatcher
         }
     }
 
+    // Legacy frames (pre-multi-viewer server) carry no viewerId; collapse
+    // them onto a single deterministic viewer so a one-viewer run still
+    // works end-to-end.
+    const string DefaultViewerId = "default";
+
     /// <summary>
-    /// Forward a Pixel Streaming signalling frame to the local Cirrus WS
-    /// owned by the visualiser orchestrator for <c>runId</c>.
-    ///
-    /// Phase I: real bridge wired via <see cref="SignallingBridgeRegistry"/>.
-    /// The bridge is lazy-created on first inbound frame (falling back to
-    /// <see cref="SignallingBridgeRegistry.DefaultLocalCirrusUrl"/>) so we
-    /// stay forward-compatible with the upcoming orchestrator branch,
-    /// which will publish its local Cirrus URL via
-    /// <c>RegisterLocalCirrus</c> before any frames flow.
+    /// Forward a Pixel Streaming signalling frame to the per-viewer local
+    /// Cirrus/Wilbur WS owned by the visualiser orchestrator for
+    /// <c>(runId, viewerId)</c>. Each browser viewer is an independent
+    /// Wilbur player, so frames are demuxed by viewerId — never shared.
+    /// The bridge is lazy-created on first inbound frame for a viewer
+    /// (falling back to <see cref="SignallingBridgeRegistry.DefaultLocalCirrusUrl"/>).
     /// </summary>
     void HandleSignallingFrame(string raw)
     {
@@ -259,34 +263,48 @@ public sealed class AgentMessageDispatcher
             return;
         }
 
-        // Decode binary up front so we don't hold the dispatcher thread
-        // on a base64 conversion. Per the contract exactly one of the
-        // two payload fields is set; if both are absent we still forward
-        // an empty frame so the bridge can log/drop.
         byte[]? binary = !string.IsNullOrEmpty(env.Data.PayloadB64)
             ? Convert.FromBase64String(env.Data.PayloadB64)
             : null;
         var text = env.Data.Payload;
 
-        // Fire-and-forget — the same pattern HandleUpdate uses. The WS
-        // pump thread must not block on a local-Cirrus connect that may
-        // take O(seconds) on first frame.
         var registry = _sp.GetRequiredService<SignallingBridgeRegistry>();
         var runId = env.Data.RunId;
+        var viewerId = string.IsNullOrEmpty(env.Data.ViewerId) ? DefaultViewerId : env.Data.ViewerId;
         _ = Task.Run(async () =>
         {
             try
             {
-                var bridge = await registry.GetOrCreateAsync(runId).ConfigureAwait(false);
+                var bridge = await registry.GetOrCreateAsync(runId, viewerId).ConfigureAwait(false);
                 await bridge.ForwardToLocalAsync(text, binary, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 _log.LogWarning(ex,
-                    "signallingFrame: failed to forward to local Cirrus for runId={RunId} (textLen={TextLen} binLen={BinLen})",
-                    runId, text?.Length ?? 0, binary?.Length ?? 0);
+                    "signallingFrame: failed to forward to local Cirrus for runId={RunId} viewerId={ViewerId} (textLen={TextLen} binLen={BinLen})",
+                    runId, viewerId, text?.Length ?? 0, binary?.Length ?? 0);
             }
         });
+    }
+
+    /// <summary>Server -&gt; agent: a browser viewer disconnected; tear down its Wilbur player.</summary>
+    void HandleSignallingViewerClose(string raw)
+    {
+        var env = ParseEnvelope<SignallingViewerCloseData>(raw);
+        if (env?.Data is null || string.IsNullOrEmpty(env.Data.RunId)) return;
+        var viewerId = string.IsNullOrEmpty(env.Data.ViewerId) ? DefaultViewerId : env.Data.ViewerId;
+        var registry = _sp.GetRequiredService<SignallingBridgeRegistry>();
+        _ = registry.DropViewerAsync(env.Data.RunId, viewerId);
+    }
+
+    /// <summary>Server -&gt; agent: authoritative single-controller lock state for one viewer.</summary>
+    void HandleSetViewerControl(string raw)
+    {
+        var env = ParseEnvelope<SetViewerControlData>(raw);
+        if (env?.Data is null || string.IsNullOrEmpty(env.Data.RunId)) return;
+        var viewerId = string.IsNullOrEmpty(env.Data.ViewerId) ? DefaultViewerId : env.Data.ViewerId;
+        var registry = _sp.GetRequiredService<SignallingBridgeRegistry>();
+        registry.SetViewerControl(env.Data.RunId, viewerId, env.Data.CanControl);
     }
 
     static Envelope<T>? ParseEnvelope<T>(string raw)

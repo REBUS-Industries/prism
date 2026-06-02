@@ -281,6 +281,39 @@ export const visualiserRuns = pgTable('visualiser_runs', {
 }));
 
 // ---------------------------------------------------------------------------
+// Visualiser share links — opaque tokens that grant a view/control seat
+// ---------------------------------------------------------------------------
+//
+// A run creator (API key) or an admin can mint a share link that opens the
+// PRISM-hosted viewer page for a streaming run without an admin/portal
+// login. The link embeds an opaque share token; the viewer page exchanges
+// it (POST /streams/:runId/shares/exchange) for a short-lived signalling
+// JWT carrying the link's `tier`. Links auto-die with the run — the
+// exchange endpoint refuses any run that is not currently `streaming`, so
+// no explicit cascade delete is needed (the FK is `on delete cascade`
+// anyway so rows are reaped when the run row is, if it ever is).
+//
+// We persist only a SHA-256 hash of the token (same stance as api_keys) —
+// the plaintext is returned once at mint time inside the share URL.
+
+export const visualiserShareLinks = pgTable('visualiser_share_links', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  runId:     uuid('run_id').notNull().references(() => visualiserRuns.id, { onDelete: 'cascade' }),
+  // SHA-256 hex of the opaque share token (never store plaintext).
+  tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+  // 'view' | 'control' — the tier minted into the signalling JWT on exchange.
+  tier:      varchar('tier', { length: 8 }).notNull().default('view'),
+  // Free-form principal that minted the link (apiKey:<id> or admin:<name>).
+  createdBy: varchar('created_by', { length: 128 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  // Null = never expires (still auto-dies with the run).
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, (t) => ({
+  byRun:   index('visualiser_share_links_run_idx').on(t.runId),
+}));
+
+// ---------------------------------------------------------------------------
 // Project attachments — portal-uploaded files attached to an ORBIT project
 // ---------------------------------------------------------------------------
 //
@@ -350,5 +383,7 @@ export type AgentSession = typeof agentSessions.$inferSelect;
 export type Webhook    = typeof webhooks.$inferSelect;
 export type VisualiserRun    = typeof visualiserRuns.$inferSelect;
 export type NewVisualiserRun = typeof visualiserRuns.$inferInsert;
+export type VisualiserShareLink    = typeof visualiserShareLinks.$inferSelect;
+export type NewVisualiserShareLink = typeof visualiserShareLinks.$inferInsert;
 export type ProjectAttachment    = typeof projectAttachments.$inferSelect;
 export type NewProjectAttachment = typeof projectAttachments.$inferInsert;

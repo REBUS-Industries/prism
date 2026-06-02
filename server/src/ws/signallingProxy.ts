@@ -24,10 +24,13 @@
  *   - We refuse to connect unless `status='streaming'` (no point
  *     attempting WebRTC negotiation against an importing run).
  *   - We register the browser socket in the proxy registry, keyed by
- *     runId. Concurrent browser tabs on the same runId are allowed
- *     and each receives a fan-out of inbound agent frames.
- *   - On close we drop the socket; if it was the last for `runId`
- *     the registry entry is reaped.
+ *     (runId, viewerId). Each viewer is an INDEPENDENT Pixel Streaming
+ *     player (its own local Cirrus/Wilbur WS on the agent), so inbound
+ *     agent frames are routed to the single matching viewer, never
+ *     broadcast — that fan-out was what froze a second viewer.
+ *   - On close we drop the socket, tell the agent to tear down that
+ *     viewer's Wilbur player, and release the controller lock if the
+ *     departing viewer held it.
  *
  * The companion `agentProtocol.ts` calls
  * `signallingProxyRegistry.forwardAgentToBrowser(frame)` for every
@@ -35,11 +38,16 @@
  */
 import type { FastifyPluginAsync } from 'fastify';
 import { eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { db } from '../db/client.js';
 import { visualiserRuns } from '../db/schema.js';
-import { sendSignallingFrameToAgent } from './agentProtocol.js';
+import {
+  sendSignallingFrameToAgent,
+  sendSignallingViewerCloseToAgent,
+  sendSetViewerControlToAgent,
+} from './agentProtocol.js';
 import { verifySignallingToken } from '../visualiser/signallingToken.js';
-import { signallingProxyRegistry, type BrowserConn } from './signallingProxyRegistry.js';
+import { signallingProxyRegistry, type BrowserConn, type ViewerTier } from './signallingProxyRegistry.js';
 import type { SignallingFrameData } from '../../../shared/contracts/agent-protocol.js';
 
 const plugin: FastifyPluginAsync = async (app) => {
@@ -77,18 +85,38 @@ const plugin: FastifyPluginAsync = async (app) => {
         return;
       }
 
+      // Identity from the JWT: each token represents one viewer "seat".
+      // Legacy tokens (pre-multi-viewer) carry no viewerId/tier — mint a
+      // per-socket viewerId and default the tier to `control` so the
+      // owner/admin viewer keeps driving the viewport as before.
+      const viewerId: string = verified.payload.viewerId ?? randomUUID();
+      const tier: ViewerTier = verified.payload.tier === 'view' ? 'view' : 'control';
+
       const conn: BrowserConn = {
         socket,
         agentSessionId: row.agentSessionId,
         runId: row.id,
+        viewerId,
+        tier,
       };
       signallingProxyRegistry.add(conn);
-      childLog.info({ agentSessionId: conn.agentSessionId }, 'browser signalling ws connected');
+      childLog.info({ agentSessionId: conn.agentSessionId, viewerId, tier }, 'browser signalling ws connected');
+
+      // If this is a control-tier viewer and nobody holds the lock yet,
+      // auto-grant it so the first/owner viewer can drive immediately.
+      // Always push the explicit control state for this viewer to the
+      // agent so its per-viewer bridge gates input correctly (the bridge
+      // defaults to "allow" for legacy single-viewer runs, so a
+      // non-controller MUST be told `false`).
+      const granted = signallingProxyRegistry.autoGrantIfVacant(conn.runId, viewerId, tier);
+      const isController = signallingProxyRegistry.controllerState(conn.runId).controllerViewerId === viewerId;
+      sendSetViewerControlToAgent(conn.agentSessionId, { runId: conn.runId, viewerId, canControl: isController });
+      void granted;
 
       socket.on('message', (data, isBinary) => {
         const frame: SignallingFrameData = isBinary
-          ? { runId: conn.runId, payloadB64: (data as Buffer).toString('base64') }
-          : { runId: conn.runId, payload: data.toString() };
+          ? { runId: conn.runId, viewerId: conn.viewerId, payloadB64: (data as Buffer).toString('base64') }
+          : { runId: conn.runId, viewerId: conn.viewerId, payload: data.toString() };
         const ok = sendSignallingFrameToAgent(conn.agentSessionId, frame);
         if (!ok) {
           childLog.warn('agent send failed; closing browser socket');
@@ -97,8 +125,15 @@ const plugin: FastifyPluginAsync = async (app) => {
       });
 
       socket.on('close', (code, reason) => {
-        signallingProxyRegistry.remove(conn);
-        childLog.info({ code, reason: reason.toString() }, 'browser signalling ws closed');
+        const { wasController } = signallingProxyRegistry.remove(conn);
+        // Tear down this viewer's dedicated Wilbur player on the agent so
+        // the streamer drops the peer (no stale players across tabs).
+        sendSignallingViewerCloseToAgent(conn.agentSessionId, { runId: conn.runId, viewerId: conn.viewerId });
+        if (wasController) {
+          // The controller left — clear its input gate on the agent too.
+          sendSetViewerControlToAgent(conn.agentSessionId, { runId: conn.runId, viewerId: conn.viewerId, canControl: false });
+        }
+        childLog.info({ code, reason: reason.toString(), viewerId: conn.viewerId }, 'browser signalling ws closed');
       });
 
       socket.on('error', (err) => {

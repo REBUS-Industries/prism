@@ -26,6 +26,14 @@ const KNOWN_SCOPES = [
   // read-only "kick off a visualiser run" key can't silently upload assets
   // (and so the portal can mint two keys with different lifetimes).
   'visualiser:attach_project_files',
+  // Multi-viewer — mint share links for a streaming run. Distinct from
+  // create_stream so a portal can issue a dedicated "share manager" key
+  // that can hand out view/control seats without being able to start new
+  // streams. A key with create_stream also implicitly owns the runs it
+  // started (see ownerCanCancel) and can mint shares for those without
+  // this scope; this scope is for keys that manage shares for runs they
+  // did not start (e.g. an org-wide sharing service).
+  'visualiser:join_stream',
 ] as const;
 const scopesSchema = z.array(z.enum(KNOWN_SCOPES)).default([]);
 

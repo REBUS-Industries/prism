@@ -37,6 +37,32 @@ describe('issueSignallingToken', () => {
       runId: '5b9c1d4f', ttlSeconds: 0, env: ENV, now: () => FIXED_NOW,
     })).toThrow(/positive integer/);
   });
+
+  it('defaults tier to control and mints a viewerId (preserves owner behaviour)', () => {
+    const res = issueSignallingToken({ runId: 'r', env: ENV, now: () => FIXED_NOW });
+    expect(res.tier).toBe('control');
+    expect(res.viewerId).toMatch(/[0-9a-f-]{36}/);
+    const v = verifySignallingToken(res.token, { expectedRunId: 'r', env: ENV, now: () => FIXED_NOW });
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.payload.tier).toBe('control');
+      expect(v.payload.viewerId).toBe(res.viewerId);
+    }
+  });
+
+  it('carries an explicit view tier + caller-supplied viewerId', () => {
+    const res = issueSignallingToken({
+      runId: 'r', tier: 'view', viewerId: 'seat-42', env: ENV, now: () => FIXED_NOW,
+    });
+    expect(res.tier).toBe('view');
+    expect(res.viewerId).toBe('seat-42');
+    const v = verifySignallingToken(res.token, { expectedRunId: 'r', env: ENV, now: () => FIXED_NOW });
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.payload.tier).toBe('view');
+      expect(v.payload.viewerId).toBe('seat-42');
+    }
+  });
 });
 
 describe('verifySignallingToken', () => {

@@ -24,10 +24,13 @@
  *                           503 with a clear error so operators notice).
  *   JWT_SIGNALLING_TTL_SEC  Default token lifetime. Defaults to 300 (5 minutes).
  */
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 const DEFAULT_TTL_SECONDS = 5 * 60;
 const ALG = 'HS256';
+
+/** Permission tier carried by a signalling token. */
+export type SignallingTier = 'view' | 'control';
 
 export interface SignallingTokenPayload {
   /** The visualiser_runs row id this token authorises a signalling WS for. */
@@ -38,12 +41,31 @@ export interface SignallingTokenPayload {
   iat: number;
   /** Subject — currently the issuing api_keys.id, admin user id, or `admin:<name>`. */
   sub?: string;
+  /**
+   * Permission tier. `control` viewers may take the single-controller
+   * lock and drive input; `view` viewers are spectators. Absent on
+   * pre-multi-viewer tokens — the verifier defaults those to `control`
+   * to preserve the historical "owner/admin drives the viewport"
+   * behaviour.
+   */
+  tier?: SignallingTier;
+  /**
+   * Stable per-viewer demux key. Each minted token represents one viewer
+   * "seat"; the signalling proxy uses it to route frames 1:1 and the
+   * control channel uses it to identify who holds the lock. Absent on
+   * legacy tokens — the verifier/proxy mints a fallback per socket.
+   */
+  viewerId?: string;
 }
 
 export interface IssueOpts {
   runId: string;
   ttlSeconds?: number;
   subject?: string;
+  /** Permission tier; defaults to `control` (owner/admin-minted tokens). */
+  tier?: SignallingTier;
+  /** Stable per-viewer id; a random uuid is minted when omitted. */
+  viewerId?: string;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
 }
@@ -82,7 +104,7 @@ function requireSecret(env: NodeJS.ProcessEnv): string | { error: string } {
  * — the route handler catches that and returns a 503 so the caller
  * sees a clear failure mode rather than a malformed token.
  */
-export function issueSignallingToken(opts: IssueOpts): { token: string; exp: number } {
+export function issueSignallingToken(opts: IssueOpts): { token: string; exp: number; viewerId: string; tier: SignallingTier } {
   const env = opts.env ?? process.env;
   const secretOrErr = requireSecret(env);
   if (typeof secretOrErr !== 'string') throw new Error(secretOrErr.error);
@@ -93,15 +115,17 @@ export function issueSignallingToken(opts: IssueOpts): { token: string; exp: num
   const nowMs = (opts.now ?? (() => new Date()))().getTime();
   const iat = Math.floor(nowMs / 1000);
   const exp = iat + ttl;
+  const tier: SignallingTier = opts.tier ?? 'control';
+  const viewerId = opts.viewerId ?? randomUUID();
   const header = { alg: ALG, typ: 'JWT' };
-  const payload: SignallingTokenPayload = { runId: opts.runId, iat, exp, sub: opts.subject };
+  const payload: SignallingTokenPayload = { runId: opts.runId, iat, exp, sub: opts.subject, tier, viewerId };
 
   const headerB64  = b64urlEncode(Buffer.from(JSON.stringify(header),  'utf8'));
   const payloadB64 = b64urlEncode(Buffer.from(JSON.stringify(payload), 'utf8'));
   const signingInput = `${headerB64}.${payloadB64}`;
   const sig = createHmac('sha256', secretOrErr).update(signingInput).digest();
   const sigB64 = b64urlEncode(sig);
-  return { token: `${signingInput}.${sigB64}`, exp };
+  return { token: `${signingInput}.${sigB64}`, exp, viewerId, tier };
 }
 
 /**

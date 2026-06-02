@@ -36,7 +36,9 @@
         "visualisationReady",
         "visualisationFailed",
         "visualisationEnded",
-        "signallingFrame"
+        "signallingFrame",
+        "signallingViewerClose",
+        "setViewerControl"
       ]
     },
     "Hello": {
@@ -310,13 +312,33 @@
       }
     },
     "SignallingFrame": {
-      "description": "Bidirectional opaque WebRTC signalling envelope. PRISM does not parse the Pixel Streaming sub-protocol; the server wraps browser frames into one of these, the agent unwraps and forwards to local Cirrus, and the reverse direction does the same. Exactly one of payload / payloadB64 is set per frame.",
+      "description": "Bidirectional opaque WebRTC signalling envelope. PRISM does not parse the Pixel Streaming sub-protocol; the server wraps browser frames into one of these, the agent unwraps and forwards to local Cirrus, and the reverse direction does the same. Exactly one of payload / payloadB64 is set per frame. `viewerId` demuxes per-viewer: each browser viewer is an independent Wilbur player (1:1) so SDP/ICE never collides between concurrent viewers.",
       "type": "object",
       "required": ["runId"],
       "properties": {
         "runId":      { "type": "string", "format": "uuid" },
+        "viewerId":   { "type": "string", "description": "Per-viewer demux key assigned by the server (carried in the signalling JWT). Optional for backward tolerance." },
         "payload":    { "type": "string", "description": "UTF-8 text payload (Pixel Streaming JSON control frames)." },
         "payloadB64": { "type": "string", "contentEncoding": "base64", "description": "Base64-encoded binary payload." }
+      }
+    },
+    "SignallingViewerClose": {
+      "description": "Server -> agent: a browser viewer's signalling socket closed. The agent tears down that viewer's dedicated local Cirrus/Wilbur player WS so the streamer drops the corresponding WebRTC peer.",
+      "type": "object",
+      "required": ["runId", "viewerId"],
+      "properties": {
+        "runId":    { "type": "string", "format": "uuid" },
+        "viewerId": { "type": "string" }
+      }
+    },
+    "SetViewerControl": {
+      "description": "Server -> agent: authoritative single-controller lock state for one viewer. The agent's per-viewer bridge gates browser->Cirrus input frames so only the current controller can drive the viewport. Exactly one viewer per run has canControl=true at any moment.",
+      "type": "object",
+      "required": ["runId", "viewerId", "canControl"],
+      "properties": {
+        "runId":      { "type": "string", "format": "uuid" },
+        "viewerId":   { "type": "string" },
+        "canControl": { "type": "boolean" }
       }
     }
   }

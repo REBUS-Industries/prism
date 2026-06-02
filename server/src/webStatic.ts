@@ -87,6 +87,18 @@ export async function registerWebStatic(app: FastifyInstance): Promise<void> {
     app.get('/convert', (_req, reply) => reply.redirect('/convert/'));
   }
 
+  // Viewer SPA (login-free share-link viewer)
+  const viewerHtmlDir = resolve(root, 'src', 'viewer');
+  if (existsSync(resolve(viewerHtmlDir, 'index.html'))) {
+    await app.register(fastifyStatic, {
+      root: viewerHtmlDir,
+      prefix: '/viewer/',
+      decorateReply: false,
+      index: 'index.html',
+    });
+    app.get('/viewer', (_req, reply) => reply.redirect('/viewer/'));
+  }
+
   // Root -> admin
   app.get('/', (_req, reply) => reply.redirect('/admin/'));
 }

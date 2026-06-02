@@ -43,6 +43,13 @@
       "when": 1779908435900,
       "tag": "0005_project_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780406625436,
+      "tag": "0006_visualiser_share_links",
+      "breakpoints": true
     }
   ]
 }

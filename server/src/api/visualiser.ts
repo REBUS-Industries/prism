@@ -48,9 +48,9 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { agentSessions, visualiserRuns, workstations, type VisualiserRun } from '../db/schema.js';
+import { agentSessions, visualiserRuns, visualiserShareLinks, workstations, type VisualiserRun } from '../db/schema.js';
 import { requireAdmin, requireAuth, requireScope } from '../auth/middleware.js';
 import { envelope, type CancelVisualisationData } from '../../../shared/contracts/agent-protocol.js';
 import { sessionRegistry } from '../ws/sessionRegistry.js';
@@ -59,8 +59,14 @@ import { releaseVisualiserSlot, tryDispatchVisualisation } from '../jobs/dispatc
 import { visualiserRunRegistry } from '../visualiser/runRegistry.js';
 import { generateTurnCredential } from '../visualiser/turnCredentials.js';
 import { issueSignallingToken } from '../visualiser/signallingToken.js';
+import { mintShareToken, hashShareToken } from '../visualiser/shareLinks.js';
 
-const START_TIMEOUT_MS = Number(process.env.VISUALISER_START_TIMEOUT_MS ?? 180_000);
+// Cold full-editor runs open the heavyweight Unreal Editor and, on a first
+// open of a freshly-cached C++ project, pay the shader-compile + DDC build
+// cost before the streamer registers — several minutes. The old 180 s default
+// failed those runs ("start exceeded 180000ms") even though the editor opened.
+// Default is now 600 s; still overridable via VISUALISER_START_TIMEOUT_MS.
+const START_TIMEOUT_MS = Number(process.env.VISUALISER_START_TIMEOUT_MS ?? 600_000);
 
 const PUBLIC_BASE_URL =
   process.env.PUBLIC_BASE_URL
@@ -90,6 +96,25 @@ const listQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+const shareBody = z.object({
+  tier: z.enum(['view', 'control']).default('view'),
+  // Optional TTL on top of the run-lifetime auto-expiry. Capped at 24h.
+  expiresInSeconds: z.number().int().positive().max(86_400).optional(),
+});
+
+const exchangeBody = z.object({
+  shareToken: z.string().min(1),
+  // Caller-supplied stable per-session viewer id so identity survives JWT
+  // refreshes (the player re-mints every ~5 min; a new viewerId each time
+  // would orphan its Wilbur player + controller lock). Optional — a random
+  // one is minted when absent.
+  viewerId: z.string().min(1).max(64).optional(),
+});
+
+const tokenBody = z.object({
+  viewerId: z.string().min(1).max(64).optional(),
+});
+
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -108,6 +133,12 @@ function buildSignallingUrl(runId: string): string {
   // alone so the override env var can point at a development relay.
   const wsBase = base.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
   return `${wsBase}/ws/visualiser/${runId}/signalling`;
+}
+
+/** Public URL of the PRISM-hosted standalone viewer page for a share link. */
+function buildShareViewerUrl(runId: string, shareToken: string): string {
+  const base = PUBLIC_BASE_URL.replace(/\/+$/, '');
+  return `${base}/viewer/#/${runId}?st=${encodeURIComponent(shareToken)}`;
 }
 
 function toPublicRun(row: VisualiserRun, opts?: { withTurn?: boolean }) {
@@ -414,17 +445,135 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (row.status !== 'streaming' && row.status !== 'importing') {
       return reply.code(409).send({ error: `run is ${row.status}` });
     }
+    const tokenParsed = tokenBody.safeParse(req.body ?? {});
+    if (!tokenParsed.success) return reply.code(400).send({ error: 'invalid body', issues: tokenParsed.error.issues });
     try {
       const subject = req.principal?.kind === 'apiKey' ? req.principal.apiKeyId
                     : req.principal?.kind === 'adminSession' ? `admin:${req.principal.username}`
                     : undefined;
-      const { token, exp } = issueSignallingToken({ runId: row.id, subject });
-      return { token, exp };
+      // Owner/admin tokens default to `control` tier so the admin viewer
+      // keeps driving the viewport (the proxy auto-grants the lock to the
+      // first control-tier viewer). A caller-supplied viewerId keeps the
+      // seat stable across token refreshes.
+      const { token, exp, viewerId, tier } = issueSignallingToken({
+        runId: row.id, subject, tier: 'control', viewerId: tokenParsed.data.viewerId,
+      });
+      return { token, exp, viewerId, tier };
     } catch (err) {
       const msg = (err as Error).message;
       req.log.error({ err, runId: row.id }, 'failed to mint signalling token');
       return reply.code(503).send({ error: 'signalling_token_unavailable', message: msg });
     }
+  });
+
+  /* ---------- POST /api/visualiser/streams/:runId/shares ---------- */
+  // Mint a share link for a streaming run. Auth: run creator (matching
+  // api key) OR admin session OR an api key with `visualiser:join_stream`.
+  app.post<{ Params: { runId: string }; Body: unknown }>('/streams/:runId/shares', {
+    preHandler: requireAuth,
+  }, async (req, reply) => {
+    const row = await db.query.visualiserRuns.findFirst({ where: eq(visualiserRuns.id, req.params.runId) });
+    if (!row) return reply.code(404).send({ error: 'not found' });
+    const canMint = (await ownerCanCancel(row, req))
+      || (req.principal?.kind === 'apiKey' && req.principal.scopes.includes('visualiser:join_stream'));
+    if (!canMint) return reply.code(403).send({ error: 'forbidden' });
+    if (row.status !== 'streaming') return reply.code(409).send({ error: `run is ${row.status}` });
+
+    const body = shareBody.safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: 'invalid body', issues: body.error.issues });
+
+    const { plaintext, hash } = mintShareToken();
+    const expiresAt = body.data.expiresInSeconds
+      ? new Date(Date.now() + body.data.expiresInSeconds * 1000)
+      : null;
+    const createdBy = req.principal?.kind === 'apiKey' ? `apiKey:${req.principal.apiKeyId}`
+                    : req.principal?.kind === 'adminSession' ? `admin:${req.principal.username}`
+                    : null;
+    const inserted = await db.insert(visualiserShareLinks).values({
+      runId: row.id, tokenHash: hash, tier: body.data.tier, createdBy, expiresAt,
+    }).returning();
+    const link = inserted[0]!;
+    return reply.code(201).send({
+      id: link.id,
+      tier: link.tier,
+      url: buildShareViewerUrl(row.id, plaintext),
+      shareToken: plaintext,   // shown once — embedded in the URL
+      expiresAt: link.expiresAt,
+      createdAt: link.createdAt,
+    });
+  });
+
+  /* ---------- POST /api/visualiser/streams/:runId/shares/exchange ---------- */
+  // PUBLIC (no owner auth). A shared viewer with no portal account posts
+  // the opaque share token and receives a signalling JWT carrying the
+  // link's tier. Validates: token matches, not revoked/expired, and the
+  // run is still streaming (share links auto-die with the run).
+  app.post<{ Params: { runId: string }; Body: unknown }>('/streams/:runId/shares/exchange', async (req, reply) => {
+    const body = exchangeBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid body', issues: body.error.issues });
+    const hash = hashShareToken(body.data.shareToken);
+    const link = await db.query.visualiserShareLinks.findFirst({
+      where: and(eq(visualiserShareLinks.tokenHash, hash), eq(visualiserShareLinks.runId, req.params.runId)),
+    });
+    if (!link) return reply.code(404).send({ error: 'invalid share token' });
+    if (link.revokedAt) return reply.code(410).send({ error: 'share link revoked' });
+    if (link.expiresAt && link.expiresAt.getTime() <= Date.now()) return reply.code(410).send({ error: 'share link expired' });
+
+    const row = await db.query.visualiserRuns.findFirst({ where: eq(visualiserRuns.id, req.params.runId) });
+    if (!row || row.status !== 'streaming') return reply.code(409).send({ error: 'stream is not active' });
+
+    try {
+      const tier = link.tier === 'control' ? 'control' : 'view';
+      const { token, exp, viewerId } = issueSignallingToken({ runId: row.id, subject: `share:${link.id}`, tier, viewerId: body.data.viewerId });
+      return {
+        token, exp, viewerId, tier,
+        runId: row.id,
+        signallingUrl: buildSignallingUrl(row.id),
+        turn: generateTurnCredential({ runId: row.id }),
+      };
+    } catch (err) {
+      req.log.error({ err, runId: row.id }, 'failed to mint signalling token for share exchange');
+      return reply.code(503).send({ error: 'signalling_token_unavailable', message: (err as Error).message });
+    }
+  });
+
+  /* ---------- GET /api/visualiser/streams/:runId/shares ---------- */
+  app.get<{ Params: { runId: string } }>('/streams/:runId/shares', {
+    preHandler: requireAuth,
+  }, async (req, reply) => {
+    const row = await db.query.visualiserRuns.findFirst({ where: eq(visualiserRuns.id, req.params.runId) });
+    if (!row) return reply.code(404).send({ error: 'not found' });
+    if (!(await ownerCanCancel(row, req))) return reply.code(403).send({ error: 'forbidden' });
+    const links = await db
+      .select()
+      .from(visualiserShareLinks)
+      .where(eq(visualiserShareLinks.runId, row.id))
+      .orderBy(desc(visualiserShareLinks.createdAt));
+    // Never surface the token hash; the plaintext is irretrievable by design.
+    return { shares: links.map((l) => ({
+      id: l.id, tier: l.tier, createdBy: l.createdBy, createdAt: l.createdAt,
+      expiresAt: l.expiresAt, revokedAt: l.revokedAt,
+    })) };
+  });
+
+  /* ---------- DELETE /api/visualiser/streams/:runId/shares/:id ---------- */
+  app.delete<{ Params: { runId: string; id: string } }>('/streams/:runId/shares/:id', {
+    preHandler: requireAuth,
+  }, async (req, reply) => {
+    const row = await db.query.visualiserRuns.findFirst({ where: eq(visualiserRuns.id, req.params.runId) });
+    if (!row) return reply.code(404).send({ error: 'not found' });
+    if (!(await ownerCanCancel(row, req))) return reply.code(403).send({ error: 'forbidden' });
+    const updated = await db
+      .update(visualiserShareLinks)
+      .set({ revokedAt: new Date() })
+      .where(and(
+        eq(visualiserShareLinks.id, req.params.id),
+        eq(visualiserShareLinks.runId, row.id),
+        isNull(visualiserShareLinks.revokedAt),
+      ))
+      .returning({ id: visualiserShareLinks.id });
+    if (updated.length === 0) return reply.code(404).send({ error: 'not found or already revoked' });
+    return { revoked: updated[0]!.id };
   });
 
   /* ---------- GET /api/visualiser/workstations ---------- */

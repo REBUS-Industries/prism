@@ -13,14 +13,36 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, RouterLink } from 'vue-router';
-import { visualiserApi, type ApiError, type VisualiserRun } from '../../shared/api';
-import PixelStreamingPlayer from '../components/PixelStreamingPlayer.vue';
+import { visualiserApi, type ApiError, type VisualiserRun, type VisualiserShareTier } from '../../shared/api';
+import VisualiserStage from '../../shared/VisualiserStage.vue';
 
 const route = useRoute();
 const runId = computed(() => String(route.params.runId ?? ''));
 
 const run = ref<VisualiserRun | null>(null);
 const loadError = ref<string | null>(null);
+
+// Stable per-session seat id reused for the player + control-channel JWTs.
+const viewerId = (globalThis.crypto?.randomUUID?.() ?? `admin-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+const adminTokenProvider = () => visualiserApi.signallingToken(runId.value, viewerId).then((r) => r.token);
+
+const shareBusy = ref(false);
+const shareMsg = ref<string | null>(null);
+
+async function mintShare(tier: VisualiserShareTier) {
+  shareBusy.value = true;
+  shareMsg.value = null;
+  try {
+    const res = await visualiserApi.createShare(runId.value, { tier });
+    const url = res.url ?? '';
+    try { await navigator.clipboard.writeText(url); shareMsg.value = `${tier} link copied to clipboard`; }
+    catch { shareMsg.value = `${tier} link: ${url}`; }
+  } catch (err) {
+    shareMsg.value = (err as ApiError).message ?? 'failed to mint share link';
+  } finally {
+    shareBusy.value = false;
+  }
+}
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -79,17 +101,24 @@ async function stopRun() {
         </p>
       </div>
       <div class="head-actions" v-if="run && (run.status === 'streaming' || run.status === 'importing' || run.status === 'queued')">
+        <template v-if="run.status === 'streaming'">
+          <button class="btn" :disabled="shareBusy" @click="mintShare('view')">Share view link</button>
+          <button class="btn" :disabled="shareBusy" @click="mintShare('control')">Share control link</button>
+        </template>
         <button class="btn btn-danger" @click="stopRun">Stop</button>
       </div>
     </header>
 
+    <div v-if="shareMsg" class="alert ok">{{ shareMsg }}</div>
     <div v-if="loadError" class="alert err">{{ loadError }}</div>
 
     <div v-if="run && run.status === 'streaming' && run.signallingUrl" class="player-shell">
-      <PixelStreamingPlayer
+      <VisualiserStage
         :run-id="runId"
         :signalling-url="run.signallingUrl"
         :turn="run.turn ?? null"
+        :viewer-id="viewerId"
+        :token-provider="adminTokenProvider"
       />
     </div>
 
@@ -134,6 +163,11 @@ async function stopRun() {
 .alert.err {
   border: 1px solid var(--color-danger, #c33);
   background: var(--color-danger-fade, rgba(204,51,51,0.08));
+  padding: 8px 12px; border-radius: var(--radius);
+}
+.alert.ok {
+  border: 1px solid rgba(64,160,96,0.5);
+  background: rgba(64,160,96,0.1);
   padding: 8px 12px; border-radius: var(--radius);
 }
 

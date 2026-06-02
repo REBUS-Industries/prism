@@ -22,6 +22,7 @@ export default defineConfig({
       input: {
         admin: fileURLToPath(new URL('./src/admin/index.html', import.meta.url)),
         convert: fileURLToPath(new URL('./src/convert/index.html', import.meta.url)),
+        viewer: fileURLToPath(new URL('./src/viewer/index.html', import.meta.url)),
       },
       output: {
         // Place each entry's HTML at dist/<name>/index.html so the server
@@ -36,9 +37,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api':       { target: 'http://localhost:8765', changeOrigin: true },
-      '/v1':        { target: 'http://localhost:8765', changeOrigin: true },
-      '/ws/admin':  { target: 'ws://localhost:8765', ws: true },
+      '/api':           { target: 'http://localhost:8765', changeOrigin: true },
+      '/v1':            { target: 'http://localhost:8765', changeOrigin: true },
+      '/ws/admin':      { target: 'ws://localhost:8765', ws: true },
+      '/ws/visualiser': { target: 'ws://localhost:8765', ws: true },
     },
   },
 });

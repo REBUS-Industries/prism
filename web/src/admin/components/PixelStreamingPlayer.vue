@@ -43,7 +43,7 @@
  * RTCPeerConnection is created. This is the lib's public surface — the
  * controller field is exposed on `psInstance.webRtcController`.
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   Config,
   Flags,
@@ -58,6 +58,22 @@ const props = defineProps<{
   runId: string;
   signallingUrl: string;
   turn?: VisualiserTurnBundle | null;
+  /**
+   * View-only: disables the keyboard/mouse/touch/gamepad input the
+   * frontend forwards to UE. This is a UI hint driven by the server's
+   * controller lock — the authoritative gate lives on the agent/server
+   * (see ws/visualiserControl.ts + agent SignallingBridge). Toggled live
+   * when control is taken/released.
+   */
+  viewOnly?: boolean;
+  /** Stable per-session viewer id so the JWT seat survives token refreshes. */
+  viewerId?: string;
+  /**
+   * Optional token provider. Share viewers (no admin login) pass a
+   * provider that calls the public share-exchange endpoint; the default
+   * mints via the owner/admin signalling-token endpoint.
+   */
+  tokenProvider?: () => Promise<string>;
 }>();
 
 type Status = 'idle' | 'connecting' | 'streaming' | 'failed';
@@ -73,10 +89,24 @@ let psInstance: PixelStreaming | null = null;
  * connect and re-invoked by the lib on every reconnect, so a 5-minute
  * token expiry over a longer session is handled transparently.
  */
+async function fetchToken(): Promise<string> {
+  if (props.tokenProvider) return props.tokenProvider();
+  const { token } = await visualiserApi.signallingToken(props.runId, props.viewerId);
+  return token;
+}
+
 async function buildSignallingUrlAsync(): Promise<string> {
-  const { token } = await visualiserApi.signallingToken(props.runId);
+  const token = await fetchToken();
   const sep = props.signallingUrl.includes('?') ? '&' : '?';
   return `${props.signallingUrl}${sep}token=${encodeURIComponent(token)}`;
+}
+
+function applyInputFlags(viewOnly: boolean): void {
+  if (!psInstance) return;
+  const enabled = !viewOnly;
+  for (const flag of [Flags.KeyboardInput, Flags.MouseInput, Flags.TouchInput, Flags.GamepadInput]) {
+    try { psInstance.config.setFlagEnabled(flag, enabled); } catch { /* ignore */ }
+  }
 }
 
 onMounted(async () => {
@@ -101,10 +131,11 @@ onMounted(async () => {
         StartVideoMuted: false,
         // Input wiring — keyboard + mouse forward back to UE so the
         // operator can drive the viewport. Touch + gamepad on for free.
-        KeyboardInput: true,
-        MouseInput: true,
-        TouchInput: true,
-        GamepadInput: true,
+        // Disabled up-front for view-only viewers (server controller lock).
+        KeyboardInput: !props.viewOnly,
+        MouseInput: !props.viewOnly,
+        TouchInput: !props.viewOnly,
+        GamepadInput: !props.viewOnly,
         // Hide the lib's built-in settings/info overlay — we render our
         // own minimal status chrome around it.
         HideUI: true,
@@ -172,6 +203,9 @@ onMounted(async () => {
     // browsers AutoConnect needs a manual nudge once the user has
     // interacted with the page. Calling .connect() here is idempotent
     // when AutoConnect already fired.
+    // Reflect later control changes (take/release) without reconnecting.
+    watch(() => props.viewOnly, (vo) => applyInputFlags(Boolean(vo)));
+
     if (!config.isFlagEnabled(Flags.AutoConnect)) psInstance.connect();
     // Silence unused warning for TextParameters — kept as a hint to the
     // reader that the `ss` key in initialSettings maps to this enum.

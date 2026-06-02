@@ -42,6 +42,8 @@ public enum MessageType
     VisualisationFailed,
     VisualisationEnded,
     SignallingFrame,
+    SignallingViewerClose,
+    SetViewerControl,
 }
 
 [JsonConverter(typeof(StringEnumConverter), typeof(CamelCaseNamingStrategy))]
@@ -355,6 +357,33 @@ public sealed class VisualisationEndedData
 public sealed class SignallingFrameData
 {
     [JsonProperty("runId")] public string RunId { get; set; } = "";
+    /// <summary>Per-viewer demux key assigned by the server. Each browser
+    /// viewer is an independent Wilbur player (1:1). Optional for backward
+    /// tolerance — a frame with no viewerId targets the run's sole viewer.</summary>
+    [JsonProperty("viewerId",   NullValueHandling = NullValueHandling.Ignore)] public string? ViewerId   { get; set; }
     [JsonProperty("payload",    NullValueHandling = NullValueHandling.Ignore)] public string? Payload    { get; set; }
     [JsonProperty("payloadB64", NullValueHandling = NullValueHandling.Ignore)] public string? PayloadB64 { get; set; }
+}
+
+/// <summary>
+/// Server -&gt; agent: a browser viewer's signalling socket closed. The
+/// agent tears down that viewer's dedicated local Cirrus/Wilbur player WS
+/// so the streamer drops the corresponding WebRTC peer.
+/// </summary>
+public sealed class SignallingViewerCloseData
+{
+    [JsonProperty("runId")]    public string RunId    { get; set; } = "";
+    [JsonProperty("viewerId")] public string ViewerId { get; set; } = "";
+}
+
+/// <summary>
+/// Server -&gt; agent: authoritative single-controller lock state for one
+/// viewer. The agent's per-viewer bridge gates browser-&gt;Cirrus input
+/// frames so only the current controller can drive the viewport.
+/// </summary>
+public sealed class SetViewerControlData
+{
+    [JsonProperty("runId")]      public string RunId      { get; set; } = "";
+    [JsonProperty("viewerId")]   public string ViewerId   { get; set; } = "";
+    [JsonProperty("canControl")] public bool   CanControl { get; set; }
 }

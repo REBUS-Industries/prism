@@ -123,8 +123,9 @@ public sealed class SignallingBridgeTests
         var emptyBin = new List<byte[]>();
         var bridge = new SignallingBridge(
             runId: "test-run",
+            viewerId: "viewer-1",
             localCirrusUrl: new Uri("ws://127.0.0.1:1/"),
-            sendUpstreamAsync: (_, _, _) => ValueTask.CompletedTask,
+            sendUpstreamAsync: (_, _, _, _) => ValueTask.CompletedTask,
             log: NullLogger<SignallingBridge>.Instance);
 
         // Never called StartAsync — bridge is closed by definition.
@@ -147,14 +148,63 @@ public sealed class SignallingBridgeTests
     {
         var bridge = new SignallingBridge(
             runId: "test-run",
+            viewerId: "viewer-1",
             // 127.0.0.2:1 — RFC 1122 loopback range, port 1 reliably refused.
             localCirrusUrl: new Uri("ws://127.0.0.2:1/"),
-            sendUpstreamAsync: (_, _, _) => ValueTask.CompletedTask,
+            sendUpstreamAsync: (_, _, _, _) => ValueTask.CompletedTask,
             log: NullLogger<SignallingBridge>.Instance);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.ThrowsAnyAsync<WebSocketException>(() => bridge.StartAsync(cts.Token));
         bridge.Dispose();
+    }
+
+    /// <summary>
+    /// Control gate: a non-controller bridge (AllowInput=false) drops
+    /// browser→Cirrus INPUT frames but still forwards WebRTC negotiation
+    /// (offer/answer/iceCandidate) so video keeps flowing.
+    /// </summary>
+    [Fact]
+    public async Task NonController_DropsInputFrames_ButForwardsNegotiation()
+    {
+        await using var server = await EchoWebSocketServer.StartAsync();
+        var received = new List<string>();
+        var binaryReceived = new List<byte[]>();
+
+        await using var bridge = new BridgeUnderTest(server.Url, received, binaryReceived, allowInput: false);
+        await bridge.Inner.StartAsync(CancellationToken.None);
+
+        // Negotiation passes…
+        await bridge.Inner.ForwardToLocalAsync("{\"type\":\"offer\",\"sdp\":\"v=0\"}", binary: null, CancellationToken.None);
+        await bridge.Inner.ForwardToLocalAsync("{\"type\":\"iceCandidate\",\"candidate\":{}}", binary: null, CancellationToken.None);
+        // …input is dropped.
+        await bridge.Inner.ForwardToLocalAsync("{\"type\":\"emitUIInteraction\",\"foo\":1}", binary: null, CancellationToken.None);
+        await bridge.Inner.ForwardToLocalAsync("{\"type\":\"mouseMove\",\"x\":1,\"y\":2}", binary: null, CancellationToken.None);
+
+        await WaitForAsync(() => received.Count >= 2, TimeSpan.FromSeconds(2));
+        await Task.Delay(150); // give any (wrongly) forwarded input a chance to echo back
+        Assert.Equal(2, received.Count);
+        Assert.Contains(received, r => r.Contains("offer"));
+        Assert.Contains(received, r => r.Contains("iceCandidate"));
+        Assert.DoesNotContain(received, r => r.Contains("emitUIInteraction"));
+        Assert.DoesNotContain(received, r => r.Contains("mouseMove"));
+    }
+
+    /// <summary>Flipping AllowInput back on lets input frames through again.</summary>
+    [Fact]
+    public async Task Controller_ForwardsInputFrames()
+    {
+        await using var server = await EchoWebSocketServer.StartAsync();
+        var received = new List<string>();
+        var binaryReceived = new List<byte[]>();
+
+        await using var bridge = new BridgeUnderTest(server.Url, received, binaryReceived, allowInput: false);
+        await bridge.Inner.StartAsync(CancellationToken.None);
+        bridge.Inner.AllowInput = true; // server granted control
+
+        await bridge.Inner.ForwardToLocalAsync("{\"type\":\"emitUIInteraction\",\"foo\":1}", binary: null, CancellationToken.None);
+        await WaitForAsync(() => received.Count >= 1, TimeSpan.FromSeconds(2));
+        Assert.Contains(received, r => r.Contains("emitUIInteraction"));
     }
 
     // ---- helpers ----------------------------------------------------
@@ -178,12 +228,13 @@ public sealed class SignallingBridgeTests
     {
         public SignallingBridge Inner { get; }
 
-        public BridgeUnderTest(Uri cirrusUrl, List<string> textSink, List<byte[]> binarySink)
+        public BridgeUnderTest(Uri cirrusUrl, List<string> textSink, List<byte[]> binarySink, bool allowInput = true)
         {
             Inner = new SignallingBridge(
                 runId: "test-run",
+                viewerId: "viewer-1",
                 localCirrusUrl: cirrusUrl,
-                sendUpstreamAsync: (_, binary, text) =>
+                sendUpstreamAsync: (_, _, binary, text) =>
                 {
                     if (binary is { Length: > 0 } b)
                     {
@@ -195,7 +246,8 @@ public sealed class SignallingBridgeTests
                     }
                     return ValueTask.CompletedTask;
                 },
-                log: NullLogger<SignallingBridge>.Instance);
+                log: NullLogger<SignallingBridge>.Instance,
+                allowInput: allowInput);
         }
 
         public ValueTask DisposeAsync()

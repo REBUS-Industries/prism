@@ -7,30 +7,35 @@ namespace PRISM.Agent.Visualiser;
 
 /// <summary>
 /// Owns the lifecycle of every active <see cref="SignallingBridge"/> on
-/// this agent, keyed by <c>runId</c>. One singleton per agent process.
+/// this agent. One singleton per agent process.
 ///
-/// Two ways a bridge is born:
-///   1. <see cref="RegisterLocalCirrus"/> — eager. The Phase E/F
-///      orchestrator (when it lands) will call this from its
-///      <c>ready/v1</c> emit so the bridge is already connected by the
-///      time the first signalling frame arrives from the server.
-///   2. <see cref="GetOrCreateAsync"/> — lazy. Until the orchestrator is
-///      integrated on this branch (Phase G stubbed the inbound handler;
-///      Phase I wires the bridge) the first inbound frame implies the
-///      orchestrator has booted with a local Cirrus listening on the
-///      configured default port. We try to connect; if there's no
-///      listener yet the call surfaces the failure and the upstream
-///      handler can ack-reject.
+/// Multi-viewer keying
+/// -------------------
+/// Bridges are keyed by <c>(runId, viewerId)</c>. Each browser viewer of a
+/// run is an INDEPENDENT Pixel Streaming player with its own local
+/// Cirrus/Wilbur player WS (1:1), so the streamer's per-player SDP/ICE
+/// never collides between concurrent viewers — fixing the "second viewer
+/// freezes the first" bug. Every viewer connects to the same per-run local
+/// Cirrus URL (the Wilbur player port) registered via
+/// <see cref="RegisterLocalCirrus"/>.
+///
+/// Control gate
+/// ------------
+/// The server pushes the authoritative single-controller lock per viewer
+/// (<see cref="SetViewerControl"/>); the matching bridge gates input. The
+/// last value is remembered in <see cref="_pendingControl"/> so a bridge
+/// created after the control message still picks it up.
 ///
 /// Disposal:
-///   - <see cref="DropAsync"/> — call on visualisationEnded /
-///     visualisationFailed to tear down a single bridge.
+///   - <see cref="DropViewerAsync"/> — one viewer's tab closed.
+///   - <see cref="DropAsync"/> — the whole run ended; drop every viewer.
 ///   - <see cref="DisposeAsync"/> — agent shutdown.
 /// </summary>
 public sealed class SignallingBridgeRegistry : IAsyncDisposable
 {
-    readonly ConcurrentDictionary<string, SignallingBridge> _bridges = new();
-    readonly ConcurrentDictionary<string, Uri> _knownLocalUrls = new();
+    readonly ConcurrentDictionary<string, SignallingBridge> _bridges = new();       // key = runId|viewerId
+    readonly ConcurrentDictionary<string, Uri> _knownLocalUrls = new();             // key = runId
+    readonly ConcurrentDictionary<string, bool> _pendingControl = new();            // key = runId|viewerId
     readonly ILoggerFactory _loggerFactory;
     readonly ILogger<SignallingBridgeRegistry> _log;
     readonly WsClient _ws;
@@ -49,11 +54,11 @@ public sealed class SignallingBridgeRegistry : IAsyncDisposable
         _log           = loggerFactory.CreateLogger<SignallingBridgeRegistry>();
     }
 
+    static string Key(string runId, string viewerId) => $"{runId}|{viewerId}";
+
     /// <summary>
     /// Tell the registry which local Cirrus URL belongs to <paramref name="runId"/>.
-    /// The orchestrator's <c>ready/v1</c> handler is the natural caller;
-    /// invoking it before <see cref="GetOrCreateAsync"/> ensures the
-    /// first inbound signalling frame routes to the right port.
+    /// All viewers of the run connect to it (the Wilbur player port).
     /// </summary>
     public void RegisterLocalCirrus(string runId, Uri localCirrusUrl)
     {
@@ -64,33 +69,35 @@ public sealed class SignallingBridgeRegistry : IAsyncDisposable
     }
 
     /// <summary>
-    /// Get the existing bridge for <paramref name="runId"/> or create &
-    /// connect a new one against the registered (or default) local
-    /// Cirrus URL. Connection failures are logged + propagated so the
-    /// caller can ack-reject the inbound envelope.
+    /// Get the existing bridge for <c>(runId, viewerId)</c> or create &amp;
+    /// connect a new one against the registered (or default) local Cirrus
+    /// URL. Connection failures are logged + propagated so the caller can
+    /// ack-reject the inbound envelope.
     /// </summary>
-    public async Task<SignallingBridge> GetOrCreateAsync(string runId, CancellationToken ct = default)
+    public async Task<SignallingBridge> GetOrCreateAsync(string runId, string viewerId, CancellationToken ct = default)
     {
-        if (_bridges.TryGetValue(runId, out var existing) && existing.IsOpen)
+        var key = Key(runId, viewerId);
+        if (_bridges.TryGetValue(key, out var existing) && existing.IsOpen)
             return existing;
 
         if (!_knownLocalUrls.TryGetValue(runId, out var url))
             url = DefaultLocalCirrusUrl;
 
-        // Race protection: GetOrAdd can run the factory more than once
-        // under contention; we keep the first winner and Dispose any
-        // losers. The factory must be sync, so the WS connect happens
-        // outside and we then atomically swap the placeholder out.
+        // Default-allow unless the server has already pushed a control
+        // state for this viewer (multi-viewer runs always do at connect).
+        var allowInput = !_pendingControl.TryGetValue(key, out var canControl) || canControl;
+
         var bridge = new SignallingBridge(
             runId,
+            viewerId,
             url,
             SendUpstreamAsync,
-            _loggerFactory.CreateLogger<SignallingBridge>());
+            _loggerFactory.CreateLogger<SignallingBridge>(),
+            allowInput);
 
-        var added = _bridges.GetOrAdd(runId, bridge);
+        var added = _bridges.GetOrAdd(key, bridge);
         if (!ReferenceEquals(added, bridge))
         {
-            // Another concurrent caller already inserted a bridge; ditch ours.
             bridge.Dispose();
             return added;
         }
@@ -101,45 +108,70 @@ public sealed class SignallingBridgeRegistry : IAsyncDisposable
         }
         catch
         {
-            // Failed to connect — remove the registration so the next
-            // attempt re-tries instead of returning a dead bridge.
-            _bridges.TryRemove(KeyValuePair.Create(runId, bridge));
+            _bridges.TryRemove(KeyValuePair.Create(key, bridge));
             bridge.Dispose();
             throw;
         }
         return bridge;
     }
 
-    /// <summary>
-    /// Look up an existing bridge without creating one. Returns null
-    /// if no bridge has been registered/created for <paramref name="runId"/>.
-    /// </summary>
-    public SignallingBridge? TryGet(string runId)
-        => _bridges.TryGetValue(runId, out var bridge) ? bridge : null;
+    /// <summary>Look up an existing bridge without creating one.</summary>
+    public SignallingBridge? TryGet(string runId, string viewerId)
+        => _bridges.TryGetValue(Key(runId, viewerId), out var bridge) ? bridge : null;
 
     /// <summary>
-    /// Tear down the bridge for a single runId. Safe to call multiple
-    /// times — second call is a no-op.
+    /// Apply the authoritative single-controller lock state for one viewer.
+    /// Updates the live bridge if present and remembers the value so a
+    /// bridge created later still picks it up.
     /// </summary>
+    public void SetViewerControl(string runId, string viewerId, bool canControl)
+    {
+        var key = Key(runId, viewerId);
+        _pendingControl[key] = canControl;
+        if (_bridges.TryGetValue(key, out var bridge))
+        {
+            bridge.AllowInput = canControl;
+        }
+        _log.LogInformation("signalling bridge registry: viewer control runId={RunId} viewerId={ViewerId} canControl={CanControl}",
+            runId, viewerId, canControl);
+    }
+
+    /// <summary>Tear down a single viewer's bridge (its browser tab closed).</summary>
+    public Task DropViewerAsync(string runId, string viewerId)
+    {
+        var key = Key(runId, viewerId);
+        _pendingControl.TryRemove(key, out _);
+        if (_bridges.TryRemove(key, out var bridge))
+        {
+            bridge.Dispose();
+            _log.LogInformation("signalling bridge registry: dropped viewer runId={RunId} viewerId={ViewerId}", runId, viewerId);
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Tear down every bridge for a run (the run ended).</summary>
     public Task DropAsync(string runId)
     {
         _knownLocalUrls.TryRemove(runId, out _);
-        if (_bridges.TryRemove(runId, out var bridge))
+        var prefix = runId + "|";
+        foreach (var key in _bridges.Keys)
         {
-            bridge.Dispose();
-            _log.LogInformation("signalling bridge registry: dropped runId={RunId}", runId);
+            if (!key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            if (_bridges.TryRemove(key, out var bridge)) bridge.Dispose();
+            _pendingControl.TryRemove(key, out _);
         }
+        _log.LogInformation("signalling bridge registry: dropped all viewers for runId={RunId}", runId);
         return Task.CompletedTask;
     }
 
     /// <summary>
     /// Cirrus → server upstream sender. Wraps the frame into a
-    /// <c>signallingFrame</c> envelope and pushes it onto the agent
-    /// WS outbox.
+    /// <c>signallingFrame</c> envelope (tagged with the viewer) and pushes
+    /// it onto the agent WS outbox.
     /// </summary>
-    async ValueTask SendUpstreamAsync(string runId, ReadOnlyMemory<byte>? binary, string? text)
+    async ValueTask SendUpstreamAsync(string runId, string viewerId, ReadOnlyMemory<byte>? binary, string? text)
     {
-        var data = new SignallingFrameData { RunId = runId };
+        var data = new SignallingFrameData { RunId = runId, ViewerId = viewerId };
         if (binary is { } b && b.Length > 0)
         {
             data.PayloadB64 = Convert.ToBase64String(b.Span);
@@ -150,7 +182,7 @@ public sealed class SignallingBridgeRegistry : IAsyncDisposable
         }
         else
         {
-            return; // nothing to send
+            return;
         }
         try
         {
@@ -158,7 +190,7 @@ public sealed class SignallingBridgeRegistry : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "signalling bridge registry: failed to push frame upstream for runId={RunId}", runId);
+            _log.LogWarning(ex, "signalling bridge registry: failed to push frame upstream for runId={RunId} viewerId={ViewerId}", runId, viewerId);
         }
     }
 
@@ -170,6 +202,7 @@ public sealed class SignallingBridgeRegistry : IAsyncDisposable
         }
         _bridges.Clear();
         _knownLocalUrls.Clear();
+        _pendingControl.Clear();
         await Task.CompletedTask;
     }
 }

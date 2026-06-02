@@ -6,6 +6,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import { handleAgentSocket } from './agentProtocol.js';
 import { handleAdminSocket } from './adminProtocol.js';
 import signallingProxyPlugin from './signallingProxy.js';
+import visualiserControlPlugin from './visualiserControl.js';
 import { tryAuthAdminSession } from '../auth/adminSession.js';
 
 const plugin: FastifyPluginAsync = async (app) => {
@@ -37,6 +38,11 @@ const plugin: FastifyPluginAsync = async (app) => {
   // Auth is the short-lived JWT in the `token` query param — see
   // `../visualiser/signallingToken.ts`.
   await app.register(signallingProxyPlugin);
+
+  // Visualiser control channel (multi-viewer): single-controller lock
+  // take/release + controller-state broadcast. Separate from the PS
+  // signalling stream. Same JWT auth (tier + viewerId claims).
+  await app.register(visualiserControlPlugin);
 };
 
 export default plugin;

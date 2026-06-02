@@ -585,9 +585,51 @@ export const visualiserApi = {
     api.delete<{ ok: true; status: VisualiserStatus }>(`/api/visualiser/streams/${runId}`),
   listWorkstations: () =>
     api.get<{ workstations: VisualiserWorkstation[] }>('/api/visualiser/workstations'),
-  signallingToken: (runId: string) =>
-    api.post<{ token: string; exp: number }>(`/api/visualiser/streams/${runId}/signalling-token`, {}),
+  signallingToken: (runId: string, viewerId?: string) =>
+    api.post<VisualiserSignallingToken>(`/api/visualiser/streams/${runId}/signalling-token`, viewerId ? { viewerId } : {}),
+  /** Mint a share link (creator/admin). Returns the share URL + one-time token. */
+  createShare: (runId: string, body: { tier: VisualiserShareTier; expiresInSeconds?: number }) =>
+    api.post<VisualiserShareLink>(`/api/visualiser/streams/${runId}/shares`, body),
+  listShares: (runId: string) =>
+    api.get<{ shares: VisualiserShareLink[] }>(`/api/visualiser/streams/${runId}/shares`),
+  revokeShare: (runId: string, id: string) =>
+    api.delete<{ revoked: string }>(`/api/visualiser/streams/${runId}/shares/${id}`),
+  /** Public — exchange an opaque share token for a signalling JWT. */
+  exchangeShare: (runId: string, shareToken: string, viewerId?: string) =>
+    api.post<VisualiserExchangeResult>(`/api/visualiser/streams/${runId}/shares/exchange`, { shareToken, viewerId }),
 };
+
+export type VisualiserShareTier = 'view' | 'control';
+
+export interface VisualiserSignallingToken {
+  token: string;
+  exp: number;
+  viewerId: string;
+  tier: VisualiserShareTier;
+}
+
+export interface VisualiserShareLink {
+  id: string;
+  tier: VisualiserShareTier;
+  /** Only present in the mint response. */
+  url?: string;
+  /** Only present in the mint response (shown once). */
+  shareToken?: string;
+  createdBy?: string | null;
+  createdAt: string;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+}
+
+export interface VisualiserExchangeResult {
+  token: string;
+  exp: number;
+  viewerId: string;
+  tier: VisualiserShareTier;
+  runId: string;
+  signallingUrl: string;
+  turn: VisualiserTurnBundle | null;
+}
 
 export const orbitApi = {
   /** Test stored credentials for a target. Returns either `{ ok: true, user, serverInfo }` or `{ ok: false, reason, error }`. */

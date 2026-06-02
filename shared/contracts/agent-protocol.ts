@@ -34,7 +34,9 @@ export type MessageType =
   | 'visualisationReady'
   | 'visualisationFailed'
   | 'visualisationEnded'
-  | 'signallingFrame';
+  | 'signallingFrame'
+  | 'signallingViewerClose'
+  | 'setViewerControl';
 
 export type AgentRole = 'conversion' | 'layering' | 'receive' | 'visualiser';
 
@@ -272,10 +274,46 @@ export interface VisualisationEndedData {
  */
 export interface SignallingFrameData {
   runId: string;
+  /**
+   * Per-viewer demux key. Each browser viewer of a run is an INDEPENDENT
+   * Pixel Streaming player with its own local Cirrus/Wilbur WS on the
+   * agent (1:1), so the streamer's per-player SDP/ICE never collides
+   * between viewers. The server assigns a stable viewerId per browser
+   * signalling socket (carried in the signalling JWT) and tags every
+   * frame in both directions. Optional for backward tolerance: a frame
+   * with no `viewerId` is treated as the run's default/sole viewer.
+   */
+  viewerId?: string;
   /** UTF-8 text payload (Pixel Streaming JSON control frames). */
   payload?: string;
   /** Base64-encoded binary payload (Pixel Streaming media-control blobs). */
   payloadB64?: string;
+}
+
+/**
+ * Server -> agent: a browser viewer's signalling socket closed. The agent
+ * tears down that viewer's dedicated local Cirrus/Wilbur player WS so the
+ * streamer drops the corresponding WebRTC peer (otherwise stale Wilbur
+ * players accumulate across tab opens/closes). Keyed by (runId, viewerId).
+ */
+export interface SignallingViewerCloseData {
+  runId: string;
+  viewerId: string;
+}
+
+/**
+ * Server -> agent: authoritative single-controller lock state for one
+ * viewer. The agent's per-viewer bridge gates browser->Cirrus input
+ * frames so only the current controller can drive the viewport
+ * (defence-in-depth for any input that is relayed over signalling; the
+ * client also suppresses input UI when `canControl` is false). The
+ * server is the source of truth — exactly one viewer per run has
+ * `canControl: true` at any moment.
+ */
+export interface SetViewerControlData {
+  runId: string;
+  viewerId: string;
+  canControl: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -310,6 +348,8 @@ export type VisualisationReadyMsg  = Base<'visualisationReady',  VisualisationRe
 export type VisualisationFailedMsg = Base<'visualisationFailed', VisualisationFailedData>;
 export type VisualisationEndedMsg  = Base<'visualisationEnded',  VisualisationEndedData>;
 export type SignallingFrameMsg     = Base<'signallingFrame',     SignallingFrameData>;
+export type SignallingViewerCloseMsg = Base<'signallingViewerClose', SignallingViewerCloseData>;
+export type SetViewerControlMsg      = Base<'setViewerControl',      SetViewerControlData>;
 
 export type AgentToServerMsg =
   | HelloMsg | HeartbeatMsg | AckMsg | ProgressMsg | LogMsg | CompleteMsg | FailMsg | LayersMsg
@@ -317,7 +357,8 @@ export type AgentToServerMsg =
 
 export type ServerToAgentMsg =
   | WelcomeMsg | AssignMsg | CancelMsg | PollLayersMsg | RestartMsg | UpdateMsg
-  | StartVisualisationMsg | CancelVisualisationMsg | SignallingFrameMsg;
+  | StartVisualisationMsg | CancelVisualisationMsg | SignallingFrameMsg
+  | SignallingViewerCloseMsg | SetViewerControlMsg;
 
 export type AnyMsg = AgentToServerMsg | ServerToAgentMsg;
 
