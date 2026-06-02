@@ -112,19 +112,19 @@ LEVEL_NAME = "{{LEVEL_NAME}}"
 # ORBIT/Speckle models arrive (after the orchestrator's Speckle->UE coordinate
 # conversion in Staging/CoordinateTransform.cs: scale x100 + Y-mirror for
 # handedness, NO rotation) yawed 90 degrees from the orientation the visualiser
-# expects, so we rotate the imported model root 90 degrees ANTICLOCKWISE
-# (counter-clockwise) about the vertical Z axis.
+# expects, so we rotate the imported model root 90 degrees CLOCKWISE about the
+# vertical Z axis.
 #
 # SIGN REASONING — Unreal is LEFT-handed, Z-up, and a POSITIVE yaw turns
 # +X (forward / "north") toward +Y (right / "east"), which reads as CLOCKWISE
-# when viewed top-down (plan view). A 90 degree ANTICLOCKWISE turn is therefore
-# a NEGATIVE yaw, i.e. -90 degrees. (Cross-check: yaw +90 would rotate the model
-# clockwise — the opposite of what was asked.)
+# when viewed top-down (plan view). A 90 degree CLOCKWISE turn is therefore a
+# POSITIVE yaw, i.e. +90 degrees. (Cross-check: yaw -90 would rotate the model
+# anticlockwise — the opposite of what is wanted.)
 #
 # This is the single knob for import orientation. Override it on a workstation
 # without rebuilding via the env var PRISM_VISUALISER_IMPORT_YAW_DEG, e.g.
-# "90" to flip the direction, "0" to disable the correction, "180" to reverse.
-_DEFAULT_IMPORT_YAW_DEGREES = -90.0
+# "-90" to flip the direction, "0" to disable the correction, "180" to reverse.
+_DEFAULT_IMPORT_YAW_DEGREES = 90.0
 _yaw_env = os.environ.get("PRISM_VISUALISER_IMPORT_YAW_DEG")
 try:
     ORBIT_IMPORT_YAW_DEGREES = (
@@ -717,7 +717,7 @@ def main():
         # by the same yaw so the framing camera still points at the model.
         center = _rotate_yaw_about_z(center, ORBIT_IMPORT_YAW_DEGREES)
         _log("import yaw=%.1f deg about Z applied to model root "
-             "(negative = anticlockwise top-down); framed center=(%.1f,%.1f,%.1f)"
+             "(positive = clockwise top-down); framed center=(%.1f,%.1f,%.1f)"
              % (ORBIT_IMPORT_YAW_DEGREES, center.x, center.y, center.z))
 
         cam_loc, cam_rot = _frame_view(center, radius)

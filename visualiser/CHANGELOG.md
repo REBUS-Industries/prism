@@ -4,6 +4,25 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.19 — import orientation is CLOCKWISE (flip default yaw to +90)
+
+> Corrects the direction shipped in v0.5.18: the imported model needs a 90°
+> **clockwise** yaw about Z, not anticlockwise. The default `ORBIT_IMPORT_YAW_DEGREES`
+> flips from `-90.0` to **`+90.0`**.
+
+### Fixed
+
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** — `ORBIT_IMPORT_YAW_DEGREES`
+  default is now **`+90.0`** (was `-90.0`). Per the verified sign convention (UE
+  left-handed, Z-up; a *positive* yaw turns +X→+Y = **clockwise** top-down), a
+  positive yaw gives the requested 90° clockwise rotation. The framing camera
+  reuses the same constant via `_rotate_yaw_about_z`, so it stays aligned with
+  the rotated model automatically. Env override
+  `PRISM_VISUALISER_IMPORT_YAW_DEG` unchanged (now `-90` flips, `0` disables,
+  `180` reverses).
+- **Connector-import handoff** (`docs/VISUALISER_CONNECTOR_IMPORT.md`) updated:
+  the recommended `orbit-connectors` companion change is now `Yaw = +90` (CW).
+
 ## v0.5.18 — fix imported model orientation (90° anticlockwise yaw about Z)
 
 > Models imported via the **Interchange** path came in yawed 90° from the
