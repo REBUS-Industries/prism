@@ -31,6 +31,7 @@
         "layers",
         "restart",
         "update",
+        "pullTemplate",
         "startVisualisation",
         "cancelVisualisation",
         "visualisationReady",
@@ -236,6 +237,13 @@
       "type": "object",
       "properties": {
         "tag": { "type": "string", "description": "Optional release tag to pin (e.g. 'v0.1.33'). When omitted, the agent picks the latest release." }
+      }
+    },
+    "PullTemplate": {
+      "description": "Server -> agent: download the latest (or pinned) orbit-ue-template GitHub release and install it into the workstation's visualiser template root (default C:\\PRISM\\Templates), then point VisualiserTemplateProjectPath at the pulled project. Fire-and-forget like 'update' — the agent runs the pull in the background and reports progress in its logs; the admin UI gets {queued:true}.",
+      "type": "object",
+      "properties": {
+        "tag": { "type": "string", "description": "Optional orbit-ue-template release tag to pull (e.g. 'v1.0.0-ue5.7'). When omitted the agent uses its configured UnrealTemplateTag, or the repo's latest release if that is empty." }
       }
     },
     "ProjectAttachmentRef": {

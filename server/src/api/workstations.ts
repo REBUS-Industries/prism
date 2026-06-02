@@ -10,7 +10,7 @@ import { eq, desc } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { agentSessions, workstations, type AgentSession } from '../db/schema.js';
 import { requireAdmin } from '../auth/middleware.js';
-import { sendRestartToAgent, sendUpdateToAgent } from '../ws/agentProtocol.js';
+import { sendRestartToAgent, sendUpdateToAgent, sendPullTemplateToAgent } from '../ws/agentProtocol.js';
 
 const updateBody = z.object({
   nodeName:     z.string().min(1).max(128).optional(),
@@ -144,6 +144,32 @@ const plugin: FastifyPluginAsync = async (app) => {
       const sent = sendUpdateToAgent(row.machineId, tag ? { tag } : {});
       if (!sent) return reply.code(503).send({ error: 'agent not connected' });
       req.log.info({ workstationId: row.id, nodeName: row.nodeName, machineId: row.machineId, tag }, 'update dispatched to agent');
+      return { queued: true };
+    },
+  );
+
+  /**
+   * POST /:id/pull-template — ask the agent to download the latest (or a
+   * pinned) orbit-ue-template GitHub release and install it into its
+   * visualiser template root. Optional `{tag: "v1.0.0-ue5.7"}` pins a
+   * specific release; default uses the agent's configured tag / latest.
+   *
+   * Fire-and-forget like /update: the agent runs the pull in the background
+   * and surfaces progress on its local web UI. Older agents (pre-pullTemplate)
+   * silently ignore the message, so this returns 503 only when no agent is
+   * connected at all.
+   */
+  app.post<{ Params: { id: string }; Body: { tag?: string } | undefined }>(
+    '/:id/pull-template',
+    async (req, reply) => {
+      const row = await db.query.workstations.findFirst({ where: eq(workstations.id, req.params.id) });
+      if (!row) return reply.code(404).send({ error: 'workstation not found' });
+      const tag = typeof req.body?.tag === 'string' && req.body.tag.trim().length > 0
+        ? req.body.tag.trim()
+        : undefined;
+      const sent = sendPullTemplateToAgent(row.machineId, tag ? { tag } : {});
+      if (!sent) return reply.code(503).send({ error: 'agent not connected' });
+      req.log.info({ workstationId: row.id, nodeName: row.nodeName, machineId: row.machineId, tag }, 'pull-template dispatched to agent');
       return { queued: true };
     },
   );

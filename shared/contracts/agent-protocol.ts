@@ -29,6 +29,7 @@ export type MessageType =
   | 'layers'
   | 'restart'
   | 'update'
+  | 'pullTemplate'
   | 'startVisualisation'
   | 'cancelVisualisation'
   | 'visualisationReady'
@@ -158,6 +159,21 @@ export interface RestartData {
  * agent picks the latest release.
  */
 export interface UpdateData {
+  tag?: string;
+}
+
+/**
+ * Server -> agent: download the latest (or pinned) `orbit-ue-template`
+ * GitHub release and install it into the workstation's visualiser
+ * template root (default `C:\PRISM\Templates`), then point
+ * `VisualiserTemplateProjectPath` at the pulled project. Fire-and-forget
+ * like `update` — the agent runs the pull in the background and reports
+ * progress in its logs; the admin UI receives `{queued: true}` and can
+ * poll the agent's local web UI for status. `tag` is optional; when
+ * omitted the agent uses its configured `UnrealTemplateTag`, or the
+ * repo's latest release if that is empty.
+ */
+export interface PullTemplateData {
   tag?: string;
 }
 
@@ -342,6 +358,7 @@ export type PollLayersMsg = Base<'pollLayers', PollLayersData>;
 export type LayersMsg     = Base<'layers',     LayersData>;
 export type RestartMsg    = Base<'restart',    RestartData>;
 export type UpdateMsg     = Base<'update',     UpdateData>;
+export type PullTemplateMsg = Base<'pullTemplate', PullTemplateData>;
 export type StartVisualisationMsg  = Base<'startVisualisation',  StartVisualisationData>;
 export type CancelVisualisationMsg = Base<'cancelVisualisation', CancelVisualisationData>;
 export type VisualisationReadyMsg  = Base<'visualisationReady',  VisualisationReadyData>;
@@ -356,7 +373,7 @@ export type AgentToServerMsg =
   | VisualisationReadyMsg | VisualisationFailedMsg | VisualisationEndedMsg | SignallingFrameMsg;
 
 export type ServerToAgentMsg =
-  | WelcomeMsg | AssignMsg | CancelMsg | PollLayersMsg | RestartMsg | UpdateMsg
+  | WelcomeMsg | AssignMsg | CancelMsg | PollLayersMsg | RestartMsg | UpdateMsg | PullTemplateMsg
   | StartVisualisationMsg | CancelVisualisationMsg | SignallingFrameMsg
   | SignallingViewerCloseMsg | SetViewerControlMsg;
 

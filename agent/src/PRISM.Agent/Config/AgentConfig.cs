@@ -73,6 +73,28 @@ public sealed class AgentConfig
     public string UnrealTemplateTag { get; set; } = "v1.0.0-ue5.7";
 
     /// <summary>
+    /// GitHub repository slug (<c>owner/repo</c>) the "pull latest UE
+    /// template" feature downloads release archives from. Defaults to the
+    /// first-party <c>orbit-ue-template</c> repo. Kept overridable so a fork
+    /// or a re-org rename can be pointed at without an agent rebuild. The
+    /// old <c>REBUS-ORBIT</c> org still redirects to <c>REBUS-Industries</c>,
+    /// so either form resolves.
+    /// </summary>
+    public string UnrealTemplateRepo { get; set; } = "REBUS-ORBIT/orbit-ue-template";
+
+    /// <summary>
+    /// Filesystem root the "pull latest UE template" feature installs pulled
+    /// UE projects under. The release archive is extracted and the contained
+    /// UE project (the folder holding the <c>.uproject</c>) is copied to
+    /// <c>&lt;root&gt;\&lt;ProjectName&gt;</c>; on success
+    /// <see cref="VisualiserTemplateProjectPath"/> is repointed there so the
+    /// next visualiser run uses the freshly-pulled project. Defaults to
+    /// <c>C:\PRISM\Templates</c> (the parent of the default template project
+    /// path).
+    /// </summary>
+    public string VisualiserTemplateRoot { get; set; } = @"C:\PRISM\Templates";
+
+    /// <summary>
     /// Hard cap on simultaneous visualiser sessions on this workstation.
     /// UE + Pixel Streaming is GPU-bound, so multi-session work needs a
     /// real benchmark per box; the safe Phase A default is 1.
@@ -239,6 +261,8 @@ public sealed class AgentConfig
         cfg.UnrealEngineRoot = SanitizePathLike(cfg.UnrealEngineRoot)
             ?? string.Empty;
         cfg.VisualiserOrchestratorPath = SanitizePathLike(cfg.VisualiserOrchestratorPath);
+        cfg.VisualiserTemplateRoot = SanitizePathLike(cfg.VisualiserTemplateRoot)
+            ?? string.Empty;
         return cfg;
     }
 

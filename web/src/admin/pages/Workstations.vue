@@ -128,14 +128,16 @@ function setLifecycleStatus(workstationId: string, status: LifecycleStatus): voi
   lifecycleTimers.set(workstationId, timer);
 }
 
-function lifecycleErrorMessage(err: unknown, action: 'restart' | 'update'): string {
+type LifecycleAction = 'restart' | 'update' | 'pullTemplate';
+
+function lifecycleErrorMessage(err: unknown, action: LifecycleAction): string {
   const e = err as ApiError | undefined;
   if (e?.status === 503) return 'Agent offline — try again when it reconnects.';
   if (e?.status === 404) return 'Workstation not found.';
   return e?.message ?? `${action} failed`;
 }
 
-function isLifecycleBusy(w: Workstation, action: 'restart' | 'update'): boolean {
+function isLifecycleBusy(w: Workstation, action: LifecycleAction): boolean {
   return inFlightLifecycle.has(`${w.id}:${action}`);
 }
 
@@ -170,6 +172,24 @@ async function updateAgentBuild(w: Workstation) {
     setLifecycleStatus(w.id, { kind: 'ok', msg: 'Update queued' });
   } catch (err) {
     setLifecycleStatus(w.id, { kind: 'err', msg: lifecycleErrorMessage(err, 'update') });
+  } finally {
+    inFlightLifecycle.delete(key);
+  }
+}
+
+async function pullTemplate(w: Workstation) {
+  if (isLifecycleBusy(w, 'pullTemplate')) return;
+  const ok = confirm(
+    `Pull the latest UE template onto ${w.nodeName}?\n\nThe agent downloads the latest orbit-ue-template release and installs it into its template root, then repoints the active template project at it. Progress is shown on the agent's local web UI.`,
+  );
+  if (!ok) return;
+  const key = `${w.id}:pullTemplate`;
+  inFlightLifecycle.add(key);
+  try {
+    await workstationsApi.pullTemplate(w.id);
+    setLifecycleStatus(w.id, { kind: 'ok', msg: 'Template pull queued' });
+  } catch (err) {
+    setLifecycleStatus(w.id, { kind: 'err', msg: lifecycleErrorMessage(err, 'pullTemplate') });
   } finally {
     inFlightLifecycle.delete(key);
   }
@@ -408,6 +428,13 @@ onUnmounted(() => {
                   :title="w.online ? `Update agent on ${w.nodeName} to the latest release` : 'Agent offline'"
                   @click="updateAgentBuild(w)"
                 >Update</button>
+                <button
+                  v-if="w.canVisualise"
+                  class="btn-small"
+                  :disabled="!w.online || isLifecycleBusy(w, 'pullTemplate')"
+                  :title="w.online ? `Pull the latest UE template onto ${w.nodeName}` : 'Agent offline'"
+                  @click="pullTemplate(w)"
+                >Pull template</button>
                 <button class="btn-small" @click="toggleEnabled(w)">
                   {{ w.isEnabled ? 'Disable' : 'Enable' }}
                 </button>

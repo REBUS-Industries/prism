@@ -43,6 +43,34 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.17 — 2026-06-02 — Pull latest UE template onto a workstation
+
+- **New "pull latest UE template" action on the agent.** Downloads the latest
+  (or a pinned) `orbit-ue-template` GitHub release and installs the contained
+  UE project into the workstation's template root (default
+  `C:\PRISM\Templates`), then repoints `VisualiserTemplateProjectPath` at the
+  pulled project so the next visualiser run uses it. Picks a `.zip` release
+  asset when present, else the source `zipball`; honours `PRISM_GITHUB_TOKEN` /
+  `GITHUB_TOKEN` for a private template repo.
+  - New agent core: `Visualiser/TemplatePuller.cs` (resolve → download →
+    extract → locate `.uproject` → atomic stage-and-swap install with rollback)
+    + `AgentControlPlane.PullTemplate` with a single-flight gate and a
+    `TemplatePullStatus` surfaced on the web UI.
+  - New `AgentConfig` fields: `UnrealTemplateRepo` (default
+    `REBUS-ORBIT/orbit-ue-template`) and `VisualiserTemplateRoot` (default
+    `C:\PRISM\Templates`).
+- **Two trigger surfaces:**
+  - Agent local web UI (`:7421`): a *Pull latest UE template* button + live
+    status line in the Visualiser card, plus editable template root / repo.
+  - Admin **Workstations** page: a *Pull template* button (shown for
+    visualiser-capable nodes) → `POST /api/workstations/:id/pull-template` →
+    new `pullTemplate` WS command → agent. Fire-and-forget, mirroring `update`
+    (the agent runs the pull in the background and reports progress on its own
+    web UI). Requires the matching server deploy; older agents ignore the
+    unknown message.
+- **Contracts:** added the `pullTemplate` message type + `PullTemplateData` to
+  all three mirrors (`agent-protocol.json` / `.ts` / `AgentProtocol.cs`).
+
 ## v0.3.16 — 2026-06-02 — Visualiser debug-window / full-editor toggles + 600s start timeout
 
 ### Added

@@ -219,6 +219,45 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                         break;
                     }
 
+                case ("POST", "/api/visualiser/template/pull"):
+                    {
+                        var body = await ReadBodyAsync(req);
+                        string? tag = null;
+                        if (!string.IsNullOrWhiteSpace(body))
+                        {
+                            try
+                            {
+                                var probe = JsonConvert.DeserializeObject<PullTemplateBody>(body, _json);
+                                tag = probe?.Tag;
+                            }
+                            catch { /* tolerate junk */ }
+                        }
+                        var outcome = _plane.PullTemplate(tag);
+                        if (outcome.AlreadyRunning)
+                        {
+                            res.StatusCode = 409;
+                            await WriteJsonAsync(res, new
+                            {
+                                ok             = false,
+                                alreadyRunning = true,
+                                error          = outcome.Error,
+                                state          = BuildState(),
+                            });
+                        }
+                        else
+                        {
+                            await WriteJsonAsync(res, new
+                            {
+                                ok      = true,
+                                pulling = true,
+                                tag     = outcome.Tag,
+                                message = "pulling UE template in background",
+                                state   = BuildState(),
+                            });
+                        }
+                        break;
+                    }
+
                 case ("POST", "/api/agent/update"):
                     {
                         var body = await ReadBodyAsync(req);
@@ -329,6 +368,18 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 visualiserDebugWindow   = cfg.VisualiserDebugWindow,
                 visualiserFullEditor    = cfg.VisualiserFullEditor,
                 visualiserTemplateProjectPath = cfg.VisualiserTemplateProjectPath,
+                unrealTemplateRepo      = cfg.UnrealTemplateRepo,
+                visualiserTemplateRoot  = cfg.VisualiserTemplateRoot,
+            },
+            templatePull = new
+            {
+                state       = _plane.TemplatePull.State,
+                tag         = _plane.TemplatePull.Tag,
+                message     = _plane.TemplatePull.Message,
+                projectName = _plane.TemplatePull.ProjectName,
+                projectPath = _plane.TemplatePull.ProjectPath,
+                updatedAt   = _plane.TemplatePull.UpdatedAt,
+                inProgress  = _plane.IsTemplatePullInProgress,
             },
             availableRoles = Enum.GetNames(typeof(AgentRole)).Select(s => s.ToLowerInvariant()).ToArray(),
         };
@@ -357,8 +408,9 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
         await res.OutputStream.WriteAsync(bytes, 0, bytes.Length);
     }
 
-    sealed class RestartBody { public string? Reason { get; set; } }
-    sealed class UpdateBody  { public string? Tag    { get; set; } }
+    sealed class RestartBody      { public string? Reason { get; set; } }
+    sealed class UpdateBody       { public string? Tag    { get; set; } }
+    sealed class PullTemplateBody { public string? Tag    { get; set; } }
 
     /// <summary>
     /// Reads <c>Assets/prism-logo.png</c> next to the executable, base64-

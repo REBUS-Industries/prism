@@ -43,6 +43,7 @@ public sealed class AgentMessageDispatcher
                 case MessageType.PollLayers: HandlePollLayers(rawJson); return;
                 case MessageType.Restart:    HandleRestart(rawJson);    return;
                 case MessageType.Update:     HandleUpdate(rawJson);     return;
+                case MessageType.PullTemplate: HandlePullTemplate(rawJson); return;
                 // Visualiser — spawns the sidecar
                 // PRISM.Visualiser.Orchestrator.exe, pumps its stdout
                 // JSON events back upstream, and forwards cancel
@@ -155,6 +156,21 @@ public sealed class AgentMessageDispatcher
                 _log.LogError(ex, "remote update handler threw");
             }
         });
+    }
+
+    void HandlePullTemplate(string raw)
+    {
+        var env = ParseEnvelope<PullTemplateData>(raw);
+        var tag = env?.Data?.Tag;
+        _log.LogInformation("pullTemplate requested by server (tag={Tag})", tag ?? "<configured/latest>");
+        var plane = _sp.GetRequiredService<AgentControlPlane>();
+        var outcome = plane.PullTemplate(tag);
+        if (outcome.AlreadyRunning)
+        {
+            _log.LogWarning(
+                "remote pullTemplate ignored — another template pull is already in progress (tag={Tag})",
+                tag ?? "<configured/latest>");
+        }
     }
 
     void HandleStartVisualisation(string raw)

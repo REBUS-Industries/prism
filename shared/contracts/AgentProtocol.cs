@@ -34,6 +34,7 @@ public enum MessageType
     Layers,
     Restart,
     Update,
+    PullTemplate,
     // Visualiser (Phase A scaffold — handlers stub-ack `accepted: false`).
     // Phase G adds VisualisationEnded + SignallingFrame for the WS proxy.
     StartVisualisation,
@@ -244,6 +245,23 @@ public sealed class RestartData
 /// release tag; when null/empty the agent picks the latest.
 /// </summary>
 public sealed class UpdateData
+{
+    [JsonProperty("tag", NullValueHandling = NullValueHandling.Ignore)]
+    public string? Tag { get; set; }
+}
+
+/// <summary>
+/// Server -> agent: download the latest (or pinned) <c>orbit-ue-template</c>
+/// GitHub release and install it into the workstation's visualiser template
+/// root (default <c>C:\PRISM\Templates</c>), then point
+/// <c>VisualiserTemplateProjectPath</c> at the pulled project. Fire-and-forget
+/// like <see cref="UpdateData"/> — the agent runs the pull in the background
+/// and reports progress in its logs. <see cref="Tag"/> optionally pins a
+/// specific template release tag; when null/empty the agent uses its
+/// configured <c>UnrealTemplateTag</c>, or the repo's latest release if that
+/// is empty too.
+/// </summary>
+public sealed class PullTemplateData
 {
     [JsonProperty("tag", NullValueHandling = NullValueHandling.Ignore)]
     public string? Tag { get; set; }

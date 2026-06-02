@@ -333,6 +333,18 @@ export const workstationsApi = {
   updateAgent: (id: string, tag?: string) =>
     api.post<{ queued: true }>(`/api/workstations/${id}/update`, tag ? { tag } : {}),
 
+  /**
+   * Ask the agent on this workstation to download the latest (or a pinned)
+   * `orbit-ue-template` GitHub release and install it into its visualiser
+   * template root (default `C:\PRISM\Templates`). `tag` optionally pins a
+   * specific template release; when omitted the agent uses its configured
+   * tag / the repo's latest. Fire-and-forget — returns `{queued: true}`;
+   * progress is visible on the agent's local web UI. Same 404 / 503
+   * semantics as `restart`. Older agents silently ignore the message.
+   */
+  pullTemplate: (id: string, tag?: string) =>
+    api.post<{ queued: true }>(`/api/workstations/${id}/pull-template`, tag ? { tag } : {}),
+
   // ---------------------------------------------- node provisioning downloads
   // Since agent v0.1.30 ships a wizard installer (`.exe`) that embeds the
   // PowerShell install scripts and prompts for prismUrl/nodeName/slots,

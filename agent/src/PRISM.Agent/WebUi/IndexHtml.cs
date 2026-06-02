@@ -511,6 +511,32 @@ internal static class IndexHtml
           <span class="hint" style="display:block;margin-top:4px;">Full-editor baseline project opened &amp; auto-streamed. Default: minimal cube. Use C:\PRISM\Templates\REBUS_TEMPLATE for the full template.</span>
         </div>
       </div>
+      <div class="row">
+        <label class="field">
+          <span>Template root</span>
+          <input type="text" id="visualiserTemplateRoot" placeholder="C:\PRISM\Templates" />
+        </label>
+        <label class="field">
+          <span>Template repo</span>
+          <input type="text" id="unrealTemplateRepo" placeholder="REBUS-ORBIT/orbit-ue-template" />
+        </label>
+      </div>
+      <div class="row">
+        <div>
+          <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Pull UE template</span>
+          <div class="actions" style="margin-top:0;">
+            <button id="btnPullTemplate" class="primary">Pull latest UE template</button>
+            <span id="templatePullStatus" class="hint" style="align-self:center;"></span>
+          </div>
+          <span class="hint" style="display:block;margin-top:6px;">
+            Downloads the latest release of the template repo above (or the
+            <em>Template tag</em>, when set) and installs the UE project into the
+            <em>Template root</em>. On success the <em>Template project</em> above is
+            repointed at the pulled project, ready for the next run. Save any path /
+            repo / tag edits first.
+          </span>
+        </div>
+      </div>
       <p class="hint">
         On agent start, if the Visualiser role is enabled but the Unreal
         Engine root above is missing, a structured <code>WARN</code> is
@@ -690,7 +716,13 @@ internal static class IndexHtml
       $('visualiserFullEditorLabel').classList.toggle('checked', fullEd);
       if (document.activeElement !== $('visualiserTemplateProjectPath'))
         $('visualiserTemplateProjectPath').value = s.config.visualiserTemplateProjectPath || '';
+      if (document.activeElement !== $('visualiserTemplateRoot'))
+        $('visualiserTemplateRoot').value = s.config.visualiserTemplateRoot || '';
+      if (document.activeElement !== $('unrealTemplateRepo'))
+        $('unrealTemplateRepo').value = s.config.unrealTemplateRepo || '';
     }
+
+    renderTemplatePull(s.templatePull);
 
     const visualiserEnabled = (s.config.roles || []).includes('visualiser');
     $('visualiserCard').hidden = !visualiserEnabled;
@@ -761,7 +793,34 @@ internal static class IndexHtml
       visualiserDebugWindow:   $('visualiserDebugWindow').checked,
       visualiserFullEditor:    $('visualiserFullEditor').checked,
       visualiserTemplateProjectPath: $('visualiserTemplateProjectPath').value.trim(),
+      visualiserTemplateRoot:  $('visualiserTemplateRoot').value.trim(),
+      unrealTemplateRepo:      $('unrealTemplateRepo').value.trim(),
     };
+  }
+
+  function renderTemplatePull(tp) {
+    const el = $('templatePullStatus');
+    const btn = $('btnPullTemplate');
+    if (!tp) { el.textContent = ''; return; }
+    const running = tp.state === 'running' || tp.inProgress;
+    btn.disabled = running;
+    if (running) {
+      btn.textContent = 'Pulling…';
+      el.style.color = 'var(--color-text-muted)';
+      el.textContent = tp.message || 'pulling…';
+    } else {
+      btn.textContent = 'Pull latest UE template';
+      if (tp.state === 'success') {
+        el.style.color = 'var(--color-success)';
+        el.textContent = tp.message || 'done';
+      } else if (tp.state === 'error') {
+        el.style.color = 'var(--color-error)';
+        el.textContent = 'failed: ' + (tp.message || 'unknown error');
+      } else {
+        el.style.color = 'var(--color-text-muted)';
+        el.textContent = '';
+      }
+    }
   }
 
   async function refresh() {
@@ -836,6 +895,22 @@ internal static class IndexHtml
     }
   });
 
+  $('btnPullTemplate').addEventListener('click', async () => {
+    const btn = $('btnPullTemplate');
+    if (dirty && !confirm('You have unsaved settings changes. Pull using the last SAVED template root / repo / tag?\n\nClick Cancel to save first.')) return;
+    btn.disabled = true;
+    btn.textContent = 'Pulling…';
+    try {
+      const r = await api('/api/visualiser/template/pull', { method: 'POST', body: '{}' });
+      if (r.state) renderTemplatePull(r.state.templatePull);
+      toast(r.alreadyRunning ? 'A template pull is already running.' : 'Pulling UE template — watch the status line.', r.alreadyRunning ? 'warn' : 'success');
+    } catch (err) {
+      toast('Pull failed: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Pull latest UE template';
+    }
+  });
+
   $('btnRestart').addEventListener('click', async () => {
     if (!confirm('Restart the PRISM agent now?\n\nIn-flight jobs in this process will be cancelled. The agent will come back online within ~1 minute.')) return;
     const btn = $('btnRestart');
@@ -855,6 +930,7 @@ internal static class IndexHtml
   for (const id of [
     'prismUrl','nodeName','slots','rhinoVersion','logDir','webUiPort',
     'unrealEngineRoot','unrealTemplateTag','visualiserMaxConcurrent',
+    'visualiserTemplateRoot','unrealTemplateRepo',
   ]) {
     $(id).addEventListener('input', markDirty);
   }

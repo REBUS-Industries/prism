@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using PRISM.Agent.Config;
 using PRISM.Agent.Pipeline;
 using PRISM.Agent.Tray;
+using PRISM.Agent.Visualiser;
 using PRISM.Agent.Ws;
 using PRISM.Contracts;
 
@@ -26,6 +27,15 @@ public sealed class AgentControlPlane
     readonly WorkerSlotPool _slots;
 
     bool _paused;
+
+    // Single-flight gate + last-known status for the "pull latest UE
+    // template" action. Both the local web UI and the admin Workstations
+    // page (via the WS `pullTemplate` command) funnel through PullTemplateAsync,
+    // so the gate stops a second trigger from racing the first on the same
+    // template directory. The status is surfaced on the web UI's /api/state
+    // so an operator can watch progress without tailing logs.
+    readonly SemaphoreSlim _templatePullGate = new(1, 1);
+    volatile TemplatePullStatus _templatePull = TemplatePullStatus.Idle();
 
     public AgentControlPlane(
         ILogger<AgentControlPlane> log,
@@ -53,6 +63,12 @@ public sealed class AgentControlPlane
         typeof(AgentControlPlane).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
     public IReadOnlyCollection<string> SupportedFormats => AgentService.SupportedFormats;
+
+    /// <summary>Last-known state of the "pull latest UE template" action.</summary>
+    public TemplatePullStatus TemplatePull => _templatePull;
+
+    /// <summary>True while a template pull is running.</summary>
+    public bool IsTemplatePullInProgress => _templatePullGate.CurrentCount == 0;
 
     /// <summary>Raised whenever a mutation runs.  Tray + web UI subscribe.</summary>
     public event Action? StateChanged;
@@ -203,6 +219,10 @@ public sealed class AgentControlPlane
             _cfg.UnrealEngineRoot = uer.Trim();
         if (update.UnrealTemplateTag is { } utt && !string.IsNullOrWhiteSpace(utt))
             _cfg.UnrealTemplateTag = utt.Trim();
+        if (update.UnrealTemplateRepo is { } utr && !string.IsNullOrWhiteSpace(utr))
+            _cfg.UnrealTemplateRepo = utr.Trim();
+        if (update.VisualiserTemplateRoot is { } vtr && !string.IsNullOrWhiteSpace(vtr))
+            _cfg.VisualiserTemplateRoot = vtr.Trim();
         if (update.VisualiserMaxConcurrent is { } vmc)
             _cfg.VisualiserMaxConcurrent = Math.Max(1, Math.Min(4, vmc));
         if (update.VisualiserGpuCheck is { } vgc)
@@ -400,7 +420,124 @@ if (Test-Path '{Esc(exePath)}') {{
         return new UpdateOutcome(true, captured.TagName, true, null);
     }
 
+    // ---- Pull latest UE template ---------------------------------------
+
+    public sealed record PullTemplateOutcome(
+        bool    Started,
+        string? Tag,
+        bool    AlreadyRunning,
+        string? Error);
+
+    /// <summary>
+    /// Kick off a background download + install of the latest (or pinned)
+    /// <c>orbit-ue-template</c> release into
+    /// <see cref="AgentConfig.VisualiserTemplateRoot"/>. Returns synchronously
+    /// so the HTTP / WS caller can ack quickly; progress + the terminal result
+    /// are tracked in <see cref="TemplatePull"/> (surfaced on the web UI) and
+    /// the agent log. On success
+    /// <see cref="AgentConfig.VisualiserTemplateProjectPath"/> is repointed at
+    /// the freshly-pulled project so the next visualiser run uses it.
+    /// </summary>
+    /// <param name="pinnedTag">
+    /// Optional release tag to pull; when null/empty the configured
+    /// <see cref="AgentConfig.UnrealTemplateTag"/> is used, falling back to the
+    /// repo's latest release if that is empty.
+    /// </param>
+    public PullTemplateOutcome PullTemplate(string? pinnedTag = null)
+    {
+        var tag = string.IsNullOrWhiteSpace(pinnedTag) ? null : pinnedTag.Trim();
+        _log.LogInformation("template pull requested (tag={Tag})", tag ?? "<configured/latest>");
+
+        if (!_templatePullGate.Wait(0))
+        {
+            _log.LogWarning("template pull ignored — another pull is already in progress on this agent");
+            return new PullTemplateOutcome(false, tag, AlreadyRunning: true,
+                Error: "Another template pull is already in progress on this agent.");
+        }
+
+        var startedTag = tag ?? (string.IsNullOrWhiteSpace(_cfg.UnrealTemplateTag) ? null : _cfg.UnrealTemplateTag.Trim());
+        SetTemplatePull(TemplatePullStatus.Running(startedTag, "starting…"));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var progress = new Progress<string>(msg =>
+                    SetTemplatePull(_templatePull with { Message = msg, UpdatedAt = DateTime.UtcNow }));
+
+                var result = await TemplatePuller.PullAsync(
+                    repoSlug:      _cfg.UnrealTemplateRepo,
+                    requestedTag:  tag,
+                    configuredTag: _cfg.UnrealTemplateTag,
+                    templateRoot:  _cfg.VisualiserTemplateRoot,
+                    progress:      progress,
+                    log:           _log,
+                    ct:            CancellationToken.None).ConfigureAwait(false);
+
+                // Repoint the active template project at the freshly-pulled one
+                // so the next visualiser run picks it up (read at job launch).
+                _cfg.VisualiserTemplateProjectPath = result.ProjectPath;
+                try { _cfg.Save(); }
+                catch (Exception ex) { _log.LogWarning(ex, "template pull: failed to persist new template path"); }
+
+                _log.LogInformation(
+                    "template pull complete: {Project} tag={Tag} -> {Path}",
+                    result.ProjectName, result.Tag, result.ProjectPath);
+                SetTemplatePull(TemplatePullStatus.Success(
+                    result.Tag, result.ProjectName, result.ProjectPath));
+                Notify();
+            }
+            catch (TemplatePullException ex)
+            {
+                _log.LogError(ex, "template pull failed");
+                SetTemplatePull(TemplatePullStatus.Error(startedTag, ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "template pull failed (unexpected)");
+                SetTemplatePull(TemplatePullStatus.Error(startedTag, ex.Message));
+            }
+            finally
+            {
+                _templatePullGate.Release();
+            }
+        });
+
+        return new PullTemplateOutcome(true, startedTag, AlreadyRunning: false, Error: null);
+    }
+
+    void SetTemplatePull(TemplatePullStatus status)
+    {
+        _templatePull = status;
+        Notify();
+    }
+
     static string Esc(string path) => path.Replace("'", "''");
+}
+
+/// <summary>
+/// Snapshot of the "pull latest UE template" action, surfaced on the agent
+/// web UI so an operator can watch a pull without tailing logs.
+/// </summary>
+public sealed record TemplatePullStatus(
+    string  State,            // idle | running | success | error
+    string? Tag,
+    string? Message,
+    string? ProjectName,
+    string? ProjectPath,
+    DateTime? UpdatedAt)
+{
+    public static TemplatePullStatus Idle() =>
+        new("idle", null, null, null, null, null);
+
+    public static TemplatePullStatus Running(string? tag, string? message) =>
+        new("running", tag, message, null, null, DateTime.UtcNow);
+
+    public static TemplatePullStatus Success(string tag, string projectName, string projectPath) =>
+        new("success", tag, $"installed {projectName} ({tag})", projectName, projectPath, DateTime.UtcNow);
+
+    public static TemplatePullStatus Error(string? tag, string message) =>
+        new("error", tag, message, null, null, DateTime.UtcNow);
 }
 
 /// <summary>
@@ -421,6 +558,8 @@ public sealed class ConfigUpdate
     // Visualiser (Phase A — orchestrator binary lands in Phase F/G)
     public string?      UnrealEngineRoot        { get; set; }
     public string?      UnrealTemplateTag       { get; set; }
+    public string?      UnrealTemplateRepo      { get; set; }
+    public string?      VisualiserTemplateRoot  { get; set; }
     public int?         VisualiserMaxConcurrent { get; set; }
     public bool?        VisualiserGpuCheck      { get; set; }
     public bool?        VisualiserDebugWindow   { get; set; }

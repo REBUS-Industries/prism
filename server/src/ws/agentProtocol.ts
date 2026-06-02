@@ -17,7 +17,7 @@ import { agentSessions, jobLogs, jobs, visualiserRuns, workstations } from '../d
 import { sessionRegistry, type AgentConn } from './sessionRegistry.js';
 import {
   envelope, PROTOCOL_VERSION,
-  type AgentToServerMsg, type HelloData, type RestartData, type UpdateData, type WelcomeData,
+  type AgentToServerMsg, type HelloData, type RestartData, type UpdateData, type PullTemplateData, type WelcomeData,
   type SignallingFrameData, type SignallingViewerCloseData, type SetViewerControlData,
 } from '../../../shared/contracts/agent-protocol.js';
 import { broadcastJobUpdate, broadcastWorkstationUpdate } from './adminProtocol.js';
@@ -414,6 +414,25 @@ export function sendUpdateToAgent(machineId: string, data: UpdateData = {}): boo
   if (!conn) return false;
   try {
     conn.socket.send(JSON.stringify(envelope('update', data, randomUUID())));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Dispatch a `pullTemplate` envelope to a live agent connection, asking it
+ * to download + install the latest (or pinned) orbit-ue-template release
+ * into its visualiser template root. Fire-and-forget like `update`; the
+ * agent runs the pull in the background and surfaces progress on its local
+ * web UI. `tag` is optional; when omitted the agent uses its configured
+ * template tag (or the repo's latest release).
+ */
+export function sendPullTemplateToAgent(machineId: string, data: PullTemplateData = {}): boolean {
+  const conn = sessionRegistry.getAgentByMachine(machineId);
+  if (!conn) return false;
+  try {
+    conn.socket.send(JSON.stringify(envelope('pullTemplate', data, randomUUID())));
     return true;
   } catch {
     return false;
