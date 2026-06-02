@@ -88,8 +88,8 @@ async function stopRun() {
         <p class="muted small">
           <template v-if="run">
             status <span :class="['pill', `pill--${run.status}`]">{{ run.status }}</span>
-            <template v-if="run.workstationId">
-              · workstation <code class="mono">{{ run.workstationId.slice(0, 8) }}</code>
+            <template v-if="run.workstationName || run.workstationId">
+              · workstation <code class="mono">{{ run.workstationName ?? run.workstationId!.slice(0, 8) }}</code>
             </template>
             <template v-if="run.failureReason">
               · failure <code class="mono">{{ run.failureReason }}</code>

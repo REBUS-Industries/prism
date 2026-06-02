@@ -245,7 +245,7 @@ onUnmounted(() => {
           <td>{{ projectNameFor(r.projectId) }}</td>
           <td><code class="mono">{{ r.modelId.slice(0, 8) }}</code></td>
           <td>{{ r.versionId ? r.versionId.slice(0, 8) : '—' }}</td>
-          <td>{{ r.workstationId ? r.workstationId.slice(0, 8) : '—' }}</td>
+          <td>{{ r.workstationName ?? (r.workstationId ? r.workstationId.slice(0, 8) : '—') }}</td>
           <td>
             <span :class="['pill', `pill--${r.status}`]">{{ r.status }}</span>
             <span v-if="r.failureReason" class="muted" style="margin-left:6px"

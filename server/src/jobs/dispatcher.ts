@@ -275,10 +275,12 @@ export type VisualiserDispatchOutcome =
  *   - agent is currently connected
  *   - workstation.current_visualiser_load < agent.hello.slots
  *
- * Selection: least-loaded by `current_visualiser_load` (the in-memory
- * sessionRegistry's `slotsBusy` is shared with the conversion pool and
- * doesn't reflect long-lived UE sessions reliably). Ties broken by
- * earliest-connected.
+ * Selection: when `preferredWorkstationId` is supplied the dispatcher
+ * restricts eligibility to that single workstation (the operator picked a
+ * specific box in the admin UI). Otherwise it picks least-loaded by
+ * `current_visualiser_load` (the in-memory sessionRegistry's `slotsBusy`
+ * is shared with the conversion pool and doesn't reflect long-lived UE
+ * sessions reliably). Ties broken by earliest-connected.
  *
  * Atomic load bump: we run a `SELECT ... FOR UPDATE SKIP LOCKED`
  * against the eligible row in a single transaction so two concurrent
@@ -297,6 +299,7 @@ export type VisualiserDispatchOutcome =
 export async function tryDispatchVisualisation(
   runId: string,
   log: FastifyBaseLogger,
+  preferredWorkstationId?: string,
 ): Promise<VisualiserDispatchOutcome> {
   const run = await db.query.visualiserRuns.findFirst({ where: eq(visualiserRuns.id, runId) });
   if (!run) return { dispatched: false, error: 'invalid_state', reason: 'visualiser run not found' };
@@ -313,16 +316,31 @@ export async function tryDispatchVisualisation(
   type Candidate = { conn: AgentConn; workstationId: string; load: number };
   const candidates: Candidate[] = [];
   let sawAnyVisualiserCapable = false;
+  // Whether the operator-requested workstation was seen online + enabled +
+  // visualiser-capable (regardless of whether it had a free slot).
+  let sawPreferred = false;
   for (const conn of sessionRegistry.allAgents()) {
     const w = wsByMachine.get(conn.machineId);
     if (!w || !w.isEnabled) continue;
     if (!w.canVisualise) continue;
     sawAnyVisualiserCapable = true;
+    // Honor an explicit workstation choice: skip every box except the one
+    // the caller asked for. Without this filter the dispatcher always fell
+    // through to the least-loaded agent (typically PC01), ignoring the
+    // selection made in the admin UI.
+    if (preferredWorkstationId && w.id !== preferredWorkstationId) continue;
+    if (preferredWorkstationId) sawPreferred = true;
     if (w.currentVisualiserLoad >= conn.hello.slots) continue;
     candidates.push({ conn, workstationId: w.id, load: w.currentVisualiserLoad });
   }
 
   if (candidates.length === 0) {
+    if (preferredWorkstationId) {
+      if (!sawPreferred) {
+        return { dispatched: false, error: 'no_workstation_available', reason: `requested workstation ${preferredWorkstationId} is not online or not can_visualise = true` };
+      }
+      return { dispatched: false, error: 'all_workstations_busy', reason: `requested workstation ${preferredWorkstationId} is at capacity` };
+    }
     if (!sawAnyVisualiserCapable) {
       return { dispatched: false, error: 'no_workstation_available', reason: 'no workstation has can_visualise = true and an agent online' };
     }

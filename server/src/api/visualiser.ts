@@ -82,7 +82,7 @@ const startBody = z.object({
   versionId:   z.string().min(1).optional(),
   /** Optional ORBIT target — defaults to `prod` to match the jobs surface. */
   orbitTarget: z.enum(['prod', 'dev']).default('prod'),
-  /** Reserved for future use; the dispatcher currently picks the least-loaded. */
+  /** Pin the run to a specific workstation; when omitted the dispatcher picks the least-loaded eligible box. */
   preferredWorkstationId: z.string().uuid().optional(),
   /** Reserved for future use; the portal contract documents this for status callbacks. */
   callbackUrl: z.string().url().optional(),
@@ -141,7 +141,7 @@ function buildShareViewerUrl(runId: string, shareToken: string): string {
   return `${base}/viewer/#/${runId}?st=${encodeURIComponent(shareToken)}`;
 }
 
-function toPublicRun(row: VisualiserRun, opts?: { withTurn?: boolean }) {
+function toPublicRun(row: VisualiserRun, opts?: { withTurn?: boolean; workstationName?: string | null }) {
   // Phase I: when a caller is about to open the live player (i.e. the
   // single-row GET on `/streams/:runId`), mint a fresh TURN bundle and
   // attach it to the response. We deliberately do NOT mint credentials
@@ -161,6 +161,7 @@ function toPublicRun(row: VisualiserRun, opts?: { withTurn?: boolean }) {
     versionId: row.versionId,
     templateTag: row.templateTag,
     workstationId: row.workstationId,
+    workstationName: opts?.workstationName ?? null,
     agentSessionId: row.agentSessionId,
     signallingUrl: row.signallingUrl,
     playerUrl: row.playerUrl,
@@ -246,7 +247,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     // a listener.
     const waiter = visualiserRunRegistry.waitFor(runId, START_TIMEOUT_MS);
 
-    const dispatch = await tryDispatchVisualisation(runId, req.log);
+    const dispatch = await tryDispatchVisualisation(runId, req.log, parsed.data.preferredWorkstationId);
     if (!dispatch.dispatched) {
       visualiserRunRegistry.abandon(runId);
       const failureReason = dispatch.error;
@@ -381,7 +382,24 @@ const plugin: FastifyPluginAsync = async (app) => {
       .orderBy(desc(visualiserRuns.createdAt))
       .limit(parsed.data.limit)
       .offset(parsed.data.offset);
-    return { runs: rows.map((row) => toPublicRun(row)), limit: parsed.data.limit, offset: parsed.data.offset };
+    // Resolve the friendly node name for each run's workstation in one query
+    // so the admin table can show "PC02" instead of a bare UUID prefix.
+    const wsIds = [...new Set(rows.map((r) => r.workstationId).filter((id): id is string => !!id))];
+    const wsNameById = new Map<string, string>();
+    if (wsIds.length > 0) {
+      const wsRows = await db
+        .select({ id: workstations.id, nodeName: workstations.nodeName })
+        .from(workstations)
+        .where(inArray(workstations.id, wsIds));
+      for (const w of wsRows) wsNameById.set(w.id, w.nodeName);
+    }
+    return {
+      runs: rows.map((row) => toPublicRun(row, {
+        workstationName: row.workstationId ? wsNameById.get(row.workstationId) ?? null : null,
+      })),
+      limit: parsed.data.limit,
+      offset: parsed.data.offset,
+    };
   });
 
   /* ---------- GET /api/visualiser/streams/:runId ---------- */
@@ -390,11 +408,14 @@ const plugin: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const row = await db.query.visualiserRuns.findFirst({ where: eq(visualiserRuns.id, req.params.runId) });
     if (!row) return reply.code(404).send({ error: 'not found' });
+    const workstationName = row.workstationId
+      ? (await db.query.workstations.findFirst({ where: eq(workstations.id, row.workstationId) }))?.nodeName ?? null
+      : null;
     // Phase I: include a freshly-minted TURN bundle so the admin viewer
     // can wire it into the browser RTCPeerConnection. See toPublicRun
     // for the rationale on why we only mint here and not on the list
     // endpoint.
-    return toPublicRun(row, { withTurn: true });
+    return toPublicRun(row, { withTurn: true, workstationName });
   });
 
   /* ---------- DELETE /api/visualiser/streams/:runId ---------- */
