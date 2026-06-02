@@ -522,18 +522,40 @@ internal static class IndexHtml
         </label>
       </div>
       <div class="row">
+        <label class="field">
+          <span>Connector repo</span>
+          <input type="text" id="orbitConnectorRepo" placeholder="REBUS-ORBIT/orbit-connectors" />
+        </label>
+        <label class="field">
+          <span>Connector tag (blank = latest)</span>
+          <input type="text" id="orbitConnectorTag" placeholder="latest" />
+        </label>
+      </div>
+      <div class="row">
+        <label class="toggle" id="visualiserPullConnectorLabel" style="align-self:center;">
+          <input type="checkbox" id="visualiserPullConnector" />
+          <span>Merge OrbitConnector plug-in into pulled project</span>
+        </label>
+      </div>
+      <div class="row">
         <div>
           <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Pull UE template</span>
-          <div class="actions" style="margin-top:0;">
-            <button id="btnPullTemplate" class="primary">Pull latest UE template</button>
+          <div class="actions" style="margin-top:0;align-items:center;">
+            <select id="templateRelease" style="min-width:240px;">
+              <option value="">Latest release</option>
+            </select>
+            <button id="btnReleasesRefresh" class="btn-small" title="Refresh the release list from the template repo">↻</button>
+            <button id="btnPullTemplate" class="primary">Pull selected version</button>
             <span id="templatePullStatus" class="hint" style="align-self:center;"></span>
           </div>
           <span class="hint" style="display:block;margin-top:6px;">
-            Downloads the latest release of the template repo above (or the
-            <em>Template tag</em>, when set) and installs the UE project into the
-            <em>Template root</em>. On success the <em>Template project</em> above is
-            repointed at the pulled project, ready for the next run. Save any path /
-            repo / tag edits first.
+            Pick a published version of the template repo above (default
+            <em>Latest release</em>) and pull it into the <em>Template root</em>. When
+            <em>Merge OrbitConnector plug-in</em> is on, the latest (or pinned)
+            <em>OrbitConnector.UE5</em> build is merged into the pulled project's
+            <code>Plugins\</code> so the connector-driven import works. On success the
+            <em>Template project</em> above is repointed at the pulled project, ready
+            for the next run. Save any path / repo / tag edits first.
           </span>
         </div>
       </div>
@@ -630,6 +652,8 @@ internal static class IndexHtml
 
   let state = null;
   let dirty = false;
+  // Repo slug the release dropdown was last populated for (re-fetched when it changes).
+  let releasesLoadedForRepo = null;
 
   // ---- Theme toggle ----
   function applyTheme(theme) {
@@ -720,12 +744,25 @@ internal static class IndexHtml
         $('visualiserTemplateRoot').value = s.config.visualiserTemplateRoot || '';
       if (document.activeElement !== $('unrealTemplateRepo'))
         $('unrealTemplateRepo').value = s.config.unrealTemplateRepo || '';
+      if (document.activeElement !== $('orbitConnectorRepo'))
+        $('orbitConnectorRepo').value = s.config.orbitConnectorRepo || '';
+      if (document.activeElement !== $('orbitConnectorTag'))
+        $('orbitConnectorTag').value = s.config.orbitConnectorTag || '';
+      const pullConn = s.config.visualiserPullConnector !== false;
+      $('visualiserPullConnector').checked = pullConn;
+      $('visualiserPullConnectorLabel').classList.toggle('checked', pullConn);
     }
 
     renderTemplatePull(s.templatePull);
 
     const visualiserEnabled = (s.config.roles || []).includes('visualiser');
     $('visualiserCard').hidden = !visualiserEnabled;
+    // Lazily load the template release list the first time the visualiser
+    // card becomes visible (and whenever the repo changes via Save).
+    if (visualiserEnabled && s.config.unrealTemplateRepo !== releasesLoadedForRepo) {
+      releasesLoadedForRepo = s.config.unrealTemplateRepo;
+      loadReleases();
+    }
 
     // LAN URL hint -- show the host:port a remote operator would type.
     const host = location.hostname && location.hostname !== 'localhost'
@@ -795,7 +832,39 @@ internal static class IndexHtml
       visualiserTemplateProjectPath: $('visualiserTemplateProjectPath').value.trim(),
       visualiserTemplateRoot:  $('visualiserTemplateRoot').value.trim(),
       unrealTemplateRepo:      $('unrealTemplateRepo').value.trim(),
+      orbitConnectorRepo:      $('orbitConnectorRepo').value.trim(),
+      orbitConnectorTag:       $('orbitConnectorTag').value.trim(),
+      visualiserPullConnector: $('visualiserPullConnector').checked,
     };
+  }
+
+  // ---- Template release picker ----
+  async function loadReleases() {
+    const sel = $('templateRelease');
+    const prev = sel.value;
+    try {
+      const r = await api('/api/visualiser/template/releases');
+      const releases = (r && r.releases) || [];
+      sel.innerHTML = '';
+      const latest = document.createElement('option');
+      latest.value = '';
+      latest.textContent = 'Latest release';
+      sel.appendChild(latest);
+      for (const rel of releases) {
+        const o = document.createElement('option');
+        o.value = rel.tag;
+        const date = rel.publishedAt ? ' · ' + new Date(rel.publishedAt).toLocaleDateString() : '';
+        const pre = rel.prerelease ? ' (pre)' : '';
+        o.textContent = (rel.name && rel.name !== rel.tag ? rel.name + ' — ' : '') + rel.tag + pre + date;
+        if (!rel.hasArchive) { o.disabled = true; o.textContent += ' · no archive'; }
+        sel.appendChild(o);
+      }
+      // Preserve the operator's selection across refreshes when still present.
+      if (prev && Array.from(sel.options).some((o) => o.value === prev)) sel.value = prev;
+    } catch (err) {
+      // Leave the lone "Latest release" option in place; surface softly.
+      toast('Could not list template releases: ' + err.message, 'warn');
+    }
   }
 
   function renderTemplatePull(tp) {
@@ -809,7 +878,7 @@ internal static class IndexHtml
       el.style.color = 'var(--color-text-muted)';
       el.textContent = tp.message || 'pulling…';
     } else {
-      btn.textContent = 'Pull latest UE template';
+      btn.textContent = 'Pull selected version';
       if (tp.state === 'success') {
         el.style.color = 'var(--color-success)';
         el.textContent = tp.message || 'done';
@@ -895,19 +964,23 @@ internal static class IndexHtml
     }
   });
 
+  $('btnReleasesRefresh').addEventListener('click', () => loadReleases());
+
   $('btnPullTemplate').addEventListener('click', async () => {
     const btn = $('btnPullTemplate');
-    if (dirty && !confirm('You have unsaved settings changes. Pull using the last SAVED template root / repo / tag?\n\nClick Cancel to save first.')) return;
+    if (dirty && !confirm('You have unsaved settings changes. Pull using the last SAVED template root / repo / connector settings?\n\nClick Cancel to save first.')) return;
+    const tag = $('templateRelease').value.trim();
     btn.disabled = true;
     btn.textContent = 'Pulling…';
     try {
-      const r = await api('/api/visualiser/template/pull', { method: 'POST', body: '{}' });
+      const r = await api('/api/visualiser/template/pull', { method: 'POST', body: JSON.stringify(tag ? { tag } : {}) });
       if (r.state) renderTemplatePull(r.state.templatePull);
-      toast(r.alreadyRunning ? 'A template pull is already running.' : 'Pulling UE template — watch the status line.', r.alreadyRunning ? 'warn' : 'success');
+      const label = tag ? `version ${tag}` : 'latest UE template';
+      toast(r.alreadyRunning ? 'A template pull is already running.' : `Pulling ${label} — watch the status line.`, r.alreadyRunning ? 'warn' : 'success');
     } catch (err) {
       toast('Pull failed: ' + err.message, 'error');
       btn.disabled = false;
-      btn.textContent = 'Pull latest UE template';
+      btn.textContent = 'Pull selected version';
     }
   });
 
@@ -931,9 +1004,14 @@ internal static class IndexHtml
     'prismUrl','nodeName','slots','rhinoVersion','logDir','webUiPort',
     'unrealEngineRoot','unrealTemplateTag','visualiserMaxConcurrent',
     'visualiserTemplateRoot','unrealTemplateRepo',
+    'orbitConnectorRepo','orbitConnectorTag',
   ]) {
     $(id).addEventListener('input', markDirty);
   }
+  $('visualiserPullConnector').addEventListener('change', () => {
+    $('visualiserPullConnectorLabel').classList.toggle('checked', $('visualiserPullConnector').checked);
+    markDirty();
+  });
   $('webUiBindAll').addEventListener('change', () => {
     $('bindAllLabel').classList.toggle('checked', $('webUiBindAll').checked);
     markDirty();

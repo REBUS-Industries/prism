@@ -44,6 +44,14 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     CancellationTokenSource? _cts;
     Task? _loop;
 
+    // Light cache for the template release list so opening the dropdown
+    // repeatedly doesn't hammer the GitHub API. Keyed by repo slug; 60s TTL.
+    readonly SemaphoreSlim _releasesGate = new(1, 1);
+    string? _releasesRepo;
+    DateTime _releasesFetchedAt;
+    IReadOnlyList<Visualiser.TemplatePuller.ReleaseInfo>? _releasesCache;
+    static readonly TimeSpan _releasesTtl = TimeSpan.FromSeconds(60);
+
     static readonly JsonSerializerSettings _json = new()
     {
         ContractResolver = new CamelCasePropertyNamesContractResolver(),
@@ -219,6 +227,21 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                         break;
                     }
 
+                case ("GET", "/api/visualiser/template/releases"):
+                    {
+                        try
+                        {
+                            var releases = await GetReleasesCachedAsync(ct);
+                            await WriteJsonAsync(res, new { ok = true, repo = _cfg.UnrealTemplateRepo, releases });
+                        }
+                        catch (Visualiser.TemplatePullException ex)
+                        {
+                            res.StatusCode = 502;
+                            await WriteJsonAsync(res, new { ok = false, error = ex.Message, releases = Array.Empty<object>() });
+                        }
+                        break;
+                    }
+
                 case ("POST", "/api/visualiser/template/pull"):
                     {
                         var body = await ReadBodyAsync(req);
@@ -336,6 +359,43 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Fetch the configured template repo's release list, served from a 60s
+    /// in-memory cache (invalidated when the repo slug changes). Drives the
+    /// version picker on the web UI's Visualiser card.
+    /// </summary>
+    async Task<IReadOnlyList<Visualiser.TemplatePuller.ReleaseInfo>> GetReleasesCachedAsync(CancellationToken ct)
+    {
+        var repo = _cfg.UnrealTemplateRepo;
+        if (_releasesCache is { } cached &&
+            string.Equals(_releasesRepo, repo, StringComparison.OrdinalIgnoreCase) &&
+            DateTime.UtcNow - _releasesFetchedAt < _releasesTtl)
+        {
+            return cached;
+        }
+
+        await _releasesGate.WaitAsync(ct);
+        try
+        {
+            if (_releasesCache is { } c2 &&
+                string.Equals(_releasesRepo, repo, StringComparison.OrdinalIgnoreCase) &&
+                DateTime.UtcNow - _releasesFetchedAt < _releasesTtl)
+            {
+                return c2;
+            }
+
+            var list = await Visualiser.TemplatePuller.ListReleasesAsync(repo, _log, ct);
+            _releasesCache = list;
+            _releasesRepo = repo;
+            _releasesFetchedAt = DateTime.UtcNow;
+            return list;
+        }
+        finally
+        {
+            _releasesGate.Release();
+        }
+    }
+
     object BuildState()
     {
         var cfg = _plane.Config;
@@ -370,16 +430,20 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 visualiserTemplateProjectPath = cfg.VisualiserTemplateProjectPath,
                 unrealTemplateRepo      = cfg.UnrealTemplateRepo,
                 visualiserTemplateRoot  = cfg.VisualiserTemplateRoot,
+                orbitConnectorRepo      = cfg.OrbitConnectorRepo,
+                orbitConnectorTag       = cfg.OrbitConnectorTag,
+                visualiserPullConnector = cfg.VisualiserPullConnector,
             },
             templatePull = new
             {
-                state       = _plane.TemplatePull.State,
-                tag         = _plane.TemplatePull.Tag,
-                message     = _plane.TemplatePull.Message,
-                projectName = _plane.TemplatePull.ProjectName,
-                projectPath = _plane.TemplatePull.ProjectPath,
-                updatedAt   = _plane.TemplatePull.UpdatedAt,
-                inProgress  = _plane.IsTemplatePullInProgress,
+                state        = _plane.TemplatePull.State,
+                tag          = _plane.TemplatePull.Tag,
+                message      = _plane.TemplatePull.Message,
+                projectName  = _plane.TemplatePull.ProjectName,
+                projectPath  = _plane.TemplatePull.ProjectPath,
+                connectorTag = _plane.TemplatePull.ConnectorTag,
+                updatedAt    = _plane.TemplatePull.UpdatedAt,
+                inProgress   = _plane.IsTemplatePullInProgress,
             },
             availableRoles = Enum.GetNames(typeof(AgentRole)).Select(s => s.ToLowerInvariant()).ToArray(),
         };

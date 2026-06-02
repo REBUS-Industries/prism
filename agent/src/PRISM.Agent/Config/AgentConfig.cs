@@ -95,6 +95,34 @@ public sealed class AgentConfig
     public string VisualiserTemplateRoot { get; set; } = @"C:\PRISM\Templates";
 
     /// <summary>
+    /// GitHub repository slug (<c>owner/repo</c>) the "pull latest UE
+    /// template" feature pulls the built <c>OrbitConnector.UE5</c> plug-in
+    /// from. Its <c>OrbitConnector-UE5-plugin-&lt;tag&gt;.zip</c> release
+    /// asset (connector + bundled <c>orbit-cli.exe</c> + the
+    /// <c>glTFRuntime</c> dependency) is merged into the pulled project's
+    /// <c>Plugins\</c> so the orchestrator's connector-driven import path
+    /// works out of the box. Defaults to the first-party
+    /// <c>orbit-connectors</c> repo.
+    /// </summary>
+    public string OrbitConnectorRepo { get; set; } = "REBUS-ORBIT/orbit-connectors";
+
+    /// <summary>
+    /// Pinned <c>orbit-connectors</c> release tag to merge during a template
+    /// pull. Empty (the default) means "always merge the connector's latest
+    /// release" so a freshly-pulled project ships the newest connector
+    /// regardless of which template version was selected.
+    /// </summary>
+    public string OrbitConnectorTag { get; set; } = "";
+
+    /// <summary>
+    /// When true (default) every template pull also downloads the latest
+    /// <c>OrbitConnector.UE5</c> plug-in and merges it into the pulled
+    /// project's <c>Plugins\</c>. Set false to pull the template project
+    /// verbatim (e.g. when the project already vendors a connector build).
+    /// </summary>
+    public bool VisualiserPullConnector { get; set; } = true;
+
+    /// <summary>
     /// Hard cap on simultaneous visualiser sessions on this workstation.
     /// UE + Pixel Streaming is GPU-bound, so multi-session work needs a
     /// real benchmark per box; the safe Phase A default is 1.

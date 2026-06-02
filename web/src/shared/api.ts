@@ -161,6 +161,15 @@ export interface Workstation {
   host?: string | null;
 }
 
+/** One published UE-template release, for the admin version picker. */
+export interface TemplateRelease {
+  tag: string;
+  name: string | null;
+  publishedAt: string | null;
+  prerelease: boolean;
+  hasArchive: boolean;
+}
+
 export interface ApiKey {
   id: string;
   name: string;
@@ -344,6 +353,16 @@ export const workstationsApi = {
    */
   pullTemplate: (id: string, tag?: string) =>
     api.post<{ queued: true }>(`/api/workstations/${id}/pull-template`, tag ? { tag } : {}),
+
+  /**
+   * List the published versions of the UE template repo so the admin can
+   * pick which release to pull onto a workstation. `repo` optionally
+   * overrides the server default (`owner/repo`). Cached 60s server-side.
+   */
+  templateReleases: (repo?: string) =>
+    api.get<{ repo: string; releases: TemplateRelease[] }>(
+      `/api/workstations/template-releases${repo ? `?repo=${encodeURIComponent(repo)}` : ''}`,
+    ),
 
   // ---------------------------------------------- node provisioning downloads
   // Since agent v0.1.30 ships a wizard installer (`.exe`) that embeds the

@@ -6,6 +6,7 @@ import {
   workstationsApi,
   type AgentBuildInfo,
   type ApiError,
+  type TemplateRelease,
   type Workstation,
 } from '../../shared/api';
 import { adminWs } from '../../shared/ws';
@@ -13,6 +14,12 @@ import { workstationWebUiHost, workstationWebUiUrl } from '../../shared/workstat
 
 const rows = ref<Workstation[]>([]);
 const loading = ref(true);
+
+// Published UE-template versions for the per-row "Pull template" picker.
+// Shared across rows (all agents default to the same template repo); fetched
+// once on mount. `selectedTemplateTag` keeps each row's chosen tag ('' = latest).
+const templateReleases = ref<TemplateRelease[]>([]);
+const selectedTemplateTag = reactive(new Map<string, string>());
 
 // Tracks in-flight role toggles as a `${workstationId}:${role}` set so we can
 // dim the pill while the PATCH is in flight and ignore double-clicks.
@@ -49,6 +56,16 @@ async function refresh() {
     rows.value = (await workstationsApi.list()).workstations;
   } finally {
     loading.value = false;
+  }
+}
+
+async function refreshTemplateReleases() {
+  try {
+    templateReleases.value = (await workstationsApi.templateReleases()).releases;
+  } catch {
+    // Non-fatal: the picker just shows "Latest" only. The agent still
+    // resolves "latest" when no tag is sent.
+    templateReleases.value = [];
   }
 }
 
@@ -179,15 +196,17 @@ async function updateAgentBuild(w: Workstation) {
 
 async function pullTemplate(w: Workstation) {
   if (isLifecycleBusy(w, 'pullTemplate')) return;
+  const tag = (selectedTemplateTag.get(w.id) ?? '').trim();
+  const versionLabel = tag ? `version ${tag}` : 'the latest UE template';
   const ok = confirm(
-    `Pull the latest UE template onto ${w.nodeName}?\n\nThe agent downloads the latest orbit-ue-template release and installs it into its template root, then repoints the active template project at it. Progress is shown on the agent's local web UI.`,
+    `Pull ${versionLabel} onto ${w.nodeName}?\n\nThe agent downloads the ${tag ? `'${tag}'` : 'latest'} orbit-ue-template release, merges the latest OrbitConnector.UE5 plug-in into its Plugins\\, installs it into the template root, then repoints the active template project at it. Progress is shown on the agent's local web UI.`,
   );
   if (!ok) return;
   const key = `${w.id}:pullTemplate`;
   inFlightLifecycle.add(key);
   try {
-    await workstationsApi.pullTemplate(w.id);
-    setLifecycleStatus(w.id, { kind: 'ok', msg: 'Template pull queued' });
+    await workstationsApi.pullTemplate(w.id, tag || undefined);
+    setLifecycleStatus(w.id, { kind: 'ok', msg: `Pull queued (${tag || 'latest'})` });
   } catch (err) {
     setLifecycleStatus(w.id, { kind: 'err', msg: lifecycleErrorMessage(err, 'pullTemplate') });
   } finally {
@@ -242,7 +261,7 @@ async function refreshDnsSuffix() {
 }
 
 onMounted(async () => {
-  await Promise.all([refresh(), refreshAgentInfo(), refreshDnsSuffix()]);
+  await Promise.all([refresh(), refreshAgentInfo(), refreshDnsSuffix(), refreshTemplateReleases()]);
 
   // 1) Live updates: refresh whenever the WS reports a workstation event.
   //    Matches the Dashboard pattern (see Dashboard.vue).
@@ -428,11 +447,27 @@ onUnmounted(() => {
                   :title="w.online ? `Update agent on ${w.nodeName} to the latest release` : 'Agent offline'"
                   @click="updateAgentBuild(w)"
                 >Update</button>
+                <select
+                  v-if="w.canVisualise"
+                  class="template-version"
+                  :disabled="!w.online || isLifecycleBusy(w, 'pullTemplate')"
+                  :value="selectedTemplateTag.get(w.id) ?? ''"
+                  title="UE template version to pull (default: latest)"
+                  @change="selectedTemplateTag.set(w.id, ($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">Latest</option>
+                  <option
+                    v-for="rel in templateReleases"
+                    :key="rel.tag"
+                    :value="rel.tag"
+                    :disabled="!rel.hasArchive"
+                  >{{ rel.tag }}{{ rel.prerelease ? ' (pre)' : '' }}{{ rel.hasArchive ? '' : ' · no archive' }}</option>
+                </select>
                 <button
                   v-if="w.canVisualise"
                   class="btn-small"
                   :disabled="!w.online || isLifecycleBusy(w, 'pullTemplate')"
-                  :title="w.online ? `Pull the latest UE template onto ${w.nodeName}` : 'Agent offline'"
+                  :title="w.online ? `Pull the selected UE template version onto ${w.nodeName} (connector merged in)` : 'Agent offline'"
                   @click="pullTemplate(w)"
                 >Pull template</button>
                 <button class="btn-small" @click="toggleEnabled(w)">
@@ -572,6 +607,14 @@ button.role-pill.role-busy {
   font-size: 12px;
 }
 a.btn-small { text-decoration: none; }
+
+/* Template version picker sits inline with the row actions; keep it as
+   compact as the small buttons so the action cluster still fits one line. */
+.template-version {
+  padding: 3px 6px;
+  font-size: 12px;
+  max-width: 150px;
+}
 
 .lifecycle-status {
   display: inline-block;

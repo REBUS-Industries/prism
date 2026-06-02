@@ -43,6 +43,46 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.19 — 2026-06-02 — Template pull: pick a version + merge the OrbitConnector plug-in
+
+### Added
+
+- **Connector merge is now part of every template pull.** After downloading the
+  selected `orbit-ue-template` release, the agent also pulls the latest (or a
+  pinned) `OrbitConnector.UE5` build from the connectors repo and merges every
+  plug-in folder in `OrbitConnector-UE5-plugin-<tag>.zip` (the connector +
+  bundled `orbit-cli.exe`, plus its `glTFRuntime` dependency) into the pulled
+  project's `Plugins\`. The merge happens *before* the atomic install, so a
+  connector failure aborts the whole pull cleanly rather than leaving a
+  connector-less project on disk. This makes a freshly-pulled project usable by
+  the orchestrator's connector-driven import path (`OrbitConnectorLocator`) with
+  no manual plug-in install.
+  - New `AgentConfig`: `OrbitConnectorRepo` (default
+    `REBUS-ORBIT/orbit-connectors`), `OrbitConnectorTag` (blank = latest), and
+    `VisualiserPullConnector` (default `true`; turn off to pull the template
+    verbatim). All three are editable on the agent web UI and PATCHable via
+    `/api/config`.
+- **Release/version picker.** The operator can now choose *which* published
+  template release to pull instead of always taking latest:
+  - Agent: `TemplatePuller.ListReleasesAsync` lists the configured repo's
+    releases (tag, name, published date, prerelease flag, archive availability);
+    new agent endpoint `GET /api/visualiser/template/releases` (60s cache) feeds
+    a dropdown on the web UI's Visualiser card. The "Pull" button now pulls the
+    selected tag (default **Latest release**).
+  - Server: `GET /api/workstations/template-releases` lists the template repo's
+    releases (60s cache, `?repo=` override) for the admin SPA, which now shows a
+    per-row **version dropdown** next to "Pull template" and forwards the chosen
+    tag through the existing `pull-template` route.
+- An explicitly-selected tag is authoritative end-to-end — the agent's
+  `requestedTag` path still hard-fails on a 404 (no silent fallback to latest);
+  only the *configured default* tag degrades to latest (unchanged from v0.3.18).
+
+### Changed
+
+- `TemplatePuller.PullAsync` now takes connector parameters and returns the
+  merged connector tag + plug-in list; the web-UI / WS pull status surfaces
+  `… + connector <tag>` on success.
+
 ## v0.3.18 — 2026-06-02 — Template pull falls back to latest when the pinned tag is missing
 
 ### Fixed

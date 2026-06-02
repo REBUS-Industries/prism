@@ -47,6 +47,70 @@ function pickHost(sessions: AgentSession[] | undefined): string | null {
   return null;
 }
 
+/** Default template repo the version picker lists when no override is set. */
+const DEFAULT_TEMPLATE_REPO = process.env['PRISM_UE_TEMPLATE_REPO']?.trim() || 'REBUS-ORBIT/orbit-ue-template';
+
+interface TemplateRelease {
+  tag: string;
+  name: string | null;
+  publishedAt: string | null;
+  prerelease: boolean;
+  hasArchive: boolean;
+}
+
+/** Lightweight in-memory cache for the GitHub release list (keyed by repo, 60s TTL). */
+const releaseCache = new Map<string, { at: number; releases: TemplateRelease[] }>();
+const RELEASE_TTL_MS = 60_000;
+
+/**
+ * Fetch the published releases for `repo` (newest first) so the admin
+ * Workstations page can offer a template version picker. Mirrors the agent's
+ * `TemplatePuller.ListReleasesAsync` shape. Anonymous unless a
+ * PRISM_GITHUB_TOKEN / GITHUB_TOKEN is set server-side (private repos).
+ */
+async function fetchTemplateReleases(repo: string): Promise<TemplateRelease[]> {
+  const cached = releaseCache.get(repo);
+  if (cached && Date.now() - cached.at < RELEASE_TTL_MS) return cached.releases;
+
+  const token = process.env['PRISM_GITHUB_TOKEN'] || process.env['GITHUB_TOKEN'];
+  const headers: Record<string, string> = {
+    accept: 'application/vnd.github+json',
+    'user-agent': 'prism-server',
+  };
+  if (token) headers['authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=50`, { headers });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error(`GitHub API ${res.status} ${res.statusText}`);
+
+  const body = (await res.json()) as Array<{
+    tag_name?: string;
+    name?: string | null;
+    draft?: boolean;
+    prerelease?: boolean;
+    published_at?: string | null;
+    zipball_url?: string | null;
+    assets?: Array<{ name?: string }>;
+  }>;
+
+  const releases: TemplateRelease[] = [];
+  for (const r of body) {
+    if (r.draft) continue;
+    const tag = r.tag_name?.trim();
+    if (!tag) continue;
+    const hasZipAsset = (r.assets ?? []).some((a) => a.name?.toLowerCase().endsWith('.zip'));
+    releases.push({
+      tag,
+      name: r.name && r.name !== tag ? r.name : tag,
+      publishedAt: r.published_at ?? null,
+      prerelease: !!r.prerelease,
+      hasArchive: hasZipAsset || !!r.zipball_url,
+    });
+  }
+  releaseCache.set(repo, { at: Date.now(), releases });
+  return releases;
+}
+
 const plugin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireAdmin);
 
@@ -100,6 +164,27 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (res.length === 0) return reply.code(404).send({ error: 'not found' });
     return { deleted: res[0]!.id };
   });
+
+  /**
+   * GET /template-releases — list the published versions of the UE template
+   * repo so the admin can pick a specific version to pull onto a workstation.
+   * Optional `?repo=owner/repo` overrides the default (to match a workstation
+   * whose agent points at a fork). Cached 60s; 502 if GitHub is unreachable.
+   */
+  app.get<{ Querystring: { repo?: string } }>(
+    '/template-releases',
+    async (req, reply) => {
+      const repo = (req.query.repo?.trim() || DEFAULT_TEMPLATE_REPO).replace(/^\/+|\/+$/g, '');
+      if (!repo.includes('/')) return reply.code(400).send({ error: "invalid repo (expected 'owner/repo')" });
+      try {
+        const releases = await fetchTemplateReleases(repo);
+        return { repo, releases };
+      } catch (err) {
+        req.log.warn({ err, repo }, 'failed to list template releases');
+        return reply.code(502).send({ error: 'could not list template releases', repo, releases: [] });
+      }
+    },
+  );
 
   // ------------------------------------------------------------------ lifecycle
   // Both routes look up the workstation by id, confirm an active agent

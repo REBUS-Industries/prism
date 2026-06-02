@@ -223,6 +223,13 @@ public sealed class AgentControlPlane
             _cfg.UnrealTemplateRepo = utr.Trim();
         if (update.VisualiserTemplateRoot is { } vtr && !string.IsNullOrWhiteSpace(vtr))
             _cfg.VisualiserTemplateRoot = vtr.Trim();
+        if (update.OrbitConnectorRepo is { } ocr && !string.IsNullOrWhiteSpace(ocr))
+            _cfg.OrbitConnectorRepo = ocr.Trim();
+        // Connector tag: empty string is meaningful ("latest"), so apply verbatim when present.
+        if (update.OrbitConnectorTag is { } oct)
+            _cfg.OrbitConnectorTag = oct.Trim();
+        if (update.VisualiserPullConnector is { } vpc)
+            _cfg.VisualiserPullConnector = vpc;
         if (update.VisualiserMaxConcurrent is { } vmc)
             _cfg.VisualiserMaxConcurrent = Math.Max(1, Math.Min(4, vmc));
         if (update.VisualiserGpuCheck is { } vgc)
@@ -466,13 +473,16 @@ if (Test-Path '{Esc(exePath)}') {{
                     SetTemplatePull(_templatePull with { Message = msg, UpdatedAt = DateTime.UtcNow }));
 
                 var result = await TemplatePuller.PullAsync(
-                    repoSlug:      _cfg.UnrealTemplateRepo,
-                    requestedTag:  tag,
-                    configuredTag: _cfg.UnrealTemplateTag,
-                    templateRoot:  _cfg.VisualiserTemplateRoot,
-                    progress:      progress,
-                    log:           _log,
-                    ct:            CancellationToken.None).ConfigureAwait(false);
+                    repoSlug:       _cfg.UnrealTemplateRepo,
+                    requestedTag:   tag,
+                    configuredTag:  _cfg.UnrealTemplateTag,
+                    templateRoot:   _cfg.VisualiserTemplateRoot,
+                    connectorRepo:  _cfg.OrbitConnectorRepo,
+                    connectorTag:   _cfg.OrbitConnectorTag,
+                    pullConnector:  _cfg.VisualiserPullConnector,
+                    progress:       progress,
+                    log:            _log,
+                    ct:             CancellationToken.None).ConfigureAwait(false);
 
                 // Repoint the active template project at the freshly-pulled one
                 // so the next visualiser run picks it up (read at job launch).
@@ -481,10 +491,11 @@ if (Test-Path '{Esc(exePath)}') {{
                 catch (Exception ex) { _log.LogWarning(ex, "template pull: failed to persist new template path"); }
 
                 _log.LogInformation(
-                    "template pull complete: {Project} tag={Tag} -> {Path}",
-                    result.ProjectName, result.Tag, result.ProjectPath);
+                    "template pull complete: {Project} tag={Tag} connector={Connector} -> {Path}",
+                    result.ProjectName, result.Tag,
+                    result.ConnectorTag ?? "<skipped>", result.ProjectPath);
                 SetTemplatePull(TemplatePullStatus.Success(
-                    result.Tag, result.ProjectName, result.ProjectPath));
+                    result.Tag, result.ProjectName, result.ProjectPath, result.ConnectorTag));
                 Notify();
             }
             catch (TemplatePullException ex)
@@ -525,19 +536,24 @@ public sealed record TemplatePullStatus(
     string? Message,
     string? ProjectName,
     string? ProjectPath,
+    string? ConnectorTag,
     DateTime? UpdatedAt)
 {
     public static TemplatePullStatus Idle() =>
-        new("idle", null, null, null, null, null);
+        new("idle", null, null, null, null, null, null);
 
     public static TemplatePullStatus Running(string? tag, string? message) =>
-        new("running", tag, message, null, null, DateTime.UtcNow);
+        new("running", tag, message, null, null, null, DateTime.UtcNow);
 
-    public static TemplatePullStatus Success(string tag, string projectName, string projectPath) =>
-        new("success", tag, $"installed {projectName} ({tag})", projectName, projectPath, DateTime.UtcNow);
+    public static TemplatePullStatus Success(string tag, string projectName, string projectPath, string? connectorTag) =>
+        new("success", tag,
+            connectorTag is { Length: > 0 }
+                ? $"installed {projectName} ({tag}) + connector {connectorTag}"
+                : $"installed {projectName} ({tag})",
+            projectName, projectPath, connectorTag, DateTime.UtcNow);
 
     public static TemplatePullStatus Error(string? tag, string message) =>
-        new("error", tag, message, null, null, DateTime.UtcNow);
+        new("error", tag, message, null, null, null, DateTime.UtcNow);
 }
 
 /// <summary>
@@ -560,6 +576,9 @@ public sealed class ConfigUpdate
     public string?      UnrealTemplateTag       { get; set; }
     public string?      UnrealTemplateRepo      { get; set; }
     public string?      VisualiserTemplateRoot  { get; set; }
+    public string?      OrbitConnectorRepo      { get; set; }
+    public string?      OrbitConnectorTag       { get; set; }
+    public bool?        VisualiserPullConnector { get; set; }
     public int?         VisualiserMaxConcurrent { get; set; }
     public bool?        VisualiserGpuCheck      { get; set; }
     public bool?        VisualiserDebugWindow   { get; set; }
