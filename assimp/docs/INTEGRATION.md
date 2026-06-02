@@ -104,7 +104,7 @@ groups end up in Rhino.
 
 ```yaml
 prism-assimp:
-  image: ghcr.io/rebus-orbit/prism-assimp:${PRISM_ASSIMP_TAG:-latest}
+  image: ghcr.io/rebus-industries/prism-assimp:${PRISM_ASSIMP_TAG:-latest}
   container_name: prism-assimp
   restart: unless-stopped
   environment:
@@ -127,7 +127,7 @@ environment:
 ```
 
 A CI workflow (`.github/workflows/assimp.yml`) builds and pushes
-`ghcr.io/rebus-orbit/prism-assimp` on changes under `assimp/**`,
+`ghcr.io/rebus-industries/prism-assimp` on changes under `assimp/**`,
 mirroring the existing `server-image` workflow, then deploys via the
 LAN-local self-hosted runner (LXC 261, 10.0.200.61) with
 `ssh prism-prod 'cd /opt/prism && docker compose pull prism-assimp && docker compose up -d prism-assimp'`.

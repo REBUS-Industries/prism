@@ -152,13 +152,13 @@ Implemented in:
   `preconvert` stage between `validate` and `queue` so the admin Pipeline
   view renders it.
 - `PRISM/infra/docker-compose.yml` — `prism-assimp` service (pulls
-  `ghcr.io/rebus-orbit/prism-assimp:${PRISM_ASSIMP_TAG:-latest}`,
+  `ghcr.io/rebus-industries/prism-assimp:${PRISM_ASSIMP_TAG:-latest}`,
   in-network only, healthchecked) + `ASSIMP_SERVICE_URL` env on
   `prism-server`.
 - `PRISM/infra/.env.example` — `PRISM_ASSIMP_TAG` and (commented)
   `ASSIMP_SERVICE_URL` placeholders.
 - `.github/workflows/assimp.yml` — builds + pushes
-  `ghcr.io/rebus-orbit/prism-assimp` on changes under `assimp/**`,
+  `ghcr.io/rebus-industries/prism-assimp` on changes under `assimp/**`,
   mirroring the server-image workflow, then deploys via the LAN-local
   self-hosted runner.
 

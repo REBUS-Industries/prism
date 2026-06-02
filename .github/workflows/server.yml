@@ -2,7 +2,7 @@ name: server-image
 
 # Builds + pushes the PRISM server container to GHCR.
 #
-# Image:      ghcr.io/rebus-orbit/prism-server
+# Image:      ghcr.io/rebus-industries/prism-server
 # Tags:       latest (on main), <branch>, <short-sha>, <tag-name> (on tag push)
 # Caching:    GHA-native layer cache so subsequent pushes are fast
 #
@@ -56,7 +56,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/rebus-orbit/prism-server
+          images: ghcr.io/rebus-industries/prism-server
           tags: |
             type=ref,event=branch
             type=ref,event=tag

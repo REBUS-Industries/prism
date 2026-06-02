@@ -5,7 +5,7 @@ Phase 8 fills in the actual job definitions.
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `server.yml` | push to `main`, paths `server/**` `shared/**` | Build + push `ghcr.io/rebus-orbit/prism-server:latest` (multi-arch) |
+| `server.yml` | push to `main`, paths `server/**` `shared/**` | Build + push `ghcr.io/rebus-industries/prism-server:latest` (multi-arch) |
 | `web.yml` | push to `main`, paths `web/**` | Build the admin + convert SPAs; assets are baked into the server image |
 | `agent.yml` | tag matching `agent-v*` | Build + sign the Windows `.msi`, attach to GitHub Release |
 | `deploy.yml` | push to `main` after `server.yml` succeeds, OR manual `workflow_dispatch` | SSH to VM 211 -> `git pull && docker compose pull && docker compose up -d` |

@@ -150,7 +150,7 @@ These exclusions reduce the AV surface area on the workstation. They are
 
 1.  The PRISM agent already trusts everything under
     `C:\Program Files\PRISM.Agent\` and the per-user cache directories —
-    code there is shipped by the auto-updater from `github.com/REBUS-ORBIT/prism`.
+    code there is shipped by the auto-updater from `github.com/REBUS-Industries/prism`.
 2.  The UE engine binaries are signed by Epic Games (verifiable via
     `signtool verify /pa "UnrealEditor.exe"`).
 3.  The per-run staging dirs are wiped at the end of every run (or on

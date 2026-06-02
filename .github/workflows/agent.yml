@@ -251,14 +251,14 @@ jobs:
               {
                 echo "No CHANGELOG entry found for $TAG; using a default body."
                 echo ""
-                echo "See [CHANGELOG.md](https://github.com/REBUS-ORBIT/prism/blob/main/CHANGELOG.md) for full history."
+                echo "See [CHANGELOG.md](https://github.com/REBUS-Industries/prism/blob/main/CHANGELOG.md) for full history."
               } > RELEASE_NOTES.md
             fi
           elif [[ -f CHANGELOG.md ]]; then
             {
               echo "Manual / non-tag build of PRISM Agent."
               echo ""
-              echo "See [CHANGELOG.md](https://github.com/REBUS-ORBIT/prism/blob/main/CHANGELOG.md) for full history."
+              echo "See [CHANGELOG.md](https://github.com/REBUS-Industries/prism/blob/main/CHANGELOG.md) for full history."
             } > RELEASE_NOTES.md
           else
             echo "No CHANGELOG.md present in repo." > RELEASE_NOTES.md
@@ -272,7 +272,7 @@ jobs:
         id: release
         uses: softprops/action-gh-release@v2
         with:
-          repository: REBUS-ORBIT/prism-agent
+          repository: REBUS-Industries/prism-agent
           tag_name: ${{ github.ref_name || 'latest' }}
           name: PRISM Agent ${{ github.ref_name || 'latest' }}
           body_path: RELEASE_NOTES.md
@@ -303,7 +303,7 @@ jobs:
           $tag = "${{ github.ref_name }}"
           if (-not $tag) { $tag = "latest" }
           $zipName = "PRISM.Agent-$tag.zip"
-          $downloadUrl = "https://github.com/REBUS-ORBIT/prism-agent/releases/download/$tag/$zipName"
+          $downloadUrl = "https://github.com/REBUS-Industries/prism-agent/releases/download/$tag/$zipName"
 
           $keyPath = "$env:RUNNER_TEMP\prod_vm_key"
           [IO.File]::WriteAllText($keyPath, $env:PROD_VM_SSH_KEY)

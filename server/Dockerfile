@@ -7,7 +7,7 @@
 #   3. runtime — slim node:22 with prod deps, the compiled server, the
 #      built SPAs, and the Drizzle migrations
 #
-# Image: ghcr.io/rebus-orbit/prism-server:<tag>
+# Image: ghcr.io/rebus-industries/prism-server:<tag>
 
 # -------- web-builder --------
 FROM node:22-alpine AS web-builder

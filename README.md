@@ -7,8 +7,8 @@ work to a pool of Rhino workstation agents, and uploads the resulting ORBIT
 objects directly to `orbit-server` — preserving native B-rep / SubD / Extrusion
 geometry through `RhinoDataObject.rawEncoding`.
 
-This repo is part of the [REBUS-ORBIT](https://github.com/REBUS-ORBIT) org and
-is independent of the ORBIT monorepo (`REBUS-ORBIT/orbit-server`). It pulls
+This repo is part of the [REBUS-Industries](https://github.com/REBUS-Industries) org and
+is independent of the ORBIT monorepo (`REBUS-Industries/orbit-server`). It pulls
 in the ORBIT SDK + Rhino-connector core library as a **git submodule** at
 [`vendor/orbit-monorepo/`](vendor/orbit-monorepo).
 
@@ -16,7 +16,7 @@ in the ORBIT SDK + Rhino-connector core library as a **git submodule** at
 
 ```text
 prism/
-  vendor/orbit-monorepo/  submodule -> REBUS-ORBIT/orbit-server @ pinned commit
+  vendor/orbit-monorepo/  submodule -> REBUS-Industries/orbit-server @ pinned commit
   server/                 TypeScript orchestrator (Fastify + WS)
   web/                    Vue 3 admin + convert SPAs
   agent/                  C# .NET 8 Windows service (Rhino.Inside)

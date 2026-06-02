@@ -11,12 +11,12 @@ PRISM ships, and how subsequent maintenance releases follow.
 | Artifact                              | Tag at the milestone               | Source of truth                                    | What it is                                                      |
 | ------------------------------------- | ---------------------------------- | -------------------------------------------------- | --------------------------------------------------------------- |
 | **PRISM Agent (.NET Windows)**        | `v0.2.0`                           | `agent/src/PRISM.Agent/PRISM.Agent.csproj`         | Tray + WS client + Visualiser slot pool. Sidecar: orchestrator. |
-| **PRISM Server (Node, Docker image)** | `v0.2.0` → `ghcr.io/rebus-orbit/prism-server:v0.2.0` | `server/package.json`                              | Fastify REST + WS gateway, signalling proxy, visualiser API.    |
+| **PRISM Server (Node, Docker image)** | `v0.2.0` → `ghcr.io/rebus-industries/prism-server:v0.2.0` | `server/package.json`                              | Fastify REST + WS gateway, signalling proxy, visualiser API.    |
 | **Visualiser Orchestrator (.NET)**    | `visualiser-v0.2.0` *(see below)*  | `visualiser/Directory.Build.props`                 | `prism-visualiser.exe` standalone EXE bundled into the agent.   |
-| **REBUS-ORBIT/orbit-ue-template**     | `v0.1.0-ue5.7-scaffold` (NO BUMP)  | Separate repo                                      | UE 5.7 project template; v1.0.0 gated on artist work — see [Open items](#open-items). |
+| **REBUS-Industries/orbit-ue-template**     | `v0.1.0-ue5.7-scaffold` (NO BUMP)  | Separate repo                                      | UE 5.7 project template; v1.0.0 gated on artist work — see [Open items](#open-items). |
 | **coturn (`turnserver.conf` + `docker-compose.yml`)** | n/a — config-only deploy   | `infra/turn/` (lands in Phase H)                   | TURN relay on VM 211. Deployed via runbook, not auto-tagged.    |
 
-`v0.2.0` on the PRISM repo (`REBUS-ORBIT/prism`) is the canonical
+`v0.2.0` on the PRISM repo (`REBUS-Industries/prism`) is the canonical
 "Visualiser GA" tag. It fires the `agent.yml` + `server.yml` workflows
 which publish the agent and server image. The orchestrator tag
 `visualiser-v0.2.0` fires `visualiser-msi.yml` separately.
@@ -60,7 +60,7 @@ may or may not coincide with `visualiser-v0.6.0`.
     git push origin v0.2.0
     ```
     -   `agent.yml` builds `PRISM.Agent-v0.2.0.exe` + GitHub Release.
-    -   `server.yml` builds + pushes `ghcr.io/rebus-orbit/prism-server:v0.2.0`.
+    -   `server.yml` builds + pushes `ghcr.io/rebus-industries/prism-server:v0.2.0`.
 3.  **Cut `visualiser-v0.2.0`** (and the semver-continuous alias) at the
     same commit:
     ```bash
@@ -129,7 +129,7 @@ items" / "Risks" sections:
 ### UE template milestone gating
 
 The Visualiser milestone v0.2.0 ships with the **placeholder scaffold**
-of the UE template at `REBUS-ORBIT/orbit-ue-template@v0.1.0-ue5.7-scaffold`.
+of the UE template at `REBUS-Industries/orbit-ue-template@v0.1.0-ue5.7-scaffold`.
 The full artist-populated template (`v1.0.0-ue5.7`) is pending creative-team
 work and lands as a **v0.2.1 hotfix**:
 

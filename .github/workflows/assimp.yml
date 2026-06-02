@@ -2,7 +2,7 @@ name: assimp-image
 
 # Builds + pushes the prism-assimp pre-conversion sidecar to GHCR.
 #
-# Image:      ghcr.io/rebus-orbit/prism-assimp
+# Image:      ghcr.io/rebus-industries/prism-assimp
 # Tags:       latest (on main), <branch>, <short-sha>, <tag-name> (on tag push)
 # Caching:    GHA-native layer cache.  The libassimp build stage is the
 #             expensive part (~5-7 min cold) so the cache pays for itself
@@ -48,7 +48,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/rebus-orbit/prism-assimp
+          images: ghcr.io/rebus-industries/prism-assimp
           tags: |
             type=ref,event=branch
             type=ref,event=tag

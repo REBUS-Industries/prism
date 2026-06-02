@@ -5,14 +5,14 @@
 #   postgres       jobs, settings, keys, workstations, presets
 #   redis          BullMQ queue + transient log fan-out
 #
-# Phase 8 will switch `prism-server.image` to ghcr.io/rebus-orbit/prism-server:latest
+# Phase 8 will switch `prism-server.image` to ghcr.io/rebus-industries/prism-server:latest
 # and remove the `build:` directive so deploys are pull-only.
 
 services:
   prism-server:
     # Production: pull from GHCR (built by .github/workflows/server.yml).
     # Local dev: comment `image:` and uncomment `build:` to build from source.
-    image: ghcr.io/rebus-orbit/prism-server:${PRISM_IMAGE_TAG:-latest}
+    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
     # build:
     #   context: ..
     #   dockerfile: server/Dockerfile
@@ -115,7 +115,7 @@ services:
     # zip that the agent's Rhino pipeline already knows how to ingest.
     # Built by .github/workflows/assimp.yml; pin in prod via
     # PRISM_ASSIMP_TAG.  Listening on :8088 in-network only.
-    image: ghcr.io/rebus-orbit/prism-assimp:${PRISM_ASSIMP_TAG:-latest}
+    image: ghcr.io/rebus-industries/prism-assimp:${PRISM_ASSIMP_TAG:-latest}
     container_name: prism-assimp
     restart: unless-stopped
     environment:

@@ -13,7 +13,7 @@ their own portal.
 ## Overview
 
 PRISM Visualiser lets your portal embed a live, interactive 3D view of an
-[ORBIT](https://github.com/REBUS-ORBIT) project, rendered on a REBUS
+[ORBIT](https://github.com/REBUS-Industries) project, rendered on a REBUS
 workstation in Unreal Engine 5.7 and streamed over WebRTC to the browser via
 [Pixel Streaming 2](https://docs.unrealengine.com/5.7/en-US/pixel-streaming-in-unreal-engine/).
 
@@ -732,4 +732,4 @@ Plan around them; do not file bugs.
 -   AV exclusions on workstations: [`ANTIVIRUS_EXCLUSIONS.md`](ANTIVIRUS_EXCLUSIONS.md)
 -   Scheduled-task resilience: [`SCHEDULED_TASK_RESILIENCE.md`](SCHEDULED_TASK_RESILIENCE.md)
 -   PR merge order for the v0.2.0 release: [`VISUALISER_MERGE_ORDER.md`](VISUALISER_MERGE_ORDER.md)
--   Source: [`github.com/REBUS-ORBIT/prism`](https://github.com/REBUS-ORBIT/prism)
+-   Source: [`github.com/REBUS-Industries/prism`](https://github.com/REBUS-Industries/prism)

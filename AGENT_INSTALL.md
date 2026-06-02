@@ -19,7 +19,7 @@ The release ships **two** download options — pick whichever fits the workflow.
 ### Option A — Wizard installer (recommended, v0.1.30+)
 
 1. Grab `PRISM.Agent-Setup-vX.Y.Z.exe` from the
-   [releases page](https://github.com/REBUS-ORBIT/prism-agent/releases/latest).
+   [releases page](https://github.com/REBUS-Industries/prism-agent/releases/latest).
 2. Right-click → **Run as administrator**.
 3. Click through the wizard:
    - **Install location** — defaults to `C:\Program Files\PRISM.Agent`.
@@ -41,7 +41,7 @@ Inno Setup AppId stays constant across releases).
 ### Option B — Manual zip + install.ps1 (legacy / unattended deploys)
 
 1. **Download the agent zip** from the
-   [releases page](https://github.com/REBUS-ORBIT/prism-agent/releases/latest)
+   [releases page](https://github.com/REBUS-Industries/prism-agent/releases/latest)
    (file: `PRISM.Agent-vX.Y.Z.zip`).
    The in-app **🔄 Check for Updates** menu item also polls this repo and
    downloads the .zip variant for in-place self-update.

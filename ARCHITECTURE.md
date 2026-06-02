@@ -3,8 +3,8 @@
 PRISM is an ORBIT-native, node-based conversion pipeline. It's split
 across two repos and three deploy targets:
 
-- **`REBUS-ORBIT/prism`** — this repo: server, web SPAs, agent, contracts
-- **`REBUS-ORBIT/orbit-server`** (submodule at `vendor/orbit-monorepo/`)
+- **`REBUS-Industries/prism`** — this repo: server, web SPAs, agent, contracts
+- **`REBUS-Industries/orbit-server`** (submodule at `vendor/orbit-monorepo/`)
   — the shared C# SDK and the Rhino connector core, reused by the agent
 - **PRISM Server (VM 211)** + **`orbit-server` (VM 211)** + **Rhino
   workstations (RB-DA2-PCxx)**
@@ -120,7 +120,7 @@ sync — wired into CI as the `schemas` job.
 ## Deployment
 
 - `.github/workflows/server.yml` — builds + pushes
-  `ghcr.io/rebus-orbit/prism-server` on every push to `main` and tag
+  `ghcr.io/rebus-industries/prism-server` on every push to `main` and tag
 - `.github/workflows/agent.yml`  — builds the C# agent as a self-contained
   single-file Windows publish, signs it (when CODE_SIGN_* secrets are set),
   and attaches the zip to a GH Release on tag push

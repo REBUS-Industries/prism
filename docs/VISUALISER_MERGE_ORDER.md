@@ -13,8 +13,8 @@ This is the actionable runbook for whoever does the merging.
 
 | # | PR                                                                                   | Branch                       | Notes                                                       |
 | - | ------------------------------------------------------------------------------------ | ---------------------------- | ----------------------------------------------------------- |
-| 1 | [#1 Phase A — role plumbing](https://github.com/REBUS-ORBIT/prism/pull/1)            | `feat/visualiser-phase-a`    | AgentProtocol enum, DB migration 0003, dispatcher branch.   |
-| 2 | [#4 CI cleanup](https://github.com/REBUS-ORBIT/prism/pull/4)                         | `chore/ci-cleanup`           | Independent of #1; rebases cleanly either order.            |
+| 1 | [#1 Phase A — role plumbing](https://github.com/REBUS-Industries/prism/pull/1)            | `feat/visualiser-phase-a`    | AgentProtocol enum, DB migration 0003, dispatcher branch.   |
+| 2 | [#4 CI cleanup](https://github.com/REBUS-Industries/prism/pull/4)                         | `chore/ci-cleanup`           | Independent of #1; rebases cleanly either order.            |
 
 ---
 
@@ -22,11 +22,11 @@ This is the actionable runbook for whoever does the merging.
 
 | # | PR                                                                                         | Branch                                | Stack base                                       |
 | - | ------------------------------------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------ |
-| 3 | [#2 Phase B — orchestrator scaffold](https://github.com/REBUS-ORBIT/prism/pull/2)          | `feat/visualiser-phase-b`             | `main` (after #1)                                |
-| 4 | [#3 Phase C — receive pipeline](https://github.com/REBUS-ORBIT/prism/pull/3)               | `feat/visualiser-phase-c`             | `feat/visualiser-phase-b` (rebase onto `main` after #2 merges) |
-| 5 | Phase E — Python import + UE editor scaffold *(no PR yet)*                                 | `feat/visualiser-phase-e`             | `feat/visualiser-phase-c`. Open at: <https://github.com/REBUS-ORBIT/prism/pull/new/feat/visualiser-phase-e> |
-| 6 | [#5 Phase F — Pixel Streaming](https://github.com/REBUS-ORBIT/prism/pull/5)                | `feat/visualiser-phase-f`             | `feat/visualiser-phase-e`                        |
-| 7 | [#7 Phase J orchestrator — MVR/GDTF](https://github.com/REBUS-ORBIT/prism/pull/7)          | `feat/visualiser-phase-j-orchestrator`| `feat/visualiser-phase-f`                        |
+| 3 | [#2 Phase B — orchestrator scaffold](https://github.com/REBUS-Industries/prism/pull/2)          | `feat/visualiser-phase-b`             | `main` (after #1)                                |
+| 4 | [#3 Phase C — receive pipeline](https://github.com/REBUS-Industries/prism/pull/3)               | `feat/visualiser-phase-c`             | `feat/visualiser-phase-b` (rebase onto `main` after #2 merges) |
+| 5 | Phase E — Python import + UE editor scaffold *(no PR yet)*                                 | `feat/visualiser-phase-e`             | `feat/visualiser-phase-c`. Open at: <https://github.com/REBUS-Industries/prism/pull/new/feat/visualiser-phase-e> |
+| 6 | [#5 Phase F — Pixel Streaming](https://github.com/REBUS-Industries/prism/pull/5)                | `feat/visualiser-phase-f`             | `feat/visualiser-phase-e`                        |
+| 7 | [#7 Phase J orchestrator — MVR/GDTF](https://github.com/REBUS-Industries/prism/pull/7)          | `feat/visualiser-phase-j-orchestrator`| `feat/visualiser-phase-f`                        |
 
 ---
 
@@ -34,10 +34,10 @@ This is the actionable runbook for whoever does the merging.
 
 | # | PR                                                                                       | Branch                            | Stack base                                       |
 | - | ---------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------ |
-|  8 | Phase G — server API + WS signalling proxy *(no PR yet)*                                | `feat/visualiser-phase-g`         | `main` (after orchestrator stack). Open at: <https://github.com/REBUS-ORBIT/prism/pull/new/feat/visualiser-phase-g> |
-|  9 | Phase H — coturn on VM 211 *(no PR yet)*                                                | `feat/visualiser-phase-h`         | `feat/visualiser-phase-g`. Open at: <https://github.com/REBUS-ORBIT/prism/pull/new/feat/visualiser-phase-h> |
-| 10 | [#6 Phase I — PS player + agent bridge](https://github.com/REBUS-ORBIT/prism/pull/6)    | `feat/visualiser-phase-i`         | `feat/visualiser-phase-h`                        |
-| 11 | [#8 Phase J server — attachments](https://github.com/REBUS-ORBIT/prism/pull/8)          | `feat/visualiser-phase-j-server`  | `feat/visualiser-phase-i`                        |
+|  8 | Phase G — server API + WS signalling proxy *(no PR yet)*                                | `feat/visualiser-phase-g`         | `main` (after orchestrator stack). Open at: <https://github.com/REBUS-Industries/prism/pull/new/feat/visualiser-phase-g> |
+|  9 | Phase H — coturn on VM 211 *(no PR yet)*                                                | `feat/visualiser-phase-h`         | `feat/visualiser-phase-g`. Open at: <https://github.com/REBUS-Industries/prism/pull/new/feat/visualiser-phase-h> |
+| 10 | [#6 Phase I — PS player + agent bridge](https://github.com/REBUS-Industries/prism/pull/6)    | `feat/visualiser-phase-i`         | `feat/visualiser-phase-h`                        |
+| 11 | [#8 Phase J server — attachments](https://github.com/REBUS-Industries/prism/pull/8)          | `feat/visualiser-phase-j-server`  | `feat/visualiser-phase-i`                        |
 
 ---
 
@@ -105,7 +105,7 @@ git push origin v0.2.0
 ```
 
 This fires both `agent.yml` (publishes the agent MSI / GitHub release)
-and `server.yml` (builds + publishes `ghcr.io/rebus-orbit/prism-server:v0.2.0`).
+and `server.yml` (builds + publishes `ghcr.io/rebus-industries/prism-server:v0.2.0`).
 
 For the orchestrator (which versions independently with the
 `visualiser-` prefix):

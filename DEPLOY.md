@@ -110,7 +110,7 @@ priority.
 
 ```bash
 cd /opt/prism
-# pin to a known-good tag from ghcr.io/rebus-orbit/prism-server
+# pin to a known-good tag from ghcr.io/rebus-industries/prism-server
 PRISM_IMAGE_TAG=sha-<oldsha> docker compose up -d
 docker compose logs -f prism-server
 ```
