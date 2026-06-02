@@ -74,8 +74,8 @@ public static class TemplatePuller
             throw new TemplatePullException("VisualiserTemplateRoot is not configured.");
 
         repoSlug = repoSlug.Trim().Trim('/');
-        var tag = (requestedTag ?? "").Trim();
-        if (tag.Length == 0) tag = (configuredTag ?? "").Trim();
+        var requested = (requestedTag ?? "").Trim();
+        var configured = (configuredTag ?? "").Trim();
 
         using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true })
         {
@@ -89,8 +89,10 @@ public static class TemplatePuller
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
 
         // 1. Resolve the release.
-        progress?.Report(tag.Length > 0 ? $"resolving release {tag}…" : "resolving latest release…");
-        var (resolvedTag, archiveUrl) = await ResolveReleaseAsync(http, repoSlug, tag, log, ct)
+        var effective = requested.Length > 0 ? requested : configured;
+        progress?.Report(effective.Length > 0 ? $"resolving release {effective}…" : "resolving latest release…");
+        var (resolvedTag, archiveUrl) = await ResolveReleaseAsync(
+                http, repoSlug, requested, configured, progress, log, ct)
             .ConfigureAwait(false);
         log.LogInformation(
             "template pull: repo={Repo} tag={Tag} archive={Archive}",
@@ -144,24 +146,77 @@ public static class TemplatePuller
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Resolve a release to <c>(tag, archiveUrl)</c>. When <paramref name="tag"/>
-    /// is empty the repo's <c>releases/latest</c> is used. Prefers a
-    /// <c>.zip</c> release asset; falls back to the source <c>zipball</c>.
+    /// Resolve a release to <c>(tag, archiveUrl)</c>.
+    ///
+    /// <para>Precedence + forgiveness:</para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     A <paramref name="requestedTag"/> (operator-typed / admin-pinned)
+    ///     takes priority and <b>must exist</b> — a 404 is a hard error.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Otherwise the agent's <paramref name="configuredTag"/> is tried as a
+    ///     <b>preference</b>: if that release does not exist (e.g. the default
+    ///     points at an as-yet-unpublished artist tag), we fall back to the
+    ///     repo's <c>releases/latest</c> with a warning rather than failing.
+    ///   </description></item>
+    ///   <item><description>
+    ///     With neither set, <c>releases/latest</c> is used directly.
+    ///   </description></item>
+    /// </list>
+    /// Prefers a <c>.zip</c> release asset; falls back to the source <c>zipball</c>.
     /// </summary>
     static async Task<(string Tag, string ArchiveUrl)> ResolveReleaseAsync(
-        HttpClient http, string repoSlug, string tag, ILogger log, CancellationToken ct)
+        HttpClient http, string repoSlug, string requestedTag, string configuredTag,
+        IProgress<string>? progress, ILogger log, CancellationToken ct)
     {
-        var apiUrl = tag.Length > 0
+        var explicitTag = requestedTag.Length > 0;
+        var tag = explicitTag ? requestedTag : configuredTag;
+
+        var hit = await TryGetReleaseAsync(http, repoSlug, tag.Length > 0 ? tag : null, log, ct)
+            .ConfigureAwait(false);
+        if (hit is { } found) return found;
+
+        // The requested/configured/latest lookup 404'd.
+        if (explicitTag)
+        {
+            throw new TemplatePullException(
+                $"No release tagged '{tag}' found in {repoSlug} (HTTP 404). " +
+                "Check the tag, clear it to pull the latest release, or set PRISM_GITHUB_TOKEN if the repo is private.");
+        }
+
+        if (tag.Length > 0)
+        {
+            // Configured default missing — degrade to latest instead of failing.
+            log.LogWarning(
+                "template pull: configured tag '{Tag}' not found in {Repo}; falling back to the latest release",
+                tag, repoSlug);
+            progress?.Report($"tag {tag} not found — falling back to latest…");
+            var latest = await TryGetReleaseAsync(http, repoSlug, null, log, ct).ConfigureAwait(false);
+            if (latest is { } l) return l;
+        }
+
+        throw new TemplatePullException(
+            $"No releases found in {repoSlug} (HTTP 404). " +
+            "If the repo is private, set PRISM_GITHUB_TOKEN.");
+    }
+
+    /// <summary>
+    /// GET a single release (a specific <paramref name="tag"/>, or the latest
+    /// when null) and pick its archive URL. Returns <c>null</c> when the
+    /// release / tag does not exist (HTTP 404) so the caller can fall back;
+    /// throws <see cref="TemplatePullException"/> for any other HTTP failure
+    /// or when a found release exposes no downloadable archive.
+    /// </summary>
+    static async Task<(string Tag, string ArchiveUrl)?> TryGetReleaseAsync(
+        HttpClient http, string repoSlug, string? tag, ILogger log, CancellationToken ct)
+    {
+        var apiUrl = tag is { Length: > 0 }
             ? $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag)}"
             : $"https://api.github.com/repos/{repoSlug}/releases/latest";
 
         using var resp = await http.GetAsync(apiUrl, ct).ConfigureAwait(false);
-        if (resp.StatusCode == HttpStatusCode.NotFound)
-        {
-            throw new TemplatePullException(tag.Length > 0
-                ? $"No release tagged '{tag}' found in {repoSlug} (HTTP 404). If the repo is private, set PRISM_GITHUB_TOKEN."
-                : $"No releases found in {repoSlug} (HTTP 404). If the repo is private, set PRISM_GITHUB_TOKEN.");
-        }
+        if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         if (!resp.IsSuccessStatusCode)
         {
             throw new TemplatePullException(
@@ -173,7 +228,7 @@ public static class TemplatePuller
         var root = doc.RootElement;
 
         var resolvedTag = root.TryGetProperty("tag_name", out var tn) ? tn.GetString() : null;
-        if (string.IsNullOrEmpty(resolvedTag)) resolvedTag = tag.Length > 0 ? tag : "latest";
+        if (string.IsNullOrEmpty(resolvedTag)) resolvedTag = tag is { Length: > 0 } ? tag : "latest";
 
         // Prefer a .zip release asset (the orbit-ue-template build CI uploads
         // orbit-ue-template-<tag>.zip). Otherwise fall back to the source zipball.

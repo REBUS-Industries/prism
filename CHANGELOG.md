@@ -43,6 +43,19 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.18 — 2026-06-02 — Template pull falls back to latest when the pinned tag is missing
+
+### Fixed
+
+- **Template pull no longer hard-fails when the configured `UnrealTemplateTag`
+  has no published release.** The default tag (`v1.0.0-ue5.7`, the
+  yet-to-be-published artist build) 404'd against
+  `orbit-ue-template`, which only ships `v0.1.0-ue5.7-scaffold`. The
+  configured tag is now treated as a *preference*: if its release does not
+  exist the agent falls back to the repo's `releases/latest` (with a WARN +
+  web-UI status note). An **operator-typed / admin-pinned** tag still hard-fails
+  on 404 (with a hint to clear it), since that is an explicit request.
+
 ## v0.3.17 — 2026-06-02 — Pull latest UE template onto a workstation
 
 - **New "pull latest UE template" action on the agent.** Downloads the latest
