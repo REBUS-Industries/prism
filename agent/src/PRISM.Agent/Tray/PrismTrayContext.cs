@@ -39,6 +39,8 @@ public sealed class PrismTrayContext : ApplicationContext
     readonly ToolStripMenuItem _layItem;
     readonly ToolStripMenuItem _rcvItem;
     readonly ToolStripMenuItem _visItem;
+    readonly ToolStripMenuItem _visDebugItem;
+    readonly ToolStripMenuItem _visFullEditorItem;
 
     // Lazy-created forms (they hide on close, never destroyed until exit)
     LogsForm?            _logsForm;
@@ -117,6 +119,35 @@ public sealed class PrismTrayContext : ApplicationContext
         Add(_layItem);
         Add(_rcvItem);
         Add(_visItem);
+
+        // Visualiser debug-window toggle. Sits under the Visualiser role
+        // and is only meaningful when that role is enabled, so we
+        // enable/disable it from RefreshRoleCheckmarks based on the role.
+        // CheckOnClick mirrors the role items; the Click handler persists
+        // the new value via the control plane (live-applied — picked up on
+        // the next visualiser run, no restart).
+        _visDebugItem = new ToolStripMenuItem("    ↳ Debug window (visible UE window)")
+        {
+            CheckOnClick = true,
+            Checked      = _cfg.VisualiserDebugWindow,
+        };
+        _visDebugItem.Click += (_, _) =>
+            _ = _plane.SetVisualiserDebugWindowAsync(_visDebugItem.Checked);
+        Add(_visDebugItem);
+
+        // Visualiser full-editor toggle. Opens the FULL Unreal Editor GUI on
+        // the imported map AND streams the level-editor viewport to the
+        // browser viewer — SUPERSEDES the debug-window toggle when checked.
+        // The operator controls UE on the workstation; viewers watch the
+        // streamed viewport. Same enable/persist pattern.
+        _visFullEditorItem = new ToolStripMenuItem("    ↳ Full editor (control on PC + browser stream)")
+        {
+            CheckOnClick = true,
+            Checked      = _cfg.VisualiserFullEditor,
+        };
+        _visFullEditorItem.Click += (_, _) =>
+            _ = _plane.SetVisualiserFullEditorAsync(_visFullEditorItem.Checked);
+        Add(_visFullEditorItem);
         Add(new ToolStripSeparator());
 
         Add(new ToolStripMenuItem("⚙  Settings…",         null, OnSettings));
@@ -290,7 +321,15 @@ public sealed class PrismTrayContext : ApplicationContext
         _convItem.Checked = _cfg.Roles.Contains(AgentRole.Conversion);
         _layItem.Checked  = _cfg.Roles.Contains(AgentRole.Layering);
         _rcvItem.Checked  = _cfg.Roles.Contains(AgentRole.Receive);
-        _visItem.Checked  = _cfg.Roles.Contains(AgentRole.Visualiser);
+        var visualiserEnabled = _cfg.Roles.Contains(AgentRole.Visualiser);
+        _visItem.Checked  = visualiserEnabled;
+        // The debug-window toggle only matters when the Visualiser role is
+        // active; grey it out otherwise but still reflect its stored value.
+        _visDebugItem.Checked = _cfg.VisualiserDebugWindow;
+        _visDebugItem.Enabled = visualiserEnabled;
+        // Full-editor toggle: same enable gating; reflects stored value.
+        _visFullEditorItem.Checked = _cfg.VisualiserFullEditor;
+        _visFullEditorItem.Enabled = visualiserEnabled;
     }
 
     void OnSettings(object? sender, EventArgs e)

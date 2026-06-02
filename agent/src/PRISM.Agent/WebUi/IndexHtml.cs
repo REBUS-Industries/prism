@@ -481,11 +481,60 @@ internal static class IndexHtml
           </div>
         </div>
       </div>
+      <div class="row">
+        <div>
+          <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Debug window</span>
+          <div class="toggle-row">
+            <label class="toggle" id="visualiserDebugWindowLabel">
+              <input type="checkbox" id="visualiserDebugWindow" />
+              <span>Show visible UE window (debug)</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Full editor</span>
+          <div class="toggle-row">
+            <label class="toggle" id="visualiserFullEditorLabel">
+              <input type="checkbox" id="visualiserFullEditor" />
+              <span>Open full Unreal Editor (control on workstation) + browser stream</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Template project</span>
+          <input type="text" id="visualiserTemplateProjectPath" style="width:100%;box-sizing:border-box;"
+                 placeholder="C:\PRISM\Templates\MINIMAL_CUBE" />
+          <span class="hint" style="display:block;margin-top:4px;">Full-editor baseline project opened &amp; auto-streamed. Default: minimal cube. Use C:\PRISM\Templates\REBUS_TEMPLATE for the full template.</span>
+        </div>
+      </div>
       <p class="hint">
         On agent start, if the Visualiser role is enabled but the Unreal
         Engine root above is missing, a structured <code>WARN</code> is
         sent to PRISM so the admin dashboard surfaces the misconfiguration.
         Other roles keep running normally.
+      </p>
+      <p class="hint">
+        <strong>Debug window</strong> makes the next visualiser run open a
+        visible Unreal Engine window (windowed, not headless) so you can watch
+        the scene, viewport and logs on this workstation. Pixel Streaming to
+        the browser keeps working. Applies to the next run — no restart needed.
+        The window is only visible when the agent runs in your interactive
+        desktop session (not as a session-0 Windows service).
+      </p>
+      <p class="hint">
+        <strong>Full editor</strong> opens the full Unreal Editor GUI (World
+        Outliner, Details, Content Browser, viewport gizmos) on the imported
+        map AND Pixel-Streams the level-editor viewport to the browser viewer
+        at the same time — you drive Unreal on this workstation while remote
+        viewers watch the streamed viewport. It <strong>supersedes</strong> the
+        debug window when both are on. Applies to the next run; the editor only
+        appears in your interactive desktop session (not a session-0 service).
+        If auto-start doesn't engage, click <em>Stream Level Editor</em> on the
+        Pixel Streaming toolbar in the editor.
       </p>
     </div>
   </section>
@@ -633,6 +682,14 @@ internal static class IndexHtml
       const gpu = !!s.config.visualiserGpuCheck;
       $('visualiserGpuCheck').checked = gpu;
       $('visualiserGpuCheckLabel').classList.toggle('checked', gpu);
+      const dbgWin = !!s.config.visualiserDebugWindow;
+      $('visualiserDebugWindow').checked = dbgWin;
+      $('visualiserDebugWindowLabel').classList.toggle('checked', dbgWin);
+      const fullEd = !!s.config.visualiserFullEditor;
+      $('visualiserFullEditor').checked = fullEd;
+      $('visualiserFullEditorLabel').classList.toggle('checked', fullEd);
+      if (document.activeElement !== $('visualiserTemplateProjectPath'))
+        $('visualiserTemplateProjectPath').value = s.config.visualiserTemplateProjectPath || '';
     }
 
     const visualiserEnabled = (s.config.roles || []).includes('visualiser');
@@ -701,6 +758,9 @@ internal static class IndexHtml
       unrealTemplateTag:       $('unrealTemplateTag').value.trim(),
       visualiserMaxConcurrent: Number($('visualiserMaxConcurrent').value),
       visualiserGpuCheck:      $('visualiserGpuCheck').checked,
+      visualiserDebugWindow:   $('visualiserDebugWindow').checked,
+      visualiserFullEditor:    $('visualiserFullEditor').checked,
+      visualiserTemplateProjectPath: $('visualiserTemplateProjectPath').value.trim(),
     };
   }
 
@@ -806,6 +866,15 @@ internal static class IndexHtml
     $('visualiserGpuCheckLabel').classList.toggle('checked', $('visualiserGpuCheck').checked);
     markDirty();
   });
+  $('visualiserFullEditor').addEventListener('change', () => {
+    $('visualiserFullEditorLabel').classList.toggle('checked', $('visualiserFullEditor').checked);
+    markDirty();
+  });
+  $('visualiserDebugWindow').addEventListener('change', () => {
+    $('visualiserDebugWindowLabel').classList.toggle('checked', $('visualiserDebugWindow').checked);
+    markDirty();
+  });
+  $('visualiserTemplateProjectPath').addEventListener('input', () => markDirty());
 
   refresh().then(refreshLogs);
   setInterval(refresh, 4000);

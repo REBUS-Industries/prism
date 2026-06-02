@@ -1051,7 +1051,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             'Synchronous. Blocks until the agent either reports the run is',
             'streaming (`prism-visualiser/ready/v1`), a terminal failure',
             '(`prism-visualiser/failed/v1`), or the deadline configured by',
-            '`VISUALISER_START_TIMEOUT_MS` fires (default 180s).',
+            '`VISUALISER_START_TIMEOUT_MS` fires (default 600s).',
             '',
             '**Auth:** `X-API-Key` with the `visualiser:create_stream` scope,',
             'or an authenticated admin session.',

@@ -27,6 +27,8 @@ public sealed class SettingsForm : Form
     readonly TextBox     _ueTemplateTagBox;
     readonly NumericUpDown _maxConcurrentBox;
     readonly CheckBox    _gpuCheckBox;
+    readonly CheckBox    _debugWindowBox;
+    readonly CheckBox    _fullEditorBox;
 
     public SettingsForm(AgentConfig cfg)
     {
@@ -37,8 +39,8 @@ public sealed class SettingsForm : Form
         MaximizeBox     = true;
         MinimizeBox     = true;
         StartPosition   = FormStartPosition.CenterScreen;
-        ClientSize      = new Size(560, 460);
-        MinimumSize     = new Size(480, 420);
+        ClientSize      = new Size(560, 540);
+        MinimumSize     = new Size(480, 500);
         Font            = new Font("Segoe UI", 9f);
 
         // ---- layout ----
@@ -109,12 +111,12 @@ public sealed class SettingsForm : Form
         {
             Dock        = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount    = 4,
+            RowCount    = 6,
             AutoSize    = true,
         };
         vtbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
         vtbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 6; i++)
             vtbl.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
 
         vtbl.Controls.Add(MakeLabel("UE root:"), 0, 0);
@@ -143,6 +145,26 @@ public sealed class SettingsForm : Form
             AutoSize = false,
         };
         vtbl.Controls.Add(_gpuCheckBox, 1, 3);
+
+        vtbl.Controls.Add(MakeLabel("Debug window:"), 0, 4);
+        _debugWindowBox = new CheckBox
+        {
+            Text    = "Show visible UE window (debug; next run)",
+            Checked = cfg.VisualiserDebugWindow,
+            Dock    = DockStyle.Fill,
+            AutoSize = false,
+        };
+        vtbl.Controls.Add(_debugWindowBox, 1, 4);
+
+        vtbl.Controls.Add(MakeLabel("Full editor:"), 0, 5);
+        _fullEditorBox = new CheckBox
+        {
+            Text    = "Open full Unreal Editor (control on workstation) + browser stream (supersedes debug window)",
+            Checked = cfg.VisualiserFullEditor,
+            Dock    = DockStyle.Fill,
+            AutoSize = false,
+        };
+        vtbl.Controls.Add(_fullEditorBox, 1, 5);
 
         visualiserGroup.Controls.Add(vtbl);
         tbl.Controls.Add(visualiserGroup, 0, 4);
@@ -193,6 +215,8 @@ public sealed class SettingsForm : Form
         _cfg.UnrealTemplateTag       = _ueTemplateTagBox.Text.Trim();
         _cfg.VisualiserMaxConcurrent = (int)_maxConcurrentBox.Value;
         _cfg.VisualiserGpuCheck      = _gpuCheckBox.Checked;
+        _cfg.VisualiserDebugWindow   = _debugWindowBox.Checked;
+        _cfg.VisualiserFullEditor    = _fullEditorBox.Checked;
         _cfg.Save();
     }
 

@@ -109,6 +109,40 @@ public sealed class AgentControlPlane
         Notify();
     }
 
+    /// <summary>
+    /// Toggle the Visualiser debug-window setting (visible UE window on the
+    /// next run). Live-applied — the orchestrator reads it at job launch, so
+    /// no agent restart is required. Mirrors <see cref="SetRolesAsync"/>'s
+    /// persist-then-notify shape so the tray + web UI stay in sync.
+    /// </summary>
+    public async Task SetVisualiserDebugWindowAsync(bool enabled)
+    {
+        if (enabled == _cfg.VisualiserDebugWindow) return;
+        _cfg.VisualiserDebugWindow = enabled;
+        _cfg.Save();
+        _log.LogInformation("visualiser debug window changed -> {Enabled}", enabled);
+        await SendHelloAsync();
+        Notify();
+    }
+
+    /// <summary>
+    /// Toggle the Visualiser full-editor setting (open the full Unreal
+    /// Editor GUI on the next run for inspection — SUPERSEDES the
+    /// debug-window setting). Live-applied — the orchestrator reads it at
+    /// job launch, so no agent restart is required. Mirrors
+    /// <see cref="SetVisualiserDebugWindowAsync"/>'s persist-then-notify
+    /// shape so the tray + web UI stay in sync.
+    /// </summary>
+    public async Task SetVisualiserFullEditorAsync(bool enabled)
+    {
+        if (enabled == _cfg.VisualiserFullEditor) return;
+        _cfg.VisualiserFullEditor = enabled;
+        _cfg.Save();
+        _log.LogInformation("visualiser full editor changed -> {Enabled}", enabled);
+        await SendHelloAsync();
+        Notify();
+    }
+
     public async Task SetNodeNameAsync(string nodeName)
     {
         if (string.IsNullOrWhiteSpace(nodeName)) return;
@@ -173,6 +207,15 @@ public sealed class AgentControlPlane
             _cfg.VisualiserMaxConcurrent = Math.Max(1, Math.Min(4, vmc));
         if (update.VisualiserGpuCheck is { } vgc)
             _cfg.VisualiserGpuCheck = vgc;
+        if (update.VisualiserDebugWindow is { } vdw)
+            _cfg.VisualiserDebugWindow = vdw;
+        if (update.VisualiserFullEditor is { } vfe)
+            _cfg.VisualiserFullEditor = vfe;
+        // Template project path is read fresh at each visualiser job launch
+        // (see VisualiserJob), so a change applies to the NEXT run with no
+        // agent restart. Empty string resets to the configured default.
+        if (update.VisualiserTemplateProjectPath is { } vtp)
+            _cfg.VisualiserTemplateProjectPath = vtp.Trim();
 
         _cfg.Save();
         _log.LogInformation("config saved (restartRequired={Restart})", restart);
@@ -380,6 +423,9 @@ public sealed class ConfigUpdate
     public string?      UnrealTemplateTag       { get; set; }
     public int?         VisualiserMaxConcurrent { get; set; }
     public bool?        VisualiserGpuCheck      { get; set; }
+    public bool?        VisualiserDebugWindow   { get; set; }
+    public bool?        VisualiserFullEditor    { get; set; }
+    public string?      VisualiserTemplateProjectPath { get; set; }
 }
 
 public sealed record ConfigUpdateResult(bool RestartRequired, AgentConfig Config);

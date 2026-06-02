@@ -59,7 +59,7 @@ services:
       # visualisationReady before failing. 180s matches Phase G's
       # measured first-cold-start envelope (~60-90s) with comfortable
       # headroom.
-      VISUALISER_START_TIMEOUT_MS: "${VISUALISER_START_TIMEOUT_MS:-180000}"
+      VISUALISER_START_TIMEOUT_MS: "${VISUALISER_START_TIMEOUT_MS:-600000}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - prism-uploads:/var/lib/prism/uploads

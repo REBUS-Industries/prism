@@ -326,6 +326,9 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 unrealTemplateTag       = cfg.UnrealTemplateTag,
                 visualiserMaxConcurrent = cfg.VisualiserMaxConcurrent,
                 visualiserGpuCheck      = cfg.VisualiserGpuCheck,
+                visualiserDebugWindow   = cfg.VisualiserDebugWindow,
+                visualiserFullEditor    = cfg.VisualiserFullEditor,
+                visualiserTemplateProjectPath = cfg.VisualiserTemplateProjectPath,
             },
             availableRoles = Enum.GetNames(typeof(AgentRole)).Select(s => s.ToLowerInvariant()).ToArray(),
         };
