@@ -246,6 +246,22 @@ public sealed class AgentControlPlane
         if (update.VisualiserTemplateProjectPath is { } vtp)
             _cfg.VisualiserTemplateProjectPath = vtp.Trim();
 
+        // Portal URL is NOT secret — applied verbatim (trimmed) when present.
+        // Blank is allowed (resets toward whatever the operator typed); read at
+        // job-launch, so a change applies on the NEXT visualiser run.
+        if (update.PortalUrl is { } purl)
+            _cfg.PortalUrl = purl.Trim();
+
+        // Portal API key (SECRET) — update-or-keep semantics: a null OR
+        // blank/whitespace value LEAVES THE STORED KEY UNCHANGED. The web UI
+        // never receives the key back (it only knows rebusApiKeySet), so it
+        // can't round-trip the value; treating blank as "no change" stops an
+        // unrelated settings save from wiping the key. Only a non-blank value
+        // replaces the stored key. (There is intentionally no clear-via-UI
+        // path here; an operator clears it by editing agent-config.json.)
+        if (!string.IsNullOrWhiteSpace(update.RebusApiKey))
+            _cfg.RebusApiKey = update.RebusApiKey.Trim();
+
         _cfg.Save();
         _log.LogInformation("config saved (restartRequired={Restart})", restart);
 
@@ -589,6 +605,10 @@ public sealed class ConfigUpdate
     public bool?        VisualiserDebugWindow   { get; set; }
     public bool?        VisualiserFullEditor    { get; set; }
     public string?      VisualiserTemplateProjectPath { get; set; }
+    // Portal (external app the UE plug-ins connect to).
+    public string?      PortalUrl    { get; set; }
+    // SECRET — blank/omitted leaves the stored key unchanged (see ApplyAsync).
+    public string?      RebusApiKey  { get; set; }
 }
 
 public sealed record ConfigUpdateResult(bool RestartRequired, AgentConfig Config);

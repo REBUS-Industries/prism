@@ -148,6 +148,26 @@ public sealed class VisualiserJob
     public const string VisualiserConnectorImportEnvVar = "PRISM_VISUALISER_CONNECTOR_IMPORT";
 
     /// <summary>
+    /// Env var forwarded to the orchestrator carrying the external Portal
+    /// base URL the UE plug-ins connect to. The orchestrator passes it to UE
+    /// as <c>-PortalUrl="&lt;url&gt;"</c>. Mirrors
+    /// <see cref="Config.AgentConfig.PortalUrl"/>. NOT secret — logged
+    /// normally. Read at job-launch so a config change applies on the next run.
+    /// </summary>
+    public const string PortalUrlEnvVar = "PRISM_PORTAL_URL";
+
+    /// <summary>
+    /// Env var forwarded to the orchestrator carrying the REBUS Portal API
+    /// key the UE plug-ins authenticate with. The orchestrator passes it to UE
+    /// as <c>-RebusApiKey=&lt;key&gt;</c>. Mirrors
+    /// <see cref="Config.AgentConfig.RebusApiKey"/>. SECRET — its value is
+    /// NEVER logged (only a "set"/"unset" boolean), exactly like the existing
+    /// <c>-OrbitToken=</c> / <c>ORBIT_PAT_*</c> handling. Forwarded only when
+    /// the configured key is non-blank.
+    /// </summary>
+    public const string RebusApiKeyEnvVar = "PRISM_REBUS_API_KEY";
+
+    /// <summary>
     /// Suggested signalling port the orchestrator's
     /// <c>PortAllocator</c> uses as a starting hint. The orchestrator
     /// will pick a different free port if this one is in use.
@@ -371,6 +391,44 @@ public sealed class VisualiserJob
             _log.LogInformation(
                 "visualiser job: connector-import unset (config=auto) — orchestrator will auto-detect " +
                 "the OrbitConnector plug-in in the fixed project and fall back to Interchange if absent.");
+        }
+
+        // Forward the external Portal connection so the orchestrator can hand
+        // it to UE (-PortalUrl / -RebusApiKey). Honour an externally-set env
+        // var (override), else the persisted config value. The URL is NOT
+        // secret and is logged; the API KEY is a SECRET and follows the exact
+        // OrbitToken precedent — its value is set on the child env but NEVER
+        // logged (we only log whether it is set). Read at job-launch so a
+        // config change applies on the next run.
+        var envPortalUrl = Environment.GetEnvironmentVariable(PortalUrlEnvVar);
+        var portalUrl = !string.IsNullOrWhiteSpace(envPortalUrl)
+            ? envPortalUrl
+            : _cfg.PortalUrl;
+        if (!string.IsNullOrWhiteSpace(portalUrl))
+        {
+            psi.Environment[PortalUrlEnvVar] = portalUrl.Trim();
+            _log.LogInformation(
+                "visualiser job: portal url -> {Url} (config={CfgValue} env={EnvValue})",
+                portalUrl.Trim(), _cfg.PortalUrl ?? "<unset>", envPortalUrl ?? "<unset>");
+        }
+
+        // SECRET: never log the key value. Mirror the ORBIT_PAT_* / -OrbitToken
+        // precedent above — set it on the child env only, and emit only a
+        // boolean so the env dump stays clean.
+        var envRebusKey = Environment.GetEnvironmentVariable(RebusApiKeyEnvVar);
+        var rebusApiKey = !string.IsNullOrWhiteSpace(envRebusKey)
+            ? envRebusKey
+            : _cfg.RebusApiKey;
+        if (!string.IsNullOrWhiteSpace(rebusApiKey))
+        {
+            psi.Environment[RebusApiKeyEnvVar] = rebusApiKey.Trim();
+            _log.LogInformation(
+                "visualiser job: REBUS Portal API key forwarded to orchestrator (set=true; value redacted)");
+        }
+        else
+        {
+            _log.LogInformation(
+                "visualiser job: no REBUS Portal API key configured (set=false) — orchestrator will omit -RebusApiKey");
         }
 
         if (!string.IsNullOrWhiteSpace(_cfg.UnrealEngineRoot))

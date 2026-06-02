@@ -773,13 +773,28 @@ internal static class Program
         //    typed failed/v1 event AND a ready/v1 status=failed line
         //    (the agent reads both, but the ready event is what the
         //    server's WS handler binds against).
+        // External Portal connection for the UE plug-ins, forwarded by the
+        // agent via PRISM_PORTAL_URL / PRISM_REBUS_API_KEY. Null when neither
+        // is set, so the launcher omits both flags. The API key is a SECRET
+        // and is never logged (mirrors -OrbitToken=); we log only the URL +
+        // a presence flag here so a run's Portal wiring is diagnosable.
+        var portal = PortalSettings.FromEnvironment();
+        if (portal is not null)
+        {
+            logger.Information(
+                "portal connection forwarded to UE: url={PortalUrl} rebusApiKey={RebusApiKey}",
+                portal.HasUrl ? portal.Url : "<unset>",
+                portal.HasApiKey ? "set (redacted)" : "<unset>");
+        }
+
         PixelStreamingSession session;
         try
         {
             session = await pipeline
                 .StartStreamingAsync(
                     manifest, install, scaffold,
-                    fullEditor: fullEditor, orbitImport: orbitImport, ct: ct)
+                    fullEditor: fullEditor, orbitImport: orbitImport,
+                    portal: portal, ct: ct)
                 .ConfigureAwait(false);
         }
         catch (SignallingNotFoundException ex)

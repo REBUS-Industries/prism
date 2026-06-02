@@ -4,6 +4,35 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.15 — forward external Portal connection to the Unreal plug-ins
+
+> The PRISM agent now forwards an external "Portal" connection (set from the
+> agent web UI) to the orchestrator via `PRISM_PORTAL_URL` /
+> `PRISM_REBUS_API_KEY`. The orchestrator hands these to Unreal so the plug-ins
+> can authenticate to the Portal.
+
+### Added
+
+- **`Unreal/PortalSettings.cs`** — new record carrying the Portal `Url` (not
+  secret) and `ApiKey` (secret). `PortalSettings.FromEnvironment()` reads
+  `PRISM_PORTAL_URL` / `PRISM_REBUS_API_KEY` (returns `null` when neither is
+  set).
+- **`UnrealLauncher`** appends `-PortalUrl="<url>"` and `-RebusApiKey=<key>` to
+  the UE argument list for BOTH the streaming `-game` launch
+  (`BuildGameStartInfoCore`) and the full-editor + stream launch
+  (`BuildFullEditorStreamingStartInfoCore`). Each flag is emitted only when its
+  value is present, so an unset key never produces an empty `-RebusApiKey=`.
+  Quoting is handled by `ProcessStartInfo.ArgumentList`.
+- `Program.cs::RunPhaseFAsync` reads the Portal settings once and threads them
+  through `VisualiserPipeline.StartStreamingAsync` to the launcher.
+
+### Security
+
+- The **`RebusApiKey` is never logged** — exactly like the existing
+  `-OrbitToken=`. The launch log lines report the Portal URL (not secret) and a
+  `set (redacted)` / `<unset>` indicator for the key only; the value appears
+  solely on the UE command line.
+
 ## v0.5.14 — deterministic .uproject selection (fixes stray MyProject.uproject shadowing)
 
 > Follow-up fix to the fixed-project visualiser path. The local template cache is

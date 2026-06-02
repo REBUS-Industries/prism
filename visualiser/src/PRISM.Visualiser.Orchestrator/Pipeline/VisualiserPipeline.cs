@@ -354,6 +354,7 @@ public sealed class VisualiserPipeline
         TimeSpan? streamerConnectTimeout = null,
         bool fullEditor = false,
         OrbitImportParams? orbitImport = null,
+        PortalSettings? portal = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(manifest);
@@ -491,7 +492,7 @@ public sealed class VisualiserPipeline
                 // the streamed viewport. Reuses the streamerId/URL bring-up
                 // above so the browser viewer connects identically to -game.
                 ueHandle = launcher.LaunchFullEditorStreaming(
-                    scaffold, signallingUrl, streamerId);
+                    scaffold, signallingUrl, streamerId, portal: portal);
             }
             else
             {
@@ -504,7 +505,7 @@ public sealed class VisualiserPipeline
                 ueHandle = launcher.LaunchGameMode(
                     scaffold, signallingUrl, streamerId,
                     resX: gameResX, resY: gameResY, debugWindow: _debugWindow,
-                    orbitImport: orbitImport);
+                    orbitImport: orbitImport, portal: portal);
             }
 
             var match = await WaitForStreamerConnectedAsync(

@@ -60,6 +60,42 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.22 — 2026-06-02 — Portal URL + REBUS API key for the Unreal plug-ins
+
+### Added
+
+- **Portal connection settings on the agent.** New `AgentConfig.PortalUrl`
+  (default `https://app.rebus.industries`) and `AgentConfig.RebusApiKey`
+  (secret, default empty). Both are settable from the agent web UI's
+  *Visualiser* card — a "Portal URL" text input and a write-only
+  "Portal API key (REBUS)" password input.
+- **The agent forwards the Portal connection to the orchestrator** via two new
+  env vars: `PRISM_PORTAL_URL` and `PRISM_REBUS_API_KEY` (mirroring the
+  `PRISM_VISUALISER_*` style). The orchestrator then appends
+  `-PortalUrl="<url>"` and `-RebusApiKey=<key>` to the Unreal command line for
+  BOTH the streaming `-game` launch and the full-editor (`+ stream`) launch.
+  The flags are omitted entirely when their values are unset (no empty
+  `-RebusApiKey=`).
+
+### Security
+
+- **`RebusApiKey` is a secret and is never leaked.** It follows the exact
+  `-OrbitToken=` precedent: it is passed to Unreal on the command line only and
+  is NEVER written to any log (the agent and orchestrator log only a
+  `set`/`unset` indicator). The web UI `/api/config` state never echoes the
+  value — it returns a `rebusApiKeySet` boolean instead, and the UI shows a
+  "key set" placeholder. Writes are accepted; reads are masked.
+
+### Behaviour
+
+- **Blank-key update semantics:** a `null` or blank `rebusApiKey` in a config
+  POST leaves the stored key unchanged, so an unrelated settings save (which
+  can't round-trip the never-returned value) never wipes the key. Only a
+  non-blank value replaces it. `PortalUrl` is not secret and is applied
+  verbatim. Both are read at job-launch, so changes apply on the next
+  visualiser run with no agent restart.
+- Orchestrator companion release: `PRISM/visualiser/CHANGELOG.md` (v0.5.15).
+
 ## v0.3.21 — 2026-06-02 — Compile the pulled project so the headless -game launch works
 
 ### Fixed

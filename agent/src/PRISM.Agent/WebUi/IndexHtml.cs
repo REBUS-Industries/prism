@@ -464,6 +464,25 @@ internal static class IndexHtml
       </div>
       <div class="row">
         <label class="field">
+          <span>Portal URL</span>
+          <input type="url" id="portalUrl" placeholder="https://app.rebus.industries" />
+        </label>
+        <label class="field">
+          <span>Portal API key (REBUS)</span>
+          <input type="password" id="rebusApiKey" autocomplete="off" placeholder="not set" />
+        </label>
+      </div>
+      <p class="hint">
+        The <strong>Portal URL</strong> and <strong>API key</strong> are passed
+        to the Unreal plug-ins on the next visualiser run
+        (<code>-PortalUrl</code> / <code>-RebusApiKey</code>). The API key is
+        write-only: it is stored on this workstation and forwarded to Unreal,
+        but is never shown here again — the field shows
+        <em>"key set"</em> once saved. Leave it blank to keep the existing key;
+        type a new value to replace it.
+      </p>
+      <div class="row">
+        <label class="field">
           <span>Max concurrent sessions (1–4)</span>
           <input type="number" id="visualiserMaxConcurrent" min="1" max="4" />
         </label>
@@ -749,6 +768,18 @@ internal static class IndexHtml
       const compileProj = s.config.visualiserCompileProject !== false;
       $('visualiserCompileProject').checked = compileProj;
       $('visualiserCompileProjectLabel').classList.toggle('checked', compileProj);
+
+      // Portal URL is echoed normally. The API key is never returned by the
+      // server — only a rebusApiKeySet boolean — so we leave the password
+      // field blank and use its placeholder to show "key set" / "not set".
+      // Skip overwriting the URL if the operator is mid-edit.
+      if (document.activeElement !== $('portalUrl'))
+        $('portalUrl').value = s.config.portalUrl || '';
+      const keyInput = $('rebusApiKey');
+      // Don't clobber a value the operator is currently typing.
+      if (document.activeElement !== keyInput && !keyInput.value) {
+        keyInput.placeholder = s.config.rebusApiKeySet ? 'key set — leave blank to keep' : 'not set';
+      }
     }
 
     renderTemplatePull(s.templatePull);
@@ -812,7 +843,7 @@ internal static class IndexHtml
   function collectUpdate() {
     const roles = Array.from(document.querySelectorAll('#roles input:checked'))
       .map((el) => el.dataset.role);
-    return {
+    const update = {
       prismUrl:     $('prismUrl').value.trim(),
       nodeName:     $('nodeName').value.trim(),
       slots:        Number($('slots').value),
@@ -832,7 +863,17 @@ internal static class IndexHtml
       orbitConnectorRepo:      $('orbitConnectorRepo').value.trim(),
       visualiserPullConnector: $('visualiserPullConnector').checked,
       visualiserCompileProject: $('visualiserCompileProject').checked,
+      // Portal URL is not secret — always sent.
+      portalUrl:               $('portalUrl').value.trim(),
     };
+    // Portal API key (SECRET): only send it when the operator actually typed
+    // one. Omitting it (or sending blank) leaves the stored key unchanged
+    // server-side, so an unrelated save never wipes the key.
+    const rebusApiKey = $('rebusApiKey').value;
+    if (rebusApiKey && rebusApiKey.trim().length > 0) {
+      update.rebusApiKey = rebusApiKey.trim();
+    }
+    return update;
   }
 
   // ---- Template release picker ----
@@ -933,6 +974,9 @@ internal static class IndexHtml
       const update = collectUpdate();
       const r = await api('/api/config', { method: 'POST', body: JSON.stringify(update) });
       clearDirty();
+      // Clear the write-only API key field so it isn't resent on the next
+      // save and the placeholder can reflect the new "key set" state.
+      $('rebusApiKey').value = '';
       applyState(r.state);
       toast(r.restartRequired
         ? 'Saved. Restart the agent to apply server URL / Rhino / web UI changes.'
@@ -1001,7 +1045,7 @@ internal static class IndexHtml
     'prismUrl','nodeName','slots','rhinoVersion','logDir','webUiPort',
     'unrealEngineRoot','visualiserMaxConcurrent',
     'visualiserTemplateRoot','unrealTemplateRepo',
-    'orbitConnectorRepo',
+    'orbitConnectorRepo','portalUrl','rebusApiKey',
   ]) {
     $(id).addEventListener('input', markDirty);
   }

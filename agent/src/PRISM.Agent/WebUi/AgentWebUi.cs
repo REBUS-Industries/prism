@@ -434,6 +434,11 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 orbitConnectorTag       = cfg.OrbitConnectorTag,
                 visualiserPullConnector = cfg.VisualiserPullConnector,
                 visualiserCompileProject = cfg.VisualiserCompileProject,
+                // Portal: URL is not secret (echoed); the API key is NEVER
+                // echoed back — only a "set"/"not set" indicator is exposed so
+                // the UI can show a placeholder without leaking the value.
+                portalUrl     = cfg.PortalUrl,
+                rebusApiKeySet = !string.IsNullOrWhiteSpace(cfg.RebusApiKey),
             },
             templatePull = new
             {

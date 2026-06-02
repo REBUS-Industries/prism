@@ -233,6 +233,37 @@ public sealed class AgentConfig
     public bool? VisualiserConnectorImport { get; set; } = null;
 
     /// <summary>
+    /// Base URL of the external "Portal" service the Unreal plug-ins connect
+    /// to (forwarded to UE as <c>-PortalUrl="&lt;url&gt;"</c>). Not a secret —
+    /// echoed normally in the agent web UI / WS state. Forwarded to the
+    /// orchestrator as <c>PRISM_PORTAL_URL</c>; read at job-launch time so a
+    /// change applies on the NEXT visualiser run with no agent restart.
+    /// </summary>
+    public string PortalUrl { get; set; } = "https://app.rebus.industries";
+
+    /// <summary>
+    /// REBUS Portal API key the Unreal plug-ins authenticate to the Portal
+    /// with (forwarded to UE as <c>-RebusApiKey=&lt;key&gt;</c>). This is a
+    /// SECRET: it is persisted to the local agent-config.json but is NEVER
+    /// echoed back in the web UI / WS state (the UI only sees a
+    /// <c>rebusApiKeySet</c> boolean) and is NEVER written to any log — the
+    /// agent forwards it to the orchestrator via <c>PRISM_REBUS_API_KEY</c>
+    /// and the orchestrator passes it to UE on the command line only, exactly
+    /// mirroring the existing <c>-OrbitToken=</c> handling. Empty (the
+    /// default) means "unset" — the orchestrator omits the
+    /// <c>-RebusApiKey=</c> flag entirely.
+    ///
+    /// <para>
+    /// Update semantics (see <see cref="AgentControlPlane.ApplyAsync"/>): a
+    /// <c>null</c> or blank/whitespace value in a <see cref="ConfigUpdate"/>
+    /// LEAVES THE STORED KEY UNCHANGED, so the web UI — which never receives
+    /// the value back and therefore cannot round-trip it — does not wipe the
+    /// key on an unrelated settings save. Only a non-blank value replaces it.
+    /// </para>
+    /// </summary>
+    public string RebusApiKey { get; set; } = "";
+
+    /// <summary>
     /// Optional override for the on-disk path of
     /// <c>PRISM.Visualiser.Orchestrator.exe</c>. When set, takes
     /// precedence over the agent installer's bundled copy at

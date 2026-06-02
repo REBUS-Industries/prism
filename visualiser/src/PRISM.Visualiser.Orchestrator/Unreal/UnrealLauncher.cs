@@ -343,17 +343,23 @@ public sealed class UnrealLauncher
         int resX = DefaultGameResX,
         int resY = DefaultGameResY,
         bool debugWindow = false,
-        OrbitImportParams? orbitImport = null)
+        OrbitImportParams? orbitImport = null,
+        PortalSettings? portal = null)
     {
         ArgumentNullException.ThrowIfNull(scaffold);
         ArgumentException.ThrowIfNullOrWhiteSpace(signallingUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(streamerId);
 
-        var psi = BuildGameStartInfoCore(_install, scaffold, signallingUrl, streamerId, resX, resY, debugWindow, orbitImport);
+        var psi = BuildGameStartInfoCore(_install, scaffold, signallingUrl, streamerId, resX, resY, debugWindow, orbitImport, portal);
+        // NB: the Portal URL is logged (not secret) but the RebusApiKey is
+        // NEVER logged — mirroring the -OrbitToken= precedent (we only report
+        // whether a key is present).
         _log.Information(
-            "ue game launch project={Project} level={Level} signallingUrl={SignallingUrl} streamerId={StreamerId} res={ResX}x{ResY} debugWindow={DebugWindow} connectorImport={ConnectorImport}",
+            "ue game launch project={Project} level={Level} signallingUrl={SignallingUrl} streamerId={StreamerId} res={ResX}x{ResY} debugWindow={DebugWindow} connectorImport={ConnectorImport} portalUrl={PortalUrl} rebusApiKey={RebusApiKey}",
             scaffold.UprojectPath, scaffold.LevelPath, signallingUrl, streamerId, resX, resY, debugWindow,
-            orbitImport is null ? "off" : $"{orbitImport.Server}/{orbitImport.ProjectId}/{orbitImport.ModelId}");
+            orbitImport is null ? "off" : $"{orbitImport.Server}/{orbitImport.ProjectId}/{orbitImport.ModelId}",
+            portal is { HasUrl: true } ? portal.Url : "<unset>",
+            portal is { HasApiKey: true } ? "set (redacted)" : "<unset>");
         if (debugWindow)
         {
             _log.Warning(
@@ -432,11 +438,12 @@ public sealed class UnrealLauncher
         int resX = DefaultGameResX,
         int resY = DefaultGameResY,
         bool debugWindow = false,
-        OrbitImportParams? orbitImport = null)
+        OrbitImportParams? orbitImport = null,
+        PortalSettings? portal = null)
     {
         ArgumentNullException.ThrowIfNull(install);
         ArgumentNullException.ThrowIfNull(scaffold);
-        return BuildGameStartInfoCore(install, scaffold, signallingUrl, streamerId, resX, resY, debugWindow, orbitImport);
+        return BuildGameStartInfoCore(install, scaffold, signallingUrl, streamerId, resX, resY, debugWindow, orbitImport, portal);
     }
 
     private static ProcessStartInfo BuildGameStartInfoCore(
@@ -447,7 +454,8 @@ public sealed class UnrealLauncher
         int resX,
         int resY,
         bool debugWindow,
-        OrbitImportParams? orbitImport = null)
+        OrbitImportParams? orbitImport = null,
+        PortalSettings? portal = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -551,7 +559,41 @@ public sealed class UnrealLauncher
             }
         }
 
+        AppendPortalArgs(psi, portal);
+
         return psi;
+    }
+
+    /// <summary>
+    /// Append the external Portal connection flags the UE plug-ins read —
+    /// <c>-PortalUrl="&lt;url&gt;"</c> and <c>-RebusApiKey=&lt;key&gt;</c>.
+    /// Each flag is emitted only when its value is present, so an unset key
+    /// never produces an empty <c>-RebusApiKey=</c>. <see cref="ProcessStartInfo.ArgumentList"/>
+    /// applies Windows' own CommandLineToArgvW quoting, so values with spaces
+    /// (or none) round-trip correctly without manual quoting.
+    ///
+    /// <para>
+    /// The API KEY is a SECRET and is intentionally NEVER logged here (or by
+    /// any caller) — exactly like <c>-OrbitToken=</c>; only the launch sites'
+    /// "set/unset" boolean is ever written to a log.
+    /// </para>
+    /// </summary>
+    private static void AppendPortalArgs(ProcessStartInfo psi, PortalSettings? portal)
+    {
+        if (portal is null) return;
+        if (portal.HasUrl)
+        {
+            // Format with explicit quotes so the rendered command line reads
+            // -PortalUrl="https://app.rebus.industries" (matches the dev's
+            // requested form); ArgumentList re-quotes safely for the OS.
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-PortalUrl=\"{0}\"", portal.Url));
+        }
+        if (portal.HasApiKey)
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-RebusApiKey={0}", portal.ApiKey));
+        }
     }
 
     // ----------------------------------------------------------------
@@ -770,7 +812,8 @@ public sealed class UnrealLauncher
     public UnrealGameHandle LaunchFullEditorStreaming(
         ScaffoldResult scaffold,
         string signallingUrl,
-        string streamerId)
+        string streamerId,
+        PortalSettings? portal = null)
     {
         ArgumentNullException.ThrowIfNull(scaffold);
         ArgumentException.ThrowIfNullOrWhiteSpace(signallingUrl);
@@ -797,7 +840,7 @@ public sealed class UnrealLauncher
         // Property" at init) and the toolbar click was still required.
         WriteEditorStreamingConfig(ResolveDefaultGameIniPath(scaffold), signallingUrl);
 
-        var psi = BuildFullEditorStreamingStartInfoCore(_install, scaffold, signallingUrl, streamerId);
+        var psi = BuildFullEditorStreamingStartInfoCore(_install, scaffold, signallingUrl, streamerId, portal);
         var editorExe = psi.FileName;
         if (!File.Exists(editorExe))
         {
@@ -807,9 +850,13 @@ public sealed class UnrealLauncher
         }
 
         var mapPackage = ExtractMapPackagePath(scaffold.LevelPath);
+        // Portal URL is logged (not secret); the RebusApiKey is NEVER logged
+        // (mirrors -OrbitToken=) — only its presence is reported.
         _log.Information(
-            "ue FULL EDITOR + STREAM launch editor={Editor} project={Project} map={Map} signallingUrl={SignallingUrl} streamerId={StreamerId}",
-            editorExe, scaffold.UprojectPath, mapPackage, signallingUrl, streamerId);
+            "ue FULL EDITOR + STREAM launch editor={Editor} project={Project} map={Map} signallingUrl={SignallingUrl} streamerId={StreamerId} portalUrl={PortalUrl} rebusApiKey={RebusApiKey}",
+            editorExe, scaffold.UprojectPath, mapPackage, signallingUrl, streamerId,
+            portal is { HasUrl: true } ? portal.Url : "<unset>",
+            portal is { HasApiKey: true } ? "set (redacted)" : "<unset>");
         _log.Warning(
             "ue full-editor-stream: opening the Unreal Editor GUI AND streaming the level-editor viewport. " +
             "The editor window only appears on the operator's INTERACTIVE desktop session (session-0 service = invisible). " +
@@ -873,15 +920,17 @@ public sealed class UnrealLauncher
     /// string without spawning UE.
     /// </summary>
     public static ProcessStartInfo BuildFullEditorStreamingStartInfoForTest(
-        UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId)
+        UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId,
+        PortalSettings? portal = null)
     {
         ArgumentNullException.ThrowIfNull(install);
         ArgumentNullException.ThrowIfNull(scaffold);
-        return BuildFullEditorStreamingStartInfoCore(install, scaffold, signallingUrl, streamerId);
+        return BuildFullEditorStreamingStartInfoCore(install, scaffold, signallingUrl, streamerId, portal);
     }
 
     private static ProcessStartInfo BuildFullEditorStreamingStartInfoCore(
-        UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId)
+        UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId,
+        PortalSettings? portal = null)
     {
         var editorExe = ResolveFullEditorExePath(install);
         var psi = new ProcessStartInfo
@@ -927,6 +976,10 @@ public sealed class UnrealLauncher
         psi.ArgumentList.Add("-FullStdOutLogOutput");
         psi.ArgumentList.Add("-log");
         psi.ArgumentList.Add("-NoSplash");
+
+        // External Portal connection for the UE plug-ins (same flags + secret
+        // handling as the -game path).
+        AppendPortalArgs(psi, portal);
 
         return psi;
     }
