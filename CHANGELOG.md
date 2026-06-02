@@ -43,6 +43,20 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.16 — 2026-06-02 — Visualiser debug-window / full-editor toggles + 600s start timeout
+
+### Added
+
+- **Visualiser debug-window toggle** and **full-editor toggle** in the agent tray Settings form and the agent web UI. Both are live-applied — read at visualiser job launch, so no agent restart is required. Full-editor (open the full Unreal Editor GUI on the workstation alongside the browser stream) supersedes the debug-window (visible headless UE window). Backed by `AgentControlPlane.SetVisualiserDebugWindowAsync` / `SetVisualiserFullEditorAsync` and new `ConfigUpdate` fields (`VisualiserDebugWindow`, `VisualiserFullEditor`, `VisualiserTemplateProjectPath`).
+
+### Changed
+
+- **`VISUALISER_START_TIMEOUT_MS` default 180000 → 600000** (server `.env.example` + `infra/docker-compose.yml` + OpenAPI doc) to cover a cold full-editor first-open (Unreal Editor + shader compile + DDC build on a freshly-cached C++ template). Lean `-game` runs still connect in ~60–90s; this only raises the upper bound before a run is failed.
+
+### Included from main (now tagged)
+
+- **Multi-viewer `Visualiser/SignallingBridge.cs` per-viewer demux** (commit `0daf284`) — opens one local Cirrus/Wilbur WS **per browser viewer** so multiple peers per run are demuxed independently (fixes the 2nd-viewer-freezes-1st bug). Previously hot-patched on PC01 and reported as `v0.3.15`; **v0.3.16 is the first tagged agent build that carries it.** Server-train multi-viewer notes remain under **Unreleased → Visualiser multi-viewer** (server ships as a rolling `main` deploy, not tagged).
+
 ## v0.3.15 — 2026-06-01 — Hardened in-app updater (locked-DLL update failures)
 
 ### Fixed
@@ -737,6 +751,41 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 ---
 
 ## Unreleased
+
+### Added — Visualiser multi-viewer (shareable links + control tiers)
+
+> Shipped to prod as a rolling `main` deploy at commit `0daf284`
+> (`ghcr.io/rebus-orbit/prism-server:sha-0daf284` on VM 211); not yet cut as
+> a tagged version. The PC01 agent was hot-patched with the matching
+> `SignallingBridge` change (still reporting `v0.3.15`).
+
+- **Multiple concurrent browser viewers per visualiser run** (~5), with
+  view-only / control permission tiers, a single-controller lock, and
+  shareable links. Opening a 2nd viewer no longer freezes the 1st (the
+  original single-WS demux bug).
+- **`server/src/ws/signallingProxyRegistry.ts`** — rewritten for per-viewer
+  routing, the controller lock, and control-channel subscriptions.
+- **`agent/src/PRISM.Agent/Visualiser/SignallingBridge.cs`** — refactored to
+  open one local Cirrus/Wilbur WS **per viewer** so each browser peer is
+  demuxed independently (fixes the freeze/disconnect when a second viewer
+  joined).
+- **New migration `0006_visualiser_share_links.sql`** — `visualiser_share_links`
+  table (`run_id` FK cascade, `token_hash` unique, `tier` default `view`,
+  `created_by`, `expires_at`, `revoked_at`).
+- **New `/viewer/` page + share-link endpoints** for minting/redeeming view
+  and control links.
+- Integration contract documented in `visualiser/PRISM-INTEGRATION.md`.
+
+### Verified — TURN / coturn for off-LAN viewers
+
+- `coturn/coturn:4.6` on VM 211 (`/home/rebus/coturn/`, `network_mode=host`,
+  UDP+TCP `:3478` + TLS `:5349`, relay `52000–56999`) confirmed healthy with a
+  `static-auth-secret` byte-identical to `prism-server`'s `TURN_SECRET`.
+  `generateTurnCredential` (`server/src/visualiser/turnCredentials.ts`) returns
+  `turn:visualiser.rebus.industries:3478` + `turns:…:5349`, username
+  `<exp>:<runid-seg>`, `base64(HMAC-SHA1(secret, username))`, `ttl 86400`.
+  `:3478` is internet-reachable; UniFi DNAT for the relay UDP range + `5349/TLS`
+  is the one item still to confirm.
 
 ### Changed
 
