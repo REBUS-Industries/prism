@@ -621,9 +621,21 @@ internal static class Program
         //     glTF stage / Interchange python pass).
         //   - Interchange (legacy fallback): receive + stage + UE editor import.
         ScaffoldResult scaffold;
-        // Non-null on the connector path; threaded to the -game launch so the
-        // connector's headless auto-import knows which model to pull.
-        OrbitImportParams? orbitImport = null;
+        // ORBIT session identity, forwarded to UE on EVERY launch path so any
+        // plugin/module (the Portal plugin, etc.) can read the project / model
+        // / version IDs as the UE-native shared variable
+        // (-OrbitProject= / -OrbitModel= / -OrbitVersion=, read via FParse).
+        // These are NOT secret. The bearer token is added ONLY on the
+        // connector-import path below (see `with { Token = … }`): that path's
+        // FOrbitHeadlessAutoImport needs it to pull the model, and other paths
+        // neither have nor need it (so no secret leaks where it isn't used).
+        OrbitImportParams orbitImport = new(
+            Server: manifest.Server.Name,
+            ProjectId: manifest.ProjectId,
+            ModelId: manifest.ModelId,
+            VersionId: manifest.VersionId,
+            Token: string.Empty,
+            Target: manifest.Server.Name);
         if (fullEditor)
         {
             try
@@ -665,13 +677,9 @@ internal static class Program
             // -game instance — no glTF stage / Interchange python pass here.
             scaffold = connectorScaffold;
             var token = await pipeline.ResolveOrbitTokenAsync(manifest, ct).ConfigureAwait(false);
-            orbitImport = new OrbitImportParams(
-                Server: manifest.Server.Name,
-                ProjectId: manifest.ProjectId,
-                ModelId: manifest.ModelId,
-                VersionId: manifest.VersionId,
-                Token: token,
-                Target: manifest.Server.Name);
+            // Add the bearer token to the identity built above so the
+            // connector's headless auto-import can pull + load the model.
+            orbitImport = orbitImport with { Token = token };
             logger.Information(
                 "connector-import: streaming fixed project root={Root} level={Level}; " +
                 "OrbitConnector will pull server={Server} project={Project} model={Model} version={Version} at runtime",

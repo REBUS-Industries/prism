@@ -118,6 +118,51 @@ public sealed class ConnectorImportTests
     }
 
     [Fact]
+    public void GameStartInfo_AddsIdentityArgs_ButOmitsToken_WhenNoToken()
+    {
+        // Identity-only params (no token): non-connector paths still forward
+        // the project/model/version IDs so other UE plugins can read them, but
+        // -OrbitToken= is omitted (no secret where it isn't needed).
+        var orbit = new OrbitImportParams(
+            Server: "prod", ProjectId: "proj123", ModelId: "model456",
+            VersionId: "ver789", Token: string.Empty, Target: "prod");
+
+        var psi = UnrealLauncher.BuildGameStartInfoForTest(
+            MakeInstall(),
+            MakeScaffold(@"C:\proj", "/Game/REBUS/Maps/Imported_run.Imported_run"),
+            "ws://127.0.0.1:8888", "orbit_run",
+            orbitImport: orbit);
+
+        Assert.Contains("-OrbitProject=proj123", psi.ArgumentList);
+        Assert.Contains("-OrbitModel=model456", psi.ArgumentList);
+        Assert.Contains("-OrbitVersion=ver789", psi.ArgumentList);
+        Assert.Contains("-OrbitServer=prod", psi.ArgumentList);
+        Assert.DoesNotContain(psi.ArgumentList, a => a.StartsWith("-OrbitToken=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FullEditorStreamingStartInfo_AddsIdentityArgs_ForPluginsToConsume()
+    {
+        // The full-editor + stream path must ALSO expose the ORBIT identity on
+        // the command line so plugins running in that mode can read the IDs.
+        var orbit = new OrbitImportParams(
+            Server: "dev", ProjectId: "projA", ModelId: "modelB",
+            VersionId: "verC", Token: string.Empty, Target: "dev");
+
+        var psi = UnrealLauncher.BuildFullEditorStreamingStartInfoForTest(
+            MakeInstall(),
+            MakeScaffold(@"C:\proj", "/Game/REBUS/Maps/Imported_run.Imported_run"),
+            "ws://127.0.0.1:8888", "orbit_run",
+            orbitImport: orbit);
+
+        Assert.Contains("-OrbitServer=dev", psi.ArgumentList);
+        Assert.Contains("-OrbitProject=projA", psi.ArgumentList);
+        Assert.Contains("-OrbitModel=modelB", psi.ArgumentList);
+        Assert.Contains("-OrbitVersion=verC", psi.ArgumentList);
+        Assert.DoesNotContain(psi.ArgumentList, a => a.StartsWith("-OrbitToken=", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void GameStartInfo_OmitsEmptyLevelArg_ForFixedProjectStartupMap()
     {
         // Fixed project with no recorded EditorStartupMap → no map token, so UE

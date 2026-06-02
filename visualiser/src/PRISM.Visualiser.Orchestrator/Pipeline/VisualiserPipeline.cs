@@ -492,7 +492,7 @@ public sealed class VisualiserPipeline
                 // the streamed viewport. Reuses the streamerId/URL bring-up
                 // above so the browser viewer connects identically to -game.
                 ueHandle = launcher.LaunchFullEditorStreaming(
-                    scaffold, signallingUrl, streamerId, portal: portal);
+                    scaffold, signallingUrl, streamerId, portal: portal, orbitImport: orbitImport);
             }
             else
             {

@@ -351,13 +351,14 @@ public sealed class UnrealLauncher
         ArgumentException.ThrowIfNullOrWhiteSpace(streamerId);
 
         var psi = BuildGameStartInfoCore(_install, scaffold, signallingUrl, streamerId, resX, resY, debugWindow, orbitImport, portal);
-        // NB: the Portal URL is logged (not secret) but the RebusApiKey is
-        // NEVER logged — mirroring the -OrbitToken= precedent (we only report
-        // whether a key is present).
+        // NB: the ORBIT project/model/version + Portal URL are logged (not
+        // secret); the -OrbitToken= and -RebusApiKey= are NEVER logged — we
+        // only report whether each is present.
         _log.Information(
-            "ue game launch project={Project} level={Level} signallingUrl={SignallingUrl} streamerId={StreamerId} res={ResX}x{ResY} debugWindow={DebugWindow} connectorImport={ConnectorImport} portalUrl={PortalUrl} rebusApiKey={RebusApiKey}",
+            "ue game launch project={Project} level={Level} signallingUrl={SignallingUrl} streamerId={StreamerId} res={ResX}x{ResY} debugWindow={DebugWindow} orbit={Orbit} orbitToken={OrbitToken} portalUrl={PortalUrl} rebusApiKey={RebusApiKey}",
             scaffold.UprojectPath, scaffold.LevelPath, signallingUrl, streamerId, resX, resY, debugWindow,
-            orbitImport is null ? "off" : $"{orbitImport.Server}/{orbitImport.ProjectId}/{orbitImport.ModelId}",
+            orbitImport is null ? "<none>" : $"{orbitImport.Server}/{orbitImport.ProjectId}/{orbitImport.ModelId}/{(string.IsNullOrWhiteSpace(orbitImport.VersionId) ? "latest" : orbitImport.VersionId)}",
+            orbitImport is { Token.Length: > 0 } ? "set (redacted)" : "<unset>",
             portal is { HasUrl: true } ? portal.Url : "<unset>",
             portal is { HasApiKey: true } ? "set (redacted)" : "<unset>");
         if (debugWindow)
@@ -528,40 +529,74 @@ public sealed class UnrealLauncher
         psi.ArgumentList.Add("-FullStdOutLogOutput");
         psi.ArgumentList.Add("-log");
 
-        // Connector-import path: hand the ORBIT target to the bundled
-        // OrbitConnector.UE5 plug-in. FOrbitHeadlessAutoImport reads these
-        // -Orbit* tokens at module init and fires UOrbitImportSubsystem::
-        // OrbitImport once the game world begins play, so the model is pulled
-        // + loaded by the connector inside this same streamed UE instance
-        // (no orchestrator-side glTF stage / Interchange python pass).
-        if (orbitImport is not null)
-        {
-            psi.ArgumentList.Add(string.Format(
-                CultureInfo.InvariantCulture, "-OrbitServer={0}", orbitImport.Server));
-            psi.ArgumentList.Add(string.Format(
-                CultureInfo.InvariantCulture, "-OrbitProject={0}", orbitImport.ProjectId));
-            psi.ArgumentList.Add(string.Format(
-                CultureInfo.InvariantCulture, "-OrbitModel={0}", orbitImport.ModelId));
-            if (!string.IsNullOrWhiteSpace(orbitImport.VersionId))
-            {
-                psi.ArgumentList.Add(string.Format(
-                    CultureInfo.InvariantCulture, "-OrbitVersion={0}", orbitImport.VersionId));
-            }
-            if (!string.IsNullOrWhiteSpace(orbitImport.Token))
-            {
-                psi.ArgumentList.Add(string.Format(
-                    CultureInfo.InvariantCulture, "-OrbitToken={0}", orbitImport.Token));
-            }
-            if (!string.IsNullOrWhiteSpace(orbitImport.Target))
-            {
-                psi.ArgumentList.Add(string.Format(
-                    CultureInfo.InvariantCulture, "-OrbitTarget={0}", orbitImport.Target));
-            }
-        }
+        // ORBIT session identity (server/project/model/version/target) — see
+        // AppendOrbitArgs. Forwarded so ANY UE plugin/module can read the IDs
+        // via FParse; on the connector-import path the bearer -OrbitToken is
+        // also present so FOrbitHeadlessAutoImport can pull + load the model
+        // inside this same streamed UE instance.
+        AppendOrbitArgs(psi, orbitImport);
 
         AppendPortalArgs(psi, portal);
 
         return psi;
+    }
+
+    /// <summary>
+    /// Append the ORBIT session-identity command-line tokens the connector AND
+    /// any other UE plugin/module reads: <c>-OrbitServer=</c>,
+    /// <c>-OrbitProject=</c>, <c>-OrbitModel=</c>, optional <c>-OrbitVersion=</c>,
+    /// optional <c>-OrbitToken=</c>, and optional <c>-OrbitTarget=</c>.
+    ///
+    /// <para>
+    /// These are emitted on EVERY streaming launch path that has a session
+    /// (connector-import, Interchange, full-editor), so the project / model /
+    /// version IDs are available as the UE-native shared variable — any module
+    /// reads e.g. the project id via
+    /// <c>FParse::Value(FCommandLine::Get(), TEXT("OrbitProject="), Out)</c>.
+    /// On the connector-import path <c>FOrbitHeadlessAutoImport</c> additionally
+    /// uses them (plus the token) to pull + load the model.
+    /// </para>
+    ///
+    /// <para>
+    /// The project/model/version/server/target are NOT secret and ARE logged
+    /// at the call sites. The bearer <c>-OrbitToken=</c> IS a secret: it is
+    /// emitted only when present (i.e. the connector path) and is NEVER logged
+    /// — exactly like <c>-RebusApiKey=</c>.
+    /// </para>
+    /// </summary>
+    private static void AppendOrbitArgs(ProcessStartInfo psi, OrbitImportParams? orbitImport)
+    {
+        if (orbitImport is null) return;
+        if (!string.IsNullOrWhiteSpace(orbitImport.Server))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitServer={0}", orbitImport.Server));
+        }
+        if (!string.IsNullOrWhiteSpace(orbitImport.ProjectId))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitProject={0}", orbitImport.ProjectId));
+        }
+        if (!string.IsNullOrWhiteSpace(orbitImport.ModelId))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitModel={0}", orbitImport.ModelId));
+        }
+        if (!string.IsNullOrWhiteSpace(orbitImport.VersionId))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitVersion={0}", orbitImport.VersionId));
+        }
+        if (!string.IsNullOrWhiteSpace(orbitImport.Token))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitToken={0}", orbitImport.Token));
+        }
+        if (!string.IsNullOrWhiteSpace(orbitImport.Target))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitTarget={0}", orbitImport.Target));
+        }
     }
 
     /// <summary>
@@ -813,7 +848,8 @@ public sealed class UnrealLauncher
         ScaffoldResult scaffold,
         string signallingUrl,
         string streamerId,
-        PortalSettings? portal = null)
+        PortalSettings? portal = null,
+        OrbitImportParams? orbitImport = null)
     {
         ArgumentNullException.ThrowIfNull(scaffold);
         ArgumentException.ThrowIfNullOrWhiteSpace(signallingUrl);
@@ -840,7 +876,7 @@ public sealed class UnrealLauncher
         // Property" at init) and the toolbar click was still required.
         WriteEditorStreamingConfig(ResolveDefaultGameIniPath(scaffold), signallingUrl);
 
-        var psi = BuildFullEditorStreamingStartInfoCore(_install, scaffold, signallingUrl, streamerId, portal);
+        var psi = BuildFullEditorStreamingStartInfoCore(_install, scaffold, signallingUrl, streamerId, portal, orbitImport);
         var editorExe = psi.FileName;
         if (!File.Exists(editorExe))
         {
@@ -850,11 +886,13 @@ public sealed class UnrealLauncher
         }
 
         var mapPackage = ExtractMapPackagePath(scaffold.LevelPath);
-        // Portal URL is logged (not secret); the RebusApiKey is NEVER logged
-        // (mirrors -OrbitToken=) — only its presence is reported.
+        // ORBIT project/model/version + Portal URL are logged (not secret);
+        // the -OrbitToken= and -RebusApiKey= are NEVER logged (only presence).
         _log.Information(
-            "ue FULL EDITOR + STREAM launch editor={Editor} project={Project} map={Map} signallingUrl={SignallingUrl} streamerId={StreamerId} portalUrl={PortalUrl} rebusApiKey={RebusApiKey}",
+            "ue FULL EDITOR + STREAM launch editor={Editor} project={Project} map={Map} signallingUrl={SignallingUrl} streamerId={StreamerId} orbit={Orbit} orbitToken={OrbitToken} portalUrl={PortalUrl} rebusApiKey={RebusApiKey}",
             editorExe, scaffold.UprojectPath, mapPackage, signallingUrl, streamerId,
+            orbitImport is null ? "<none>" : $"{orbitImport.Server}/{orbitImport.ProjectId}/{orbitImport.ModelId}/{(string.IsNullOrWhiteSpace(orbitImport.VersionId) ? "latest" : orbitImport.VersionId)}",
+            orbitImport is { Token.Length: > 0 } ? "set (redacted)" : "<unset>",
             portal is { HasUrl: true } ? portal.Url : "<unset>",
             portal is { HasApiKey: true } ? "set (redacted)" : "<unset>");
         _log.Warning(
@@ -921,16 +959,16 @@ public sealed class UnrealLauncher
     /// </summary>
     public static ProcessStartInfo BuildFullEditorStreamingStartInfoForTest(
         UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId,
-        PortalSettings? portal = null)
+        PortalSettings? portal = null, OrbitImportParams? orbitImport = null)
     {
         ArgumentNullException.ThrowIfNull(install);
         ArgumentNullException.ThrowIfNull(scaffold);
-        return BuildFullEditorStreamingStartInfoCore(install, scaffold, signallingUrl, streamerId, portal);
+        return BuildFullEditorStreamingStartInfoCore(install, scaffold, signallingUrl, streamerId, portal, orbitImport);
     }
 
     private static ProcessStartInfo BuildFullEditorStreamingStartInfoCore(
         UnrealInstall install, ScaffoldResult scaffold, string signallingUrl, string streamerId,
-        PortalSettings? portal = null)
+        PortalSettings? portal = null, OrbitImportParams? orbitImport = null)
     {
         var editorExe = ResolveFullEditorExePath(install);
         var psi = new ProcessStartInfo
@@ -977,8 +1015,11 @@ public sealed class UnrealLauncher
         psi.ArgumentList.Add("-log");
         psi.ArgumentList.Add("-NoSplash");
 
-        // External Portal connection for the UE plug-ins (same flags + secret
-        // handling as the -game path).
+        // ORBIT session identity (project/model/version/server/target) + the
+        // external Portal connection — same args + secret handling as the
+        // -game path, so plugins running in the full-editor stream see the
+        // same -Orbit* / -Portal* command-line variables.
+        AppendOrbitArgs(psi, orbitImport);
         AppendPortalArgs(psi, portal);
 
         return psi;

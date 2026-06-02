@@ -4,6 +4,43 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.17 — expose the ORBIT project/model/version on the UE command line for ALL plugins
+
+> The ORBIT session identity (`-OrbitServer=` / `-OrbitProject=` / `-OrbitModel=`
+> / `-OrbitVersion=` / `-OrbitTarget=`) was previously emitted only on the
+> connector-import `-game` launch. It is now emitted on **every** streaming
+> launch path so any UE plugin/module (e.g. the Portal plugin) can read the IDs
+> as the UE-native shared variable via
+> `FParse::Value(FCommandLine::Get(), TEXT("OrbitProject="), Out)` — not just the
+> connector's import code.
+
+### Changed
+
+- **`Unreal/UnrealLauncher.cs`** — new shared `AppendOrbitArgs(psi, orbitImport)`
+  helper (factored out of `BuildGameStartInfoCore`) now appends the `-Orbit*`
+  identity tokens on BOTH the streaming `-game` path AND the full-editor + stream
+  path (`BuildFullEditorStreamingStartInfoCore`). The launch log lines report the
+  ORBIT project/model/version (not secret); the bearer `-OrbitToken=` is emitted
+  only when present and is NEVER logged (only `set (redacted)` / `<unset>`),
+  exactly like `-RebusApiKey=`.
+- **`Program.cs::RunPhaseFAsync`** — builds the `OrbitImportParams` identity from
+  the run manifest for **every** session (full-editor, connector-import, and
+  Interchange), and adds the bearer token only on the connector-import path
+  (`orbitImport with { Token = … }`). Threaded through
+  `VisualiserPipeline.StartStreamingAsync` to `LaunchFullEditorStreaming` as well
+  as `LaunchGameMode`.
+- **`Unreal/OrbitImportParams.cs`** — doc updated: the record is now the general
+  ORBIT session-identity carrier (consumed by the connector AND other plugins),
+  not connector-only.
+
+### Docs
+
+- **`docs/VISUALISER_CONNECTOR_IMPORT.md`** — new "ORBIT IDs as a UE command-line
+  variable (all launch paths)" section with a per-path table, the canonical
+  `FParse` accessor snippet for plugin authors, and a recommended companion
+  `UOrbitSessionSubsystem` shape for the `orbit-connectors` repo (out of scope
+  here — that plugin source is not vendored into this checkout).
+
 ## v0.5.16 — open a local template project in place (no redundant LOCALAPPDATA mirror)
 
 > Reconciles `TemplateProjectProvider` with the agent's "pull latest UE

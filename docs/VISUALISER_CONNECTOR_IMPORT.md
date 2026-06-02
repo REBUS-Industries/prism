@@ -114,6 +114,85 @@ connector and `orbit-cli` both redact it).
 
 ---
 
+## ORBIT IDs as a UE command-line variable (all launch paths)
+
+The ORBIT **session identity** — `-OrbitServer=`, `-OrbitProject=`,
+`-OrbitModel=`, `-OrbitVersion=` (omitted when "latest"), `-OrbitTarget=` — is
+appended to the UE command line on **every** streaming launch path, not just the
+connector-import path:
+
+| Launch path | Builder (`Unreal/UnrealLauncher.cs`) | Identity args | `-OrbitToken=` |
+| --- | --- | --- | --- |
+| Streaming `-game` (connector-import) | `BuildGameStartInfoCore` | ✅ | ✅ (needed to pull) |
+| Streaming `-game` (Interchange fallback) | `BuildGameStartInfoCore` | ✅ | ❌ |
+| Full-editor + stream | `BuildFullEditorStreamingStartInfoCore` | ✅ | ❌ |
+
+All three call the shared `AppendOrbitArgs(psi, orbitImport)` helper. The
+orchestrator builds the identity from the run manifest for **every** session
+(`Program.cs::RunPhaseFAsync`) and only adds the bearer `-OrbitToken=` on the
+connector-import path (`orbitImport with { Token = … }`). The
+project/model/version/server/target are **not secret** and are logged; the token
+is a secret and is **never** logged (only a `set (redacted)` / `<unset>`
+indicator), exactly like `-RebusApiKey=` (see `PORTAL_INTEGRATION.md`).
+
+This means the command line is the **UE-native shared variable**: any
+plugin/module (the connector, the Portal plugin, a Blueprint library, …) can read
+the IDs without depending on the connector. The canonical accessor:
+
+```cpp
+// Anywhere a UE module/plugin has run (module Startup, GameInstance init,
+// subsystem Initialize, an actor's BeginPlay, etc.). FCommandLine::Get()
+// returns the full process command line UE was launched with.
+FString OrbitProject, OrbitModel, OrbitVersion, OrbitServer;
+FParse::Value(FCommandLine::Get(), TEXT("OrbitProject="), OrbitProject);
+FParse::Value(FCommandLine::Get(), TEXT("OrbitModel="),   OrbitModel);
+FParse::Value(FCommandLine::Get(), TEXT("OrbitVersion="), OrbitVersion); // empty == latest
+FParse::Value(FCommandLine::Get(), TEXT("OrbitServer="),  OrbitServer);  // "prod" | "dev" | https URL
+```
+
+> `FParse::Value` matches the `Key=` token anywhere on the command line and
+> handles optional quoting, so values with spaces round-trip. Do **not** read
+> `-OrbitToken=` from outside the connector's auth path — treat it as a secret.
+
+### Recommended companion change (connector repo — NOT in this PRISM repo)
+
+The "expose the IDs as a Blueprint-/subsystem-readable `UObject` property" piece
+is UE C++ that belongs in the **`OrbitConnector.UE5`** plugin in the
+`orbit-connectors` repo (its source is not vendored into this PRISM checkout, so
+it is not changed here). Suggested shape — a tiny `UGameInstanceSubsystem` that
+parses the command line once and exposes the IDs to Blueprint and other plugins:
+
+```cpp
+UCLASS()
+class ORBITCONNECTOR_API UOrbitSessionSubsystem : public UGameInstanceSubsystem
+{
+    GENERATED_BODY()
+public:
+    virtual void Initialize(FSubsystemCollectionBase& Collection) override
+    {
+        const TCHAR* Cmd = FCommandLine::Get();
+        FParse::Value(Cmd, TEXT("OrbitProject="), ProjectId);
+        FParse::Value(Cmd, TEXT("OrbitModel="),   ModelId);
+        FParse::Value(Cmd, TEXT("OrbitVersion="), VersionId);
+        FParse::Value(Cmd, TEXT("OrbitServer="),  Server);
+        // NB: never expose -OrbitToken= here; it is a secret.
+    }
+
+    UPROPERTY(BlueprintReadOnly, Category="Orbit") FString ProjectId;
+    UPROPERTY(BlueprintReadOnly, Category="Orbit") FString ModelId;
+    UPROPERTY(BlueprintReadOnly, Category="Orbit") FString VersionId; // empty == latest
+    UPROPERTY(BlueprintReadOnly, Category="Orbit") FString Server;
+};
+```
+
+Other plugins read it with
+`GetGameInstance()->GetSubsystem<UOrbitSessionSubsystem>()`. A `UBlueprintFunctionLibrary`
+with `static` getters is an equally valid alternative if a subsystem is too
+heavy. Either way, the PRISM-side plumbing above already guarantees the IDs are
+on the command line for it to read.
+
+---
+
 ## Prerequisite the operator MUST satisfy
 
 The fixed project (default `C:\PRISM\Templates\<ProjectName>`, e.g.
