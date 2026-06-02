@@ -66,6 +66,18 @@ public static class TemplatePuller
         bool HasArchive);
 
     /// <summary>
+    /// Result of <see cref="ListReleasesAsync"/>. When <see cref="NotModified"/>
+    /// is true the caller's cached list is still current (GitHub returned 304
+    /// to the conditional request — which does NOT count against the rate
+    /// limit) and <see cref="Releases"/> is empty. Otherwise <see cref="ETag"/>
+    /// is the value to send as <c>If-None-Match</c> on the next refresh.
+    /// </summary>
+    public sealed record ReleaseListResult(
+        IReadOnlyList<ReleaseInfo> Releases,
+        string? ETag,
+        bool NotModified);
+
+    /// <summary>
     /// Pull + install a template. Throws <see cref="TemplatePullException"/>
     /// for any actionable failure (bad repo slug, no release, no archive,
     /// no <c>.uproject</c> in the archive, filesystem error).
@@ -211,8 +223,8 @@ public static class TemplatePuller
     /// HTTP failure (e.g. a private repo without a token → 404 is treated as
     /// "no releases").
     /// </summary>
-    public static async Task<IReadOnlyList<ReleaseInfo>> ListReleasesAsync(
-        string repoSlug, ILogger log, CancellationToken ct)
+    public static async Task<ReleaseListResult> ListReleasesAsync(
+        string repoSlug, string? etag, ILogger log, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(repoSlug) || !repoSlug.Contains('/'))
             throw new TemplatePullException(
@@ -221,17 +233,25 @@ public static class TemplatePuller
 
         using var http = CreateHttpClient();
         var apiUrl = $"https://api.github.com/repos/{repoSlug}/releases?per_page=50";
-        using var resp = await http.GetAsync(apiUrl, ct).ConfigureAwait(false);
-        if (resp.StatusCode == HttpStatusCode.NotFound)
-            return Array.Empty<ReleaseInfo>();
-        if (!resp.IsSuccessStatusCode)
-            throw new TemplatePullException(
-                $"GitHub API GET {apiUrl} failed: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}.");
+        // Conditional request: a 304 (cache still valid) does NOT count against
+        // the GitHub rate limit, so polling the picker is effectively free.
+        using var req = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+        if (!string.IsNullOrWhiteSpace(etag))
+            req.Headers.TryAddWithoutValidation("If-None-Match", etag);
 
+        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        if (resp.StatusCode == HttpStatusCode.NotModified)
+            return new ReleaseListResult(Array.Empty<ReleaseInfo>(), etag, NotModified: true);
+        if (resp.StatusCode == HttpStatusCode.NotFound)
+            return new ReleaseListResult(Array.Empty<ReleaseInfo>(), null, NotModified: false);
+        if (!resp.IsSuccessStatusCode)
+            throw HttpFailure(resp, apiUrl);
+
+        var newEtag = resp.Headers.ETag?.Tag;
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array)
-            return Array.Empty<ReleaseInfo>();
+            return new ReleaseListResult(Array.Empty<ReleaseInfo>(), newEtag, NotModified: false);
 
         var list = new List<ReleaseInfo>();
         foreach (var r in doc.RootElement.EnumerateArray())
@@ -264,7 +284,7 @@ public static class TemplatePuller
         }
 
         log.LogInformation("template releases: {Repo} → {Count} release(s)", repoSlug, list.Count);
-        return list;
+        return new ReleaseListResult(list, newEtag, NotModified: false);
     }
 
     /// <summary>
@@ -287,6 +307,56 @@ public static class TemplatePuller
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
         return http;
     }
+
+    /// <summary>True when a GitHub token is configured in the agent's environment.</summary>
+    static bool HasGitHubToken() =>
+        !string.IsNullOrWhiteSpace(
+            Environment.GetEnvironmentVariable("PRISM_GITHUB_TOKEN")
+            ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN"));
+
+    /// <summary>
+    /// Build a <see cref="TemplatePullException"/> for a non-success GitHub
+    /// response. A 403/429 with <c>x-ratelimit-remaining: 0</c> is recognised
+    /// as a <b>rate limit</b> (not a generic failure) and the message tells the
+    /// operator to set <c>PRISM_GITHUB_TOKEN</c> and when the limit resets.
+    /// </summary>
+    static TemplatePullException HttpFailure(HttpResponseMessage resp, string apiUrl)
+    {
+        var status = (int)resp.StatusCode;
+        var remaining = FirstHeader(resp, "x-ratelimit-remaining");
+        var isRateLimited = (status == 403 || status == 429) &&
+                            string.Equals(remaining, "0", StringComparison.Ordinal);
+        if (isRateLimited)
+        {
+            var advice = HasGitHubToken()
+                ? "A PRISM_GITHUB_TOKEN is set but the limit was still hit — the token may be invalid/expired, " +
+                  "or authenticated usage is unusually high."
+                : "The agent is making UNAUTHENTICATED GitHub requests (60/hour per IP). Set PRISM_GITHUB_TOKEN " +
+                  "(a GitHub PAT with public_repo scope; repo scope if the template/connector repos are private) " +
+                  "in the agent's environment to raise the limit to 5000/hour.";
+            return new TemplatePullException(
+                $"GitHub API rate limit exceeded (HTTP {status}) for {apiUrl}. {advice}{DescribeReset(resp)}");
+        }
+        return new TemplatePullException(
+            $"GitHub API GET {apiUrl} failed: HTTP {status} {resp.ReasonPhrase}.");
+    }
+
+    /// <summary>Human-readable reset hint from <c>x-ratelimit-reset</c> (unix secs) or <c>Retry-After</c>.</summary>
+    static string DescribeReset(HttpResponseMessage resp)
+    {
+        var reset = FirstHeader(resp, "x-ratelimit-reset");
+        if (long.TryParse(reset, out var unix))
+        {
+            var when = DateTimeOffset.FromUnixTimeSeconds(unix);
+            var mins = Math.Max(0, (when - DateTimeOffset.UtcNow).TotalMinutes);
+            return $" Limit resets at {when.UtcDateTime:yyyy-MM-dd HH:mm:ss}Z (~{mins:F0} min).";
+        }
+        var retry = FirstHeader(resp, "Retry-After");
+        return int.TryParse(retry, out var secs) ? $" Retry after ~{secs}s." : string.Empty;
+    }
+
+    static string? FirstHeader(HttpResponseMessage resp, string name) =>
+        resp.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
 
     /// <summary>
     /// Resolve a release to <c>(tag, archiveUrl)</c>.
@@ -361,10 +431,7 @@ public static class TemplatePuller
         using var resp = await http.GetAsync(apiUrl, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         if (!resp.IsSuccessStatusCode)
-        {
-            throw new TemplatePullException(
-                $"GitHub API GET {apiUrl} failed: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}.");
-        }
+            throw HttpFailure(resp, apiUrl);
 
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
@@ -512,8 +579,7 @@ public static class TemplatePuller
                   "If the repo is private, set PRISM_GITHUB_TOKEN.");
         }
         if (!resp.IsSuccessStatusCode)
-            throw new TemplatePullException(
-                $"GitHub API GET {apiUrl} failed: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}.");
+            throw HttpFailure(resp, apiUrl);
 
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);

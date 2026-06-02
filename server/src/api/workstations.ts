@@ -58,15 +58,47 @@ interface TemplateRelease {
   hasArchive: boolean;
 }
 
-/** Lightweight in-memory cache for the GitHub release list (keyed by repo, 60s TTL). */
-const releaseCache = new Map<string, { at: number; releases: TemplateRelease[] }>();
-const RELEASE_TTL_MS = 60_000;
+/**
+ * In-memory cache for the GitHub release list (keyed by repo). 5-min TTL; on
+ * expiry we re-validate with the stored ETag (`If-None-Match`) so a 304 keeps
+ * the cached list WITHOUT counting against the GitHub rate limit.
+ */
+const releaseCache = new Map<string, { at: number; etag: string | null; releases: TemplateRelease[] }>();
+const RELEASE_TTL_MS = 300_000;
+
+/** Error thrown when GitHub reports the API rate limit is exhausted. */
+class GitHubRateLimitError extends Error {
+  constructor(message: string) { super(message); this.name = 'GitHubRateLimitError'; }
+}
+
+/** Build the actionable rate-limit message (with reset time) from a 403/429 response. */
+function rateLimitMessage(res: Response): string {
+  const token = process.env['PRISM_GITHUB_TOKEN'] || process.env['GITHUB_TOKEN'];
+  const advice = token
+    ? 'A PRISM_GITHUB_TOKEN is set server-side but the limit was still hit — the token may be invalid/expired.'
+    : 'The server is making UNAUTHENTICATED GitHub requests (60/hour per IP). Set PRISM_GITHUB_TOKEN '
+      + '(a GitHub PAT with public_repo scope; repo scope for private repos) in the server environment '
+      + '(infra/.env → PRISM_GITHUB_TOKEN) to raise the limit to 5000/hour.';
+  let reset = '';
+  const resetHdr = res.headers.get('x-ratelimit-reset');
+  if (resetHdr && /^\d+$/.test(resetHdr)) {
+    const when = new Date(Number(resetHdr) * 1000);
+    const mins = Math.max(0, Math.round((when.getTime() - Date.now()) / 60_000));
+    reset = ` Limit resets at ${when.toISOString()} (~${mins} min).`;
+  } else {
+    const retry = res.headers.get('retry-after');
+    if (retry) reset = ` Retry after ~${retry}s.`;
+  }
+  return `GitHub API rate limit exceeded (HTTP ${res.status}). ${advice}${reset}`;
+}
 
 /**
  * Fetch the published releases for `repo` (newest first) so the admin
  * Workstations page can offer a template version picker. Mirrors the agent's
- * `TemplatePuller.ListReleasesAsync` shape. Anonymous unless a
- * PRISM_GITHUB_TOKEN / GITHUB_TOKEN is set server-side (private repos).
+ * `TemplatePuller.ListReleasesAsync` shape. Authenticated when a
+ * PRISM_GITHUB_TOKEN / GITHUB_TOKEN is set server-side (also lifts the rate
+ * limit 60→5000/hr). Throws {@link GitHubRateLimitError} on a 403/429 with
+ * `x-ratelimit-remaining: 0`.
  */
 async function fetchTemplateReleases(repo: string): Promise<TemplateRelease[]> {
   const cached = releaseCache.get(repo);
@@ -78,9 +110,20 @@ async function fetchTemplateReleases(repo: string): Promise<TemplateRelease[]> {
     'user-agent': 'prism-server',
   };
   if (token) headers['authorization'] = `Bearer ${token}`;
+  // Conditional request: a 304 doesn't count against the rate limit.
+  if (cached?.etag) headers['if-none-match'] = cached.etag;
 
   const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=50`, { headers });
+
+  // Cache still valid — refresh the timestamp and serve the cached list.
+  if (res.status === 304 && cached) {
+    releaseCache.set(repo, { ...cached, at: Date.now() });
+    return cached.releases;
+  }
   if (res.status === 404) return [];
+  if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
+    throw new GitHubRateLimitError(rateLimitMessage(res));
+  }
   if (!res.ok) throw new Error(`GitHub API ${res.status} ${res.statusText}`);
 
   const body = (await res.json()) as Array<{
@@ -107,7 +150,7 @@ async function fetchTemplateReleases(repo: string): Promise<TemplateRelease[]> {
       hasArchive: hasZipAsset || !!r.zipball_url,
     });
   }
-  releaseCache.set(repo, { at: Date.now(), releases });
+  releaseCache.set(repo, { at: Date.now(), etag: res.headers.get('etag'), releases });
   return releases;
 }
 
@@ -169,7 +212,8 @@ const plugin: FastifyPluginAsync = async (app) => {
    * GET /template-releases — list the published versions of the UE template
    * repo so the admin can pick a specific version to pull onto a workstation.
    * Optional `?repo=owner/repo` overrides the default (to match a workstation
-   * whose agent points at a fork). Cached 60s; 502 if GitHub is unreachable.
+   * whose agent points at a fork). Cached 5 min + ETag-revalidated; 429 with an
+   * actionable message when GitHub's rate limit is hit, 502 otherwise.
    */
   app.get<{ Querystring: { repo?: string } }>(
     '/template-releases',
@@ -180,6 +224,10 @@ const plugin: FastifyPluginAsync = async (app) => {
         const releases = await fetchTemplateReleases(repo);
         return { repo, releases };
       } catch (err) {
+        if (err instanceof GitHubRateLimitError) {
+          req.log.warn({ repo }, 'template releases: GitHub rate limit exceeded');
+          return reply.code(429).send({ error: err.message, repo, releases: [] });
+        }
         req.log.warn({ err, repo }, 'failed to list template releases');
         return reply.code(502).send({ error: 'could not list template releases', repo, releases: [] });
       }

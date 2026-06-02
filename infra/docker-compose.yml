@@ -60,6 +60,12 @@ services:
       # measured first-cold-start envelope (~60-90s) with comfortable
       # headroom.
       VISUALISER_START_TIMEOUT_MS: "${VISUALISER_START_TIMEOUT_MS:-600000}"
+      # GitHub PAT for the UE-template version picker (GET /api/workstations/
+      # template-releases). Lifts the GitHub API limit 60→5000/hr; without it
+      # the picker fails with "rate limit exceeded". Scope: public_repo (repo
+      # if the template/connector repos are private). The agent reads the same
+      # var name from its own workstation environment.
+      PRISM_GITHUB_TOKEN: "${PRISM_GITHUB_TOKEN:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - prism-uploads:/var/lib/prism/uploads

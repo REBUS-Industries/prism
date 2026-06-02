@@ -45,12 +45,15 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     Task? _loop;
 
     // Light cache for the template release list so opening the dropdown
-    // repeatedly doesn't hammer the GitHub API. Keyed by repo slug; 60s TTL.
+    // repeatedly doesn't hammer the GitHub API. Keyed by repo slug; on TTL
+    // expiry we re-validate with an ETag (If-None-Match) so a 304 refresh is
+    // free against the rate limit.
     readonly SemaphoreSlim _releasesGate = new(1, 1);
     string? _releasesRepo;
+    string? _releasesEtag;
     DateTime _releasesFetchedAt;
     IReadOnlyList<Visualiser.TemplatePuller.ReleaseInfo>? _releasesCache;
-    static readonly TimeSpan _releasesTtl = TimeSpan.FromSeconds(60);
+    static readonly TimeSpan _releasesTtl = TimeSpan.FromSeconds(300);
 
     static readonly JsonSerializerSettings _json = new()
     {
@@ -360,9 +363,10 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     }
 
     /// <summary>
-    /// Fetch the configured template repo's release list, served from a 60s
-    /// in-memory cache (invalidated when the repo slug changes). Drives the
-    /// version picker on the web UI's Visualiser card.
+    /// Fetch the configured template repo's release list, served from a 5-min
+    /// in-memory cache (invalidated when the repo slug changes; revalidated
+    /// with an ETag conditional request so refreshes don't burn rate limit).
+    /// Drives the version picker on the web UI's Visualiser card.
     /// </summary>
     async Task<IReadOnlyList<Visualiser.TemplatePuller.ReleaseInfo>> GetReleasesCachedAsync(CancellationToken ct)
     {
@@ -384,11 +388,19 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 return c2;
             }
 
-            var list = await Visualiser.TemplatePuller.ListReleasesAsync(repo, _log, ct);
-            _releasesCache = list;
+            // Re-validate with the stored ETag when the repo is unchanged (a
+            // 304 keeps the cached list and doesn't count against the limit).
+            var sameRepo = string.Equals(_releasesRepo, repo, StringComparison.OrdinalIgnoreCase);
+            var conditionalEtag = sameRepo ? _releasesEtag : null;
+            var result = await Visualiser.TemplatePuller.ListReleasesAsync(repo, conditionalEtag, _log, ct);
             _releasesRepo = repo;
             _releasesFetchedAt = DateTime.UtcNow;
-            return list;
+            if (!result.NotModified)
+            {
+                _releasesCache = result.Releases;
+                _releasesEtag = result.ETag;
+            }
+            return _releasesCache ?? Array.Empty<Visualiser.TemplatePuller.ReleaseInfo>();
         }
         finally
         {

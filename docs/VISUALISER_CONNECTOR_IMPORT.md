@@ -228,6 +228,40 @@ plug-in) is the fix.
 
 ---
 
+## GitHub API token & rate limits (`PRISM_GITHUB_TOKEN`)
+
+The template pull and the version picker call the **GitHub REST API**
+(resolve the template release + assets, resolve the `OrbitConnector-UE5`
+plug-in asset, and list releases for the dropdown). A single pull makes
+**~2–4 API calls**; the picker endpoints add ~1 per cache refresh.
+
+Without a token, GitHub allows only **60 requests/hour per IP** (shared,
+anonymous), so a few pulls or dropdown opens exhaust the budget and the pull
+fails with:
+
+```
+GitHub API rate limit exceeded (HTTP 403) … Set PRISM_GITHUB_TOKEN … Limit resets at <time>.
+```
+
+**Fix: configure `PRISM_GITHUB_TOKEN`** (a GitHub PAT — scope `public_repo`,
+or `repo` if `orbit-ue-template` / `orbit-connectors` are private; generate at
+<https://github.com/settings/tokens>). An authenticated token lifts the limit
+to **5000 requests/hour**. Set it in **both** places that call GitHub:
+
+| Component | Where to set it | Applies after |
+| --- | --- | --- |
+| **Agent** (workstation — runs the pull) | A **System** (or the agent service's user) environment variable `PRISM_GITHUB_TOKEN` on the workstation. (`GITHUB_TOKEN` is also accepted.) | Restart the PRISM agent so the new process inherits the env var. |
+| **Server** (admin version dropdown) | `infra/.env` → `PRISM_GITHUB_TOKEN=…` (passed through by `infra/docker-compose.yml`). | Recreate the `prism-server` container. |
+
+Call-volume safeguards already in place: the agent and server release-list
+endpoints cache for 5 minutes **and** revalidate with an `ETag`
+(`If-None-Match`) — a `304 Not Modified` refresh does **not** count against the
+limit. A 403/429 with `x-ratelimit-remaining: 0` is reported distinctly (with
+the reset time) rather than as a generic failure; the admin picker surfaces it
+as HTTP 429.
+
+---
+
 ## Test / deploy plan (when approved)
 
 1. Build the connector for UE 5.x and install it into

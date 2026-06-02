@@ -60,6 +60,46 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.25 — 2026-06-03 — Authenticate GitHub API calls + actionable rate-limit errors
+
+### Fixed
+
+- **Template pull / version picker no longer fail with an opaque "GitHub API
+  rate limit exceeded".** GitHub's **anonymous** limit is 60 requests/hour per
+  IP; a single pull makes ~2–4 API calls (resolve template release + asset,
+  resolve the `OrbitConnector-UE5` asset, ±a fallback), and the version-picker
+  endpoints add more, so the shared budget is exhausted quickly.
+- The agent already authenticates when `PRISM_GITHUB_TOKEN` / `GITHUB_TOKEN` is
+  set (`CreateHttpClient` sends `Authorization: Bearer`) — the root cause was
+  simply that **no token was configured on the workstation**. A token lifts the
+  limit to 5000/hour.
+
+### Changed
+
+- **Actionable rate-limit error (agent + server).** A `403`/`429` with
+  `x-ratelimit-remaining: 0` is now recognised as a rate limit (not a generic
+  failure) and reports how to fix it (set `PRISM_GITHUB_TOKEN`, with the
+  required PAT scope) **and the reset time** from `x-ratelimit-reset` /
+  `Retry-After`. (`TemplatePuller.HttpFailure`; server `GitHubRateLimitError` →
+  HTTP 429.)
+- **Cheaper release-list refreshes (agent + server).** Both `/api/visualiser/
+  template/releases` (agent web UI) and `/api/workstations/template-releases`
+  (server) now cache for **5 minutes** and revalidate with an **`ETag`
+  (`If-None-Match`)** — a `304 Not Modified` does not count against the rate
+  limit. `TemplatePuller.ListReleasesAsync` returns the ETag + a `NotModified`
+  flag for the caller's cache.
+- **Server route** authenticates with `PRISM_GITHUB_TOKEN` / `GITHUB_TOKEN`
+  (already present) and is wired into `infra/.env.example` +
+  `infra/docker-compose.yml` so prod actually carries the token. (Server ships
+  on the rolling `main` deploy — no separate tag.)
+
+### Docs
+
+- `docs/VISUALISER_CONNECTOR_IMPORT.md`: new "GitHub API token & rate limits"
+  section — where to set `PRISM_GITHUB_TOKEN` on the agent (workstation env var,
+  restart the agent) and the server (`infra/.env`), the PAT scope, and the
+  60→5000/hr behaviour.
+
 ## v0.3.24 — 2026-06-02 — Report the installed UE template version to operators
 
 ### Added
