@@ -43,6 +43,47 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.21 — 2026-06-02 — Compile the pulled project so the headless -game launch works
+
+### Fixed
+
+- **A freshly-pulled visualiser project now launches without opening Unreal
+  manually first.** The pulled `orbit-ue-template` project and the merged
+  `OrbitConnector.UE5` / `glTFRuntime` plug-ins ship C++ **source only** (no
+  `Binaries`), so the orchestrator's headless `UnrealEditor-Cmd … -game`
+  exited immediately — surfaced as
+  `ue_game_crashed: UE -game exited (code=1) before registering a streamer`.
+  The operator's workaround was to open the project in the editor once to let
+  it compile.
+
+### Added
+
+- **Template pull now compiles the project as its final step.** After install
+  (+ connector merge), the agent builds the project's **Editor** target with
+  UnrealBuildTool:
+
+      <UnrealEngineRoot>\Engine\Build\BatchFiles\Build.bat \
+        <ProjectName>Editor Win64 Development \
+        -Project="<installed>.uproject" -WaitMutex -FromMsBuild
+
+  This is the same compile opening the editor triggers, so a subsequent
+  `-game` launch has module binaries. Build output streams to the agent log
+  (channel `ubt`) and UBT `[n/m]` progress is surfaced on the templatePull
+  status line; a non-zero build exit fails the pull with the build-log tail in
+  the error.
+  - The Editor target name is read from `Source\*Editor.Target.cs` when present,
+    else defaults to `<ProjectName>Editor` (which UBT also synthesises for a
+    content-only project that enables a code plug-in — the scaffold + connector
+    case).
+  - The compile is skipped automatically when the project has no C++ source and
+    no code plug-in (a pure Blueprint project needs no binaries).
+  - The engine is located from `AgentConfig.UnrealEngineRoot`; a missing/invalid
+    root fails the pull with an actionable message instead of installing a
+    project that can't launch.
+- New `AgentConfig.VisualiserCompileProject` (default `true`; web-UI toggle on
+  the Visualiser card) to skip the build for a project known to ship prebuilt
+  binaries.
+
 ## v0.3.20 — 2026-06-02 — Drop redundant template/connector tag inputs from the agent web UI
 
 ### Changed

@@ -230,6 +230,8 @@ public sealed class AgentControlPlane
             _cfg.OrbitConnectorTag = oct.Trim();
         if (update.VisualiserPullConnector is { } vpc)
             _cfg.VisualiserPullConnector = vpc;
+        if (update.VisualiserCompileProject is { } vcp)
+            _cfg.VisualiserCompileProject = vcp;
         if (update.VisualiserMaxConcurrent is { } vmc)
             _cfg.VisualiserMaxConcurrent = Math.Max(1, Math.Min(4, vmc));
         if (update.VisualiserGpuCheck is { } vgc)
@@ -480,6 +482,8 @@ if (Test-Path '{Esc(exePath)}') {{
                     connectorRepo:  _cfg.OrbitConnectorRepo,
                     connectorTag:   _cfg.OrbitConnectorTag,
                     pullConnector:  _cfg.VisualiserPullConnector,
+                    compileProject: _cfg.VisualiserCompileProject,
+                    engineRoot:     _cfg.UnrealEngineRoot,
                     progress:       progress,
                     log:            _log,
                     ct:             CancellationToken.None).ConfigureAwait(false);
@@ -579,6 +583,7 @@ public sealed class ConfigUpdate
     public string?      OrbitConnectorRepo      { get; set; }
     public string?      OrbitConnectorTag       { get; set; }
     public bool?        VisualiserPullConnector { get; set; }
+    public bool?        VisualiserCompileProject { get; set; }
     public int?         VisualiserMaxConcurrent { get; set; }
     public bool?        VisualiserGpuCheck      { get; set; }
     public bool?        VisualiserDebugWindow   { get; set; }

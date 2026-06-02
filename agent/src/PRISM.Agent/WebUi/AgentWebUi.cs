@@ -433,6 +433,7 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 orbitConnectorRepo      = cfg.OrbitConnectorRepo,
                 orbitConnectorTag       = cfg.OrbitConnectorTag,
                 visualiserPullConnector = cfg.VisualiserPullConnector,
+                visualiserCompileProject = cfg.VisualiserCompileProject,
             },
             templatePull = new
             {

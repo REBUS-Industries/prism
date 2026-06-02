@@ -123,6 +123,19 @@ public sealed class AgentConfig
     public bool VisualiserPullConnector { get; set; } = true;
 
     /// <summary>
+    /// When true (default) a template pull compiles the installed project's
+    /// Editor target with UnrealBuildTool as its final step, so the headless
+    /// <c>-game</c> Pixel-Streaming launch has module binaries. The pulled
+    /// project + the merged <c>OrbitConnector.UE5</c> / <c>glTFRuntime</c>
+    /// plug-ins ship C++ <b>source only</b>; without this the orchestrator's
+    /// <c>UnrealEditor-Cmd -game</c> exits immediately (<c>ue_game_crashed</c>)
+    /// and the operator has to open the project in the editor once to trigger
+    /// a compile. Requires a valid <see cref="UnrealEngineRoot"/>. Set false
+    /// only for a project known to ship prebuilt binaries.
+    /// </summary>
+    public bool VisualiserCompileProject { get; set; } = true;
+
+    /// <summary>
     /// Hard cap on simultaneous visualiser sessions on this workstation.
     /// UE + Pixel Streaming is GPU-bound, so multi-session work needs a
     /// real benchmark per box; the safe Phase A default is 1.

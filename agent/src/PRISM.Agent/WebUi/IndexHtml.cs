@@ -530,6 +530,12 @@ internal static class IndexHtml
         </label>
       </div>
       <div class="row">
+        <label class="toggle" id="visualiserCompileProjectLabel" style="align-self:center;">
+          <input type="checkbox" id="visualiserCompileProject" />
+          <span>Compile project after pull (UnrealBuildTool — needed for C++ plug-ins)</span>
+        </label>
+      </div>
+      <div class="row">
         <div>
           <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Pull UE template</span>
           <div class="actions" style="margin-top:0;align-items:center;">
@@ -740,6 +746,9 @@ internal static class IndexHtml
       const pullConn = s.config.visualiserPullConnector !== false;
       $('visualiserPullConnector').checked = pullConn;
       $('visualiserPullConnectorLabel').classList.toggle('checked', pullConn);
+      const compileProj = s.config.visualiserCompileProject !== false;
+      $('visualiserCompileProject').checked = compileProj;
+      $('visualiserCompileProjectLabel').classList.toggle('checked', compileProj);
     }
 
     renderTemplatePull(s.templatePull);
@@ -822,6 +831,7 @@ internal static class IndexHtml
       unrealTemplateRepo:      $('unrealTemplateRepo').value.trim(),
       orbitConnectorRepo:      $('orbitConnectorRepo').value.trim(),
       visualiserPullConnector: $('visualiserPullConnector').checked,
+      visualiserCompileProject: $('visualiserCompileProject').checked,
     };
   }
 
@@ -997,6 +1007,10 @@ internal static class IndexHtml
   }
   $('visualiserPullConnector').addEventListener('change', () => {
     $('visualiserPullConnectorLabel').classList.toggle('checked', $('visualiserPullConnector').checked);
+    markDirty();
+  });
+  $('visualiserCompileProject').addEventListener('change', () => {
+    $('visualiserCompileProjectLabel').classList.toggle('checked', $('visualiserCompileProject').checked);
     markDirty();
   });
   $('webUiBindAll').addEventListener('change', () => {

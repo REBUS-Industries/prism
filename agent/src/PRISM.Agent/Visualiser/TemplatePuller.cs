@@ -77,6 +77,8 @@ public static class TemplatePuller
     /// <param name="connectorRepo">GitHub <c>owner/repo</c> slug of the connectors repo (its <c>OrbitConnector-UE5-plugin-*.zip</c> release asset is merged into the pulled project's <c>Plugins\</c>).</param>
     /// <param name="connectorTag">Pinned connector release tag; empty/null pulls the connector's latest release.</param>
     /// <param name="pullConnector">When false the connector merge is skipped (project pulled as-is).</param>
+    /// <param name="compileProject">When true (default) the installed project's Editor target is compiled via UnrealBuildTool so the headless <c>-game</c> launch has module binaries. Requires a valid <paramref name="engineRoot"/>.</param>
+    /// <param name="engineRoot">Unreal Engine install root (holds <c>Engine\Build\BatchFiles\Build.bat</c>); used to compile the project. Required when <paramref name="compileProject"/> is true.</param>
     /// <param name="progress">Optional human-readable progress sink (web UI status line).</param>
     public static async Task<PullResult> PullAsync(
         string repoSlug,
@@ -86,6 +88,8 @@ public static class TemplatePuller
         string? connectorRepo,
         string? connectorTag,
         bool pullConnector,
+        bool compileProject,
+        string? engineRoot,
         IProgress<string>? progress,
         ILogger log,
         CancellationToken ct)
@@ -156,13 +160,33 @@ public static class TemplatePuller
             InstallProject(projectRoot, dest, log);
 
             var installedUproject = Path.Combine(dest, Path.GetFileName(uproject));
+
+            // 7. Compile the installed project's Editor target so the headless
+            //    -game launch has module binaries. The pulled project + the
+            //    merged OrbitConnector.UE5 plug-in ship C++ SOURCE ONLY (no
+            //    Binaries), so without this step UnrealEditor-Cmd -game exits
+            //    immediately (ue_game_crashed) — the operator otherwise has to
+            //    open the project in the editor once to trigger a compile.
+            //    Compiled in place (post-swap): UBT writes Binaries/Intermediate
+            //    into the project tree, and building the moved tree afterwards
+            //    would invalidate UBT's absolute-path makefile — so we build the
+            //    final installed location directly.
+            var compiled = false;
+            if (compileProject)
+            {
+                compiled = await CompileProjectAsync(
+                        dest, installedUproject, projectName, engineRoot, progress, log, ct)
+                    .ConfigureAwait(false);
+            }
+
             log.LogInformation(
-                "template pull: installed {Name} tag={Tag} connector={Connector} -> {Dest}",
-                projectName, resolvedTag, connectorResolvedTag ?? "<skipped>", dest);
+                "template pull: installed {Name} tag={Tag} connector={Connector} compiled={Compiled} -> {Dest}",
+                projectName, resolvedTag, connectorResolvedTag ?? "<skipped>", compiled, dest);
             var connectorNote = connectorResolvedTag is { Length: > 0 }
                 ? $" + connector {connectorResolvedTag}"
                 : "";
-            progress?.Report($"done: {projectName} ({resolvedTag}){connectorNote}");
+            var compiledNote = compiled ? " + compiled" : "";
+            progress?.Report($"done: {projectName} ({resolvedTag}){connectorNote}{compiledNote}");
 
             return new PullResult(
                 projectName, dest, installedUproject, resolvedTag, archiveUrl,
@@ -535,6 +559,165 @@ public static class TemplatePuller
         throw new TemplatePullException(
             $"Connector release {resolvedTag} in {repoSlug} has no UE5 plug-in .zip asset " +
             "(expected OrbitConnector-UE5-plugin-<tag>.zip). The source zipball does not contain the built plug-in.");
+    }
+
+    // ---- Compile (UnrealBuildTool Editor target) -----------------------
+
+    /// <summary>
+    /// Compile the installed project's <b>Editor</b> target with
+    /// UnrealBuildTool so the headless <c>-game</c> launch has module
+    /// binaries for the project + its C++ plug-ins (OrbitConnector.UE5 /
+    /// glTFRuntime ship Source only). Equivalent to what opening the
+    /// project in the editor does on first launch. Returns <c>true</c> when
+    /// a build ran, <c>false</c> when there was nothing to compile (a
+    /// Blueprint-only project with no C++ source or code plug-in). Throws
+    /// <see cref="TemplatePullException"/> when the engine root is invalid or
+    /// the build exits non-zero (with the build-log tail in the message).
+    /// </summary>
+    static async Task<bool> CompileProjectAsync(
+        string projectDir, string uprojectPath, string projectName,
+        string? engineRoot, IProgress<string>? progress, ILogger log, CancellationToken ct)
+    {
+        // Nothing to compile unless the project itself has C++ source OR a
+        // bundled plug-in ships Source (the merged connector does). A purely
+        // Blueprint project with no code plug-in needs no binaries.
+        if (!ProjectNeedsCompile(projectDir))
+        {
+            log.LogInformation(
+                "template pull: {Name} has no C++ source or code plug-in — skipping compile", projectName);
+            progress?.Report("no C++ to compile — skipping build");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(engineRoot))
+            throw new TemplatePullException(
+                "Cannot compile the pulled project: the agent's Unreal Engine root is not configured. " +
+                "Set UnrealEngineRoot (e.g. C:\\Program Files\\Epic Games\\UE_5.7) before pulling.");
+
+        var buildBat = Path.Combine(
+            engineRoot.Trim(), "Engine", "Build", "BatchFiles", "Build.bat");
+        if (!File.Exists(buildBat))
+            throw new TemplatePullException(
+                $"Cannot compile the pulled project: UnrealBuildTool launcher not found at '{buildBat}'. " +
+                $"Check the agent's UnrealEngineRoot ('{engineRoot}') points at a valid Unreal Engine install.");
+
+        var target = ResolveEditorTargetName(projectDir, projectName);
+        progress?.Report($"compiling {target} (this can take several minutes)…");
+        log.LogInformation(
+            "template pull: compiling target={Target} project={Uproject} via {BuildBat}",
+            target, uprojectPath, buildBat);
+
+        // cmd.exe /c "<bat>" <target> Win64 Development -Project="<uproject>" -WaitMutex -FromMsBuild
+        //   -WaitMutex   : serialise with any other UBT instance (mirrors the editor's own build)
+        //   -FromMsBuild : compact, parseable diagnostic formatting
+        var inner =
+            $"\"{buildBat}\" {target} Win64 Development -Project=\"{uprojectPath}\" -WaitMutex -FromMsBuild";
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/c \"{inner}\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = projectDir,
+        };
+
+        using var process = new System.Diagnostics.Process { StartInfo = psi };
+        var tail = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        void Capture(string? line, bool err)
+        {
+            if (line is null) return;
+            if (err) log.LogWarning("ubt: {Line}", line);
+            else     log.LogInformation("ubt: {Line}", line);
+            tail.Enqueue(line);
+            while (tail.Count > 60) tail.TryDequeue(out _);
+            // UBT prints "[ n/m] Compile ..." — surface progress to the UI.
+            var m = System.Text.RegularExpressions.Regex.Match(line, @"\[\s*(\d+)\s*/\s*(\d+)\s*\]");
+            if (m.Success)
+                progress?.Report($"compiling {target}… [{m.Groups[1].Value}/{m.Groups[2].Value}]");
+        }
+        process.OutputDataReceived += (_, e) => Capture(e.Data, err: false);
+        process.ErrorDataReceived  += (_, e) => Capture(e.Data, err: true);
+
+        var startedAt = DateTime.UtcNow;
+        if (!process.Start())
+            throw new TemplatePullException($"Failed to start UnrealBuildTool via '{buildBat}'.");
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        // First compiles of a UE project + plug-ins are slow; allow a generous budget.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromMinutes(45));
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { /* nop */ }
+            throw new TemplatePullException(
+                $"Compiling {target} timed out after 45 minutes. Check the agent log (channel 'ubt') for the stalled step.");
+        }
+
+        var elapsed = DateTime.UtcNow - startedAt;
+        if (process.ExitCode != 0)
+        {
+            var logTail = string.Join("\n", tail);
+            log.LogError(
+                "template pull: compile FAILED target={Target} exit={Exit} elapsedMin={Min:F1}",
+                target, process.ExitCode, elapsed.TotalMinutes);
+            throw new TemplatePullException(
+                $"Compiling {target} failed (UnrealBuildTool exit {process.ExitCode}). Last build output:\n{logTail}");
+        }
+
+        log.LogInformation(
+            "template pull: compiled {Target} in {Min:F1} min", target, elapsed.TotalMinutes);
+        progress?.Report($"compiled {target} ({elapsed.TotalMinutes:F1} min)");
+        return true;
+    }
+
+    /// <summary>
+    /// True when the installed project tree has C++ that needs building:
+    /// either the project carries its own <c>Source\*.Build.cs</c>/<c>*.Target.cs</c>
+    /// module, or a bundled plug-in under <c>Plugins\</c> ships a
+    /// <c>Source\*.Build.cs</c> (the merged OrbitConnector.UE5 does).
+    /// </summary>
+    static bool ProjectNeedsCompile(string projectDir)
+    {
+        var projectSource = Path.Combine(projectDir, "Source");
+        if (Directory.Exists(projectSource) &&
+            Directory.EnumerateFiles(projectSource, "*.Build.cs", SearchOption.AllDirectories).Any())
+            return true;
+
+        var pluginsDir = Path.Combine(projectDir, "Plugins");
+        if (Directory.Exists(pluginsDir) &&
+            Directory.EnumerateFiles(pluginsDir, "*.Build.cs", SearchOption.AllDirectories).Any())
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Resolve the UBT Editor target name. Prefers an explicit
+    /// <c>Source\*Editor.Target.cs</c> (honours a custom target name); else
+    /// falls back to the conventional <c>&lt;ProjectName&gt;Editor</c> — which
+    /// UBT also synthesises for a content-only project that enables a code
+    /// plug-in (exactly our scaffold + connector case).
+    /// </summary>
+    static string ResolveEditorTargetName(string projectDir, string projectName)
+    {
+        var sourceDir = Path.Combine(projectDir, "Source");
+        if (Directory.Exists(sourceDir))
+        {
+            var editorTarget = Directory
+                .EnumerateFiles(sourceDir, "*.Target.cs", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .FirstOrDefault(f => f!.EndsWith("Editor.Target.cs", StringComparison.OrdinalIgnoreCase));
+            if (editorTarget is not null)
+                return editorTarget[..^".Target.cs".Length];
+        }
+        return projectName + "Editor";
     }
 
     static async Task DownloadAsync(
