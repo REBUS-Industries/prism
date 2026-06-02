@@ -146,6 +146,13 @@ export interface Workstation {
   slotsTotal: number;
   agentVersion?: string | null;
   rhinoVersion?: string | null;
+  /** Release tag of the orbit-ue-template build the agent reports as installed
+   *  at its VisualiserTemplateProjectPath. Null/undefined when the agent never
+   *  reported it (older build, or no template pulled yet). */
+  installedTemplateTag?: string | null;
+  /** Release tag of the OrbitConnector.UE5 plug-in merged into the installed
+   *  template project (companion to `installedTemplateTag`). */
+  installedConnectorTag?: string | null;
   isEnabled: boolean;
   notes?: string | null;
   createdAt: string;

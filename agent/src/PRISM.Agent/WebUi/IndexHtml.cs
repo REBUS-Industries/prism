@@ -556,6 +556,18 @@ internal static class IndexHtml
       </div>
       <div class="row">
         <div>
+          <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Installed UE template</span>
+          <div id="installedTemplate" style="font-weight:600;">unknown</div>
+          <span class="hint" style="display:block;margin-top:4px;">
+            The template release currently installed at <em>Template project</em> above
+            (read from its <code>.prism-template.json</code> marker). This is what the
+            agent reports to PRISM and persists across restarts — independent of the
+            last pull below.
+          </span>
+        </div>
+      </div>
+      <div class="row">
+        <div>
           <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Pull UE template</span>
           <div class="actions" style="margin-top:0;align-items:center;">
             <select id="templateRelease" style="min-width:240px;">
@@ -783,6 +795,7 @@ internal static class IndexHtml
     }
 
     renderTemplatePull(s.templatePull);
+    renderInstalledTemplate(s.installedTemplate);
 
     const visualiserEnabled = (s.config.roles || []).includes('visualiser');
     $('visualiserCard').hidden = !visualiserEnabled;
@@ -903,6 +916,20 @@ internal static class IndexHtml
       // Leave the lone "Latest release" option in place; surface softly.
       toast('Could not list template releases: ' + err.message, 'warn');
     }
+  }
+
+  function renderInstalledTemplate(it) {
+    const el = $('installedTemplate');
+    if (!el) return;
+    const tag = it && it.templateTag;
+    if (!tag) {
+      el.textContent = 'unknown';
+      el.style.color = 'var(--color-text-subtle)';
+      return;
+    }
+    el.style.color = 'var(--color-text)';
+    const conn = it && it.connectorTag;
+    el.textContent = conn ? `${tag}  ·  connector ${conn}` : tag;
   }
 
   function renderTemplatePull(tp) {

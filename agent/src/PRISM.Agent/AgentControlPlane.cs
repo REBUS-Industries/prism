@@ -274,15 +274,18 @@ public sealed class AgentControlPlane
 
     public Task SendHelloAsync()
     {
+        var (templateTag, connectorTag) = TemplateMarker.Resolve(_cfg);
         return _ws.SendAsync(MessageType.Hello, new HelloData
         {
-            MachineId    = _cfg.MachineId,
-            NodeName     = _cfg.NodeName,
-            Slots        = _cfg.Slots,
-            Roles        = _cfg.Roles,
-            Formats      = AgentService.SupportedFormats,
-            AgentVersion = AgentVersion,
-            RhinoVersion = null,
+            MachineId             = _cfg.MachineId,
+            NodeName              = _cfg.NodeName,
+            Slots                 = _cfg.Slots,
+            Roles                 = _cfg.Roles,
+            Formats               = AgentService.SupportedFormats,
+            AgentVersion          = AgentVersion,
+            RhinoVersion          = null,
+            InstalledTemplateTag  = templateTag,
+            InstalledConnectorTag = connectorTag,
         }).AsTask();
     }
 
@@ -505,10 +508,23 @@ if (Test-Path '{Esc(exePath)}') {{
                     ct:             CancellationToken.None).ConfigureAwait(false);
 
                 // Repoint the active template project at the freshly-pulled one
-                // so the next visualiser run picks it up (read at job launch).
+                // so the next visualiser run picks it up (read at job launch),
+                // and record WHICH release is now installed: a durable marker
+                // in the project root plus a config fallback. The agent reports
+                // the resolved version to the server on the next `hello`.
                 _cfg.VisualiserTemplateProjectPath = result.ProjectPath;
+                _cfg.VisualiserTemplateVersion     = result.Tag;
+                _cfg.VisualiserConnectorVersion    = result.ConnectorTag ?? "";
+                TemplateMarker.Write(
+                    result.ProjectPath, result.Tag, result.ConnectorTag, _cfg.UnrealTemplateRepo, _log);
                 try { _cfg.Save(); }
                 catch (Exception ex) { _log.LogWarning(ex, "template pull: failed to persist new template path"); }
+
+                // Re-announce capabilities so the server's workstation row
+                // reflects the freshly-installed template version immediately
+                // (otherwise it only updates on the next reconnect).
+                try { await SendHelloAsync().ConfigureAwait(false); }
+                catch (Exception ex) { _log.LogWarning(ex, "template pull: failed to re-send hello after pull"); }
 
                 _log.LogInformation(
                     "template pull complete: {Project} tag={Tag} connector={Connector} -> {Path}",

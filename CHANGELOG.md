@@ -60,6 +60,41 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.24 — 2026-06-02 — Report the installed UE template version to operators
+
+### Added
+
+- **Installed UE template version is now reported end-to-end.** The agent
+  records which `orbit-ue-template` release is installed at
+  `VisualiserTemplateProjectPath` and surfaces it on the admin Workstations
+  page and the agent web UI, so operators can see what's actually running on a
+  workstation without triggering a fresh pull.
+- **Durable persistence (agent):** a successful "pull latest UE template" now
+  writes a `.prism-template.json` marker into the installed project root
+  (`{ templateTag, connectorTag, pulledAt, repo }`) and persists the same tags
+  to `AgentConfig` (`VisualiserTemplateVersion` / `VisualiserConnectorVersion`).
+  On startup the agent resolves the installed version from the marker (config
+  value as fallback, else "unknown") — independent of the transient pull status,
+  so it survives agent restarts. New `Visualiser/TemplateMarker` helper.
+- **Protocol (backward-compatible):** the agent `hello` payload gains optional
+  `installedTemplateTag` + `installedConnectorTag` fields. Mirrored across all
+  three contract sources (`shared/contracts/agent-protocol.{json,ts,cs}`). Older
+  agents simply omit the fields and the server shows "unknown".
+- **Server:** new `workstations.installed_template_tag` /
+  `installed_connector_tag` columns (migration `0007`), populated from `hello`
+  and returned by `/api/workstations`.
+- **Admin SPA:** a "UE \<tag\>" badge per visualiser-capable workstation in the
+  Agent column (tooltip includes the connector tag); shows "unknown" when not set.
+- **Agent web UI:** the Visualiser card now shows the installed template version
+  (read-only) above the pull controls.
+
+### Notes
+
+- "Installed version" = the template release tag installed at
+  `VisualiserTemplateProjectPath`. The agent re-announces `hello` immediately
+  after a successful pull so the admin row updates without waiting for a
+  reconnect. Server ships as a rolling deploy (no separate server tag).
+
 ## v0.3.23 — 2026-06-02 — Reconcile VisualiserTemplateProjectPath docs with the local pull flow
 
 ### Docs

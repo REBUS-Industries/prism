@@ -192,6 +192,12 @@ export const workstations = pgTable('workstations', {
   slotsTotal:       integer('slots_total').notNull().default(1),
   agentVersion:     varchar('agent_version', { length: 32 }),
   rhinoVersion:     varchar('rhino_version', { length: 32 }),
+  // Which orbit-ue-template release the agent reports as installed at its
+  // VisualiserTemplateProjectPath (from the agent's `hello` payload). Null
+  // until a visualiser-capable agent that knows about the field connects;
+  // older agents simply never set it.
+  installedTemplateTag:  varchar('installed_template_tag', { length: 128 }),
+  installedConnectorTag: varchar('installed_connector_tag', { length: 128 }),
   isEnabled:        boolean('is_enabled').notNull().default(true),
   notes:            text('notes'),
   createdAt:    timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

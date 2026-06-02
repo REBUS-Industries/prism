@@ -60,7 +60,9 @@
           "items": { "type": "string", "enum": ["conversion", "layering", "receive", "visualiser"] }
         },
         "agentVersion": { "type": "string" },
-        "rhinoVersion": { "type": "string" }
+        "rhinoVersion": { "type": "string" },
+        "installedTemplateTag": { "type": "string", "description": "Release tag of the orbit-ue-template build currently installed at the agent's VisualiserTemplateProjectPath (durable .prism-template.json marker, config fallback). Optional — older agents omit it (server shows 'unknown')." },
+        "installedConnectorTag": { "type": "string", "description": "Release tag of the OrbitConnector.UE5 plug-in merged into the installed template project (companion to installedTemplateTag)." }
       }
     },
     "Welcome": {

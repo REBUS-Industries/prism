@@ -297,6 +297,8 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
           slotsTotal: hello.slots,
           agentVersion: hello.agentVersion,
           rhinoVersion: hello.rhinoVersion ?? null,
+          installedTemplateTag: hello.installedTemplateTag ?? null,
+          installedConnectorTag: hello.installedConnectorTag ?? null,
           canConvert: hello.roles.includes('conversion'),
           canLayer:   hello.roles.includes('layering'),
           canReceive: hello.roles.includes('receive'),
@@ -316,6 +318,8 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
           slotsTotal: hello.slots,
           agentVersion: hello.agentVersion,
           rhinoVersion: hello.rhinoVersion ?? null,
+          installedTemplateTag: hello.installedTemplateTag ?? null,
+          installedConnectorTag: hello.installedConnectorTag ?? null,
           lastSeenAt: new Date(),
         })
         .where(eq(workstations.id, workstation.id));

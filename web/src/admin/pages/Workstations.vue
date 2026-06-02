@@ -249,6 +249,16 @@ function agentVersionState(w: Workstation): AgentVersionState {
   return compareSemver(ws, latest) < 0 ? 'outdated' : 'latest';
 }
 
+/** Tooltip for the installed-UE-template badge (tag + optional connector tag). */
+function ueTemplateTooltip(w: Workstation): string {
+  const tag = w.installedTemplateTag?.trim();
+  if (!tag) return 'No UE template version reported yet (older agent, or none pulled).';
+  const conn = w.installedConnectorTag?.trim();
+  return conn
+    ? `Installed UE template ${tag} · OrbitConnector ${conn}`
+    : `Installed UE template ${tag}`;
+}
+
 async function refreshDnsSuffix() {
   // Best-effort: a failure here just means the bare-nodeName fallback
   // is used. Don't block the page on it.
@@ -422,6 +432,11 @@ onUnmounted(() => {
                   class="pill version-pill version-unknown"
                   :title="agentInfo?.version ? 'Agent has not reported a version yet' : 'Latest agent version is unknown'"
                 >unknown</span>
+                <span
+                  v-if="w.canVisualise"
+                  class="pill version-pill ue-template-pill"
+                  :title="ueTemplateTooltip(w)"
+                >UE {{ w.installedTemplateTag ?? 'unknown' }}</span>
               </div>
             </td>
             <td class="muted">{{ w.rhinoVersion ?? '—' }}</td>
@@ -589,6 +604,10 @@ button.role-pill.role-busy {
 .version-unknown {
   background: var(--color-bg-hover);
   color: var(--color-text-subtle);
+}
+.ue-template-pill {
+  background: var(--orbit-primary-fade);
+  color: var(--orbit-primary-hover);
 }
 
 /* ------------------------------------------------------------ row actions */

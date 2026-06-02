@@ -49,6 +49,14 @@ export interface HelloData {
   roles: AgentRole[];
   agentVersion: string;
   rhinoVersion?: string;
+  /** Release tag of the orbit-ue-template build currently installed at the
+   *  agent's VisualiserTemplateProjectPath (read from a durable
+   *  `.prism-template.json` marker, config fallback). Optional — older agents
+   *  don't report it, so the server shows "unknown". */
+  installedTemplateTag?: string;
+  /** Release tag of the OrbitConnector.UE5 plug-in merged into the installed
+   *  template project (companion to `installedTemplateTag`). */
+  installedConnectorTag?: string;
 }
 
 export interface WelcomeData {

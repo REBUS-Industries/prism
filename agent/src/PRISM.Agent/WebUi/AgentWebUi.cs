@@ -399,6 +399,7 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     object BuildState()
     {
         var cfg = _plane.Config;
+        var (installedTemplateTag, installedConnectorTag) = Visualiser.TemplateMarker.Resolve(cfg);
         return new
         {
             agent = new
@@ -450,6 +451,15 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 connectorTag = _plane.TemplatePull.ConnectorTag,
                 updatedAt    = _plane.TemplatePull.UpdatedAt,
                 inProgress   = _plane.IsTemplatePullInProgress,
+            },
+            // Durable record of WHICH template release is installed at
+            // VisualiserTemplateProjectPath (marker file, config fallback) —
+            // independent of the transient templatePull status above, so the
+            // operator sees the installed version even before/without a fresh pull.
+            installedTemplate = new
+            {
+                templateTag  = installedTemplateTag,
+                connectorTag = installedConnectorTag,
             },
             availableRoles = Enum.GetNames(typeof(AgentRole)).Select(s => s.ToLowerInvariant()).ToArray(),
         };

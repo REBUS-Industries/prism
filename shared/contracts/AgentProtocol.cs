@@ -99,6 +99,15 @@ public sealed class HelloData
     [JsonProperty("agentVersion")] public string AgentVersion { get; set; } = "";
     [JsonProperty("rhinoVersion", NullValueHandling = NullValueHandling.Ignore)]
     public string? RhinoVersion { get; set; }
+    /// <summary>Release tag of the orbit-ue-template build currently installed at
+    /// VisualiserTemplateProjectPath (read from the .prism-template.json marker,
+    /// config fallback). Null/omitted when no template is installed.</summary>
+    [JsonProperty("installedTemplateTag", NullValueHandling = NullValueHandling.Ignore)]
+    public string? InstalledTemplateTag { get; set; }
+    /// <summary>Release tag of the OrbitConnector.UE5 plug-in merged into the
+    /// installed template project (companion to installedTemplateTag).</summary>
+    [JsonProperty("installedConnectorTag", NullValueHandling = NullValueHandling.Ignore)]
+    public string? InstalledConnectorTag { get; set; }
 }
 
 public sealed class HeartbeatData

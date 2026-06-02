@@ -99,6 +99,7 @@ public sealed class AgentService : BackgroundService
 
     void SendHelloFireAndForget()
     {
+        var (templateTag, connectorTag) = Visualiser.TemplateMarker.Resolve(_cfg);
         var hello = new HelloData
         {
             MachineId = _cfg.MachineId,
@@ -108,6 +109,10 @@ public sealed class AgentService : BackgroundService
             Roles = _cfg.Roles,
             AgentVersion = typeof(AgentService).Assembly.GetName().Version?.ToString() ?? "0.1.0",
             RhinoVersion = null,  // Phase 3: read from Rhino.Inside host
+            // Which orbit-ue-template release is installed at the configured
+            // VisualiserTemplateProjectPath (durable marker, config fallback).
+            InstalledTemplateTag = templateTag,
+            InstalledConnectorTag = connectorTag,
         };
         _ = _ws.SendAsync(MessageType.Hello, hello);
     }
