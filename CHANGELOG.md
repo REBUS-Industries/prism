@@ -27,6 +27,23 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ## Unreleased
 
+### Docs — Visualiser multi-viewer & session-control API (docs-only)
+
+- New `docs/API_MULTIVIEW_SESSION_CONTROL.md`: the session lifecycle state
+  machine (`queued→importing→streaming→ended/failed`), every
+  `/api/visualiser/*` REST endpoint (including the previously-undocumented
+  share-link routes), the server↔agent WS protocol
+  (`startVisualisation`/`visualisationReady`/`Failed`/`Ended`/`cancelVisualisation`/
+  `signallingFrame`/`signallingViewerClose`/`setViewerControl`), the multi-viewer
+  model (per-viewer demux, view/control tiers, single-controller lock + control
+  WS, input gate, share links, ≈5-viewer / single-tenant limits), and
+  end-to-end examples. Cross-linked from `PORTAL_INTEGRATION.md`.
+- OpenAPI (`server/src/docs/openapi.ts`): documented the share-link endpoints
+  (`POST`/`GET /streams/{runId}/shares`, public `…/shares/exchange`,
+  `DELETE …/shares/{id}`) + schemas; added `viewerId`/`tier` to the
+  signalling-token response; corrected the start-timeout note to the current
+  600 s code default.
+
 ### Visualiser — OrbitConnector.UE5 import path (feature branch, not yet tagged)
 
 - **Agent `AgentConfig.VisualiserConnectorImport`** (`bool?`, tri-state): `true`

@@ -723,6 +723,10 @@ Plan around them; do not file bugs.
 
 ## See also
 
+-   Multi-viewer & session control: [`API_MULTIVIEW_SESSION_CONTROL.md`](API_MULTIVIEW_SESSION_CONTROL.md)
+    — several browsers on one session, share links, view/control tiers, the
+    single-controller lock, the signalling + control WebSocket channels, and
+    the server↔agent WS protocol.
 -   Machine-readable contract: [`https://prism.rebus.industries/docs`](https://prism.rebus.industries/docs)
 -   Release strategy: [`RELEASE_STRATEGY.md`](RELEASE_STRATEGY.md)
 -   AV exclusions on workstations: [`ANTIVIRUS_EXCLUSIONS.md`](ANTIVIRUS_EXCLUSIONS.md)

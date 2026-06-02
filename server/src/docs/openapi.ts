@@ -386,7 +386,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Convert',            description: 'Submit a file for conversion to ORBIT.' },
       { name: 'Receive',            description: 'Materialise an ORBIT version into a downloadable file (.3dm or .step).' },
       { name: 'Jobs',               description: 'Poll job status and download outputs.' },
-      { name: 'Visualiser',         description: 'Start, poll, and stop Pixel Streaming sessions of ORBIT versions. Portal-facing - requires the `visualiser:create_stream` scope. See [PORTAL_INTEGRATION.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/PORTAL_INTEGRATION.md) for the narrative integrator guide.' },
+      { name: 'Visualiser',         description: 'Start, poll, and stop Pixel Streaming sessions of ORBIT versions, plus multi-viewer share links. Portal-facing - `POST`/`DELETE` require the `visualiser:create_stream` scope. The live signalling + control WebSocket channels (`/ws/visualiser/{runId}/signalling` and `/ws/visualiser/{runId}/control`) and the multi-viewer model cannot be modelled in OpenAPI - see [API_MULTIVIEW_SESSION_CONTROL.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/API_MULTIVIEW_SESSION_CONTROL.md) and [PORTAL_INTEGRATION.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/PORTAL_INTEGRATION.md).' },
       { name: 'Project Attachments',description: 'Upload MVR/GDTF lighting files to an ORBIT project before starting a visualiser stream. Optional second-pass import via `import_mvr.py`.' },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
     ],
@@ -664,8 +664,55 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           type: 'object',
           required: ['token', 'exp'],
           properties: {
-            token: { type: 'string', description: 'HS256 JWT. Append as `?token=...` to the signalling WS URL.' },
-            exp:   { type: 'integer', description: 'Token expiry, Unix epoch seconds. Default TTL 5 minutes.' },
+            token:    { type: 'string', description: 'HS256 JWT. Append as `?token=...` to the signalling WS URL.' },
+            exp:      { type: 'integer', description: 'Token expiry, Unix epoch seconds. Default TTL 5 minutes.' },
+            viewerId: { type: 'string', description: 'Stable per-viewer demux key embedded in the token. Reuse it across token refreshes so the viewer\'s Wilbur player + controller seat survive a reconnect.' },
+            tier:     { type: 'string', enum: ['view', 'control'], description: 'Viewer tier carried by the token. `signalling-token` always mints `control`; `view`-tier seats come from share links.' },
+          },
+        },
+        VisualiserShareCreateRequest: {
+          type: 'object',
+          description: 'Body for `POST /api/visualiser/streams/{runId}/shares`.',
+          properties: {
+            tier:             { type: 'string', enum: ['view', 'control'], default: 'view', description: 'Tier granted to anyone who redeems the link.' },
+            expiresInSeconds: { type: 'integer', minimum: 1, maximum: 86_400, description: 'Optional TTL on top of the run-lifetime auto-expiry. Capped at 24h.' },
+          },
+        },
+        VisualiserShareLink: {
+          type: 'object',
+          description: 'A share link. The plaintext `shareToken` + `url` are returned ONLY from the mint response (shown once); list/GET omit them — only the SHA-256 hash is stored.',
+          required: ['id', 'tier', 'createdAt'],
+          properties: {
+            id:         { type: 'string', format: 'uuid' },
+            tier:       { type: 'string', enum: ['view', 'control'] },
+            url:        { type: 'string', format: 'uri', description: 'Mint response only. Public viewer URL embedding the token: `…/viewer/#/<runId>?st=<token>`.' },
+            shareToken: { type: 'string', description: 'Mint response only — the opaque plaintext token, shown once.' },
+            createdBy:  { type: 'string', nullable: true },
+            createdAt:  { type: 'string', format: 'date-time' },
+            expiresAt:  { type: 'string', format: 'date-time', nullable: true },
+            revokedAt:  { type: 'string', format: 'date-time', nullable: true },
+          },
+        },
+        VisualiserShareExchangeRequest: {
+          type: 'object',
+          required: ['shareToken'],
+          properties: {
+            shareToken: { type: 'string', description: 'The opaque token from the share URL\'s `?st=` parameter.' },
+            viewerId:   { type: 'string', minLength: 1, maxLength: 64, description: 'Optional stable per-session viewer id so identity survives JWT refreshes. A random one is minted when absent.' },
+          },
+        },
+        VisualiserShareExchangeResponse: {
+          type: 'object',
+          description: 'Returned from the public `POST /api/visualiser/streams/{runId}/shares/exchange`. Carries a tier-scoped signalling JWT plus everything needed to open the stream.',
+          required: ['token', 'exp', 'viewerId', 'tier', 'runId', 'signallingUrl'],
+          properties: {
+            token:         { type: 'string', description: 'HS256 signalling JWT carrying the link\'s tier + viewerId.' },
+            exp:           { type: 'integer', description: 'Token expiry, Unix epoch seconds.' },
+            viewerId:      { type: 'string' },
+            tier:          { type: 'string', enum: ['view', 'control'] },
+            runId:         { type: 'string', format: 'uuid' },
+            signallingUrl: { type: 'string', description: 'Append `?token=...` and open as a WebSocket.' },
+            turn:          { $ref: '#/components/schemas/VisualiserTurnBundle' },
           },
         },
         VisualiserWorkstation: {
@@ -1027,8 +1074,8 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       //   * Warm (UE editor cached on workstation): ~2-3 s round-trip
       //   * Cold (first run on workstation, shader compile + import):
       //     ~60-90 s. Tunable via `VISUALISER_START_TIMEOUT_MS` env
-      //     (default 180 s); requests that exceed the deadline return
-      //     `504` with `code: start_timeout`.
+      //     (code default 600 000 ms = 600 s); requests that exceed the
+      //     deadline return `504` with `code: start_timeout`.
       //
       // Idempotency expectation:
       //   The Phase G implementation inserts a NEW `visualiser_runs` row
@@ -1228,6 +1275,108 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             '404': { $ref: '#/components/responses/NotFound' },
             '409': { description: 'Run is not in `streaming` / `importing` state.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '503': { description: '`JWT_SIGNALLING_SECRET` is not configured.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/visualiser/streams/{runId}/shares': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Visualiser'],
+          summary: 'Mint a share link',
+          description: [
+            'Mint a shareable viewer link for a `streaming` run so a viewer with',
+            'no PRISM account can join. The plaintext token + URL are returned',
+            '**once** (only the SHA-256 hash is stored). The link auto-dies with',
+            'the run and can be revoked early.',
+            '',
+            '**Auth:** the run creator (matching API key) or an admin session, OR',
+            'an API key with the `visualiser:join_stream` scope.',
+            '',
+            'See [API_MULTIVIEW_SESSION_CONTROL.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/API_MULTIVIEW_SESSION_CONTROL.md) §4.5.',
+          ].join('\n'),
+          parameters: [{ in: 'path', name: 'runId', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: {
+            required: false,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/VisualiserShareCreateRequest' } } },
+          },
+          responses: {
+            '201': { description: 'Share link minted (token shown once).', content: { 'application/json': { schema: { $ref: '#/components/schemas/VisualiserShareLink' } } } },
+            '400': { description: 'Invalid body.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { description: 'Caller cannot mint links for this run.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { $ref: '#/components/responses/NotFound' },
+            '409': { description: 'Run is not `streaming`.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+        get: {
+          tags: ['Visualiser'],
+          summary: 'List share links for a run',
+          description: 'Returns the run\'s share links (newest first), without the plaintext token (irretrievable by design). Owner/admin only.',
+          parameters: [{ in: 'path', name: 'runId', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': {
+              description: 'Share links.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['shares'],
+                    properties: { shares: { type: 'array', items: { $ref: '#/components/schemas/VisualiserShareLink' } } },
+                  },
+                },
+              },
+            },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { description: 'Caller does not own the run.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/visualiser/streams/{runId}/shares/exchange': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Visualiser'],
+          summary: 'Redeem a share token (public)',
+          description: [
+            'PUBLIC - no API key. A shared viewer posts the opaque token from the',
+            'share URL and receives a tier-scoped signalling JWT plus the',
+            '`signallingUrl` + `turn` bundle needed to open the stream. Refuses',
+            'revoked (`410`), expired (`410`), or non-`streaming` (`409`) links.',
+          ].join('\n'),
+          security: [],
+          parameters: [{ in: 'path', name: 'runId', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/VisualiserShareExchangeRequest' } } },
+          },
+          responses: {
+            '200': { description: 'Token redeemed.', content: { 'application/json': { schema: { $ref: '#/components/schemas/VisualiserShareExchangeResponse' } } } },
+            '400': { description: 'Invalid body.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { description: 'Unknown share token for this run.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '409': { description: 'Stream is not active.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '410': { description: 'Share link revoked or expired.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '503': { description: '`JWT_SIGNALLING_SECRET` not configured.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/visualiser/streams/{runId}/shares/{id}': {
+        servers: [{ url: API_BASE }],
+        delete: {
+          tags: ['Visualiser'],
+          summary: 'Revoke a share link',
+          description: 'Stamps `revokedAt`; subsequent exchanges of that token return `410`. Owner/admin only.',
+          parameters: [
+            { in: 'path', name: 'runId', required: true, schema: { type: 'string', format: 'uuid' } },
+            { in: 'path', name: 'id',    required: true, schema: { type: 'string', format: 'uuid' } },
+          ],
+          responses: {
+            '200': { description: 'Revoked.', content: { 'application/json': { schema: { type: 'object', properties: { revoked: { type: 'string', format: 'uuid' } } } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { description: 'Caller does not own the run.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { description: 'Not found or already revoked.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
         },
       },
