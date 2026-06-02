@@ -183,21 +183,30 @@ public sealed class AgentConfig
     public bool VisualiserFullEditor { get; set; } = false;
 
     /// <summary>
-    /// Full-editor baseline: the template Unreal project the orchestrator
-    /// opens (and copies locally) when <see cref="VisualiserFullEditor"/> is
-    /// on. Defaults to the MINIMAL_CUBE baseline project on PC01 (a tiny
-    /// Blueprint-only project: cube + floor + directional/sky light +
-    /// PlayerStart, plugins = PixelStreaming2 + PythonScriptPlugin) so the
-    /// Pixel Streaming auto-start path can be proven without C++ binaries or
-    /// heavyweight plugin interference. The ORBIT import pipeline is bypassed
-    /// in this mode, so the editor opens this fixed project's startup map and
-    /// auto-streams its level-editor viewport. Forwarded to the orchestrator
-    /// as <c>PRISM_VISUALISER_TEMPLATE_PROJECT</c>.
+    /// Absolute path to the fixed Unreal project the orchestrator opens for the
+    /// <b>connector-import / streaming</b> path AND the <see cref="VisualiserFullEditor"/>
+    /// debug path. Forwarded to the orchestrator as
+    /// <c>PRISM_VISUALISER_TEMPLATE_PROJECT</c> and read at job-launch time, so
+    /// a change applies to the NEXT run with no agent restart.
     ///
     /// <para>
-    /// Set to <c>\\fs.ad.rebus.industries\REBUS_Admin\Software\Unreal\REBUS_TEMPLATE</c>
-    /// (or its locally-staged copy <c>C:\PRISM\Templates\REBUS_TEMPLATE</c>)
-    /// to use the full REBUS template instead.
+    /// <b>Normally set by the agent's "pull latest UE template" feature</b>,
+    /// which downloads + compiles the project under
+    /// <see cref="VisualiserTemplateRoot"/> (default <c>C:\PRISM\Templates</c>)
+    /// and repoints this at <c>C:\PRISM\Templates\&lt;ProjectName&gt;</c>
+    /// (e.g. <c>…\REBUSVis</c>) on success. Because that location is local +
+    /// already built, the orchestrator opens it <b>in place</b> (no second
+    /// copy); a UNC/remote path is still mirrored to a local cache first
+    /// (see <c>TemplateProjectProvider</c>).
+    /// </para>
+    ///
+    /// <para>
+    /// The code default is the <c>MINIMAL_CUBE</c> baseline (a tiny
+    /// Blueprint-only project: cube + floor + lights + PlayerStart, plugins =
+    /// PixelStreaming2 + PythonScriptPlugin) so a never-pulled agent can still
+    /// prove the Pixel Streaming path without C++ binaries. The legacy AD share
+    /// <c>\\fs.ad.rebus.industries\…\REBUS_TEMPLATE</c> is no longer the source
+    /// of truth — pull the template locally instead.
     /// </para>
     /// </summary>
     public string VisualiserTemplateProjectPath { get; set; } =
@@ -275,6 +284,30 @@ public sealed class AgentConfig
     /// against the installed agent).
     /// </summary>
     public string? VisualiserOrchestratorPath { get; set; }
+
+    // ---- Installed-template provenance (reported to the server) ---------
+    //
+    // Set by AgentControlPlane.PullTemplate on a successful pull and used as
+    // the fallback when the on-disk .prism-template.json marker at
+    // VisualiserTemplateProjectPath is missing. TemplateMarker.Resolve reads
+    // these; the agent reports the resolved tag(s) on `hello` so the admin
+    // Workstations page + agent web UI can show which UE template release is
+    // installed. Empty = unknown.
+
+    /// <summary>
+    /// Release tag of the <c>orbit-ue-template</c> build currently installed
+    /// at <see cref="VisualiserTemplateProjectPath"/>. Persisted as a fallback
+    /// for the on-disk marker; empty when no pull has run on this workstation.
+    /// </summary>
+    public string VisualiserTemplateVersion { get; set; } = "";
+
+    /// <summary>
+    /// Release tag of the <c>OrbitConnector.UE5</c> plug-in merged into the
+    /// currently-installed template project (companion to
+    /// <see cref="VisualiserTemplateVersion"/>). Empty when the connector
+    /// merge was skipped or no pull has run.
+    /// </summary>
+    public string VisualiserConnectorVersion { get; set; } = "";
 
     /// <summary>
     /// Path the config was loaded from (or last saved to). Not persisted to JSON.

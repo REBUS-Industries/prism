@@ -9,39 +9,54 @@ using PRISM.Visualiser.Orchestrator.Unreal;
 namespace PRISM.Visualiser.Orchestrator.Pipeline;
 
 /// <summary>
-/// Resolves a FIXED template Unreal project (currently the REBUS_TEMPLATE
-/// project on the AD file share), copies it to a LOCAL working directory on
-/// the workstation, and returns a <see cref="ScaffoldResult"/> pointing at
-/// the local copy so the full-editor-streaming path can open it directly.
+/// Resolves the FIXED template Unreal project the full-editor and
+/// connector-import launch paths open, and returns a <see cref="ScaffoldResult"/>
+/// pointing at a usable working copy.
 ///
 /// <para>
-/// This is the "Full Editor baseline" target: the ORBIT receive/stage/import
-/// pipeline is intentionally bypassed for this mode. We just open the fixed
-/// project's startup map in the full editor and auto-start Pixel Streaming.
+/// The project normally comes from the PRISM agent's <b>"pull latest UE
+/// template"</b> feature, which downloads + compiles the project locally under
+/// <c>VisualiserTemplateRoot</c> (default <c>C:\PRISM\Templates\&lt;ProjectName&gt;</c>)
+/// and repoints <c>VisualiserTemplateProjectPath</c> there. The path is
+/// forwarded to the orchestrator as
+/// <see cref="TemplateSourceEnvVar"/> (<c>PRISM_VISUALISER_TEMPLATE_PROJECT</c>).
 /// </para>
 ///
 /// <para>
-/// <b>Why copy locally?</b> Opening a <c>.uproject</c> directly off a UNC
-/// share is slow and fragile — UE writes Saved/Intermediate/shader-cache and
-/// the share may be read-only or contended. We mirror the source tree into
-/// <c>%LOCALAPPDATA%\PRISM.Visualiser\templates\&lt;name&gt;</c> (skipping the
-/// UE-generated dirs), cache it between runs (only changed source files are
-/// re-copied), and launch the editor on the local copy.
+/// <b>Local source → open IN PLACE (no copy).</b> When the source is already
+/// on a local fixed/removable drive (the common case — the agent pulled and
+/// built it on this box) we open it directly. The earlier behaviour mirrored
+/// it into <c>%LOCALAPPDATA%\PRISM.Visualiser\templates\&lt;name&gt;</c>, which is
+/// now a redundant second copy of an already-local, already-compiled project
+/// (and would strand the freshly-built <c>Binaries/</c> in two places). UE
+/// writes Saved/Intermediate/shader-cache into the project tree, which is fine
+/// on a local writable drive and is wiped by the next agent pull's atomic swap.
 /// </para>
 ///
 /// <para>
-/// <b>Share access:</b> the source UNC is AD-hosted. The PRISM agent runs as
-/// the interactive LocalUser in session 2, which has the share connected, so
-/// the orchestrator child inherits that access. If LocalUser logs off (or the
-/// share connection drops) the copy will fail with a clear error.
+/// <b>Remote/UNC source → copy locally (fallback).</b> If the source is a UNC
+/// share (e.g. a legacy <c>\\fs.ad…\REBUS_TEMPLATE</c> pointer) or a mapped
+/// network drive, we still mirror it into the local cache first, because
+/// opening a <c>.uproject</c> off a share is slow/fragile and the share may be
+/// read-only or contended. The mirror skips the regenerable UE dirs, caches
+/// between runs (robocopy <c>/E /XO</c>), and the editor launches on the copy.
 /// </para>
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class TemplateProjectProvider
 {
-    /// <summary>Default template source (overridable via env var / agent config).</summary>
-    public const string DefaultTemplateSource =
-        @"\\fs.ad.rebus.industries\REBUS_Admin\Software\Unreal\REBUS_TEMPLATE";
+    /// <summary>
+    /// Default template source used only when
+    /// <see cref="TemplateSourceEnvVar"/> / <c>VisualiserTemplateProjectPath</c>
+    /// is unset (i.e. the orchestrator is run standalone without the agent).
+    /// Points at the local location the agent's template pull installs into
+    /// (<c>VisualiserTemplateRoot\&lt;ProjectName&gt;</c>); <c>REBUSVis</c> is the
+    /// <c>orbit-ue-template</c> project's <c>.uproject</c> base name. In normal
+    /// operation the agent always forwards the env var, so this default is a
+    /// rarely-hit fallback. (Was the now-dead AD UNC share
+    /// <c>\\fs.ad.rebus.industries\…\REBUS_TEMPLATE</c>.)
+    /// </summary>
+    public const string DefaultTemplateSource = @"C:\PRISM\Templates\REBUSVis";
 
     /// <summary>Env var the agent forwards from <c>VisualiserTemplateProjectPath</c>.</summary>
     public const string TemplateSourceEnvVar = "PRISM_VISUALISER_TEMPLATE_PROJECT";
@@ -61,7 +76,7 @@ public sealed class TemplateProjectProvider
     public TemplateProjectProvider(ILogger log)
         => _log = log ?? throw new ArgumentNullException(nameof(log));
 
-    /// <summary>Resolve the configured source path (env var wins, else default UNC).</summary>
+    /// <summary>Resolve the configured source path (env var wins, else the local default).</summary>
     public static string ResolveSource()
     {
         var env = Environment.GetEnvironmentVariable(TemplateSourceEnvVar);
@@ -78,9 +93,10 @@ public sealed class TemplateProjectProvider
     }
 
     /// <summary>
-    /// Copy the template source to a local working copy and return a scaffold
-    /// pointing at it. Synchronous (robocopy + file IO); the pipeline wraps it
-    /// in a worker thread.
+    /// Resolve the template source to a usable working copy and return a
+    /// scaffold pointing at it. A LOCAL source is opened IN PLACE (no copy);
+    /// a remote/UNC source is mirrored into the local cache first. Synchronous
+    /// (robocopy + file IO); the pipeline wraps it in a worker thread.
     /// </summary>
     public ScaffoldResult Prepare(string? source = null, CancellationToken ct = default)
     {
@@ -90,23 +106,43 @@ public sealed class TemplateProjectProvider
         if (!Directory.Exists(source))
         {
             throw new TemplateProjectException(
-                $"Template project source is not accessible: '{source}'. " +
-                "The path is an AD file share; the PRISM agent must run as the interactive " +
-                "LocalUser (session 2) with the share connected. Verify the share is reachable " +
-                "(e.g. the Z: mapping is connected) or set " +
-                $"{TemplateSourceEnvVar} / VisualiserTemplateProjectPath to an accessible path.");
+                $"Template project source is not accessible: '{source}' " +
+                $"({TemplateSourceEnvVar} / VisualiserTemplateProjectPath). " +
+                "Pull the UE template onto this workstation (agent: \"Pull latest UE template\", " +
+                "installs into VisualiserTemplateRoot\\<ProjectName>), or point the path at an " +
+                "accessible local project. If the path is a UNC share, the PRISM agent must run as " +
+                "an interactive user with that share connected so the orchestrator child inherits access.");
         }
 
         var name = new DirectoryInfo(source.TrimEnd('\\', '/')).Name;
         if (string.IsNullOrWhiteSpace(name)) name = "Template";
-        var dest = Path.Combine(ResolveLocalCacheRoot(), Sanitize(name));
-        Directory.CreateDirectory(dest);
 
-        CopyTemplate(source, dest, ct);
+        string projectRoot;
+        if (IsLocalSource(source))
+        {
+            // Already on a local fixed/removable drive (the agent pulled +
+            // compiled it here). Open IN PLACE — mirroring it into LOCALAPPDATA
+            // would just double-copy an already-local, already-built project.
+            projectRoot = source.TrimEnd('\\', '/');
+            _log.Information(
+                "template project: source is local — opening IN PLACE at {Root} (no mirror copy)",
+                projectRoot);
+        }
+        else
+        {
+            // Remote/UNC/mapped-network source: mirror into the local cache so
+            // UE has a fast, writable tree (Saved/Intermediate/shader cache).
+            var dest = Path.Combine(ResolveLocalCacheRoot(), Sanitize(name));
+            Directory.CreateDirectory(dest);
+            _log.Information(
+                "template project: source is remote/UNC — mirroring to local cache {Dest}", dest);
+            CopyTemplate(source, dest, ct);
+            projectRoot = dest;
+        }
 
-        var uproject = SelectUproject(dest, name, source);
+        var uproject = SelectUproject(projectRoot, name, source);
 
-        var iniPath = Path.Combine(dest, "Config", "DefaultEngine.ini");
+        var iniPath = Path.Combine(projectRoot, "Config", "DefaultEngine.ini");
         var levelPath = ReadEditorStartupMap(iniPath);
 
         _log.Information(
@@ -114,12 +150,41 @@ public sealed class TemplateProjectProvider
             uproject, string.IsNullOrEmpty(levelPath) ? "(project default)" : levelPath);
 
         return new ScaffoldResult(
-            ProjectRoot: dest,
+            ProjectRoot: projectRoot,
             UprojectPath: uproject,
             DefaultEngineIniPath: iniPath,
             PythonScriptPath: string.Empty,
             LevelPath: levelPath,
             DescriptionRewritten: false);
+    }
+
+    /// <summary>
+    /// True when <paramref name="source"/> is on a local fixed/removable drive
+    /// (so it can be opened in place). False for UNC paths
+    /// (<c>\\server\share</c>) and mapped <b>network</b> drives — those are
+    /// "remote" and get mirrored to the local cache. Anything we can't classify
+    /// (relative path, unreadable drive) is treated as remote so the copy
+    /// fallback preserves the historical behaviour.
+    /// </summary>
+    public static bool IsLocalSource(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return false;
+        // UNC (\\server\share, \\?\UNC\…) is always remote.
+        if (source.StartsWith(@"\\", StringComparison.Ordinal)) return false;
+        if (!Path.IsPathRooted(source)) return false;
+        try
+        {
+            var root = Path.GetPathRoot(source);
+            if (string.IsNullOrEmpty(root)) return false;
+            var driveType = new DriveInfo(root).DriveType;
+            // Fixed/Removable/Ram are local; Network/CDRom/NoRootDirectory/Unknown are not.
+            return driveType is DriveType.Fixed or DriveType.Removable or DriveType.Ram;
+        }
+        catch
+        {
+            // Unknown/unreadable → be conservative and treat as remote (copy).
+            return false;
+        }
     }
 
     /// <summary>

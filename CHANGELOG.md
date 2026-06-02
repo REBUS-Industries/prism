@@ -60,6 +60,21 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.23 — 2026-06-02 — Reconcile VisualiserTemplateProjectPath docs with the local pull flow
+
+### Docs
+
+- Updated the `AgentConfig.VisualiserTemplateProjectPath` summary: it is now
+  normally set by the agent's "pull latest UE template" feature (installs +
+  compiles into `C:\PRISM\Templates\<ProjectName>` and repoints here), is read
+  by **both** the connector-import/streaming path and the full-editor path, and
+  the orchestrator opens a local project **in place**. Dropped the stale
+  reference to the dead AD UNC share as the source of truth (the `MINIMAL_CUBE`
+  code default is unchanged). No behaviour change.
+- Companion orchestrator change ships as visualiser **v0.5.16** (open a local
+  template project in place; UNC sources still mirror) — see
+  `visualiser/CHANGELOG.md`.
+
 ## v0.3.22 — 2026-06-02 — Portal URL + REBUS API key for the Unreal plug-ins
 
 ### Added

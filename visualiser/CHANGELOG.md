@@ -4,6 +4,43 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.16 — open a local template project in place (no redundant LOCALAPPDATA mirror)
+
+> Reconciles `TemplateProjectProvider` with the agent's "pull latest UE
+> template" flow (agent v0.3.19–v0.3.21), which now downloads, connector-merges,
+> and **compiles** the project locally under `C:\PRISM\Templates\<name>` and
+> repoints `VisualiserTemplateProjectPath` there. Mirroring that already-local,
+> already-built project into `%LOCALAPPDATA%` was a redundant second copy.
+
+### Changed
+
+- **`TemplateProjectProvider.Prepare` now opens a LOCAL source IN PLACE** (no
+  copy). A source on a local fixed/removable drive (the common case) is launched
+  directly from `VisualiserTemplateProjectPath`; UE writes
+  Saved/Intermediate/shader-cache into the project tree (fine on a local drive,
+  wiped by the next agent pull's atomic swap). This affects **both** consumers
+  of `Prepare` — the full-editor path and the connector-import/streaming path —
+  so the connector now detects the plug-in and launches `-game` against the
+  same in-place dir.
+- **UNC / mapped-network sources still mirror** to
+  `%LOCALAPPDATA%\PRISM.Visualiser\templates\<name>` via robocopy `/E /XO`
+  (unchanged fallback — opening a `.uproject` off a share is slow/fragile). The
+  branch uses `IsLocalSource` (UNC `\\` check + `DriveInfo.DriveType`:
+  Fixed/Removable/Ram = local; Network/unknown = remote/copy). Anything
+  unclassifiable falls back to copy, so nothing regresses.
+- **Default template source** changed from the dead AD UNC share
+  `\\fs.ad.rebus.industries\…\REBUS_TEMPLATE` to the local
+  `C:\PRISM\Templates\REBUSVis` (the agent-pull install location;
+  `REBUSVis` is the `orbit-ue-template` `.uproject` base name). Only used when
+  `PRISM_VISUALISER_TEMPLATE_PROJECT` is unset (orchestrator run without the
+  agent); in normal operation the agent always forwards the env var.
+
+### Docs
+
+- Rewrote the `TemplateProjectProvider` class doc, the not-accessible error
+  message, and log strings (no longer claim the AD share is the source of
+  truth). Updated `docs/VISUALISER_CONNECTOR_IMPORT.md` + `visualiser/HANDOFF.md`.
+
 ## v0.5.15 — forward external Portal connection to the Unreal plug-ins
 
 > The PRISM agent now forwards an external "Portal" connection (set from the

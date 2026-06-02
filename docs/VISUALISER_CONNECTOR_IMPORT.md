@@ -116,21 +116,32 @@ connector and `orbit-cli` both redact it).
 
 ## Prerequisite the operator MUST satisfy
 
-The fixed project at `C:\PRISM\Templates\REBUS_Visualiser` must actually contain
-the **built** connector + CLI:
+The fixed project (default `C:\PRISM\Templates\<ProjectName>`, e.g.
+`…\REBUSVis`) must actually contain the **built** connector + CLI:
 
 ```
-C:\PRISM\Templates\REBUS_Visualiser\
+C:\PRISM\Templates\<ProjectName>\
   Plugins\OrbitConnector\OrbitConnector.uplugin
   Plugins\OrbitConnector\ThirdParty\Cli\win-x64\orbit-cli.exe   (or Binaries\…)
 ```
 
-If either is missing, `OrbitConnectorLocator.Detect` reports `IsUsable=false`
-and (in auto mode) the orchestrator falls back to Interchange. To install the
-plug-in into the project, run the connector's in-project updater (v0.1.24+ once
-released) against `C:\PRISM\Templates\REBUS_Visualiser`. **Connector C++ in this
-change is compile-pending** — it must be built (open the project in UE / run
-UAT) before this path can work on the workstation.
+**The agent's "Pull latest UE template" feature satisfies this automatically**
+(agent v0.3.19+): it downloads the `orbit-ue-template` project into
+`VisualiserTemplateRoot` (`C:\PRISM\Templates`), merges the latest
+`OrbitConnector.UE5` plug-in (+ bundled `orbit-cli.exe` + the `glTFRuntime`
+dependency) into the project's `Plugins\`, **compiles the project's Editor
+target with UnrealBuildTool** (agent v0.3.21+, so the headless `-game` launch
+has module binaries), and repoints `VisualiserTemplateProjectPath` at the
+installed project. Because that location is local + already built, the
+orchestrator opens it **in place** — it no longer mirrors it into
+`%LOCALAPPDATA%` (visualiser v0.5.16+; a UNC/remote source is still mirrored as
+a fallback).
+
+If the `.uplugin` or `orbit-cli.exe` is missing, `OrbitConnectorLocator.Detect`
+reports `IsUsable=false` and (in auto mode) the orchestrator falls back to
+Interchange. Re-running the template pull (or pointing
+`VisualiserTemplateProjectPath` at a project that already ships the built
+plug-in) is the fix.
 
 > The orchestrator references the CLI under the plug-in's `ThirdParty\Cli\win-x64`
 > by default (`OrbitConnectorLocator.CliRelativePath`). If your packaging places
