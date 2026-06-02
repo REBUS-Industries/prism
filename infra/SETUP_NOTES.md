@@ -21,14 +21,14 @@ server itself does not provision:
 1. **coturn TURN/STUN server.** Required for the browser-to-workstation
    WebRTC media relay. Deployed on VM 211 alongside PRISM server.
    - Deployment files:
-     `D:\Documents\Claude\REBUS System\TURN\docker-compose.yml`
-     `D:\Documents\Claude\REBUS System\TURN\turnserver.conf`
-   - Runbook: `D:\Documents\Claude\REBUS System\TURN\SETUP_NOTES.md`
+     `infra/coturn/docker-compose.yml`
+     `infra/coturn/turnserver.conf`
+   - Runbook: `infra/coturn/SETUP_NOTES.md`
    - Public DNS: `visualiser.rebus.industries` → `185.48.165.165`
      (NAT'd to `10.0.200.211`).
 
 2. **UniFi gateway port-forwards.** Open the public ports coturn needs.
-   - Rule table: `D:\Documents\Claude\REBUS System\TURN\UNIFI_RULES.md`
+   - Rule table: `infra/coturn/UNIFI_RULES.md`
    - Applied via UniFi Console → Settings → Internet → Port Forwarding.
    - Without these rules, `POST /api/visualiser/streams` returns valid
      credentials but browsers cannot reach the relay (ICE candidate
@@ -87,7 +87,7 @@ Two related envs land in the same Phase H wiring:
 When standing up the Visualiser stack for the first time, follow this
 order:
 
-1. Read `D:\Documents\Claude\REBUS System\TURN\SETUP_NOTES.md` end to
+1. Read `infra/coturn/SETUP_NOTES.md` end to
    end before touching anything — it's the source of truth.
 2. Generate `TURN_SECRET` and `JWT_SIGNALLING_SECRET` (two separate
    `openssl rand -hex 32` runs).
@@ -126,7 +126,7 @@ matcher takes care of that.
 | PRISM env template | `PRISM/infra/.env.example` |
 | PRISM Caddy snippet | `PRISM/infra/Caddyfile.snippet` |
 | PRISM deploy runbook | `PRISM/DEPLOY.md` |
-| coturn compose + conf | `D:\Documents\Claude\REBUS System\TURN\` |
-| coturn runbook | `D:\Documents\Claude\REBUS System\TURN\SETUP_NOTES.md` |
-| UniFi port-forward rules | `D:\Documents\Claude\REBUS System\TURN\UNIFI_RULES.md` |
+| coturn compose + conf | `infra/coturn/` |
+| coturn runbook | `infra/coturn/SETUP_NOTES.md` |
+| UniFi port-forward rules | `infra/coturn/UNIFI_RULES.md` |
 | Caddy proxy ops | `D:\Documents\Claude\REBUS System\proxy\` |

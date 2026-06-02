@@ -1,0 +1,69 @@
+# coturn deployment for PRISM Visualiser (Phase H).
+#
+# Target host:  VM 211  (10.0.200.211)
+# Public DNS:   visualiser.rebus.industries -> 185.48.165.165
+# UniFi NAT:    185.48.165.165 -> 10.0.200.211 (see UNIFI_RULES.md)
+#
+# Companion docs:
+#   SETUP_NOTES.md            step-by-step deploy + cert acquisition
+#   UNIFI_RULES.md            port-forward rules the gateway needs
+#   turnserver.conf           coturn configuration
+#   sync-visualiser-cert.sh   /usr/local/bin/ on VM 211 — Caddy cert mirror
+#
+# Cert flow (the operative path on VM 211 today):
+#   Caddy on Proxy1 LXC ACMEs visualiser.rebus.industries via HTTP-01,
+#   then sync-visualiser-cert.sh (rebus's @daily cron) rsync-mirrors the
+#   cert+key from Proxy1's Caddy data dir into ~rebus/coturn/certs/ on
+#   this host. The certs/ directory is bind-mounted read-only into the
+#   coturn container at /etc/coturn/certs/ (see volumes below), and
+#   turnserver.conf points cert= / pkey= at that path.
+#
+# We pin coturn 4.6 (the current stable line, RFC 8489 compliant) rather
+# than `latest` so a future major-version bump cannot silently break the
+# Visualiser stack.
+
+services:
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: coturn
+    restart: unless-stopped
+    # Host networking is REQUIRED. coturn allocates UDP relay ports
+    # anywhere in the configured range (currently 52000-56999, narrowed
+    # from coturn's 49152-65535 default to avoid WireGuard 51820/udp);
+    # bridge networking would force us to publish the entire range
+    # (5000 ports) which Docker handles poorly. With host networking
+    # the container binds straight to the host's interfaces — UniFi
+    # DNATs 185.48.165.165:* back to 10.0.200.211:* and traffic lands
+    # on the listener directly.
+    network_mode: host
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      # coturn 4.6 stores its long-term-credential DB and ALPN
+      # persistence here. We keep a named volume so a container
+      # rebuild doesn't lose accumulated state.
+      - coturn-data:/var/lib/coturn
+      # TLS cert mount (read-only). Populated by sync-visualiser-cert.sh
+      # (see the cert-flow notes at the top of this file). Two files
+      # must exist inside:
+      #   fullchain.pem  full cert chain (Caddy's *.crt file)
+      #   privkey.pem    EC/RSA private key (Caddy's *.key file, mode 0644
+      #                  because the coturn container runs as `nobody`)
+      # If you change this host path, update cert= / pkey= in
+      # turnserver.conf and the destination path in the sync script.
+      - ./certs:/etc/coturn/certs:ro
+    healthcheck:
+      # coturn doesn't ship a /health endpoint and the coturn/coturn:4.6
+      # Debian image doesn't include procps (so `pgrep` is unavailable);
+      # `pidof` is from sysvinit-utils which IS in the base image.
+      # `turnserver` is the supervised PID 1 and the container exits if
+      # it dies, so this is mostly a docker-compose liveness signal for
+      # the operator. start_period gives turnserver a moment to bind
+      # listeners before the first probe.
+      test: ["CMD", "pidof", "turnserver"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  coturn-data:

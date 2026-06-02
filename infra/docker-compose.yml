@@ -44,7 +44,7 @@ services:
       ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
       # --- Visualiser (Phase H wires real coturn) ---------------------
       # TURN_SECRET MUST match coturn's static-auth-secret on VM 211
-      # (see D:\Documents\Claude\REBUS System\TURN\SETUP_NOTES.md).
+      # (see infra/coturn/SETUP_NOTES.md).
       # When empty, server/src/visualiser/turnCredentials.ts returns the
       # `turn: null` sentinel and the portal/admin SPA falls back to
       # STUN/LAN-only WebRTC — useful for dev, useless in production.
