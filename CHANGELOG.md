@@ -43,6 +43,29 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.20 — 2026-06-02 — Drop redundant template/connector tag inputs from the agent web UI
+
+### Changed
+
+- **Removed two now-redundant freeform inputs from the agent web UI's
+  Visualiser card:** the *Template tag* (`unrealTemplateTag`) and *Connector
+  tag* (`orbitConnectorTag`) text boxes. The release dropdown (default
+  *Latest*) now drives which template version is pulled, and the connector
+  always merges its latest build (toggle still present), so the manual tag
+  boxes were duplicate surface.
+
+### Kept (no behaviour change)
+
+- `AgentConfig.UnrealTemplateTag` is retained: it is still the
+  configured-default fallback for the pull flow (`PullAsync` `configuredTag`,
+  which degrades to *latest* when the tag has no release) **and** is still
+  editable from the Windows tray `SettingsForm`.
+- `AgentConfig.OrbitConnectorTag` is retained: it still pins the connector
+  release the pull merges when set (blank = latest).
+- Both `ConfigUpdate` fields and the `/api/config` PATCH plumbing stay intact;
+  the web UI simply no longer sends these two keys (ApplyAsync leaves an
+  omitted field unchanged), so existing values are preserved.
+
 ## v0.3.19 — 2026-06-02 — Template pull: pick a version + merge the OrbitConnector plug-in
 
 ### Added

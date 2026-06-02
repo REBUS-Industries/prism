@@ -461,10 +461,6 @@ internal static class IndexHtml
           <span>Unreal Engine root</span>
           <input type="text" id="unrealEngineRoot" placeholder="C:\Program Files\Epic Games\UE_5.7\" />
         </label>
-        <label class="field">
-          <span>Template tag</span>
-          <input type="text" id="unrealTemplateTag" placeholder="v1.0.0-ue5.7" />
-        </label>
       </div>
       <div class="row">
         <label class="field">
@@ -525,10 +521,6 @@ internal static class IndexHtml
         <label class="field">
           <span>Connector repo</span>
           <input type="text" id="orbitConnectorRepo" placeholder="REBUS-ORBIT/orbit-connectors" />
-        </label>
-        <label class="field">
-          <span>Connector tag (blank = latest)</span>
-          <input type="text" id="orbitConnectorTag" placeholder="latest" />
         </label>
       </div>
       <div class="row">
@@ -727,7 +719,6 @@ internal static class IndexHtml
       renderRoles(s.availableRoles, new Set(s.config.roles));
 
       $('unrealEngineRoot').value       = s.config.unrealEngineRoot       ?? '';
-      $('unrealTemplateTag').value      = s.config.unrealTemplateTag      ?? '';
       $('visualiserMaxConcurrent').value = s.config.visualiserMaxConcurrent ?? 1;
       const gpu = !!s.config.visualiserGpuCheck;
       $('visualiserGpuCheck').checked = gpu;
@@ -746,8 +737,6 @@ internal static class IndexHtml
         $('unrealTemplateRepo').value = s.config.unrealTemplateRepo || '';
       if (document.activeElement !== $('orbitConnectorRepo'))
         $('orbitConnectorRepo').value = s.config.orbitConnectorRepo || '';
-      if (document.activeElement !== $('orbitConnectorTag'))
-        $('orbitConnectorTag').value = s.config.orbitConnectorTag || '';
       const pullConn = s.config.visualiserPullConnector !== false;
       $('visualiserPullConnector').checked = pullConn;
       $('visualiserPullConnectorLabel').classList.toggle('checked', pullConn);
@@ -824,7 +813,6 @@ internal static class IndexHtml
       webUiPort:    Number($('webUiPort').value),
       webUiBindAll: $('webUiBindAll').checked,
       unrealEngineRoot:        $('unrealEngineRoot').value.trim(),
-      unrealTemplateTag:       $('unrealTemplateTag').value.trim(),
       visualiserMaxConcurrent: Number($('visualiserMaxConcurrent').value),
       visualiserGpuCheck:      $('visualiserGpuCheck').checked,
       visualiserDebugWindow:   $('visualiserDebugWindow').checked,
@@ -833,7 +821,6 @@ internal static class IndexHtml
       visualiserTemplateRoot:  $('visualiserTemplateRoot').value.trim(),
       unrealTemplateRepo:      $('unrealTemplateRepo').value.trim(),
       orbitConnectorRepo:      $('orbitConnectorRepo').value.trim(),
-      orbitConnectorTag:       $('orbitConnectorTag').value.trim(),
       visualiserPullConnector: $('visualiserPullConnector').checked,
     };
   }
@@ -1002,9 +989,9 @@ internal static class IndexHtml
 
   for (const id of [
     'prismUrl','nodeName','slots','rhinoVersion','logDir','webUiPort',
-    'unrealEngineRoot','unrealTemplateTag','visualiserMaxConcurrent',
+    'unrealEngineRoot','visualiserMaxConcurrent',
     'visualiserTemplateRoot','unrealTemplateRepo',
-    'orbitConnectorRepo','orbitConnectorTag',
+    'orbitConnectorRepo',
   ]) {
     $(id).addEventListener('input', markDirty);
   }
