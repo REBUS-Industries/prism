@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
-import { adminApi } from '../shared/api';
+import { adminApi, healthApi } from '../shared/api';
 import ThemeToggle from '../shared/ThemeToggle.vue';
 import { adminWs } from '../shared/ws';
 
 const router = useRouter();
 const route = useRoute();
 const username = ref<string | null>(null);
+const serverVersion = ref<string | null>(null);
 const ready = ref(false);
 
 onMounted(async () => {
+  healthApi.get().then((h) => { serverVersion.value = h.version; }).catch(() => null);
   try {
     const me = await adminApi.me();
     username.value = me.principal?.username ?? null;
@@ -62,6 +64,7 @@ async function logout() {
           <ThemeToggle />
         </div>
       </div>
+      <div v-if="serverVersion" class="server-version muted">PRISM server v{{ serverVersion }}</div>
     </aside>
     <main>
       <RouterView />
@@ -105,6 +108,7 @@ nav a.external {
 }
 nav a.external:hover { background: transparent; color: var(--color-text); }
 .user-box { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+.server-version { font-size: 11px; text-align: center; }
 .user-actions { display: flex; align-items: center; gap: 6px; }
 .profile-link {
   color: var(--color-text); text-decoration: none; font-weight: 600;

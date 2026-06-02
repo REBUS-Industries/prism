@@ -403,6 +403,17 @@ export const settingsApi = {
   set:  (key: string, value: string) => api.put<{ ok: true }>(`/api/settings/${encodeURIComponent(key)}`, { value }),
 };
 
+export interface ServerHealth {
+  status: string;
+  service: string;
+  version: string;
+  phase: number;
+}
+
+export const healthApi = {
+  get: () => api.get<ServerHealth>('/health'),
+};
+
 export const adminApi = {
   me:     () => api.get<{ kind: string; principal: { username?: string } }>('/api/admin/me'),
   login:  (username: string, password: string) => api.post<{ ok: true; username: string }>('/api/admin/login', { username, password }),

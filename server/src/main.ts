@@ -10,8 +10,25 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { runBootstrap } from './bootstrap.js';
 
+// Sourced from this package's package.json at startup. The process is always
+// launched from the package root: `npm run dev`/`start` run with cwd=server/,
+// and the Docker image runs with WORKDIR=/prism where package.json is copied
+// (see server/Dockerfile). `tsc` does not copy the JSON into dist/, so we read
+// it at runtime rather than importing it.
+function resolveServerVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const SERVER_VERSION = resolveServerVersion();
 const PORT = Number(process.env.PORT ?? 8765);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
@@ -66,7 +83,7 @@ async function buildApp() {
   app.get('/health', async () => ({
     status: 'ok',
     service: 'prism-server',
-    version: process.env.npm_package_version ?? '0.1.0',
+    version: SERVER_VERSION,
     phase: 1,
   }));
 
