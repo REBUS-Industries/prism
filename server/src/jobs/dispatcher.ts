@@ -45,6 +45,7 @@ import { getLatestVersionId, OrbitClientError } from '../orbit/client.js';
 import { sessionRegistry, type AgentConn } from '../ws/sessionRegistry.js';
 import { broadcastJobUpdate } from '../ws/adminProtocol.js';
 import { issueDownloadToken } from '../api/internal.js';
+import { appendVisualiserRunLog } from '../visualiser/runLog.js';
 
 const PUBLIC_BASE_URL =
   process.env.PUBLIC_BASE_URL
@@ -442,6 +443,7 @@ export async function tryDispatchVisualisation(
         { runId: run.id, resolvedVersionId },
         'visualiser dispatch: resolved latest versionId (none supplied by caller)',
       );
+      await appendVisualiserRunLog(run.id, `resolved latest version ${resolvedVersionId} (none supplied by caller)`, { log });
       // Persist so the admin UI shows which version is actually running.
       await db
         .update(visualiserRuns)
@@ -528,6 +530,7 @@ export async function tryDispatchVisualisation(
     .where(eq(visualiserRuns.id, run.id));
 
   log.info({ runId: run.id, nodeName: agent.nodeName, sessionId: agent.sessionId }, 'visualiser run dispatched');
+  await appendVisualiserRunLog(run.id, `dispatched to workstation ${agent.nodeName}; orchestrator importing version ${resolvedVersionId}`, { log });
   return {
     dispatched: true,
     workstationId: reserved.workstationId,

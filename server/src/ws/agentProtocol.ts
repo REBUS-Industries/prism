@@ -24,6 +24,7 @@ import { broadcastJobUpdate, broadcastWorkstationUpdate } from './adminProtocol.
 import { dispatchJobEvent } from '../webhooks/dispatcher.js';
 import { releaseVisualiserSlot, tryDispatch } from '../jobs/dispatcher.js';
 import { visualiserRunRegistry } from '../visualiser/runRegistry.js';
+import { appendVisualiserRunLog } from '../visualiser/runLog.js';
 import { signallingProxyRegistry } from './signallingProxyRegistry.js';
 import { visualiserIdleReaper } from '../visualiser/idleReaper.js';
 
@@ -520,6 +521,7 @@ async function onVisualisationReady(
       updatedAt: new Date(),
     })
     .where(eq(visualiserRuns.id, data.runId));
+  await appendVisualiserRunLog(data.runId, `agent reported ready (streamerId ${data.streamerId ?? 'unknown'})`, { source: 'agent', log });
   visualiserRunRegistry.ready({
     runId: data.runId,
     signallingUrl: data.signallingUrl,
@@ -545,6 +547,7 @@ async function onVisualisationFailed(
       updatedAt: new Date(),
     })
     .where(eq(visualiserRuns.id, data.runId));
+  await appendVisualiserRunLog(data.runId, `agent reported failure: ${data.error}`, { level: 'error', source: 'agent', log });
   // Hand the failure back to whoever is `await`-ing the POST. If no
   // waiter exists the row is still updated for follow-up GETs.
   visualiserRunRegistry.fail({
@@ -572,6 +575,7 @@ async function onVisualisationEnded(
     .update(visualiserRuns)
     .set({ status: 'ended', endedAt: new Date(), updatedAt: new Date() })
     .where(eq(visualiserRuns.id, data.runId));
+  await appendVisualiserRunLog(data.runId, `agent reported ended${data.reason ? `: ${data.reason}` : ''}`, { source: 'agent', log });
   // Run is terminal — drop any pending idle-reap countdown for it.
   visualiserIdleReaper.cancel(data.runId);
   await releaseVisualiserSlot(conn.workstationId).catch(() => null);

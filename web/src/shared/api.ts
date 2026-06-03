@@ -421,6 +421,42 @@ export const healthApi = {
   get: () => api.get<ServerHealth>('/health'),
 };
 
+// ---------------------------------------------------------------- Server API log
+//
+// Server-side ring buffer of every inbound API request the server answered.
+// Backs the admin Logs page alongside the client-side `apiLog`. Contains only
+// safe metadata — never headers, cookies, or bodies (see server
+// observability/apiLog.ts).
+
+export type ServerApiLogCategory = 'external' | 'admin' | 'orbit' | 'internal' | 'system';
+export type ServerApiLogLevel = 'info' | 'warn' | 'error';
+
+export interface ServerApiLogEntry {
+  id: number;
+  ts: number;             // request start, epoch ms
+  durationMs: number;
+  method: string;
+  path: string;
+  status: number;
+  originKind: VisualiserOriginKind;
+  originPrincipal: string | null;
+  clientIp: string | null;
+  category: ServerApiLogCategory;
+  level: ServerApiLogLevel;
+}
+
+export const serverLogsApi = {
+  list: (since?: number, limit?: number) => {
+    const qs = new URLSearchParams();
+    if (since) qs.set('since', String(since));
+    if (limit) qs.set('limit', String(limit));
+    const tail = qs.toString();
+    return api.get<{ entries: ServerApiLogEntry[]; bufferSize: number }>(
+      `/api/admin/logs${tail ? `?${tail}` : ''}`,
+    );
+  },
+};
+
 export const adminApi = {
   me:     () => api.get<{ kind: string; principal: { username?: string } }>('/api/admin/me'),
   login:  (username: string, password: string) => api.post<{ ok: true; username: string }>('/api/admin/login', { username, password }),
@@ -542,6 +578,19 @@ export type VisualiserStatus =
   | 'failed'
   | 'ended';
 
+/** Where a visualiser run was started from (admin UI vs external API etc.). */
+export type VisualiserOriginKind = 'admin' | 'api' | 'orbit' | 'internal' | 'anonymous';
+
+/** One per-run lifecycle log line from `GET /api/visualiser/streams/:id/logs`. */
+export interface VisualiserRunLogLine {
+  id: number;
+  runId: string;
+  ts: string;
+  level: string;       // 'debug' | 'info' | 'warn' | 'error'
+  source: 'server' | 'agent' | string;
+  message: string;
+}
+
 export interface VisualiserRun {
   id: string;
   status: VisualiserStatus;
@@ -561,6 +610,10 @@ export interface VisualiserRun {
   ttlSeconds?: number | null;
   submittedBy?: string | null;
   requestedByApiKeyId?: string | null;
+  /** Request provenance, stamped at start (see server auth/provenance.ts). */
+  originKind?: VisualiserOriginKind | null;
+  originAddress?: string | null;
+  originPrincipal?: string | null;
   createdAt: string;
   updatedAt: string;
   startedAt?: string | null;
@@ -628,6 +681,10 @@ export const visualiserApi = {
   },
   getStream: (runId: string) =>
     api.get<VisualiserRun>(`/api/visualiser/streams/${runId}`),
+  getStreamLogs: (runId: string, since?: number) =>
+    api.get<{ logs: VisualiserRunLogLine[] }>(
+      `/api/visualiser/streams/${runId}/logs${since ? `?since=${since}` : ''}`,
+    ),
   startStream: (body: VisualiserStartBody) =>
     api.post<VisualiserReadyEvent>('/api/visualiser/streams', body),
   stopStream: (runId: string) =>

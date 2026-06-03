@@ -48,10 +48,12 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { agentSessions, visualiserRuns, visualiserShareLinks, workstations, type VisualiserRun } from '../db/schema.js';
+import { agentSessions, visualiserRunLogs, visualiserRuns, visualiserShareLinks, workstations, type VisualiserRun } from '../db/schema.js';
 import { requireAdmin, requireAuth, requireScope } from '../auth/middleware.js';
+import { resolveProvenance } from '../auth/provenance.js';
+import { appendVisualiserRunLog } from '../visualiser/runLog.js';
 import { envelope, type CancelVisualisationData } from '../../../shared/contracts/agent-protocol.js';
 import { sessionRegistry } from '../ws/sessionRegistry.js';
 import { broadcastWorkstationUpdate } from '../ws/adminProtocol.js';
@@ -172,6 +174,9 @@ function toPublicRun(row: VisualiserRun, opts?: { withTurn?: boolean; workstatio
     ttlSeconds: row.ttlSeconds,
     submittedBy: row.submittedBy,
     requestedByApiKeyId: row.requestedByApiKeyId,
+    originKind: row.originKind,
+    originAddress: row.originAddress,
+    originPrincipal: row.originPrincipal,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     dispatchedAt: row.dispatchedAt,
@@ -224,6 +229,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     }
 
     const { submittedBy, requestedByApiKeyId } = principalSubject(req);
+    const provenance = resolveProvenance(req);
 
     const inserted = await db
       .insert(visualiserRuns)
@@ -238,10 +244,22 @@ const plugin: FastifyPluginAsync = async (app) => {
         callbackUrl: parsed.data.callbackUrl ?? null,
         submittedBy,
         requestedByApiKeyId,
+        originKind: provenance.originKind,
+        originAddress: provenance.originAddress,
+        originPrincipal: provenance.originPrincipal,
       })
       .returning();
     const run = inserted[0]!;
     const runId = run.id;
+
+    const originLabel = provenance.originPrincipal
+      ? `${provenance.originKind} (${provenance.originPrincipal})`
+      : provenance.originKind;
+    await appendVisualiserRunLog(
+      runId,
+      `run requested by ${originLabel}${provenance.originAddress ? ` from ${provenance.originAddress}` : ''} — project ${parsed.data.projectId} / model ${parsed.data.modelId}`,
+      { log: req.log },
+    );
 
     // Register the waiter BEFORE dispatching so an extremely fast
     // agent (or a test double) can't resolve the runId before we have
@@ -252,6 +270,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (!dispatch.dispatched) {
       visualiserRunRegistry.abandon(runId);
       const failureReason = dispatch.error;
+      await appendVisualiserRunLog(runId, `dispatch failed (${dispatch.error}): ${dispatch.reason}`, { level: 'error', log: req.log });
       await db
         .update(visualiserRuns)
         .set({ status: 'failed', failureReason, error: dispatch.reason, updatedAt: new Date(), endedAt: new Date() })
@@ -282,6 +301,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     } catch (failure) {
       const f = failure as { code: string; message: string; stack?: string };
       const isTimeout = f.code === 'start_timeout';
+      await appendVisualiserRunLog(runId, `start failed (${f.code}): ${f.message}`, { level: 'error', log: req.log });
       await db
         .update(visualiserRuns)
         .set({
@@ -348,6 +368,7 @@ const plugin: FastifyPluginAsync = async (app) => {
         updatedAt: new Date(),
       })
       .where(eq(visualiserRuns.id, runId));
+    await appendVisualiserRunLog(runId, `stream is live (streamerId ${readyEvent.streamerId ?? 'unknown'})`, { log: req.log });
 
     if (!turn) {
       req.log.warn({ runId }, 'TURN_SECRET unset; returning turn: null sentinel (Phase H wires the real secret)');
@@ -419,6 +440,29 @@ const plugin: FastifyPluginAsync = async (app) => {
     return toPublicRun(row, { withTurn: true, workstationName });
   });
 
+  /* ---------- GET /api/visualiser/streams/:runId/logs ---------- */
+  // Per-run lifecycle log lines (server + agent). Backs the expandable log
+  // panel in the admin Visualiser viewer. `since` is a numeric cursor on the
+  // monotonic id so the UI can poll for just the new lines.
+  app.get<{ Params: { runId: string }; Querystring: { since?: string } }>('/streams/:runId/logs', {
+    preHandler: requireAuth,
+  }, async (req, reply) => {
+    const row = await db.query.visualiserRuns.findFirst({ where: eq(visualiserRuns.id, req.params.runId) });
+    if (!row) return reply.code(404).send({ error: 'not found' });
+    const sinceId = req.query.since ? Number(req.query.since) : 0;
+    const lines = await db
+      .select()
+      .from(visualiserRunLogs)
+      .where(
+        sinceId > 0
+          ? and(eq(visualiserRunLogs.runId, req.params.runId), gt(visualiserRunLogs.id, sinceId))
+          : eq(visualiserRunLogs.runId, req.params.runId),
+      )
+      .orderBy(asc(visualiserRunLogs.id))
+      .limit(2000);
+    return { logs: lines };
+  });
+
   /* ---------- DELETE /api/visualiser/streams/:runId ---------- */
   app.delete<{ Params: { runId: string } }>('/streams/:runId', {
     preHandler: requireAuth,
@@ -448,6 +492,12 @@ const plugin: FastifyPluginAsync = async (app) => {
     }
     // Operator cancel is terminal — drop any pending idle-reap countdown.
     visualiserIdleReaper.cancel(row.id);
+    const stopBy = resolveProvenance(req);
+    await appendVisualiserRunLog(
+      row.id,
+      `stopped by ${stopBy.originPrincipal ? `${stopBy.originKind} (${stopBy.originPrincipal})` : stopBy.originKind}`,
+      { level: 'warn', log: req.log },
+    );
     await db
       .update(visualiserRuns)
       .set({ status: 'ended', endedAt: new Date(), updatedAt: new Date() })

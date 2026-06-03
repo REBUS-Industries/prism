@@ -17,6 +17,7 @@ import {
   visualiserApi,
   type ApiError,
   type VisualiserRun,
+  type VisualiserRunLogLine,
   type VisualiserStatus,
   type VisualiserWorkstation,
 } from '../../shared/api';
@@ -107,6 +108,52 @@ async function refreshProjectNames() {
 
 function projectNameFor(id: string): string {
   return projectNames.value[id] ?? id;
+}
+
+// ---------------------------------------------- origin display (Feature 1)
+function originLabel(r: VisualiserRun): string {
+  switch (r.originKind) {
+    case 'admin': return 'Admin';
+    case 'api':   return 'API';
+    case 'orbit': return 'ORBIT';
+    case 'internal': return 'Internal';
+    default: return '—';
+  }
+}
+function originDetail(r: VisualiserRun): string {
+  const bits: string[] = [];
+  if (r.originPrincipal) bits.push(r.originPrincipal);
+  if (r.originAddress)   bits.push(r.originAddress);
+  return bits.join(' · ');
+}
+
+// ---------------------------------------------- per-run logs (Feature 2)
+const expandedLogsRunId = ref<string | null>(null);
+const runLogs = ref<VisualiserRunLogLine[]>([]);
+const runLogsLoading = ref(false);
+
+async function toggleLogs(r: VisualiserRun) {
+  if (expandedLogsRunId.value === r.id) {
+    expandedLogsRunId.value = null;
+    runLogs.value = [];
+    return;
+  }
+  expandedLogsRunId.value = r.id;
+  runLogs.value = [];
+  runLogsLoading.value = true;
+  try {
+    runLogs.value = (await visualiserApi.getStreamLogs(r.id)).logs;
+  } catch (err) {
+    errorMsg.value = (err as ApiError).message ?? 'failed to load run logs';
+  } finally {
+    runLogsLoading.value = false;
+  }
+}
+
+function logTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString([], { hour12: false });
 }
 
 // ---------------------------------------------- actions
@@ -231,6 +278,7 @@ onUnmounted(() => {
           <th>Project</th>
           <th>Model</th>
           <th>Version</th>
+          <th>Origin</th>
           <th>Workstation</th>
           <th>Status</th>
           <th>Started</th>
@@ -240,11 +288,18 @@ onUnmounted(() => {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="r in rows" :key="r.id">
+        <template v-for="r in rows" :key="r.id">
+        <tr>
           <td><code class="mono">{{ r.id.slice(0, 8) }}</code></td>
           <td>{{ projectNameFor(r.projectId) }}</td>
           <td><code class="mono">{{ r.modelId.slice(0, 8) }}</code></td>
           <td>{{ r.versionId ? r.versionId.slice(0, 8) : '—' }}</td>
+          <td>
+            <span v-if="r.originKind" :class="['pill', `origin--${r.originKind}`]" :title="originDetail(r)">
+              {{ originLabel(r) }}<template v-if="originDetail(r)"> · {{ originDetail(r) }}</template>
+            </span>
+            <span v-else class="muted">—</span>
+          </td>
           <td>{{ r.workstationName ?? (r.workstationId ? r.workstationId.slice(0, 8) : '—') }}</td>
           <td>
             <span :class="['pill', `pill--${r.status}`]">{{ r.status }}</span>
@@ -257,6 +312,11 @@ onUnmounted(() => {
           <td>{{ r.readyAt ? new Date(r.readyAt).toLocaleTimeString() : '—' }}</td>
           <td>{{ durationLive(r) }}</td>
           <td class="row-actions">
+            <button
+              class="btn btn-sm"
+              :class="{ active: expandedLogsRunId === r.id }"
+              @click="toggleLogs(r)"
+            >{{ expandedLogsRunId === r.id ? 'Hide logs' : 'Logs' }}</button>
             <RouterLink
               v-if="r.status === 'streaming'"
               :to="{ name: 'visualiser-viewer', params: { runId: r.id } }"
@@ -270,6 +330,23 @@ onUnmounted(() => {
             >{{ stoppingIds.has(r.id) ? 'Stopping…' : 'Stop' }}</button>
           </td>
         </tr>
+        <tr v-if="expandedLogsRunId === r.id" class="logs-row">
+          <td colspan="11">
+            <div class="run-logs">
+              <div v-if="runLogsLoading" class="muted small">loading logs…</div>
+              <div v-else-if="!runLogs.length" class="muted small">no log lines yet for this run.</div>
+              <div v-else class="run-log-list">
+                <div v-for="l in runLogs" :key="l.id" class="run-log-line" :class="`lvl-${l.level}`">
+                  <code class="ts">{{ logTime(l.ts) }}</code>
+                  <span class="lvl">{{ l.level }}</span>
+                  <span class="src">{{ l.source }}</span>
+                  <span class="msg">{{ l.message }}</span>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+        </template>
       </tbody>
     </table>
 
@@ -377,6 +454,34 @@ onUnmounted(() => {
 .pill--queued    { background: rgba(220,160,64,0.15); border-color: rgba(220,160,64,0.4); color: rgb(196,140,40); }
 .pill--failed    { background: rgba(204,51,51,0.15);  border-color: rgba(204,51,51,0.4);  color: rgb(204,80,80); }
 .pill--ended     { color: var(--color-text-muted); }
+
+/* Origin pills (Feature 1) */
+.origin--api      { background: rgba(80,130,220,0.15); border-color: rgba(80,130,220,0.4); color: rgb(90,140,225); }
+.origin--admin    { background: rgba(120,90,210,0.15); border-color: rgba(120,90,210,0.4); color: rgb(140,110,225); }
+.origin--orbit    { background: rgba(64,160,96,0.15);  border-color: rgba(64,160,96,0.4);  color: rgb(64,160,96); }
+.origin--internal,
+.origin--anonymous { color: var(--color-text-muted); }
+
+/* Per-run logs (Feature 2) */
+.logs-row td { padding: 0; }
+.run-logs {
+  background: var(--color-bg); border-top: 1px dashed var(--color-border);
+  padding: 8px 12px; max-height: 240px; overflow: auto;
+}
+.run-log-list { display: flex; flex-direction: column; gap: 2px; }
+.run-log-line {
+  display: grid; grid-template-columns: 72px 48px 56px 1fr; gap: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px;
+  align-items: start; padding: 1px 0;
+}
+.run-log-line .ts  { color: var(--color-text-muted); white-space: nowrap; }
+.run-log-line .lvl { text-transform: uppercase; font-size: 10px; font-weight: 600; align-self: center; }
+.run-log-line .src { color: var(--color-text-muted); font-size: 10.5px; align-self: center; }
+.run-log-line .msg { white-space: pre-wrap; word-break: break-word; }
+.run-log-line.lvl-error .lvl { color: var(--color-danger, #c33); }
+.run-log-line.lvl-warn  .lvl { color: rgb(196,140,40); }
+.run-log-line.lvl-info  .lvl { color: var(--color-info, #5a8ce0); }
+.btn.active { background: var(--orbit-primary-fade, rgba(80,130,220,0.12)); border-color: var(--orbit-primary, #5a8ce0); }
 
 .btn {
   padding: 4px 10px; border-radius: var(--radius); cursor: pointer;

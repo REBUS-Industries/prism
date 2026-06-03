@@ -264,6 +264,16 @@ export const visualiserRuns = pgTable('visualiser_runs', {
   // check on DELETE (so an API key may only stop streams it started).
   submittedBy:    varchar('submitted_by', { length: 128 }),
   requestedByApiKeyId: uuid('requested_by_api_key_id').references((): any => apiKeys.id, { onDelete: 'set null' }),
+  // Request provenance (see auth/provenance.ts), stamped at POST /streams.
+  //   originKind      — 'admin' (PRISM admin UI), 'api' (external API key),
+  //                     'orbit' (ORBIT bearer), 'internal', or 'anonymous'.
+  //   originAddress   — client IP (real source via Caddy X-Forwarded-For;
+  //                     Fastify trustProxy=true).
+  //   originPrincipal — friendly label: admin username, API key name, or
+  //                     `orbit:<userId>`. Never the key plaintext / token.
+  originKind:      varchar('origin_kind', { length: 16 }),
+  originAddress:   varchar('origin_address', { length: 64 }),
+  originPrincipal: varchar('origin_principal', { length: 128 }),
   // Max session lifetime — orchestrator hard tears down at TTL. Null = no cap.
   ttlSeconds:     integer('ttl_seconds'),
   // Optional callback URL the server will POST status updates to.
@@ -284,6 +294,22 @@ export const visualiserRuns = pgTable('visualiser_runs', {
   byStatus:     index('visualiser_runs_status_idx').on(t.status),
   byCreatedAt:  index('visualiser_runs_created_at_idx').on(t.createdAt),
   byProject:    index('visualiser_runs_project_idx').on(t.projectId),
+}));
+
+// Per-run lifecycle log lines for visualiser runs — mirrors `job_logs`.
+// Written at the meaningful transitions (requested, dispatched, version
+// resolved, ready, failed, ended, stopped) by both the server (lifecycle)
+// and the agent reverse-channel. The admin Visualiser viewer renders these
+// per run via `GET /api/visualiser/streams/:runId/logs`.
+export const visualiserRunLogs = pgTable('visualiser_run_logs', {
+  id:    bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+  runId: uuid('run_id').notNull().references(() => visualiserRuns.id, { onDelete: 'cascade' }),
+  ts:    timestamp('ts', { withTimezone: true }).notNull().defaultNow(),
+  level: varchar('level', { length: 8 }).notNull(),
+  source: varchar('source', { length: 16 }).notNull(),  // 'server' | 'agent'
+  message: text('message').notNull(),
+}, (t) => ({
+  byRun: index('visualiser_run_logs_run_idx').on(t.runId, t.ts),
 }));
 
 // ---------------------------------------------------------------------------
@@ -389,6 +415,7 @@ export type AgentSession = typeof agentSessions.$inferSelect;
 export type Webhook    = typeof webhooks.$inferSelect;
 export type VisualiserRun    = typeof visualiserRuns.$inferSelect;
 export type NewVisualiserRun = typeof visualiserRuns.$inferInsert;
+export type VisualiserRunLog = typeof visualiserRunLogs.$inferSelect;
 export type VisualiserShareLink    = typeof visualiserShareLinks.$inferSelect;
 export type NewVisualiserShareLink = typeof visualiserShareLinks.$inferInsert;
 export type ProjectAttachment    = typeof projectAttachments.$inferSelect;

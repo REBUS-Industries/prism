@@ -13,7 +13,7 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, RouterLink } from 'vue-router';
-import { visualiserApi, type ApiError, type VisualiserRun, type VisualiserShareTier } from '../../shared/api';
+import { visualiserApi, type ApiError, type VisualiserRun, type VisualiserRunLogLine, type VisualiserShareTier } from '../../shared/api';
 import VisualiserStage from '../../shared/VisualiserStage.vue';
 
 const route = useRoute();
@@ -46,6 +46,42 @@ async function mintShare(tier: VisualiserShareTier) {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+// ---------------------------------------------- per-run logs (Feature 2)
+const logs = ref<VisualiserRunLogLine[]>([]);
+const logsError = ref<string | null>(null);
+
+async function refreshLogs() {
+  try {
+    logs.value = (await visualiserApi.getStreamLogs(runId.value)).logs;
+    logsError.value = null;
+  } catch (err) {
+    logsError.value = (err as ApiError).message ?? 'failed to load logs';
+  }
+}
+
+function logTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString([], { hour12: false }) +
+    '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function originLabel(r: VisualiserRun): string {
+  switch (r.originKind) {
+    case 'admin': return 'Admin';
+    case 'api':   return 'API';
+    case 'orbit': return 'ORBIT';
+    case 'internal': return 'Internal';
+    default: return '';
+  }
+}
+function originDetail(r: VisualiserRun): string {
+  const bits: string[] = [];
+  if (r.originPrincipal) bits.push(r.originPrincipal);
+  if (r.originAddress)   bits.push(r.originAddress);
+  return bits.join(' · ');
+}
+
 async function refresh() {
   try {
     run.value = await visualiserApi.getStream(runId.value);
@@ -56,11 +92,12 @@ async function refresh() {
 }
 
 onMounted(async () => {
-  await refresh();
+  await Promise.all([refresh(), refreshLogs()]);
   // Poll only the metadata; the WebRTC stream is its own long-lived
   // connection. Slower poll than Phase G's 5s — once the player is
-  // attached, the status pill rarely changes.
-  pollTimer = setInterval(refresh, 10_000);
+  // attached, the status pill rarely changes. Logs poll alongside so
+  // lifecycle lines stream in while the run is starting up.
+  pollTimer = setInterval(() => { void refresh(); void refreshLogs(); }, 10_000);
 });
 
 onUnmounted(() => {
@@ -90,6 +127,12 @@ async function stopRun() {
             status <span :class="['pill', `pill--${run.status}`]">{{ run.status }}</span>
             <template v-if="run.workstationName || run.workstationId">
               · workstation <code class="mono">{{ run.workstationName ?? run.workstationId!.slice(0, 8) }}</code>
+            </template>
+            <template v-if="run.originKind">
+              · origin
+              <span :class="['pill', `origin--${run.originKind}`]" :title="originDetail(run)">
+                {{ originLabel(run) }}<template v-if="originDetail(run)"> · {{ originDetail(run) }}</template>
+              </span>
             </template>
             <template v-if="run.failureReason">
               · failure <code class="mono">{{ run.failureReason }}</code>
@@ -136,6 +179,23 @@ async function stopRun() {
       </p>
       <p v-else>Run ended.</p>
     </div>
+
+    <section class="run-logs-panel">
+      <header class="rl-head">
+        <h2>Run log</h2>
+        <span class="muted small">lifecycle events for this run · {{ logs.length }} line{{ logs.length === 1 ? '' : 's' }}</span>
+      </header>
+      <div v-if="logsError" class="alert err">{{ logsError }}</div>
+      <div v-if="!logs.length" class="muted small pad">No log lines yet.</div>
+      <div v-else class="rl-list">
+        <div v-for="l in logs" :key="l.id" class="rl-line" :class="`lvl-${l.level}`">
+          <code class="ts">{{ logTime(l.ts) }}</code>
+          <span class="lvl">{{ l.level }}</span>
+          <span class="src">{{ l.source }}</span>
+          <span class="msg">{{ l.message }}</span>
+        </div>
+      </div>
+    </section>
   </section>
 </template>
 
@@ -181,6 +241,37 @@ async function stopRun() {
 .pill--queued    { background: rgba(220,160,64,0.15); border-color: rgba(220,160,64,0.4); color: rgb(196,140,40); }
 .pill--failed    { background: rgba(204,51,51,0.15);  border-color: rgba(204,51,51,0.4);  color: rgb(204,80,80); }
 .pill--ended     { color: var(--color-text-muted); }
+
+.origin--api      { background: rgba(80,130,220,0.15); border-color: rgba(80,130,220,0.4); color: rgb(90,140,225); }
+.origin--admin    { background: rgba(120,90,210,0.15); border-color: rgba(120,90,210,0.4); color: rgb(140,110,225); }
+.origin--orbit    { background: rgba(64,160,96,0.15);  border-color: rgba(64,160,96,0.4);  color: rgb(64,160,96); }
+.origin--internal,
+.origin--anonymous { color: var(--color-text-muted); }
+
+.run-logs-panel {
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  background: var(--color-bg-elevated); overflow: hidden;
+}
+.rl-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid var(--color-border);
+}
+.rl-head h2 { font-size: 14px; margin: 0; }
+.pad { padding: 16px 12px; }
+.rl-list { max-height: 280px; overflow: auto; padding: 6px 12px; display: flex; flex-direction: column; gap: 2px; }
+.rl-line {
+  display: grid; grid-template-columns: 96px 48px 56px 1fr; gap: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px;
+  align-items: start;
+}
+.rl-line .ts  { color: var(--color-text-muted); white-space: nowrap; }
+.rl-line .lvl { text-transform: uppercase; font-size: 10px; font-weight: 600; align-self: center; }
+.rl-line .src { color: var(--color-text-muted); font-size: 11px; align-self: center; }
+.rl-line .msg { white-space: pre-wrap; word-break: break-word; }
+.rl-line.lvl-error .lvl { color: var(--color-danger, #c33); }
+.rl-line.lvl-error .msg { color: rgb(204,80,80); }
+.rl-line.lvl-warn  .lvl { color: rgb(196,140,40); }
+.rl-line.lvl-info  .lvl { color: var(--color-info, #5a8ce0); }
 
 .btn {
   padding: 6px 12px; border-radius: var(--radius); cursor: pointer;

@@ -13,6 +13,8 @@ import multipart from '@fastify/multipart';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runBootstrap } from './bootstrap.js';
+import { resolveProvenance } from './auth/provenance.js';
+import { serverApiLog, redactPath, categoryFor, levelFor } from './observability/apiLog.js';
 
 // Sourced from this package's package.json at startup. The process is always
 // launched from the package root: `npm run dev`/`start` run with cwd=server/,
@@ -80,6 +82,38 @@ async function buildApp() {
     },
   });
 
+  // Capture safe metadata for every inbound API request into the in-memory
+  // ring buffer that backs the admin Logs page. Runs after route preHandlers
+  // so `req.principal` is resolved; records ONLY method/path/status/duration/
+  // principal label/IP/category — never headers, cookies, or bodies, so no
+  // credential can leak. Scoped to the API surfaces (skips static SPA assets).
+  app.addHook('onResponse', async (req, reply) => {
+    const url = req.raw.url ?? req.url ?? '';
+    const path = url.split('?')[0] ?? url;
+    if (!(path.startsWith('/api') || path.startsWith('/v1') || path.startsWith('/internal') || path === '/health')) {
+      return;
+    }
+    // Don't record the Logs page polling its own feed — it would flood the
+    // bounded buffer with self-referential admin polls and evict real traffic.
+    if (path === '/api/admin/logs' || path.startsWith('/api/admin/logs/')) {
+      return;
+    }
+    const { originKind, originAddress, originPrincipal } = resolveProvenance(req);
+    const status = reply.statusCode;
+    serverApiLog.push({
+      ts: Date.now() - Math.round(reply.elapsedTime),
+      durationMs: Math.round(reply.elapsedTime),
+      method: req.method,
+      path: redactPath(url),
+      status,
+      originKind,
+      originPrincipal,
+      clientIp: originAddress,
+      category: categoryFor(path, originKind),
+      level: levelFor(status),
+    });
+  });
+
   app.get('/health', async () => ({
     status: 'ok',
     service: 'prism-server',
@@ -92,6 +126,7 @@ async function buildApp() {
   await app.register(import('./ws/gateway.js'));
 
   await app.register(import('./api/admin.js'),         { prefix: '/api/admin' });
+  await app.register(import('./api/logs.js'),          { prefix: '/api/admin/logs' });
   await app.register(import('./api/jobs.js'),          { prefix: '/api/jobs' });
   await app.register(import('./api/sse.js'),           { prefix: '/api/jobs' });
   await app.register(import('./api/convert.js'),       { prefix: '/api/convert' });

@@ -57,6 +57,13 @@
       "when": 1780437714551,
       "tag": "0007_mysterious_dreaming_celestial",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780477450366,
+      "tag": "0008_hard_rocket_raccoon",
+      "breakpoints": true
     }
   ]
 }
