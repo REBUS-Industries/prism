@@ -106,6 +106,31 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.27 — 2026-06-03 — Re-bundle the orchestrator (visualiser v0.5.19, import-orientation fix)
+
+This is primarily a **release-coordination bump** so workstations get the current
+`prism-visualiser` orchestrator through the normal agent update flow. The agent
+build publishes the orchestrator from source and bundles it under
+`Visualiser/` (see `.github/workflows/agent.yml`), so tagging `v0.3.27` ships:
+
+- **Visualiser orchestrator v0.5.19**, including the **imported-model orientation
+  fix** — the Interchange importer (`import_orbit.py`) now yaws the model root
+  **90° clockwise** about Z (`ORBIT_IMPORT_YAW_DEGREES = +90.0`, overridable via
+  `PRISM_VISUALISER_IMPORT_YAW_DEG`). Plus the v0.5.15–v0.5.18 orchestrator work
+  (Portal `-PortalUrl`/`-RebusApiKey`, `-Orbit*` IDs on the UE command line for
+  all plugins, deterministic `.uproject` selection, local-template-in-place).
+- The agent features already landed since the last workstation update:
+  v0.3.22 (Portal URL + REBUS API key from the web UI), v0.3.23–v0.3.24
+  (multi-viewer/doc reconcile), v0.3.25 (authenticated GitHub API calls +
+  rate-limit errors), v0.3.26 (GitHub token from the web UI).
+
+> **Connector-import caveat:** the orientation fix lives in the Interchange
+> importer. If a workstation's session uses the connector-import path
+> (`visualiserConnectorImport: true`, or auto-detect when the fixed project
+> bundles `OrbitConnector`), `import_orbit.py` does not run — that path needs the
+> `orbit-connectors` `Yaw = +90` change, or force Interchange with
+> `PRISM_VISUALISER_CONNECTOR_IMPORT=0`.
+
 ## v0.3.26 — 2026-06-03 — Set the GitHub token from the agent web UI
 
 ### Added
