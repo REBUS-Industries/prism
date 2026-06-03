@@ -106,6 +106,48 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.28 — 2026-06-03 — Pull UE template even while Unreal is running (detect → prompt → force-close) + robust read-only/locked-dir swap
+
+### Fixed — `Access to the path '…\Templates\<Project>' is denied` on template pull
+
+- **Root cause.** The pull's stage-and-swap step renames the live template
+  folder aside before moving the freshly-staged copy into place
+  (`TemplatePuller.InstallProject` → `Directory.Move(dest, backup)`). When the
+  **Unreal Editor was still running** it held open handles into that project
+  tree, so the move failed with `UnauthorizedAccessException` ("Access to the
+  path '…' is denied"). Read-only attributes on git-sourced / UE
+  `Intermediate`/`Saved` files were a secondary trigger for the recursive
+  deletes.
+- **Primary fix — detect → prompt → force-close.** A pull now checks for
+  running Unreal processes (`UnrealEditor`, `UnrealEditor-Cmd`,
+  `CrashReportClient`, `UnrealBuildTool`) **before** touching the template
+  folder. If any are found and the caller did not opt into force-close, the
+  pull is refused and the running instances (names + PIDs + count) are returned.
+  The **agent web UI** shows a confirm prompt — *"Unreal Engine is running (N
+  instance(s)). Pulling a new template requires closing it. Force-close and
+  continue?"* — and on confirm re-invokes the pull with `forceCloseUnreal`,
+  which kills the detected process trees (`Process.Kill(entireProcessTree:
+  true)`), waits for full exit + file-handle release (poll until gone + settle
+  delay), then runs the normal pull → connector merge → compile. Progress is
+  surfaced in the existing `templatePull` status ("closing Unreal…", then the
+  usual stages). The PRISM orchestrator (`prism-visualiser.exe`) is **never**
+  targeted; closing a `UnrealEditor-Cmd` that belongs to a live visualiser
+  session is the explicit, operator-confirmed consequence and is called out in
+  the prompt.
+- **Defense-in-depth — robust delete/swap.** `InstallProject` now sweeps stale
+  `.<name>.pull-*` / `<name>.old-*` artifacts from prior aborted runs, strips
+  `FileAttributes.ReadOnly` recursively before every delete/move, retries
+  delete/move with bounded backoff for transient locks, and on a genuinely
+  locked target throws an **actionable** `TemplatePullException` (telling the
+  operator to close the Editor/Explorer or use the confirm prompt) instead of a
+  raw OS error.
+- **Contract + admin parity.** `PullTemplateData` gained an optional `force`
+  boolean (`shared/contracts/agent-protocol.{json,ts,cs}`), threaded through the
+  agent WS dispatcher → `AgentControlPlane.PullTemplate(tag, forceCloseUnreal)`,
+  the server `POST /:id/pull-template` route, and the admin **Workstations**
+  page (its confirm dialog now warns that a running Editor is force-closed and
+  sends `force: true`).
+
 ## v0.3.27 — 2026-06-03 — Re-bundle the orchestrator (visualiser v0.5.19, import-orientation fix)
 
 This is primarily a **release-coordination bump** so workstations get the current

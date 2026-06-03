@@ -245,7 +245,8 @@
       "description": "Server -> agent: download the latest (or pinned) orbit-ue-template GitHub release and install it into the workstation's visualiser template root (default C:\\PRISM\\Templates), then point VisualiserTemplateProjectPath at the pulled project. Fire-and-forget like 'update' — the agent runs the pull in the background and reports progress in its logs; the admin UI gets {queued:true}.",
       "type": "object",
       "properties": {
-        "tag": { "type": "string", "description": "Optional orbit-ue-template release tag to pull (e.g. 'v1.0.0-ue5.7'). When omitted the agent uses its configured UnrealTemplateTag, or the repo's latest release if that is empty." }
+        "tag": { "type": "string", "description": "Optional orbit-ue-template release tag to pull (e.g. 'v1.0.0-ue5.7'). When omitted the agent uses its configured UnrealTemplateTag, or the repo's latest release if that is empty." },
+        "force": { "type": "boolean", "description": "When true the agent force-closes any running Unreal Engine instance (UnrealEditor / UnrealEditor-Cmd / CrashReportClient) that locks the template folder before pulling — ending any visualiser session using the current template. When false/omitted and Unreal is running, the agent web UI refuses and prompts the operator to confirm; the admin path passes true because the admin clicked through its own confirmation." }
       }
     },
     "ProjectAttachmentRef": {

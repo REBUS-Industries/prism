@@ -249,16 +249,18 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                     {
                         var body = await ReadBodyAsync(req);
                         string? tag = null;
+                        var force = false;
                         if (!string.IsNullOrWhiteSpace(body))
                         {
                             try
                             {
                                 var probe = JsonConvert.DeserializeObject<PullTemplateBody>(body, _json);
                                 tag = probe?.Tag;
+                                force = probe?.ForceCloseUnreal ?? probe?.Force ?? false;
                             }
                             catch { /* tolerate junk */ }
                         }
-                        var outcome = _plane.PullTemplate(tag);
+                        var outcome = _plane.PullTemplate(tag, force);
                         if (outcome.AlreadyRunning)
                         {
                             res.StatusCode = 409;
@@ -270,6 +272,22 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                                 state          = BuildState(),
                             });
                         }
+                        else if (outcome.BlockedByUnreal)
+                        {
+                            // 409: Unreal is running. The UI shows a confirm
+                            // prompt then re-POSTs with forceCloseUnreal=true.
+                            res.StatusCode = 409;
+                            await WriteJsonAsync(res, new
+                            {
+                                ok              = false,
+                                blockedByUnreal = true,
+                                count           = outcome.UnrealProcesses?.Count ?? 0,
+                                unrealProcesses = (outcome.UnrealProcesses ?? Array.Empty<Visualiser.UnrealProcessGuard.UnrealProc>())
+                                    .Select(p => new { name = p.Name, pid = p.Pid }).ToArray(),
+                                error           = outcome.Error,
+                                state           = BuildState(),
+                            });
+                        }
                         else
                         {
                             await WriteJsonAsync(res, new
@@ -277,7 +295,7 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                                 ok      = true,
                                 pulling = true,
                                 tag     = outcome.Tag,
-                                message = "pulling UE template in background",
+                                message = force ? "closing Unreal, then pulling UE template" : "pulling UE template in background",
                                 state   = BuildState(),
                             });
                         }
@@ -503,7 +521,14 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
 
     sealed class RestartBody      { public string? Reason { get; set; } }
     sealed class UpdateBody       { public string? Tag    { get; set; } }
-    sealed class PullTemplateBody { public string? Tag    { get; set; } }
+    sealed class PullTemplateBody
+    {
+        public string? Tag { get; set; }
+        /// <summary>Confirm prompt → force-close running Unreal before pulling.</summary>
+        public bool? ForceCloseUnreal { get; set; }
+        /// <summary>Alias accepted from the admin/contract path.</summary>
+        public bool? Force { get; set; }
+    }
 
     /// <summary>
     /// Reads <c>Assets/prism-logo.png</c> next to the executable, base64-

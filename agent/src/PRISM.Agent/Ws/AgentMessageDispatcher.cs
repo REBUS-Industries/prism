@@ -162,14 +162,26 @@ public sealed class AgentMessageDispatcher
     {
         var env = ParseEnvelope<PullTemplateData>(raw);
         var tag = env?.Data?.Tag;
-        _log.LogInformation("pullTemplate requested by server (tag={Tag})", tag ?? "<configured/latest>");
+        var force = env?.Data?.Force ?? false;
+        _log.LogInformation("pullTemplate requested by server (tag={Tag} force={Force})",
+            tag ?? "<configured/latest>", force);
         var plane = _sp.GetRequiredService<AgentControlPlane>();
-        var outcome = plane.PullTemplate(tag);
+        var outcome = plane.PullTemplate(tag, force);
         if (outcome.AlreadyRunning)
         {
             _log.LogWarning(
                 "remote pullTemplate ignored — another template pull is already in progress (tag={Tag})",
                 tag ?? "<configured/latest>");
+        }
+        else if (outcome.BlockedByUnreal)
+        {
+            // The admin path normally passes force=true, so this only happens
+            // for an older admin SPA that omits it. Log clearly so the operator
+            // knows to use the agent web UI (which prompts) or retry with force.
+            _log.LogWarning(
+                "remote pullTemplate blocked — Unreal Engine is running ({Procs}); " +
+                "resend with force=true (or use the agent web UI's confirm prompt) to force-close it",
+                UnrealProcessGuard.Describe(outcome.UnrealProcesses ?? Array.Empty<UnrealProcessGuard.UnrealProc>()));
         }
     }
 

@@ -358,8 +358,11 @@ export const workstationsApi = {
    * progress is visible on the agent's local web UI. Same 404 / 503
    * semantics as `restart`. Older agents silently ignore the message.
    */
-  pullTemplate: (id: string, tag?: string) =>
-    api.post<{ queued: true }>(`/api/workstations/${id}/pull-template`, tag ? { tag } : {}),
+  pullTemplate: (id: string, tag?: string, force?: boolean) =>
+    api.post<{ queued: true }>(`/api/workstations/${id}/pull-template`, {
+      ...(tag ? { tag } : {}),
+      ...(force ? { force: true } : {}),
+    }),
 
   /**
    * List the published versions of the UE template repo so the admin can
