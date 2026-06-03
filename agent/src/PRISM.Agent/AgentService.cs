@@ -19,6 +19,16 @@ public sealed class AgentService : BackgroundService
     readonly AgentMessageDispatcher _dispatcher;
     readonly WorkerSlotPool _slots;
 
+    // Signature of the installed-version fields last announced to the server in
+    // a `hello`. The heartbeat loop re-resolves these every tick and re-sends
+    // `hello` when they change, so the admin Workstations row converges on the
+    // true installed UE template / connector version even when the change
+    // happened out-of-band (a pull that did not go through the control plane,
+    // a manual template swap, etc.) and no reconnect has occurred. Without this
+    // the server only learns the versions at connect time + after a control-
+    // plane pull/mutation.
+    string _lastReportedVersionSig = "";
+
     public AgentService(
         ILogger<AgentService> log,
         AgentConfig cfg,
@@ -87,6 +97,15 @@ public sealed class AgentService : BackgroundService
                 {
                     SlotsBusy = _slots.BusyCount,
                 });
+
+                // If the installed UE template / connector version (or the
+                // agent version) changed since our last `hello`, re-announce so
+                // the server's workstation row stays in sync with what the
+                // agent's local web UI shows. Cheap: TemplateMarker.Resolve is a
+                // single small-file read, gated by a string-equality check so
+                // we only emit a hello on actual change.
+                if (_ws.IsConnected)
+                    ReportVersionsIfChanged();
             }
             catch (Exception err)
             {
@@ -100,6 +119,7 @@ public sealed class AgentService : BackgroundService
     void SendHelloFireAndForget()
     {
         var (templateTag, connectorTag) = Visualiser.TemplateMarker.Resolve(_cfg);
+        var agentVersion = typeof(AgentService).Assembly.GetName().Version?.ToString() ?? "0.1.0";
         var hello = new HelloData
         {
             MachineId = _cfg.MachineId,
@@ -107,15 +127,39 @@ public sealed class AgentService : BackgroundService
             Slots = _cfg.Slots,
             Formats = SupportedFormats,
             Roles = _cfg.Roles,
-            AgentVersion = typeof(AgentService).Assembly.GetName().Version?.ToString() ?? "0.1.0",
+            AgentVersion = agentVersion,
             RhinoVersion = null,  // Phase 3: read from Rhino.Inside host
             // Which orbit-ue-template release is installed at the configured
             // VisualiserTemplateProjectPath (durable marker, config fallback).
             InstalledTemplateTag = templateTag,
             InstalledConnectorTag = connectorTag,
         };
+        _lastReportedVersionSig = VersionSig(agentVersion, templateTag, connectorTag);
         _ = _ws.SendAsync(MessageType.Hello, hello);
     }
+
+    /// <summary>
+    /// Re-send <c>hello</c> when the resolved installed-version fields have
+    /// changed since the last announcement. Called on every heartbeat tick so
+    /// an out-of-band version change (template re-pull, manual swap) reaches
+    /// the admin Workstations page within one heartbeat interval, without
+    /// waiting for a reconnect or a control-plane mutation.
+    /// </summary>
+    void ReportVersionsIfChanged()
+    {
+        var (templateTag, connectorTag) = Visualiser.TemplateMarker.Resolve(_cfg);
+        var agentVersion = typeof(AgentService).Assembly.GetName().Version?.ToString() ?? "0.1.0";
+        var sig = VersionSig(agentVersion, templateTag, connectorTag);
+        if (sig == _lastReportedVersionSig) return;
+
+        _log.LogInformation(
+            "installed versions changed since last hello (agent={Agent} template={Template} connector={Connector}); re-announcing",
+            agentVersion, templateTag ?? "<none>", connectorTag ?? "<none>");
+        SendHelloFireAndForget();
+    }
+
+    static string VersionSig(string agentVersion, string? templateTag, string? connectorTag) =>
+        $"{agentVersion}\u0001{templateTag ?? ""}\u0001{connectorTag ?? ""}";
 
     internal static readonly string[] SupportedFormats =
     {

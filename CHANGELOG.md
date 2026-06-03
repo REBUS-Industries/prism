@@ -106,6 +106,35 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.31 — 2026-06-03 — Admin Workstations versions stay in sync with the agent's own UI
+
+### Fixed — Installed UE template / connector version no longer goes stale on the admin Workstations page
+
+- **Root cause (server).** The agent's local web UI reads the on-disk
+  `.prism-template.json` marker *live on every request*, but the central admin
+  Workstations page only learns the installed UE template / connector version
+  from the `hello` message. The agent already re-sends `hello` after a template
+  pull or a config mutation, but the server's WS handler dropped **every** hello
+  after the first on a given socket (`duplicate hello on same socket; ignoring`).
+  So the admin row stayed frozen at whatever was true at initial connect and
+  only ever updated on a full reconnect — diverging from the agent's own UI.
+- **Server.** A re-`hello` on an established connection is now treated as a
+  REFRESH of the workstation's self-reported fields (nodeName, formats, slots,
+  agent version, rhino version, installed template tag, installed connector
+  tag) and broadcasts a workstation update so the admin SPA re-fetches. It does
+  NOT create a second `agent_sessions` row, re-run the queued-job dispatch
+  sweep, or touch the admin-managed role flags. (No protocol or schema change —
+  the `installed_template_tag` / `installed_connector_tag` columns already
+  exist.)
+- **Agent.** The heartbeat loop now re-resolves the installed versions every
+  tick and re-announces `hello` when they (or the agent version) change since
+  the last announcement, so an out-of-band change (a pull that didn't go through
+  the control plane, a manual template swap) converges the admin row within one
+  heartbeat interval rather than waiting for a reconnect.
+- Agent↔server protocol is unchanged (backward-compatible). Existing
+  workstations self-correct on their next connect once the server is deployed;
+  no manual re-pull or agent restart is required for the server-side fix.
+
 ## v0.3.30 — 2026-06-03 — Self-diagnosing compile failures (surface UBT log + C++ toolchain hint)
 
 ### Changed — Template-pull compile errors are now actionable instead of a bare exit code

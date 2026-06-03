@@ -276,7 +276,48 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
 
   async function onHello(hello: HelloData) {
     if (helloProcessed) {
-      childLog.warn({ machineId: hello.machineId }, 'duplicate hello on same socket; ignoring');
+      // A live agent re-sends `hello` on the SAME socket whenever its
+      // self-reported capabilities or installed versions change — e.g. after a
+      // template pull (AgentControlPlane.PullTemplate), a config mutation
+      // (SendHelloAsync), or a periodic version-change check. Previously we
+      // dropped every hello after the first, so the agent's local web UI
+      // (which reads the on-disk .prism-template.json marker live on each
+      // request) showed the true installed UE template / connector version
+      // while the admin Workstations row stayed frozen at whatever was true at
+      // initial connect — only converging on a full reconnect. Treat a re-hello
+      // as a REFRESH of the persisted self-reported fields instead. We do NOT
+      // create a second agent_sessions row, re-run the queued-job dispatch
+      // sweep, or touch the admin-managed canConvert/canLayer/canReceive flags.
+      if (conn) {
+        conn.hello = hello;
+        try {
+          await db
+            .update(workstations)
+            .set({
+              nodeName: hello.nodeName,
+              supportedFormats: hello.formats,
+              slotsTotal: hello.slots,
+              agentVersion: hello.agentVersion,
+              rhinoVersion: hello.rhinoVersion ?? null,
+              installedTemplateTag: hello.installedTemplateTag ?? null,
+              installedConnectorTag: hello.installedConnectorTag ?? null,
+              lastSeenAt: new Date(),
+            })
+            .where(eq(workstations.id, conn.workstationId));
+          // The admin Workstations page re-fetches /api/workstations on any
+          // `workstation` broadcast, so this is enough to surface the fresh
+          // installed-version pills live.
+          broadcastWorkstationUpdate({ id: conn.workstationId, nodeName: hello.nodeName, online: true });
+          childLog.info(
+            { machineId: hello.machineId, installedTemplateTag: hello.installedTemplateTag, installedConnectorTag: hello.installedConnectorTag },
+            're-hello refreshed workstation self-reported fields',
+          );
+        } catch (err) {
+          childLog.warn({ err, machineId: hello.machineId }, 'failed to refresh workstation on re-hello');
+        }
+      } else {
+        childLog.warn({ machineId: hello.machineId }, 'duplicate hello before session established; ignoring');
+      }
       return;
     }
     helloProcessed = true;
