@@ -5,7 +5,8 @@
  * Flow:
  *   1. SPA / portal hits `POST /api/visualiser/streams/:runId/signalling-token`
  *      (authenticated via X-API-Key OR admin session). Server issues a
- *      JWT containing the runId + a 5-minute exp.
+ *      JWT containing the runId + an exp (default 1h, see
+ *      JWT_SIGNALLING_TTL_SEC).
  *   2. Browser opens `wss://prism.rebus.industries/ws/visualiser/<runId>/signalling?token=<jwt>`.
  *   3. The WS gateway verifies the JWT and rejects with 401 on any
  *      mismatch (bad sig, expired, wrong runId).
@@ -22,11 +23,24 @@
  *                           block size internally). When unset the server
  *                           refuses to mint tokens (the route returns
  *                           503 with a clear error so operators notice).
- *   JWT_SIGNALLING_TTL_SEC  Default token lifetime. Defaults to 300 (5 minutes).
+ *   JWT_SIGNALLING_TTL_SEC  Default token lifetime in seconds. Defaults to
+ *                           3600 (1 hour). This MUST comfortably exceed a
+ *                           viewing session: the PS frontend re-presents the
+ *                           token on every signalling-WS (auto-)reconnect, so
+ *                           a TTL shorter than the session dropped an
+ *                           actively-watched viewer the first time the socket
+ *                           reconnected after expiry (the old 300s default ==
+ *                           the "~5-minute inactivity" disconnect). The
+ *                           browser also refreshes the token proactively, so
+ *                           this is headroom rather than the sole guard.
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
-const DEFAULT_TTL_SECONDS = 5 * 60;
+// 1 hour. Long enough that a normal session + reconnects never outlive a
+// single token, while still bounding the replay window for a leaked token
+// (which is also scoped to one ephemeral runId + viewer seat). Override via
+// JWT_SIGNALLING_TTL_SEC.
+const DEFAULT_TTL_SECONDS = 60 * 60;
 const ALG = 'HS256';
 
 /** Permission tier carried by a signalling token. */
@@ -136,7 +150,7 @@ export function issueSignallingToken(opts: IssueOpts): { token: string; exp: num
  *
  * Note: `expectedRunId` is required so a token minted for run A can
  * never be replayed against run B. Without this guard a leaked token
- * would grant access to any concurrent stream until its 5-minute exp.
+ * would grant access to any concurrent stream until its exp.
  */
 export function verifySignallingToken(token: string, opts: VerifyOpts): VerifyResult {
   const env = opts.env ?? process.env;

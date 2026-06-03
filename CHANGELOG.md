@@ -27,6 +27,30 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ## Unreleased
 
+### Fixed — Visualiser stream no longer drops at ~5 minutes while being watched
+
+- **Root cause.** The signalling-WS JWT had a 300 s (5-minute) TTL and the
+  browser player refreshed it only ONCE after connect. Epic's PS frontend
+  re-invokes its (synchronous) signalling-URL builder on every auto-reconnect,
+  so the first time the signalling socket reconnected after ~5 min it
+  re-presented the now-expired token; the server rejected the WS with 4401 and
+  the lib's auto-reconnect could not recover — dropping an actively-watched
+  viewer right at the 5-minute mark. (300 s == the reported symptom.)
+- **Web.** `PixelStreamingPlayer.vue` now keeps the cached signalling URL's
+  token fresh — refreshing on a 60 s interval AND immediately on disconnect —
+  so every (re)connect carries a live JWT. The stable per-viewer `viewerId` is
+  preserved across refreshes, so the Wilbur player + controller seat survive.
+- **Server.** `JWT_SIGNALLING_TTL_SEC` default raised **300 -> 3600** (1 hour)
+  so a normal session + reconnects never outlive a single token; still
+  env-configurable. The replay window stays bounded (token is scoped to one
+  ephemeral runId + viewer seat).
+- **Web (hardening).** Explicitly pin the Pixel Streaming **AFK watchdog OFF**
+  (`AFKDetection=false`, `AFKTimeoutSecs=0`) in the viewer Config. It is off by
+  default in the lib, but the AFK timeout is the only code path that emits the
+  literal "You have been disconnected due to inactivity." string, so pinning it
+  guarantees a long-watched (input-idle) stream can never be AFK-reaped even if
+  a lib default or stray URL param changed.
+
 ### Fixed — Visualiser idle reaper now viewer-aware (no more "no activity" false positives)
 
 - **Server.** A live (`streaming`) visualiser run is now only reaped for

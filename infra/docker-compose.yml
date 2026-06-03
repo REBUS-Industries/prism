@@ -55,6 +55,11 @@ services:
       # (/ws/visualiser/:runId/signalling?token=<jwt>). Generate with
       # `openssl rand -hex 32` independently of TURN_SECRET.
       JWT_SIGNALLING_SECRET: "${JWT_SIGNALLING_SECRET:-}"
+      # Lifetime (seconds) of the signalling-WS JWT. Re-presented on every PS
+      # (auto-)reconnect, so it must exceed a viewing session - the old 300s
+      # default dropped an actively-watched viewer at ~5 min on reconnect.
+      # Default 3600 (1h); the browser also refreshes the token proactively.
+      JWT_SIGNALLING_TTL_SEC: "${JWT_SIGNALLING_TTL_SEC:-3600}"
       # How long /api/visualiser/streams waits for the agent to emit
       # visualisationReady before failing. 180s matches Phase G's
       # measured first-cold-start envelope (~60-90s) with comfortable

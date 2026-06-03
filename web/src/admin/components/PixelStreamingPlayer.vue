@@ -47,6 +47,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   Config,
   Flags,
+  NumericParameters,
   PixelStreaming,
   TextParameters,
   type WebRtcDisconnectedEvent,
@@ -83,6 +84,12 @@ const status = ref<Status>('idle');
 const error = ref<string | null>(null);
 
 let psInstance: PixelStreaming | null = null;
+// Periodic signalling-token refresh handle (see onMounted). Keeping the
+// cached token fresh is what prevents the ~5-minute "inactivity" drop: the
+// PS frontend's URL builder is synchronous and is re-invoked on every
+// (auto-)reconnect, so a token that has hit its TTL by reconnect time would
+// be rejected (4401) and the actively-watched viewer dropped.
+let tokenRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Build the signalling URL with a freshly-minted token. Called on first
@@ -139,6 +146,15 @@ onMounted(async () => {
         // Hide the lib's built-in settings/info overlay — we render our
         // own minimal status chrome around it.
         HideUI: true,
+        // Explicitly DISABLE the Pixel Streaming AFK ("away from keyboard")
+        // watchdog. PRISM viewers are spectators that may watch for long
+        // stretches without moving the mouse/keyboard; the AFK system would
+        // otherwise tear the stream down with "You have been disconnected due
+        // to inactivity." It defaults off in the lib, but we pin it so a
+        // future lib-default change (or a stray URL param) can never enable
+        // it for a watcher.
+        [Flags.AFKDetection]: false,
+        [NumericParameters.AFKTimeoutSecs]: 0,
       },
     });
 
@@ -149,12 +165,21 @@ onMounted(async () => {
     // token than to silently stop trying entirely (the lib's
     // disconnect/reconnect loop will surface the rejection).
     psInstance.setSignallingUrlBuilder(() => cachedUrl);
-    // Kick off background refresh of the cached URL so subsequent
-    // reconnects pick up a fresh token. Best-effort — failures here are
-    // logged and ignored.
-    void (async () => {
-      try { cachedUrl = await buildSignallingUrlAsync(); } catch { /* ignore */ }
-    })();
+    // Keep the cached signalling URL's JWT fresh so EVERY (auto-)reconnect
+    // carries a valid, unexpired token. The builder above is synchronous and
+    // is re-invoked by the lib on each reconnect; previously the token was
+    // refreshed only ONCE after connect, so a reconnect after the token's TTL
+    // (default 5 min) re-presented an expired token, the server rejected the
+    // WS (4401), and the lib's auto-reconnect could not recover — dropping an
+    // actively-watched viewer at ~5 minutes. We now refresh on a short
+    // interval (well under any sane JWT_SIGNALLING_TTL_SEC) AND immediately on
+    // disconnect, so the next reconnect always has a live token.
+    const refreshToken = async () => {
+      try { cachedUrl = await buildSignallingUrlAsync(); } catch { /* keep last good url */ }
+    };
+    const TOKEN_REFRESH_MS = 60_000; // « server JWT_SIGNALLING_TTL_SEC (default 3600)
+    tokenRefreshTimer = setInterval(() => { void refreshToken(); }, TOKEN_REFRESH_MS);
+    void refreshToken();
 
     // Inject TURN credentials into the Cirrus `config` message before
     // the RTCPeerConnection is created. The lib's WebRtcPlayerController
@@ -189,6 +214,10 @@ onMounted(async () => {
     psInstance.addEventListener('webRtcConnected',    () => { status.value = 'streaming'; error.value = null; });
     psInstance.addEventListener('webRtcDisconnected', (ev: Event & WebRtcDisconnectedEvent) => {
       status.value = 'idle';
+      // Refresh the token NOW so the lib's auto-reconnect (which fires after a
+      // short delay and calls the sync URL builder) carries a fresh JWT rather
+      // than a possibly-expired one.
+      void refreshToken();
       // Surface the disconnect reason for diagnostics; the lib's
       // auto-reconnect will retry if `allowClickToReconnect` was true.
       if (ev.data?.eventString) error.value = ev.data.eventString;
@@ -217,6 +246,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  if (tokenRefreshTimer) { clearInterval(tokenRefreshTimer); tokenRefreshTimer = null; }
   try { psInstance?.disconnect(); } catch { /* ignore */ }
   psInstance = null;
 });

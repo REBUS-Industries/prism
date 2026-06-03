@@ -665,7 +665,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           required: ['token', 'exp'],
           properties: {
             token:    { type: 'string', description: 'HS256 JWT. Append as `?token=...` to the signalling WS URL.' },
-            exp:      { type: 'integer', description: 'Token expiry, Unix epoch seconds. Default TTL 5 minutes.' },
+            exp:      { type: 'integer', description: 'Token expiry, Unix epoch seconds. Default TTL 1 hour (JWT_SIGNALLING_TTL_SEC).' },
             viewerId: { type: 'string', description: 'Stable per-viewer demux key embedded in the token. Reuse it across token refreshes so the viewer\'s Wilbur player + controller seat survive a reconnect.' },
             tier:     { type: 'string', enum: ['view', 'control'], description: 'Viewer tier carried by the token. `signalling-token` always mints `control`; `view`-tier seats come from share links.' },
           },
@@ -1258,7 +1258,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           tags: ['Visualiser'],
           summary: 'Mint a signalling WS token',
           description: [
-            'Returns a short-lived HS256 JWT (default TTL 5 minutes) the browser',
+            'Returns an HS256 JWT (default TTL 1 hour, JWT_SIGNALLING_TTL_SEC) the browser',
             'appends as `?token=...` to the signalling WS URL. The same ownership',
             'check as DELETE applies.',
             '',
