@@ -213,15 +213,19 @@ different places:
 - **Connector-import path (`orbit-connectors` repo — NOT vendored here):** the
   model is loaded by **glTFRuntime** inside the `-game` instance via
   `FOrbitHeadlessAutoImport`, so the orientation is governed by the connector's
-  glTFRuntime load config / spawned-actor rotation, **not** by this orchestrator.
-  The orchestrator's staged glTF (`GltfWriter` / `CoordinateTransform`) does **not**
-  feed this path — `orbit-cli pull` produces its own glTF — so the Interchange
-  fix above does not affect it. **Recommended companion change (in the connector
-  repo):** apply the same +90° CW (i.e. `Yaw = +90`) about Z where the connector
-  configures the glTFRuntime load — e.g. set the actor/scene `Rotation` on the
-  `FglTFRuntimeStaticMeshConfig` / spawn transform in `FOrbitHeadlessAutoImport`
-  (or expose a matching `OrbitImportYawDegrees` knob). Use the same sign + naming
-  so the two paths stay consistent.
+  spawned-actor rotation, **not** by this orchestrator. The orchestrator's staged
+  glTF (`GltfWriter` / `CoordinateTransform`) does **not** feed this path —
+  `orbit-cli pull` produces its own glTF — so the Interchange fix above does not
+  affect it. **Implemented (connector v0.1.28):**
+  `UOrbitImportSubsystem::GetOrCreateRoot` now spawns (and re-asserts on
+  re-import) the `AOrbitImportRoot` model root with the same **`+90°` CW** yaw
+  about Z. Because every imported `StaticMeshComponent` is attached beneath that
+  root at the world origin, the yaw rotates the whole assembly to match the
+  Interchange path exactly. It honours the **same** `PRISM_VISUALISER_IMPORT_YAW_DEG`
+  env override (`-90` flips, `0` disables) so both paths stay consistent.
+  Deploying it requires a new connector release **and** a template re-pull on the
+  workstation (the connector ships C++ source that UBT recompiles at pull time) —
+  see the deploy steps below.
 
 ---
 
