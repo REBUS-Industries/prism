@@ -57,6 +57,7 @@ import { sessionRegistry } from '../ws/sessionRegistry.js';
 import { broadcastWorkstationUpdate } from '../ws/adminProtocol.js';
 import { releaseVisualiserSlot, tryDispatchVisualisation } from '../jobs/dispatcher.js';
 import { visualiserRunRegistry } from '../visualiser/runRegistry.js';
+import { visualiserIdleReaper } from '../visualiser/idleReaper.js';
 import { generateTurnCredential } from '../visualiser/turnCredentials.js';
 import { issueSignallingToken } from '../visualiser/signallingToken.js';
 import { mintShareToken, hashShareToken } from '../visualiser/shareLinks.js';
@@ -445,6 +446,8 @@ const plugin: FastifyPluginAsync = async (app) => {
         }
       }
     }
+    // Operator cancel is terminal — drop any pending idle-reap countdown.
+    visualiserIdleReaper.cancel(row.id);
     await db
       .update(visualiserRuns)
       .set({ status: 'ended', endedAt: new Date(), updatedAt: new Date() })

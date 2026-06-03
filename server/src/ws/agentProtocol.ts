@@ -25,6 +25,7 @@ import { dispatchJobEvent } from '../webhooks/dispatcher.js';
 import { releaseVisualiserSlot, tryDispatch } from '../jobs/dispatcher.js';
 import { visualiserRunRegistry } from '../visualiser/runRegistry.js';
 import { signallingProxyRegistry } from './signallingProxyRegistry.js';
+import { visualiserIdleReaper } from '../visualiser/idleReaper.js';
 
 const HEARTBEAT_SECONDS = 15;
 
@@ -552,6 +553,8 @@ async function onVisualisationFailed(
     message: data.error,
     stack: data.stack,
   });
+  // Run is terminal — drop any pending idle-reap countdown for it.
+  visualiserIdleReaper.cancel(data.runId);
   await releaseVisualiserSlot(conn.workstationId).catch(() => null);
   // Drop any active signalling proxy connections for this runId so
   // the browser sees a clean close instead of a frozen socket.
@@ -569,6 +572,8 @@ async function onVisualisationEnded(
     .update(visualiserRuns)
     .set({ status: 'ended', endedAt: new Date(), updatedAt: new Date() })
     .where(eq(visualiserRuns.id, data.runId));
+  // Run is terminal — drop any pending idle-reap countdown for it.
+  visualiserIdleReaper.cancel(data.runId);
   await releaseVisualiserSlot(conn.workstationId).catch(() => null);
   signallingProxyRegistry.closeRun(data.runId, 1000, data.reason ?? 'ended');
   broadcastWorkstationUpdate({ id: conn.workstationId, visualiserRunEnded: data.runId, reason: data.reason });

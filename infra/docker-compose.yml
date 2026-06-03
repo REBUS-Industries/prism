@@ -60,6 +60,12 @@ services:
       # measured first-cold-start envelope (~60-90s) with comfortable
       # headroom.
       VISUALISER_START_TIMEOUT_MS: "${VISUALISER_START_TIMEOUT_MS:-600000}"
+      # Viewer-aware idle reaper: end a LIVE run that has had zero connected
+      # browser viewers for this long (ms), reclaiming the GPU. Distinct from
+      # the START timeout above — a run is never reaped while >=1 viewer is
+      # connected (watching counts, even with no input). 0 disables. Default
+      # 600000 (10 min).
+      VISUALISER_IDLE_TIMEOUT_MS: "${VISUALISER_IDLE_TIMEOUT_MS:-600000}"
       # GitHub PAT for the UE-template version picker (GET /api/workstations/
       # template-releases). Lifts the GitHub API limit 60→5000/hr; without it
       # the picker fails with "rate limit exceeded". Scope: public_repo (repo

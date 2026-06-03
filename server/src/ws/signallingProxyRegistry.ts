@@ -80,6 +80,35 @@ export interface ControlChange {
 class SignallingProxyRegistry {
   private byRun = new Map<string, RunState>();
 
+  /**
+   * Optional observer notified whenever a run's connected-viewer count
+   * changes (a viewer signalling socket was added or removed). The
+   * viewer-aware idle reaper subscribes to this so it can arm/cancel its
+   * per-run "no viewers" countdown. Kept as an injected callback (rather
+   * than an import) so this module stays dependency-free and no import
+   * cycle forms between the registry and the reaper.
+   */
+  private viewerCountListener: ((runId: string, count: number) => void) | null = null;
+
+  /** Register the (single) viewer-count observer. See {@link viewerCountListener}. */
+  setViewerCountListener(fn: ((runId: string, count: number) => void) | null): void {
+    this.viewerCountListener = fn;
+  }
+
+  /** Current number of connected viewer signalling sockets for a run. */
+  viewerCount(runId: string): number {
+    return this.byRun.get(runId)?.viewers.size ?? 0;
+  }
+
+  private notifyViewerCount(runId: string): void {
+    if (!this.viewerCountListener) return;
+    try {
+      this.viewerCountListener(runId, this.viewerCount(runId));
+    } catch {
+      /* a misbehaving listener must never break signalling routing */
+    }
+  }
+
   private ensure(runId: string): RunState {
     let st = this.byRun.get(runId);
     if (!st) {
@@ -107,6 +136,9 @@ class SignallingProxyRegistry {
       try { prev.socket.close(1000, 'replaced by newer viewer socket'); } catch { /* ignore */ }
     }
     st.viewers.set(conn.viewerId, conn);
+    // A viewer is connected → genuine activity; lets the idle reaper cancel
+    // any pending "no viewers" countdown for this run.
+    this.notifyViewerCount(conn.runId);
   }
 
   /**
@@ -127,6 +159,10 @@ class SignallingProxyRegistry {
     }
     const agentSessionId = conn.agentSessionId;
     if (wasController) this.broadcastControl(conn.runId);
+    // Notify BEFORE reapIfEmpty deletes the run-state map entry — the count is
+    // computed from the live `viewers` map either way (0 once deleted), so the
+    // reaper arms its countdown when the last viewer leaves.
+    this.notifyViewerCount(conn.runId);
     this.reapIfEmpty(conn.runId);
     return { wasController, agentSessionId };
   }

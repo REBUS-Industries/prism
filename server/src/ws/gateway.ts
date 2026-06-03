@@ -8,6 +8,7 @@ import { handleAdminSocket } from './adminProtocol.js';
 import signallingProxyPlugin from './signallingProxy.js';
 import visualiserControlPlugin from './visualiserControl.js';
 import { tryAuthAdminSession } from '../auth/adminSession.js';
+import { initVisualiserIdleReaper } from '../visualiser/idleReaper.js';
 
 const plugin: FastifyPluginAsync = async (app) => {
   await app.register(fastifyWebsocket, {
@@ -16,6 +17,12 @@ const plugin: FastifyPluginAsync = async (app) => {
       maxPayload: 16 * 1024 * 1024,
     },
   });
+
+  // Subscribe the viewer-aware idle reaper to per-run viewer-count changes so
+  // a `streaming` run with zero connected viewers is reclaimed after
+  // VISUALISER_IDLE_TIMEOUT_MS (active sessions are never touched). This is
+  // separate from the pre-`streaming` START timeout in runRegistry.
+  initVisualiserIdleReaper(app.log);
 
   // Agent WS endpoint.
   // Phase 2: open to any caller — the agent's `hello` message identifies

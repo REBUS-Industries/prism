@@ -27,6 +27,28 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ## Unreleased
 
+### Fixed — Visualiser idle reaper now viewer-aware (no more "no activity" false positives)
+
+- **Server.** A live (`streaming`) visualiser run is now only reaped for
+  inactivity when it has **zero connected browser viewers** — never while a
+  viewer is watching. The authoritative signal is the count of open viewer
+  signalling sockets in `signallingProxyRegistry` (a viewer keeps that socket
+  open for the whole session), so a viewer who is merely WATCHING (no
+  mouse/keyboard input) is correctly counted as active. This avoids the
+  false-positive class where "activity" was conflated with recent
+  signalling/input traffic — in PRISM's non-SFU topology the WebRTC media +
+  input data channel go peer-to-peer and the signalling stream goes quiet a
+  few seconds after negotiation even while the viewer is actively watching.
+- New `server/src/visualiser/idleReaper.ts`: when the last viewer of a run
+  disconnects, a per-run countdown starts; any viewer (re)connect cancels it.
+  If it elapses the run is ended with a clear, diagnosable reason
+  (`no viewers connected for Ns`) and the GPU is reclaimed (agent
+  `cancelVisualisation`, row → `ended` with `failureReason='idle_no_viewers'`,
+  slot released, signalling sockets closed).
+- Configurable via `VISUALISER_IDLE_TIMEOUT_MS` (default **600000** = 10 min;
+  `0` disables). This is **separate from** the pre-`streaming`
+  `VISUALISER_START_TIMEOUT_MS` start timeout — the two are not conflated.
+
 ### Docs — Visualiser multi-viewer & session-control API (docs-only)
 
 - New `docs/API_MULTIVIEW_SESSION_CONTROL.md`: the session lifecycle state
