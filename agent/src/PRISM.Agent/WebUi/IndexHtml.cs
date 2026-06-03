@@ -1063,22 +1063,76 @@ internal static class IndexHtml
 
   $('btnReleasesRefresh').addEventListener('click', () => loadReleases());
 
-  $('btnPullTemplate').addEventListener('click', async () => {
+  // Pull the template. Two-step: the first POST (forceCloseUnreal=false) is
+  // refused with HTTP 409 + blockedByUnreal when Unreal Engine is running;
+  // we then confirm with the operator and re-POST with forceCloseUnreal=true,
+  // which force-closes the editor before pulling. Uses a raw fetch (not api())
+  // so the 409 body can be inspected instead of thrown.
+  async function doPull(tag, force) {
     const btn = $('btnPullTemplate');
-    if (dirty && !confirm('You have unsaved settings changes. Pull using the last SAVED template root / repo / connector settings?\n\nClick Cancel to save first.')) return;
-    const tag = $('templateRelease').value.trim();
     btn.disabled = true;
-    btn.textContent = 'Pulling…';
+    btn.textContent = force ? 'Closing Unreal…' : 'Pulling…';
+    const body = {};
+    if (tag) body.tag = tag;
+    if (force) body.forceCloseUnreal = true;
+    let res, payload;
     try {
-      const r = await api('/api/visualiser/template/pull', { method: 'POST', body: JSON.stringify(tag ? { tag } : {}) });
-      if (r.state) renderTemplatePull(r.state.templatePull);
-      const label = tag ? `version ${tag}` : 'latest UE template';
-      toast(r.alreadyRunning ? 'A template pull is already running.' : `Pulling ${label} — watch the status line.`, r.alreadyRunning ? 'warn' : 'success');
+      res = await fetch('/api/visualiser/template/pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      payload = await res.json().catch(() => ({}));
     } catch (err) {
       toast('Pull failed: ' + err.message, 'error');
       btn.disabled = false;
       btn.textContent = 'Pull selected version';
+      return;
     }
+
+    if (res.status === 409 && payload.blockedByUnreal) {
+      if (payload.state) renderTemplatePull(payload.state.templatePull);
+      const procs = (payload.unrealProcesses || []).map(p => `${p.name} (pid ${p.pid})`).join(', ');
+      const n = payload.count || (payload.unrealProcesses || []).length;
+      const ok = confirm(
+        `Unreal Engine is running (${n} instance(s)):\n  ${procs}\n\n` +
+        'Pulling a new template requires closing it. This will FORCE-CLOSE the ' +
+        'Unreal Editor (and end any visualiser session using the current template). ' +
+        'Force-close and continue?');
+      if (!ok) {
+        toast('Pull cancelled — Unreal is still running.', 'warn');
+        btn.disabled = false;
+        btn.textContent = 'Pull selected version';
+        return;
+      }
+      return doPull(tag, true);
+    }
+
+    if (res.status === 409 && payload.alreadyRunning) {
+      if (payload.state) renderTemplatePull(payload.state.templatePull);
+      toast('A template pull is already running.', 'warn');
+      btn.disabled = false;
+      btn.textContent = 'Pull selected version';
+      return;
+    }
+
+    if (!res.ok || !payload.ok) {
+      toast('Pull failed: ' + (payload.error || `${res.status} ${res.statusText}`), 'error');
+      btn.disabled = false;
+      btn.textContent = 'Pull selected version';
+      return;
+    }
+
+    if (payload.state) renderTemplatePull(payload.state.templatePull);
+    const label = tag ? `version ${tag}` : 'latest UE template';
+    toast(force ? `Closing Unreal, then pulling ${label} — watch the status line.`
+                : `Pulling ${label} — watch the status line.`, 'success');
+  }
+
+  $('btnPullTemplate').addEventListener('click', async () => {
+    if (dirty && !confirm('You have unsaved settings changes. Pull using the last SAVED template root / repo / connector settings?\n\nClick Cancel to save first.')) return;
+    const tag = $('templateRelease').value.trim();
+    await doPull(tag, false);
   });
 
   $('btnRestart').addEventListener('click', async () => {

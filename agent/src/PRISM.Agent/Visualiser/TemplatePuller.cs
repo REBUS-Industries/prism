@@ -208,8 +208,10 @@ public static class TemplatePuller
         }
         finally
         {
-            // Best-effort cleanup of the temp work dir.
-            try { if (Directory.Exists(workDir)) Directory.Delete(workDir, recursive: true); }
+            // Best-effort cleanup of the temp work dir. The extracted git
+            // zipball carries read-only objects, so force-delete (strip
+            // read-only + retry) rather than a plain recursive delete.
+            try { ForceDelete(workDir, log); }
             catch (Exception ex) { log.LogDebug(ex, "template pull: temp cleanup failed for {Dir}", workDir); }
         }
     }
@@ -558,7 +560,7 @@ public static class TemplatePuller
             if (!seen.Add(pluginName)) continue;
 
             var pluginDest = Path.Combine(pluginsRoot, pluginName);
-            if (Directory.Exists(pluginDest)) Directory.Delete(pluginDest, recursive: true);
+            if (Directory.Exists(pluginDest)) ForceDelete(pluginDest, log);
             CopyDirectory(pluginSrc, pluginDest);
             installed.Add(pluginName);
             log.LogInformation("template pull: merged connector plug-in '{Plugin}'", pluginName);
@@ -858,34 +860,180 @@ public static class TemplatePuller
     /// <paramref name="projectRoot"/>. Staged via a sibling temp dir then an
     /// atomic-ish swap so an interrupted copy never leaves a half-written
     /// project where the previous good one used to be.
+    ///
+    /// <para>
+    /// Hardened against the two failure modes seen in the field:
+    /// (1) <b>read-only files</b> — git-sourced zipballs and UE
+    /// <c>Intermediate\</c>/<c>Saved\</c> trees carry read-only attributes,
+    /// which make a plain <see cref="Directory.Delete(string,bool)"/> throw
+    /// <see cref="UnauthorizedAccessException"/>; (2) <b>locked handles</b> —
+    /// a running Unreal Editor / orchestrator / Explorer / antivirus holds the
+    /// old project open, which makes <see cref="Directory.Move(string,string)"/>
+    /// throw "Access to the path … is denied". Stale <c>.pull-*</c> staging and
+    /// <c>.old-*</c> backup dirs from a prior aborted run (themselves often
+    /// read-only/locked) are swept first, all destructive ops strip read-only +
+    /// retry with backoff, and a genuinely-locked target throws an actionable
+    /// <see cref="TemplatePullException"/> rather than a raw OS error.
+    /// </para>
     /// </summary>
     static void InstallProject(string projectRoot, string dest, ILogger log)
     {
         var parent = Path.GetDirectoryName(dest)!;
+        Directory.CreateDirectory(parent);
+
+        // Sweep stale staging/backup dirs from a previous aborted pull — these
+        // are themselves frequently read-only (git objects) or locked, and a
+        // left-over one is a common cause of the next pull's access-denied.
+        SweepStaleArtifacts(parent, Path.GetFileName(dest), log);
+
         var staging = Path.Combine(parent, "." + Path.GetFileName(dest) + ".pull-" + Guid.NewGuid().ToString("N")[..8]);
 
         // Stage a fresh copy first (works across volumes; the extract temp
         // lives under %TEMP% which is often a different drive to C:\PRISM).
         CopyDirectory(projectRoot, staging);
 
-        // Swap: remove the old project, move the staged copy into place.
+        // Swap: move the old project aside, move the staged copy into place.
         var backup = dest + ".old-" + Guid.NewGuid().ToString("N")[..8];
         try
         {
-            if (Directory.Exists(dest)) Directory.Move(dest, backup);
-            Directory.Move(staging, dest);
+            if (Directory.Exists(dest)) RobustMove(dest, backup, log);
+            RobustMove(staging, dest, log);
         }
-        catch
+        catch (Exception swapEx)
         {
             // Roll back: restore the old project if the move failed midway.
-            try { if (!Directory.Exists(dest) && Directory.Exists(backup)) Directory.Move(backup, dest); }
+            try { if (!Directory.Exists(dest) && Directory.Exists(backup)) RobustMove(backup, dest, log); }
             catch (Exception ex) { log.LogWarning(ex, "template pull: rollback of {Dest} failed", dest); }
-            try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); } catch { /* nop */ }
+            try { ForceDelete(staging, log); } catch { /* nop */ }
+
+            // Surface a locked-target failure as an actionable message — this
+            // is the "Unreal Editor is still open" case the operator hits.
+            if (swapEx is UnauthorizedAccessException or IOException)
+            {
+                throw new TemplatePullException(
+                    $"Could not replace the template project at '{dest}' — the folder (or a file inside it) " +
+                    "is read-only or locked by another process. Close the Unreal Editor and any Explorer / " +
+                    "terminal window using that folder, then pull again. (On the agent web UI, confirming the " +
+                    "\"Unreal is running\" prompt force-closes the editor automatically before pulling.)",
+                    swapEx);
+            }
             throw;
         }
 
-        try { if (Directory.Exists(backup)) Directory.Delete(backup, recursive: true); }
+        try { ForceDelete(backup, log); }
         catch (Exception ex) { log.LogDebug(ex, "template pull: could not delete backup {Backup}", backup); }
+    }
+
+    /// <summary>
+    /// Best-effort removal of <c>.&lt;name&gt;.pull-*</c> staging dirs and
+    /// <c>&lt;name&gt;.old-*</c> backup dirs left under <paramref name="parent"/>
+    /// by an earlier aborted pull. Each is force-deleted (read-only stripped,
+    /// retried); a failure is logged and swallowed so it never blocks the pull.
+    /// </summary>
+    static void SweepStaleArtifacts(string parent, string name, ILogger log)
+    {
+        try
+        {
+            if (!Directory.Exists(parent)) return;
+            var stagingPrefix = "." + name + ".pull-";
+            var backupPrefix = name + ".old-";
+            foreach (var dir in Directory.EnumerateDirectories(parent))
+            {
+                var leaf = Path.GetFileName(dir);
+                if (leaf.StartsWith(stagingPrefix, StringComparison.OrdinalIgnoreCase) ||
+                    leaf.StartsWith(backupPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    try { ForceDelete(dir, log); log.LogInformation("template pull: swept stale artifact {Dir}", dir); }
+                    catch (Exception ex) { log.LogWarning(ex, "template pull: could not sweep stale artifact {Dir}", dir); }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogDebug(ex, "template pull: stale-artifact sweep of {Parent} failed", parent);
+        }
+    }
+
+    /// <summary>
+    /// <see cref="Directory.Move(string,string)"/> with bounded retry +
+    /// backoff. A directory rename fails transiently when a file inside the
+    /// source is momentarily open (UE/Explorer/antivirus); read-only
+    /// attributes are cleared on the source tree first so the rename isn't
+    /// rejected for that reason. Throws the last OS error when all attempts
+    /// are exhausted so the caller can map it to an actionable message.
+    /// </summary>
+    static void RobustMove(string src, string dst, ILogger log)
+    {
+        ClearReadOnly(src, log);
+        const int attempts = 6;
+        for (var i = 1; ; i++)
+        {
+            try { Directory.Move(src, dst); return; }
+            catch (Exception ex) when ((ex is UnauthorizedAccessException or IOException) && i < attempts)
+            {
+                var delayMs = 150 * i;
+                log.LogDebug(ex, "template pull: move {Src} -> {Dst} attempt {N}/{Max} failed; retrying in {Ms}ms",
+                    src, dst, i, attempts, delayMs);
+                Thread.Sleep(delayMs);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recursively delete <paramref name="dir"/> robustly: clear read-only
+    /// attributes on every file/subdir first (so <c>.git</c> objects / packed
+    /// files don't trip <see cref="UnauthorizedAccessException"/>), then delete
+    /// with bounded retry + backoff for transient locks. A no-op when the path
+    /// does not exist. Throws the last error when exhausted.
+    /// </summary>
+    static void ForceDelete(string dir, ILogger log)
+    {
+        if (!Directory.Exists(dir)) return;
+        const int attempts = 6;
+        for (var i = 1; ; i++)
+        {
+            try
+            {
+                ClearReadOnly(dir, log);
+                Directory.Delete(dir, recursive: true);
+                return;
+            }
+            catch (DirectoryNotFoundException) { return; }
+            catch (Exception ex) when ((ex is UnauthorizedAccessException or IOException) && i < attempts)
+            {
+                var delayMs = 150 * i;
+                log.LogDebug(ex, "template pull: delete {Dir} attempt {N}/{Max} failed; retrying in {Ms}ms",
+                    dir, i, attempts, delayMs);
+                Thread.Sleep(delayMs);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Strip <see cref="FileAttributes.ReadOnly"/> from <paramref name="dir"/>
+    /// and every file/subdirectory beneath it. Best-effort per entry — a
+    /// failure on one file is logged at debug and skipped so the caller's
+    /// delete/move still proceeds for the rest.
+    /// </summary>
+    static void ClearReadOnly(string dir, ILogger log)
+    {
+        try
+        {
+            var di = new DirectoryInfo(dir);
+            if (!di.Exists) return;
+            if ((di.Attributes & FileAttributes.ReadOnly) != 0)
+                di.Attributes &= ~FileAttributes.ReadOnly;
+            foreach (var info in di.EnumerateFileSystemInfos("*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    if ((info.Attributes & FileAttributes.ReadOnly) != 0)
+                        info.Attributes &= ~FileAttributes.ReadOnly;
+                }
+                catch (Exception ex) { log.LogDebug(ex, "template pull: clear read-only failed for {Path}", info.FullName); }
+            }
+        }
+        catch (Exception ex) { log.LogDebug(ex, "template pull: clear read-only sweep failed for {Dir}", dir); }
     }
 
     static void CopyDirectory(string sourceDir, string destDir)

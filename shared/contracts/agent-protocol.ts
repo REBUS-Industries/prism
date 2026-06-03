@@ -183,6 +183,15 @@ export interface UpdateData {
  */
 export interface PullTemplateData {
   tag?: string;
+  /**
+   * When true the agent force-closes any running Unreal Engine instance
+   * (`UnrealEditor` / `UnrealEditor-Cmd` / `CrashReportClient`) that locks the
+   * template folder before pulling — ending any visualiser session using the
+   * current template. When false/omitted and Unreal is running, the agent web
+   * UI refuses and prompts the operator to confirm; the admin Workstations
+   * path passes `true` because the admin clicks through its own confirmation.
+   */
+  force?: boolean;
 }
 
 export interface LayerNode {

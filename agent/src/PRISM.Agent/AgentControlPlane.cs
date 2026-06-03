@@ -462,7 +462,12 @@ if (Test-Path '{Esc(exePath)}') {{
         bool    Started,
         string? Tag,
         bool    AlreadyRunning,
-        string? Error);
+        string? Error,
+        // Set when the pull was NOT started because Unreal Engine is running
+        // and the caller did not pass forceCloseUnreal. The web UI shows a
+        // confirm prompt listing these and re-invokes the pull with force.
+        bool    BlockedByUnreal = false,
+        IReadOnlyList<Visualiser.UnrealProcessGuard.UnrealProc>? UnrealProcesses = null);
 
     /// <summary>
     /// Kick off a background download + install of the latest (or pinned)
@@ -479,10 +484,21 @@ if (Test-Path '{Esc(exePath)}') {{
     /// <see cref="AgentConfig.UnrealTemplateTag"/> is used, falling back to the
     /// repo's latest release if that is empty.
     /// </param>
-    public PullTemplateOutcome PullTemplate(string? pinnedTag = null)
+    /// <param name="pinnedTag">Optional release tag to pull (see remarks).</param>
+    /// <param name="forceCloseUnreal">
+    /// When false (default) and a running Unreal Engine instance is detected,
+    /// the pull is NOT started — the returned outcome carries
+    /// <see cref="PullTemplateOutcome.BlockedByUnreal"/> + the process list so
+    /// the web UI can prompt the operator. When true the agent force-closes
+    /// the detected Unreal processes (waiting for their handles to release)
+    /// before pulling. The default is safe (never auto-kills without explicit
+    /// confirmation).
+    /// </param>
+    public PullTemplateOutcome PullTemplate(string? pinnedTag = null, bool forceCloseUnreal = false)
     {
         var tag = string.IsNullOrWhiteSpace(pinnedTag) ? null : pinnedTag.Trim();
-        _log.LogInformation("template pull requested (tag={Tag})", tag ?? "<configured/latest>");
+        _log.LogInformation("template pull requested (tag={Tag} force={Force})",
+            tag ?? "<configured/latest>", forceCloseUnreal);
 
         if (!_templatePullGate.Wait(0))
         {
@@ -491,8 +507,29 @@ if (Test-Path '{Esc(exePath)}') {{
                 Error: "Another template pull is already in progress on this agent.");
         }
 
+        // Pre-flight: a running Unreal Editor locks the template folder and
+        // makes the stage-and-swap fail with "Access to the path … is denied".
+        // Unless the caller explicitly opted into force-close, refuse and hand
+        // the process list back so the UI can confirm with the operator.
+        var runningUnreal = Visualiser.UnrealProcessGuard.Detect(_log);
+        if (runningUnreal.Count > 0 && !forceCloseUnreal)
+        {
+            _templatePullGate.Release();
+            _log.LogWarning(
+                "template pull blocked — Unreal Engine is running ({Procs}); operator confirmation required to force-close",
+                Visualiser.UnrealProcessGuard.Describe(runningUnreal));
+            return new PullTemplateOutcome(
+                Started: false, Tag: tag, AlreadyRunning: false,
+                Error: $"Unreal Engine is running ({runningUnreal.Count} instance(s)): " +
+                       $"{Visualiser.UnrealProcessGuard.Describe(runningUnreal)}. " +
+                       "Pulling a new template requires closing it. Confirm to force-close and continue.",
+                BlockedByUnreal: true, UnrealProcesses: runningUnreal);
+        }
+
         var startedTag = tag ?? (string.IsNullOrWhiteSpace(_cfg.UnrealTemplateTag) ? null : _cfg.UnrealTemplateTag.Trim());
-        SetTemplatePull(TemplatePullStatus.Running(startedTag, "starting…"));
+        var willClose = runningUnreal.Count > 0;
+        SetTemplatePull(TemplatePullStatus.Running(startedTag,
+            willClose ? $"closing Unreal ({runningUnreal.Count} process(es))…" : "starting…"));
 
         _ = Task.Run(async () =>
         {
@@ -500,6 +537,18 @@ if (Test-Path '{Esc(exePath)}') {{
             {
                 var progress = new Progress<string>(msg =>
                     SetTemplatePull(_templatePull with { Message = msg, UpdatedAt = DateTime.UtcNow }));
+
+                // Force-close any running Unreal instances first (operator
+                // confirmed) and wait for their file handles to drop before the
+                // pull touches the locked template folder.
+                if (forceCloseUnreal)
+                {
+                    var killed = await Visualiser.UnrealProcessGuard
+                        .ForceCloseAllAsync(progress, _log, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    if (killed > 0)
+                        _log.LogInformation("template pull: force-closed {Killed} Unreal process(es) before pull", killed);
+                }
 
                 var result = await TemplatePuller.PullAsync(
                     repoSlug:       _cfg.UnrealTemplateRepo,

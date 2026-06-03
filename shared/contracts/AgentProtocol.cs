@@ -274,6 +274,18 @@ public sealed class PullTemplateData
 {
     [JsonProperty("tag", NullValueHandling = NullValueHandling.Ignore)]
     public string? Tag { get; set; }
+
+    /// <summary>
+    /// When true the agent force-closes any running Unreal Engine instance
+    /// (<c>UnrealEditor</c> / <c>UnrealEditor-Cmd</c> / <c>CrashReportClient</c>)
+    /// that locks the template folder before pulling — ending any visualiser
+    /// session using the current template. When false/omitted and Unreal is
+    /// running, the agent web UI refuses and prompts the operator to confirm;
+    /// the admin Workstations path passes <c>true</c> (the admin clicked
+    /// through its own confirmation dialog).
+    /// </summary>
+    [JsonProperty("force", NullValueHandling = NullValueHandling.Ignore)]
+    public bool? Force { get; set; }
 }
 
 /* -------------------------------------------------------------------------- */

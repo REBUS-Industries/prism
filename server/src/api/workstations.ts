@@ -292,7 +292,7 @@ const plugin: FastifyPluginAsync = async (app) => {
    * silently ignore the message, so this returns 503 only when no agent is
    * connected at all.
    */
-  app.post<{ Params: { id: string }; Body: { tag?: string } | undefined }>(
+  app.post<{ Params: { id: string }; Body: { tag?: string; force?: boolean } | undefined }>(
     '/:id/pull-template',
     async (req, reply) => {
       const row = await db.query.workstations.findFirst({ where: eq(workstations.id, req.params.id) });
@@ -300,9 +300,17 @@ const plugin: FastifyPluginAsync = async (app) => {
       const tag = typeof req.body?.tag === 'string' && req.body.tag.trim().length > 0
         ? req.body.tag.trim()
         : undefined;
-      const sent = sendPullTemplateToAgent(row.machineId, tag ? { tag } : {});
+      // The admin "Pull template" button clicks through its own confirmation
+      // dialog, so it sends force=true: the agent force-closes a running
+      // Unreal Editor (the field bug — UE locks the template folder) before
+      // pulling. The agent's local web UI uses the two-step prompt instead.
+      const force = req.body?.force === true;
+      const payload: { tag?: string; force?: boolean } = {};
+      if (tag) payload.tag = tag;
+      if (force) payload.force = true;
+      const sent = sendPullTemplateToAgent(row.machineId, payload);
       if (!sent) return reply.code(503).send({ error: 'agent not connected' });
-      req.log.info({ workstationId: row.id, nodeName: row.nodeName, machineId: row.machineId, tag }, 'pull-template dispatched to agent');
+      req.log.info({ workstationId: row.id, nodeName: row.nodeName, machineId: row.machineId, tag, force }, 'pull-template dispatched to agent');
       return { queued: true };
     },
   );

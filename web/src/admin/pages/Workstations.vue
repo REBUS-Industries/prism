@@ -199,13 +199,16 @@ async function pullTemplate(w: Workstation) {
   const tag = (selectedTemplateTag.get(w.id) ?? '').trim();
   const versionLabel = tag ? `version ${tag}` : 'the latest UE template';
   const ok = confirm(
-    `Pull ${versionLabel} onto ${w.nodeName}?\n\nThe agent downloads the ${tag ? `'${tag}'` : 'latest'} orbit-ue-template release, merges the latest OrbitConnector.UE5 plug-in into its Plugins\\, installs it into the template root, then repoints the active template project at it. Progress is shown on the agent's local web UI.`,
+    `Pull ${versionLabel} onto ${w.nodeName}?\n\nThe agent downloads the ${tag ? `'${tag}'` : 'latest'} orbit-ue-template release, merges the latest OrbitConnector.UE5 plug-in into its Plugins\\, installs it into the template root, then repoints the active template project at it. Progress is shown on the agent's local web UI.\n\nIf Unreal Engine is running on the workstation it WILL be force-closed first (it locks the template folder) — this ends any visualiser session using the current template.`,
   );
   if (!ok) return;
   const key = `${w.id}:pullTemplate`;
   inFlightLifecycle.add(key);
   try {
-    await workstationsApi.pullTemplate(w.id, tag || undefined);
+    // Admin confirmed via the dialog above → force-close a running Unreal
+    // Editor so the pull can replace the locked template folder (the agent
+    // web UI's two-step prompt is the interactive equivalent).
+    await workstationsApi.pullTemplate(w.id, tag || undefined, true);
     setLifecycleStatus(w.id, { kind: 'ok', msg: `Pull queued (${tag || 'latest'})` });
   } catch (err) {
     setLifecycleStatus(w.id, { kind: 'err', msg: lifecycleErrorMessage(err, 'pullTemplate') });
