@@ -695,10 +695,27 @@ public static class TemplatePuller
                 $"Check the agent's UnrealEngineRoot ('{engineRoot}') points at a valid Unreal Engine install.");
 
         var target = ResolveEditorTargetName(projectDir, projectName);
+
+        // Best-effort pre-flight: a Win64 compile needs an MSVC C++ toolchain
+        // (VS 2022 "Desktop development with C++": MSVC v143 + a Windows SDK).
+        // GPU/streaming boxes that only ever RAN packaged builds often lack it,
+        // and UBT then fails platform validation with "Win64 is not a valid
+        // platform to build". Probe now so we can warn early and enrich the
+        // eventual error; null = inconclusive (we don't block on that).
+        var hasToolchain = HasMsvcToolchain(log);
+        if (hasToolchain == false)
+        {
+            log.LogWarning(
+                "template pull: no MSVC C++ toolchain detected (vswhere reports no VC.Tools.x86.x64) — " +
+                "the Win64 compile will almost certainly fail. Install Visual Studio 2022 (or Build Tools) " +
+                "with the \"Desktop development with C++\" workload, or untick \"Compile project after pull\".");
+            progress?.Report("warning: no C++ build toolchain detected — compile may fail");
+        }
+
         progress?.Report($"compiling {target} (this can take several minutes)…");
         log.LogInformation(
-            "template pull: compiling target={Target} project={Uproject} via {BuildBat}",
-            target, uprojectPath, buildBat);
+            "template pull: compiling target={Target} project={Uproject} via {BuildBat} (msvcToolchain={Toolchain})",
+            target, uprojectPath, buildBat, hasToolchain?.ToString() ?? "unknown");
 
         // cmd.exe /c "<bat>" <target> Win64 Development -Project="<uproject>" -WaitMutex -FromMsBuild
         //   -WaitMutex   : serialise with any other UBT instance (mirrors the editor's own build)
@@ -757,17 +774,115 @@ public static class TemplatePuller
         if (process.ExitCode != 0)
         {
             var logTail = string.Join("\n", tail);
+            var ubtLogTail = ReadUbtLogTail();
+
+            // "Win64 is not a valid platform to build" at the makefile stage is
+            // UBT's platform validation failing — i.e. no usable C++ toolchain
+            // for Win64. Surface a targeted, actionable hint instead of a bare
+            // exit code so this is self-diagnosing.
+            var platformInvalid =
+                tail.Any(l => l.Contains("is not a valid platform to build", StringComparison.OrdinalIgnoreCase)) ||
+                (ubtLogTail?.Contains("is not a valid platform to build", StringComparison.OrdinalIgnoreCase) ?? false);
+
+            var hint = "";
+            if (platformInvalid)
+            {
+                hint =
+                    "\n\nDiagnosis: UBT rejected the Win64 platform at the makefile stage — almost always a MISSING " +
+                    "C++ BUILD TOOLCHAIN on this workstation. Fix it by installing Visual Studio 2022 (Community or " +
+                    "Build Tools) with the \"Desktop development with C++\" workload (MSVC v143 + a Windows 10/11 SDK), " +
+                    "then restart the agent and pull again. " +
+                    (hasToolchain == false ? "(vswhere confirms no MSVC C++ tools are installed on this box.) " : "") +
+                    "IMMEDIATE WORKAROUND: untick \"Compile project after pull\" in the agent web UI " +
+                    "(VisualiserCompileProject=false) to pull WITHOUT compiling — use only if the project is compiled " +
+                    "elsewhere or this box runs a pre-built engine/project.";
+            }
+            var ubtLogSection = string.IsNullOrWhiteSpace(ubtLogTail)
+                ? ""
+                : $"\n\nUnrealBuildTool log tail ({UbtLogPath()}):\n{ubtLogTail}";
+
             log.LogError(
-                "template pull: compile FAILED target={Target} exit={Exit} elapsedMin={Min:F1}",
-                target, process.ExitCode, elapsed.TotalMinutes);
+                "template pull: compile FAILED target={Target} exit={Exit} elapsedMin={Min:F1} platformInvalid={PlatformInvalid}",
+                target, process.ExitCode, elapsed.TotalMinutes, platformInvalid);
             throw new TemplatePullException(
-                $"Compiling {target} failed (UnrealBuildTool exit {process.ExitCode}). Last build output:\n{logTail}");
+                $"Compiling {target} failed (UnrealBuildTool exit {process.ExitCode}).{hint}\n\nLast build output:\n{logTail}{ubtLogSection}");
         }
 
         log.LogInformation(
             "template pull: compiled {Target} in {Min:F1} min", target, elapsed.TotalMinutes);
         progress?.Report($"compiled {target} ({elapsed.TotalMinutes:F1} min)");
         return true;
+    }
+
+    /// <summary>Absolute path of UnrealBuildTool's own diagnostic log.</summary>
+    static string UbtLogPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "UnrealBuildTool", "Log.txt");
+
+    /// <summary>
+    /// Read the tail of UBT's own <c>Log.txt</c> (the path UBT prints on every
+    /// run, e.g. <c>%LOCALAPPDATA%\UnrealBuildTool\Log.txt</c>). It carries the
+    /// detailed platform/SDK validation lines that the redirected stdout
+    /// summary omits, so surfacing it makes a compile failure self-diagnosing.
+    /// Opened shared (UBT may still hold the handle). Returns null when the log
+    /// is absent or unreadable.
+    /// </summary>
+    static string? ReadUbtLogTail(int maxLines = 40)
+    {
+        try
+        {
+            var path = UbtLogPath();
+            if (!File.Exists(path)) return null;
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var sr = new StreamReader(fs);
+            var lines = sr.ReadToEnd().Replace("\r\n", "\n").Split('\n');
+            return string.Join("\n", lines.Skip(Math.Max(0, lines.Length - maxLines))).TrimEnd();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Best-effort probe for an installed MSVC C++ toolchain (the thing UBT
+    /// needs to build Win64). Uses Visual Studio's <c>vswhere.exe</c> at its
+    /// fixed installer path, requiring the
+    /// <c>Microsoft.VisualStudio.Component.VC.Tools.x86.x64</c> component
+    /// (MSVC v143). Returns <c>true</c>/<c>false</c> when it can tell, or
+    /// <c>null</c> when inconclusive (vswhere missing, timed out, threw) — the
+    /// caller must NOT hard-block on null to avoid false positives.
+    /// </summary>
+    static bool? HasMsvcToolchain(ILogger log)
+    {
+        try
+        {
+            var vswhere = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                "Microsoft Visual Studio", "Installer", "vswhere.exe");
+            if (!File.Exists(vswhere)) return null; // can't tell without vswhere
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = vswhere,
+                Arguments = "-latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 " +
+                            "-property installationPath",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return null;
+            var stdout = p.StandardOutput.ReadToEnd();
+            if (!p.WaitForExit(10_000)) { try { p.Kill(); } catch { /* nop */ } return null; }
+            return !string.IsNullOrWhiteSpace(stdout);
+        }
+        catch (Exception ex)
+        {
+            log.LogDebug(ex, "template pull: MSVC toolchain probe (vswhere) failed");
+            return null;
+        }
     }
 
     /// <summary>

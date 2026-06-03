@@ -106,6 +106,43 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.30 — 2026-06-03 — Self-diagnosing compile failures (surface UBT log + C++ toolchain hint)
+
+### Changed — Template-pull compile errors are now actionable instead of a bare exit code
+
+- **Context.** On a workstation without a C++ build toolchain (e.g. a GPU/
+  streaming box that only ever *ran* packaged builds), the compile-on-pull step
+  fails almost instantly with `UnrealBuildTool exit 6` and
+  `Platform Win64 is not a valid platform to build`. That is UBT's platform
+  validation failing because there is **no MSVC v143 + Windows SDK** for it to
+  build Win64 with — not an engine-root or project problem (Build.bat + the
+  bundled DotNet ran fine and got as far as "Creating makefile").
+- **Self-diagnosing failures.** `TemplatePuller.CompileProjectAsync` now:
+  - detects the `is not a valid platform to build` signature and appends a
+    targeted, actionable hint to the `TemplatePullException` — install Visual
+    Studio 2022 (or Build Tools) with the **Desktop development with C++**
+    workload (MSVC v143 + a Windows 10/11 SDK), then restart the agent and pull
+    again; or untick **Compile project after pull** to pull without compiling;
+  - appends the tail of UBT's own `Log.txt`
+    (`%LOCALAPPDATA%\UnrealBuildTool\Log.txt`) — which carries the detailed
+    platform/SDK validation lines the redirected stdout summary omits — so the
+    failure is diagnosable from the agent UI/log alone;
+  - runs a **best-effort MSVC toolchain probe** (`vswhere -requires
+    Microsoft.VisualStudio.Component.VC.Tools.x86.x64`) *before* compiling and
+    warns early when no toolchain is present. The probe is advisory only
+    (inconclusive results never block a compile, so a working box is never
+    falsely refused).
+- **Escape hatch (unchanged, now documented).** Setting
+  `VisualiserCompileProject = false` (the **Compile project after pull**
+  checkbox in the agent web UI — live-applied, read at pull time) skips the
+  compile entirely: the pull → connector-merge → install completes and the
+  project is installed un-compiled. Use it when the box runs a pre-built
+  engine/project or compiles elsewhere. The compile engine is the configured
+  `UnrealEngineRoot` (also web-UI editable), so an operator can point the
+  compile at a specific full engine install.
+- No protocol or behaviour change to a working compile path — only failure
+  diagnostics + an early advisory warning.
+
 ## v0.3.29 — 2026-06-03 — Installed UE template version is now marker-authoritative + show the merged connector version
 
 ### Fixed — Agent reported a stale/incorrect "installed UE template" version
