@@ -196,6 +196,17 @@ public static class TemplatePuller
             log.LogInformation(
                 "template pull: installed {Name} tag={Tag} connector={Connector} compiled={Compiled} -> {Dest}",
                 projectName, resolvedTag, connectorResolvedTag ?? "<skipped>", compiled, dest);
+
+            // Record WHICH release is now physically installed as a durable
+            // .prism-template.json marker in the project root. The INSTALLER
+            // writes it (not just the control-plane caller) so every project
+            // this code deposits carries the marker — making the on-disk marker
+            // the single source of truth for "what UE template is installed
+            // here". TemplateMarker.Resolve reads it on every `hello`; the
+            // persisted AgentConfig values are only a fallback for legacy
+            // projects that predate markers.
+            TemplateMarker.Write(dest, resolvedTag, connectorResolvedTag, repoSlug, log);
+
             var connectorNote = connectorResolvedTag is { Length: > 0 }
                 ? $" + connector {connectorResolvedTag}"
                 : "";

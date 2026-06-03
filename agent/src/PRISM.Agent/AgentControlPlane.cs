@@ -573,8 +573,12 @@ if (Test-Path '{Esc(exePath)}') {{
                 _cfg.VisualiserTemplateProjectPath = result.ProjectPath;
                 _cfg.VisualiserTemplateVersion     = result.Tag;
                 _cfg.VisualiserConnectorVersion    = result.ConnectorTag ?? "";
-                TemplateMarker.Write(
-                    result.ProjectPath, result.Tag, result.ConnectorTag, _cfg.UnrealTemplateRepo, _log);
+                // The durable .prism-template.json marker is written by the
+                // installer itself (TemplatePuller.PullAsync) into
+                // result.ProjectPath — that on-disk marker is the source of
+                // truth for the installed version. The config values above are
+                // only the fallback TemplateMarker.Resolve uses for a legacy
+                // project that has no marker.
                 try { _cfg.Save(); }
                 catch (Exception ex) { _log.LogWarning(ex, "template pull: failed to persist new template path"); }
 

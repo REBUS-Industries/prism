@@ -110,12 +110,27 @@ public static class TemplateMarker
     public static (string? TemplateTag, string? ConnectorTag) Resolve(AgentConfig cfg)
     {
         var marker = Read(cfg.VisualiserTemplateProjectPath);
+
+        // The on-disk marker is authoritative. The persisted AgentConfig values
+        // are a fallback ONLY for a legacy project that predates markers — and
+        // only trustworthy while that project still physically exists at the
+        // configured path. If the path is gone (or was repointed to a project
+        // we have no marker for), the persisted tag describes a DIFFERENT /
+        // previous install and would be reported as a stale, incorrect
+        // "installed" version — so prefer reporting unknown (null) over a lie.
+        var projectExists = !string.IsNullOrWhiteSpace(cfg.VisualiserTemplateProjectPath)
+                            && Directory.Exists(cfg.VisualiserTemplateProjectPath);
+
         var templateTag = !string.IsNullOrWhiteSpace(marker?.TemplateTag)
             ? marker!.TemplateTag
-            : (string.IsNullOrWhiteSpace(cfg.VisualiserTemplateVersion) ? null : cfg.VisualiserTemplateVersion);
+            : (projectExists && !string.IsNullOrWhiteSpace(cfg.VisualiserTemplateVersion)
+                ? cfg.VisualiserTemplateVersion
+                : null);
         var connectorTag = !string.IsNullOrWhiteSpace(marker?.ConnectorTag)
             ? marker!.ConnectorTag
-            : (string.IsNullOrWhiteSpace(cfg.VisualiserConnectorVersion) ? null : cfg.VisualiserConnectorVersion);
+            : (projectExists && !string.IsNullOrWhiteSpace(cfg.VisualiserConnectorVersion)
+                ? cfg.VisualiserConnectorVersion
+                : null);
         return (templateTag, connectorTag);
     }
 }

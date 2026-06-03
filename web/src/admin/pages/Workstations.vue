@@ -440,6 +440,11 @@ onUnmounted(() => {
                   class="pill version-pill ue-template-pill"
                   :title="ueTemplateTooltip(w)"
                 >UE {{ w.installedTemplateTag ?? 'unknown' }}</span>
+                <span
+                  v-if="w.canVisualise && w.installedConnectorTag"
+                  class="pill version-pill connector-pill"
+                  :title="`OrbitConnector ${w.installedConnectorTag} merged into the installed UE template`"
+                >Connector {{ w.installedConnectorTag }}</span>
               </div>
             </td>
             <td class="muted">{{ w.rhinoVersion ?? '—' }}</td>
@@ -611,6 +616,10 @@ button.role-pill.role-busy {
 .ue-template-pill {
   background: var(--orbit-primary-fade);
   color: var(--orbit-primary-hover);
+}
+.connector-pill {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
 }
 
 /* ------------------------------------------------------------ row actions */

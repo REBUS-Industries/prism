@@ -106,7 +106,46 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
-## v0.3.28 — 2026-06-03 — Pull UE template even while Unreal is running (detect → prompt → force-close) + robust read-only/locked-dir swap
+## v0.3.29 — 2026-06-03 — Installed UE template version is now marker-authoritative + show the merged connector version
+
+### Fixed — Agent reported a stale/incorrect "installed UE template" version
+
+- **Root cause.** The version surfaced on the admin Workstations page (and the
+  agent web UI) comes from `TemplateMarker.Resolve`, which prefers the on-disk
+  `.prism-template.json` marker but **fell back to the persisted
+  `AgentConfig.VisualiserTemplateVersion`** whenever that marker was absent —
+  *without checking that the configured project still exists*. The marker was
+  also only written by the post-pull control-plane path
+  (`AgentControlPlane.PullTemplate`), never by the installer itself, and the
+  write is best-effort (failures are swallowed). So a workstation whose
+  configured `VisualiserTemplateProjectPath` had no marker (legacy install, a
+  repointed path, or a swallowed marker-write) reported a previously-persisted
+  tag that no longer matched what was physically installed.
+- **Installer now owns the marker.** `TemplatePuller.PullAsync` writes the
+  `.prism-template.json` marker (resolved template tag + merged connector tag +
+  repo) into the installed project root as part of the install, so **every**
+  project this code deposits carries an authoritative marker regardless of
+  caller. The redundant control-plane write was removed.
+- **No more stale fallback.** `TemplateMarker.Resolve` now only uses the
+  persisted config tags when the configured project directory still exists on
+  disk; otherwise it reports `unknown` rather than a stale, incorrect version.
+
+### Added — Installed OrbitConnector version on the admin Workstations page
+
+- The admin Workstations row now shows a **`Connector <tag>`** pill next to the
+  `UE <tag>` pill for visualiser-capable workstations (previously the connector
+  tag was only in the tooltip). The agent already reports
+  `installedConnectorTag` on `hello` (since v0.3.24) and the agent web UI
+  already shows it inline — this surfaces it in the admin SPA too. No protocol
+  or schema change (the field already exists end-to-end).
+
+> Operator note: a workstation only refreshes its reported version after the
+> agent re-sends `hello` — i.e. on the next agent (re)connect or the next
+> successful template pull. Existing workstations that show a stale version
+> should be re-pulled (or the agent restarted) once running ≥ v0.3.29 so the
+> installer writes a fresh marker.
+
+
 
 ### Fixed — `Access to the path '…\Templates\<Project>' is denied` on template pull
 
