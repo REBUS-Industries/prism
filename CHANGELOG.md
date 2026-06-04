@@ -106,6 +106,37 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.32 — 2026-06-04 — Live UE console-log page in the agent web UI (/uelogs)
+
+### Added — Stream the Unreal Engine console to the browser, no RDP needed
+
+- **New `/uelogs` page** (`http://<agent-host>:7421/uelogs`) — a live,
+  auto-scrolling, monospace tail of the Unreal Engine `-game` / editor console
+  output for visualiser runs on that workstation. Operators can watch UE logs in
+  the browser without remoting into the box. Includes an auto-scroll
+  (pin-to-bottom) toggle, a case-insensitive text filter, a clear button, a line
+  counter, a timestamp/runId toggle, and a connection-status indicator with
+  automatic reconnect. Linked from the Visualiser section of the main agent page.
+- **`GET /api/uelogs/stream` (Server-Sent Events)** — replays the recent backlog
+  (`?n=`, default 1000) then live-appends each new line. Tolerates many
+  concurrent viewers (each gets its own bounded subscription) and cleans up on
+  client disconnect / agent shutdown; a 15 s heartbeat detects half-open sockets
+  and the client de-dupes by sequence number across reconnects.
+- **`UeLogBroadcaster`** — an in-process singleton ring buffer (last
+  **4,000** lines, oldest evicted) + pub/sub. `VisualiserJob` taps it on every
+  orchestrator **stdout and stderr** line (the stderr stream carries the UE
+  `ue-game` / `ue-editor-stream` console output), tagging each with the `runId`.
+  The buffer **persists across runs** so the page shows the last run's tail even
+  with no active run, and is bounded so it never grows without limit. Each
+  subscriber's live queue is bounded + drop-oldest, so a slow browser can never
+  block the orchestrator pump or balloon agent memory.
+
+### Security
+
+- No new secret exposure: the orchestrator already redacts `-OrbitToken` /
+  `-RebusApiKey` before they reach its console, and the broadcaster relays
+  console lines verbatim — it never reads agent config or the child environment.
+
 ## v0.3.31 — 2026-06-03 — Admin Workstations versions stay in sync with the agent's own UI
 
 ### Fixed — Installed UE template / connector version no longer goes stale on the admin Workstations page

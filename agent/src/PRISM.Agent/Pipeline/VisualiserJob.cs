@@ -179,6 +179,7 @@ public sealed class VisualiserJob
     readonly SignallingBridgeRegistry _bridges;
     readonly VisualiserRunRegistry _registry;
     readonly AgentConfig _cfg;
+    readonly UeLogBroadcaster _ueLog;
 
     Process? _process;
     string? _runId;
@@ -194,13 +195,15 @@ public sealed class VisualiserJob
         WsClient ws,
         SignallingBridgeRegistry bridges,
         VisualiserRunRegistry registry,
-        AgentConfig cfg)
+        AgentConfig cfg,
+        UeLogBroadcaster ueLog)
     {
         _log = log;
         _ws = ws;
         _bridges = bridges;
         _registry = registry;
         _cfg = cfg;
+        _ueLog = ueLog;
     }
 
     /// <summary>
@@ -618,6 +621,11 @@ public sealed class VisualiserJob
             string? line;
             while ((line = await proc.StandardOutput.ReadLineAsync().ConfigureAwait(false)) is not null)
             {
+                // Tap every stdout line for the /uelogs live view (orchestrator
+                // banners/debug + the JSON protocol events) before the typed
+                // handling below forwards ready/failed envelopes upstream.
+                if (!string.IsNullOrWhiteSpace(line))
+                    _ueLog.Publish(_runId, "stdout", line);
                 HandleStdoutLine(line);
             }
         }
@@ -635,6 +643,9 @@ public sealed class VisualiserJob
             while ((line = await proc.StandardError.ReadLineAsync().ConfigureAwait(false)) is not null)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
+                // Tap for the /uelogs live view. stderr carries the UE -game /
+                // editor console output (the {"channel":"ue-game",…} lines).
+                _ueLog.Publish(_runId, "stderr", line);
                 _log.LogInformation("[orchestrator stderr runId={RunId}] {Line}", _runId, line);
             }
         }

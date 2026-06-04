@@ -118,6 +118,11 @@ public static class Program
         builder.Services.AddSingleton<VisualiserRunRegistry>(sp => new VisualiserRunRegistry(
             sp.GetRequiredService<ILogger<VisualiserRunRegistry>>(),
             cfg.VisualiserMaxConcurrent));
+        // Ring buffer + pub/sub for UE/orchestrator console output, tapped by
+        // VisualiserJob and streamed to the web UI's /uelogs page over SSE.
+        // Singleton so the buffer persists across runs and every SSE viewer +
+        // every VisualiserJob share it.
+        builder.Services.AddSingleton<UeLogBroadcaster>();
         builder.Services.AddTransient<VisualiserJob>();
 
         // Inject the in-process log buffer so the web UI's /api/logs route

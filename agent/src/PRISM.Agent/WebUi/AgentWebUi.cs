@@ -39,6 +39,7 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     readonly AgentControlPlane _plane;
     readonly TrayLoggerProvider? _logBuf;
     readonly AgentConfig _cfg;
+    readonly Visualiser.UeLogBroadcaster _ueLog;
 
     HttpListener? _listener;
     CancellationTokenSource? _cts;
@@ -71,11 +72,13 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
         ILogger<AgentWebUi> log,
         AgentControlPlane plane,
         AgentConfig cfg,
+        Visualiser.UeLogBroadcaster ueLog,
         IServiceProvider sp)
     {
         _log = log;
         _plane = plane;
         _cfg = cfg;
+        _ueLog = ueLog;
         _logBuf = sp.GetService<TrayLoggerProvider>();
     }
 
@@ -162,6 +165,14 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 case ("GET", "/"):
                 case ("GET", ""):
                     await WriteHtmlAsync(res, _renderedIndex.Value);
+                    break;
+
+                case ("GET", "/uelogs"):
+                    await WriteHtmlAsync(res, UeLogsHtml.Template);
+                    break;
+
+                case ("GET", "/api/uelogs/stream"):
+                    await HandleUeLogStreamAsync(req, res, ct);
                     break;
 
                 case ("GET", "/api/state"):
@@ -424,6 +435,88 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
         {
             _releasesGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Server-Sent Events stream of UE/orchestrator console output for the
+    /// <c>/uelogs</c> page. Replays the recent backlog (<c>?n=</c>, default
+    /// 1000) then live-appends each new line as the visualiser runs. Tolerates
+    /// many concurrent viewers (each gets its own bounded subscription) and
+    /// cleans up on client disconnect (a write throwing) or agent shutdown.
+    /// A 15 s heartbeat comment keeps the connection alive and surfaces a
+    /// dropped client promptly.
+    /// </summary>
+    async Task HandleUeLogStreamAsync(HttpListenerRequest req, HttpListenerResponse res, CancellationToken ct)
+    {
+        res.StatusCode = 200;
+        res.ContentType = "text/event-stream; charset=utf-8";
+        res.Headers["Cache-Control"] = "no-cache, no-store";
+        res.Headers["X-Accel-Buffering"] = "no"; // defeat any intermediary buffering
+        res.SendChunked = true;
+        res.KeepAlive = true;
+
+        var n = 1000;
+        var qs = req.Url?.Query ?? "";
+        var m = System.Text.RegularExpressions.Regex.Match(qs, @"[?&]n=(\d+)");
+        if (m.Success && int.TryParse(m.Groups[1].Value, out var parsed)) n = parsed;
+        n = Math.Clamp(n, 0, Visualiser.UeLogBroadcaster.MaxBufferLines);
+
+        var (id, reader) = _ueLog.Subscribe();
+        try
+        {
+            var stream = res.OutputStream;
+            // Tell EventSource to retry after 3 s if the stream drops.
+            await WriteSseRawAsync(stream, ": connected\nretry: 3000\n\n", ct);
+
+            // Backlog first (the last run's tail is visible even with no active run).
+            foreach (var line in _ueLog.Snapshot(n))
+                await WriteSseLineAsync(stream, line, ct);
+            await stream.FlushAsync(ct);
+
+            // Live tail with a heartbeat so a half-open socket is detected.
+            while (!ct.IsCancellationRequested)
+            {
+                using var hb = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                hb.CancelAfter(TimeSpan.FromSeconds(15));
+                try
+                {
+                    if (await reader.WaitToReadAsync(hb.Token))
+                    {
+                        while (reader.TryRead(out var line))
+                            await WriteSseLineAsync(stream, line, ct);
+                        await stream.FlushAsync(ct);
+                    }
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    await WriteSseRawAsync(stream, ": keep-alive\n\n", ct);
+                    await stream.FlushAsync(ct);
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* agent shutting down */ }
+        catch (HttpListenerException) { /* client disconnected */ }
+        catch (IOException) { /* client disconnected */ }
+        catch (ObjectDisposedException) { /* response closed */ }
+        finally
+        {
+            _ueLog.Unsubscribe(id);
+        }
+    }
+
+    static async Task WriteSseLineAsync(Stream stream, Visualiser.UeLogBroadcaster.Line line, CancellationToken ct)
+    {
+        // The line text is a single console line (read line-by-line upstream),
+        // and JSON-encoding escapes any control chars, so the SSE `data:` frame
+        // is guaranteed single-line and well-formed.
+        var json = JsonConvert.SerializeObject(line, _json);
+        await WriteSseRawAsync(stream, $"id: {line.Seq}\ndata: {json}\n\n", ct);
+    }
+
+    static async Task WriteSseRawAsync(Stream stream, string text, CancellationToken ct)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        await stream.WriteAsync(bytes, 0, bytes.Length, ct);
     }
 
     object BuildState()

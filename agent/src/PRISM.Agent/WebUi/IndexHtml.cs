@@ -604,6 +604,16 @@ internal static class IndexHtml
           </span>
         </div>
       </div>
+      <div class="row">
+        <div>
+          <a href="/uelogs" target="_blank" rel="noopener" class="primary" style="display:inline-block;text-decoration:none;padding:7px 12px;border-radius:6px;">Open live UE console logs ↗</a>
+          <span class="hint" style="display:block;margin-top:6px;">
+            Live, auto-scrolling stream of the Unreal Engine <code>-game</code> / editor
+            console output for visualiser runs on this workstation — watch the UE logs in
+            the browser without RDP. Opens <code>/uelogs</code>.
+          </span>
+        </div>
+      </div>
       <p class="hint">
         On agent start, if the Visualiser role is enabled but the Unreal
         Engine root above is missing, a structured <code>WARN</code> is
