@@ -594,13 +594,14 @@ internal static class Program
         if (fullEditor)
         {
             logger.Warning(
-                "full-editor mode ENABLED ({EnvVar}/--full-editor): opening the FIXED template project " +
+                "full-editor mode ENABLED ({EnvVar}/--full-editor): opening the FIXED connector-bearing project " +
                 "({TemplateSource}) in the FULL Unreal Editor GUI AND auto-streaming the level-editor " +
-                "viewport to the browser viewer (SUPERSEDES debug-window). The ORBIT receive/stage/import " +
-                "pipeline is BYPASSED in this baseline mode. The operator controls UE on the workstation; " +
-                "remote viewers watch the streamed viewport. The editor window is only visible if this " +
-                "orchestrator runs in the operator's interactive desktop session (NOT when the PRISM " +
-                "agent runs as a session-0 Windows service).",
+                "viewport to the browser viewer (SUPERSEDES debug-window). Runs the SAME plug-in pipeline as the " +
+                "headless -game connector-import path: the bundled OrbitConnector pulls + loads the ORBIT model " +
+                "into the editor world and the Portal plug-in connects, so the operator can debug the LIVE scene " +
+                "by hand. The orchestrator-side receive/stage/Interchange-python import is BYPASSED (the connector " +
+                "imports inside UE). The editor window is only visible if this orchestrator runs in the operator's " +
+                "interactive desktop session (NOT when the PRISM agent runs as a session-0 Windows service).",
                 FullEditorEnvVar, TemplateProjectProvider.ResolveSource());
         }
         else if (debugWindow)
@@ -638,6 +639,13 @@ internal static class Program
             Target: manifest.Server.Name);
         if (fullEditor)
         {
+            // Full-editor mode now runs the SAME plug-in pipeline as the headless
+            // -game connector-import path: prepare the FIXED connector-bearing
+            // project (the same provider the connector path uses) AND hand the
+            // connector the bearer token so FOrbitHeadlessAutoImport pulls + loads
+            // the model into the editor world (and the Portal plug-in connects)
+            // exactly as in -game. That is what lets the operator debug the LIVE
+            // scene by hand in the editor instead of a bare template.
             try
             {
                 scaffold = await pipeline
@@ -662,6 +670,42 @@ internal static class Program
                 EmitFailedEvent(manifest.RunId, FailedEvent.CodeScaffoldFailed, ex.Message);
                 EmitFailedReady(manifest, ex.Message);
                 return ExitCodes.Failure;
+            }
+
+            // Attach the bearer token + emit the connector-import event when a
+            // model is actually targeted (and connector-import is not force-off),
+            // so the bundled OrbitConnector auto-imports it into the editor world.
+            // With no model targeted (or the connector forced off) we leave the
+            // BARE fixed template — token stays empty — i.e. a plain editor open.
+            var fullEditorHasModel = !string.IsNullOrWhiteSpace(manifest.ModelId);
+            if (fullEditorHasModel && connectorImport != false)
+            {
+                var detection = OrbitConnectorLocator.Detect(scaffold.ProjectRoot);
+                if (!detection.IsUsable)
+                {
+                    logger.Warning(
+                        "full-editor connector-import: the fixed project '{Root}' does not fully ship the " +
+                        "OrbitConnector plug-in ({Reason}); the editor will still open, but the model auto-import " +
+                        "will NOT run until the connector + orbit-cli are present (re-pull the template+connector).",
+                        scaffold.ProjectRoot, detection.Reason ?? "not usable");
+                }
+                var token = await pipeline.ResolveOrbitTokenAsync(manifest, ct).ConfigureAwait(false);
+                // Add the bearer token to the identity so the connector's auto-
+                // import can pull + load the model inside the full editor.
+                orbitImport = orbitImport with { Token = token };
+                EmitConnectorImportEvent(manifest, scaffold.ProjectRoot);
+                logger.Information(
+                    "full-editor connector-import: opening fixed project root={Root} level={Level} in the FULL editor; " +
+                    "OrbitConnector will pull server={Server} project={Project} model={Model} version={Version} into the editor world",
+                    scaffold.ProjectRoot,
+                    string.IsNullOrEmpty(scaffold.LevelPath) ? "(project startup map)" : scaffold.LevelPath,
+                    manifest.Server.Name, manifest.ProjectId, manifest.ModelId, manifest.VersionId);
+            }
+            else
+            {
+                logger.Warning(
+                    "full-editor: opening the BARE fixed template (no model targeted{Reason}); no connector auto-import will run.",
+                    connectorImport == false ? " / connector-import forced off" : string.Empty);
             }
             logger.Information(
                 "full-editor template ready runId={RunId} project={Project} root={Root} level={Level}",

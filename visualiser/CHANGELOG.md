@@ -4,6 +4,38 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.20 — full-editor mode runs the connector-import pipeline (live model + plugins)
+
+> When PRISM opens the FULL editor (`fullEditor`/`--full-editor`) for a
+> workstation it now runs the SAME plug-in pipeline as the headless `-game`
+> connector-import path: the bundled OrbitConnector pulls + loads the ORBIT model
+> into the editor world and the Portal plug-in connects, so the operator can
+> debug the LIVE scene by hand instead of a bare template.
+
+### Changed
+
+- **`Program.cs` (`RunPhaseFAsync`, `fullEditor` branch)** — full-editor now
+  resolves the ORBIT bearer token and attaches it to `OrbitImportParams`
+  (`orbitImport with { Token = token }`) whenever a model is targeted, then
+  launches `LaunchFullEditorStreaming` with that full identity. Previously the
+  branch prepared the BARE fixed template and left `Token` empty, so
+  `AppendOrbitArgs` skipped `-OrbitToken=` and the connector could not
+  authenticate/pull — the editor opened on an empty template. The fixed project
+  is the same connector-bearing project the `-game` path uses
+  (`PrepareTemplateProjectAsync`); a connector-plugin detection warning is logged
+  if the project doesn't ship the plug-in, and a `connector-import/v1` event is
+  emitted for operator visibility.
+- **Bare-template fallback preserved**: when no model is targeted (or
+  `--connector-import false` / `PRISM_VISUALISER_CONNECTOR_IMPORT=0`), full-editor
+  opens the bare template with no auto-import (token stays empty).
+- The 600 s full-editor streamer-connect budget (cold-compile safe) is unchanged.
+
+> **Pairs with `orbit-connectors` v0.1.30**, which makes the connector's
+> `FOrbitHeadlessAutoImport` also trigger in the full editor (its ticker
+> previously only fired for Game/PIE worlds). Re-pull the template+connector
+> pinned to **v0.1.30** on the workstation so the editor build has the in-editor
+> auto-import.
+
 ## v0.5.19 — import orientation is CLOCKWISE (flip default yaw to +90)
 
 > Corrects the direction shipped in v0.5.18: the imported model needs a 90°
