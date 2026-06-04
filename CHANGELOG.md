@@ -106,6 +106,27 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.33 — 2026-06-04 — /uelogs ignore (exclude) filter
+
+### Added — Hide noisy UE console lines by pattern
+
+- The **`/uelogs`** live console page gains an **Ignore** filter alongside the
+  existing Include filter. Enter one or more exclude patterns (**one per line
+  and/or comma-separated**); a line is hidden if it matches **any** of them.
+- **Precedence:** a line is shown only when it passes the Include filter (if
+  set) **AND** matches **no** Ignore pattern — i.e. Ignore always wins. Both are
+  case-insensitive substring matches and apply to **both** the replayed backlog
+  and live-appended SSE lines.
+- **Persistence:** the Include and Ignore filters are saved in
+  <c>localStorage</c> (per browser), so they survive page reloads and SSE
+  reconnects.
+- **Quality of life:** a **✕ ignore** clear button, and **double-click a line**
+  (or select text first) to add it to the ignore list via a prompt. The line
+  counter now reads **"showing X of Y"** when a filter is active so it's obvious
+  filtering is on; the auto-scroll, clear, status indicator, sequence-dedup, and
+  the DOM cap (counters stay consistent as capped rows are evicted) all keep
+  working. Client-side only, vanilla JS, no new endpoints.
+
 ## v0.3.32 — 2026-06-04 — Live UE console-log page in the agent web UI (/uelogs)
 
 ### Added — Stream the Unreal Engine console to the browser, no RDP needed

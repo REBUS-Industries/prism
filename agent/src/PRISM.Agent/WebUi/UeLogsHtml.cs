@@ -9,9 +9,14 @@ namespace PRISM.Agent.WebUi;
 /// <para>
 /// Vanilla CSS + JS (no build step, no dependencies), themed to match the main
 /// agent page (<see cref="IndexHtml"/>): ORBIT orange brand, dark default.
-/// Features: auto-scroll (pin-to-bottom) toggle, case-insensitive text filter,
-/// clear button, line counter, and a connection-status indicator backed by the
-/// browser's native <c>EventSource</c> auto-reconnect.
+/// Features: auto-scroll (pin-to-bottom) toggle, an <b>include</b> text filter
+/// AND a multi-pattern <b>ignore</b> (exclude) filter — a line is shown only
+/// when it passes the include filter (if any) AND matches no ignore pattern.
+/// Both filters are case-insensitive substring matches, persisted in
+/// <c>localStorage</c>, and applied to both the replayed backlog and live SSE
+/// lines. Also: clear / clear-ignore buttons, double-click-to-ignore, a
+/// "showing X of Y" counter when filtering is active, and a connection-status
+/// indicator backed by the browser's native <c>EventSource</c> auto-reconnect.
 /// </para>
 /// </summary>
 internal static class UeLogsHtml
@@ -45,7 +50,7 @@ internal static class UeLogsHtml
     display: flex; flex-direction: column;
   }
   header {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap;
     padding: 10px 14px; background: var(--bg-bar);
     border-bottom: 1px solid var(--border);
   }
@@ -55,10 +60,16 @@ internal static class UeLogsHtml
   header a:hover { color: var(--text); }
   .spacer { flex: 1 1 auto; }
   .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .toolbar input[type=text] {
+  .field { display: flex; flex-direction: column; gap: 2px; }
+  .field > .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); }
+  .toolbar input[type=text], .toolbar textarea {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 5px 8px; font-size: 13px; min-width: 200px;
+    border-radius: 6px; padding: 5px 8px; font-size: 13px;
+    font-family: "Cascadia Mono", Consolas, "Liberation Mono", monospace;
   }
+  .toolbar input[type=text] { min-width: 210px; }
+  .toolbar textarea { min-width: 230px; height: 30px; resize: both; line-height: 1.3; white-space: pre; }
+  .toolbar input[type=text]:focus, .toolbar textarea:focus { outline: none; border-color: var(--orbit-primary); }
   .toolbar label { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
   .btn {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
@@ -71,6 +82,8 @@ internal static class UeLogsHtml
   .dot.connecting { background: var(--warn); }
   .dot.down { background: var(--err); }
   .count { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .count.filtering { color: var(--warn); }
+  .hint { font-size: 11px; color: var(--text-dim); padding: 4px 14px 0; }
   #log {
     flex: 1 1 auto; overflow-y: auto; padding: 8px 12px;
     font-family: "Cascadia Mono", Consolas, "Liberation Mono", monospace;
@@ -90,14 +103,23 @@ internal static class UeLogsHtml
   <a href="/">← agent settings</a>
   <div class="spacer"></div>
   <div class="toolbar">
-    <input type="text" id="filter" placeholder="filter (substring)…" autocomplete="off" />
+    <div class="field">
+      <span class="lbl">Include</span>
+      <input type="text" id="filter" placeholder="show only lines containing…" autocomplete="off" />
+    </div>
+    <div class="field">
+      <span class="lbl">Ignore (one per line / comma-sep)</span>
+      <textarea id="ignore" placeholder="hide lines containing any of these…" autocomplete="off" spellcheck="false"></textarea>
+    </div>
+    <button class="btn" id="clearIgnore" title="Clear the ignore patterns">✕ ignore</button>
     <label><input type="checkbox" id="autoscroll" checked /> auto-scroll</label>
     <label><input type="checkbox" id="showmeta" checked /> timestamps</label>
-    <button class="btn" id="clear">Clear</button>
+    <button class="btn" id="clear" title="Clear the view (does not affect the agent buffer)">Clear</button>
     <span class="count" id="count">0 lines</span>
     <span class="status"><span class="dot connecting" id="dot"></span><span id="statusText">connecting…</span></span>
   </div>
 </header>
+<div class="hint">Double-click a line (or select text first) to add it to the ignore list. Filters are case-insensitive and saved in this browser.</div>
 <div id="log"><div class="empty" id="empty">Waiting for UE console output… start a visualiser run on this workstation, or the last run's tail will appear here.</div></div>
 
 <script>
@@ -105,6 +127,7 @@ internal static class UeLogsHtml
   var logEl = document.getElementById('log');
   var emptyEl = document.getElementById('empty');
   var filterEl = document.getElementById('filter');
+  var ignoreEl = document.getElementById('ignore');
   var autoscrollEl = document.getElementById('autoscroll');
   var showmetaEl = document.getElementById('showmeta');
   var countEl = document.getElementById('count');
@@ -112,18 +135,64 @@ internal static class UeLogsHtml
   var statusTextEl = document.getElementById('statusText');
 
   var MAX_DOM_LINES = 5000;   // cap rendered nodes so the page can't grow unbounded
-  var total = 0;
+  var total = 0;              // rows currently in the DOM buffer
+  var shown = 0;              // visible rows (after include + ignore filters)
   var lastSeq = 0;
-  var filterText = '';
+  var includeText = '';
+  var ignorePatterns = [];    // lowercased substrings; line hidden if it matches ANY
+
+  var LS_INCLUDE = 'prism.uelogs.include';
+  var LS_IGNORE  = 'prism.uelogs.ignore';
 
   function setStatus(kind, text) {
     dotEl.className = 'dot ' + kind;
     statusTextEl.textContent = text;
   }
-  function updateCount() { countEl.textContent = total.toLocaleString() + ' lines'; }
 
-  function matches(text) {
-    return filterText === '' || text.toLowerCase().indexOf(filterText) !== -1;
+  function filtering() { return includeText !== '' || ignorePatterns.length > 0; }
+
+  function updateCount() {
+    if (filtering()) {
+      countEl.textContent = 'showing ' + shown.toLocaleString() + ' of ' + total.toLocaleString();
+      countEl.classList.add('filtering');
+    } else {
+      countEl.textContent = total.toLocaleString() + ' lines';
+      countEl.classList.remove('filtering');
+    }
+  }
+
+  // A line is visible when it passes the include filter (if any) AND matches
+  // no ignore pattern. Ignore always wins over include.
+  function isVisible(text) {
+    var t = text.toLowerCase();
+    if (includeText !== '' && t.indexOf(includeText) === -1) return false;
+    for (var i = 0; i < ignorePatterns.length; i++) {
+      if (ignorePatterns[i] && t.indexOf(ignorePatterns[i]) !== -1) return false;
+    }
+    return true;
+  }
+
+  function parseIgnore(raw) {
+    return raw.split(/[\n,]/).map(function (s) { return s.trim().toLowerCase(); })
+              .filter(function (s) { return s.length > 0; });
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(LS_INCLUDE, filterEl.value);
+      localStorage.setItem(LS_IGNORE, ignoreEl.value);
+    } catch (e) { /* storage disabled — non-fatal */ }
+  }
+
+  function load() {
+    try {
+      var inc = localStorage.getItem(LS_INCLUDE);
+      if (inc !== null) filterEl.value = inc;
+      var ig = localStorage.getItem(LS_IGNORE);
+      if (ig !== null) ignoreEl.value = ig;
+    } catch (e) { /* storage disabled */ }
+    includeText = filterEl.value.trim().toLowerCase();
+    ignorePatterns = parseIgnore(ignoreEl.value);
   }
 
   function fmtTime(iso) {
@@ -134,9 +203,12 @@ internal static class UeLogsHtml
   function append(item) {
     if (emptyEl) { emptyEl.remove(); emptyEl = null; }
 
+    var visible = isVisible(item.text);
+
     var row = document.createElement('div');
     row.className = 'row ' + (item.stream === 'stderr' ? 'stderr' : 'stdout');
     row.dataset.text = item.text;
+    row.dataset.visible = visible ? '1' : '0';
 
     if (showmetaEl.checked) {
       var meta = document.createElement('span');
@@ -150,42 +222,76 @@ internal static class UeLogsHtml
     txt.textContent = item.text;
     row.appendChild(txt);
 
-    if (!matches(item.text)) row.style.display = 'none';
+    if (!visible) row.style.display = 'none';
     logEl.appendChild(row);
-    total++;
+    total++; if (visible) shown++;
 
-    while (logEl.childElementCount > MAX_DOM_LINES) logEl.removeChild(logEl.firstChild);
+    // Enforce the DOM cap, keeping the counters consistent with what's removed.
+    while (logEl.childElementCount > MAX_DOM_LINES) {
+      var first = logEl.firstChild;
+      if (first && first.dataset && first.dataset.visible === '1') shown--;
+      if (first && first.classList && first.classList.contains('row')) total--;
+      logEl.removeChild(first);
+    }
     updateCount();
 
-    if (autoscrollEl.checked) logEl.scrollTop = logEl.scrollHeight;
+    if (visible && autoscrollEl.checked) logEl.scrollTop = logEl.scrollHeight;
   }
 
-  function applyFilter() {
-    filterText = filterEl.value.trim().toLowerCase();
+  // Re-evaluate every buffered row against the current filters.
+  function applyFilters() {
+    includeText = filterEl.value.trim().toLowerCase();
+    ignorePatterns = parseIgnore(ignoreEl.value);
+    save();
     var rows = logEl.querySelectorAll('.row');
+    total = rows.length; shown = 0;
     for (var i = 0; i < rows.length; i++) {
-      var t = (rows[i].dataset.text || '').toLowerCase();
-      rows[i].style.display = matches(t) ? '' : 'none';
+      var vis = isVisible(rows[i].dataset.text || '');
+      rows[i].style.display = vis ? '' : 'none';
+      rows[i].dataset.visible = vis ? '1' : '0';
+      if (vis) shown++;
     }
+    updateCount();
     if (autoscrollEl.checked) logEl.scrollTop = logEl.scrollHeight;
   }
 
-  filterEl.addEventListener('input', applyFilter);
+  filterEl.addEventListener('input', applyFilters);
+  ignoreEl.addEventListener('input', applyFilters);
+
+  document.getElementById('clearIgnore').addEventListener('click', function () {
+    ignoreEl.value = '';
+    applyFilters();
+  });
+
   document.getElementById('clear').addEventListener('click', function () {
     logEl.innerHTML = '';
-    total = 0; updateCount();
+    total = 0; shown = 0; updateCount();
   });
-  // Re-render meta visibility cheaply by toggling a class would need re-build;
-  // simplest is to reload the stream view on toggle.
+
   showmetaEl.addEventListener('change', function () {
     var metas = logEl.querySelectorAll('.row .meta');
     for (var i = 0; i < metas.length; i++) metas[i].style.display = showmetaEl.checked ? '' : 'none';
   });
 
+  // Double-click a line (or a selection within it) to add an ignore pattern.
+  logEl.addEventListener('dblclick', function (e) {
+    var row = e.target.closest ? e.target.closest('.row') : null;
+    if (!row) return;
+    var sel = '';
+    try { sel = (window.getSelection().toString() || '').trim(); } catch (x) { sel = ''; }
+    var seed = sel || (row.dataset.text || '');
+    var pat = prompt('Hide log lines containing:', seed);
+    if (pat === null) return;
+    pat = pat.trim();
+    if (!pat) return;
+    ignoreEl.value = ignoreEl.value.replace(/\s+$/, '');
+    ignoreEl.value = ignoreEl.value ? (ignoreEl.value + '\n' + pat) : pat;
+    applyFilters();
+  });
+
   var es = null;
   function connect() {
     setStatus('connecting', 'connecting…');
-    // Resume after lastSeq so a reconnect doesn't replay the whole backlog.
     var url = '/api/uelogs/stream?n=2000';
     es = new EventSource(url);
     es.onopen = function () { setStatus('live', 'live'); };
@@ -202,6 +308,9 @@ internal static class UeLogsHtml
       setStatus('down', 'reconnecting…');
     };
   }
+
+  load();
+  updateCount();
   connect();
   window.addEventListener('beforeunload', function () { if (es) es.close(); });
 })();
