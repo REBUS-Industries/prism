@@ -78,6 +78,42 @@ public static class TemplatePuller
         bool NotModified);
 
     /// <summary>
+    /// One connector ref (release tag or branch) for the connector version
+    /// picker. The <see cref="Ref"/> value is what is passed as the
+    /// <c>connectorRef</c> to the pull; branches are prefixed with
+    /// <c>branch:</c> so the pull flow can distinguish them from tags and
+    /// fetch their source zipball rather than trying a release API endpoint.
+    /// </summary>
+    /// <param name="Ref">
+    /// Value to pass as <c>connectorRef</c> (tag, e.g. <c>v0.1.28</c>, or
+    /// <c>branch:feat/my-branch</c> for a branch).
+    /// </param>
+    /// <param name="DisplayName">Human-readable label for the UI dropdown.</param>
+    /// <param name="IsBranch">True when this is a branch ref (not a release).</param>
+    /// <param name="IsPrerelease">True when GitHub flagged the release as a pre-release.</param>
+    /// <param name="HasBuiltAsset">
+    /// True when the release has a pre-built <c>OrbitConnector-UE5-plugin-*.zip</c>
+    /// asset. Always false for branches (source-only, compiled by UBT).
+    /// </param>
+    /// <param name="PublishedAt">ISO-8601 publish timestamp for releases; null for branches.</param>
+    public sealed record ConnectorRefInfo(
+        string Ref,
+        string? DisplayName,
+        bool IsBranch,
+        bool IsPrerelease,
+        bool HasBuiltAsset,
+        string? PublishedAt);
+
+    /// <summary>
+    /// Result of <see cref="ListConnectorRefsAsync"/>. <see cref="NotModified"/>
+    /// mirrors <see cref="ReleaseListResult.NotModified"/>.
+    /// </summary>
+    public sealed record ConnectorRefsResult(
+        IReadOnlyList<ConnectorRefInfo> Refs,
+        string? ETag,
+        bool NotModified);
+
+    /// <summary>
     /// Pull + install a template. Throws <see cref="TemplatePullException"/>
     /// for any actionable failure (bad repo slug, no release, no archive,
     /// no <c>.uproject</c> in the archive, filesystem error).
@@ -300,6 +336,128 @@ public static class TemplatePuller
 
         log.LogInformation("template releases: {Repo} → {Count} release(s)", repoSlug, list.Count);
         return new ReleaseListResult(list, newEtag, NotModified: false);
+    }
+
+    /// <summary>
+    /// List the connector repo's releases (including pre-releases) plus all
+    /// branches, combined into the <see cref="ConnectorRefInfo"/> list used by
+    /// the connector version picker dropdown in the agent web UI.
+    ///
+    /// <para>
+    /// <b>Releases</b> are fetched from
+    /// <c>GET /repos/{owner}/{repo}/releases?per_page=50</c>; pre-releases are
+    /// included (unlike the template picker which only shows stable tags in its
+    /// dropdown, the connector picker surfaces everything so the operator can
+    /// select a dev pre-release). A conditional request with the supplied
+    /// <paramref name="etag"/> is made, so a 304 does not count against the
+    /// GitHub rate limit.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Branches</b> are fetched from
+    /// <c>GET /repos/{owner}/{repo}/branches?per_page=100</c>. Branch refs are
+    /// prefixed with <c>branch:</c> in <see cref="ConnectorRefInfo.Ref"/> so the
+    /// pull flow knows to download the source zipball rather than the release API
+    /// endpoint. Source builds need UBT to compile, so
+    /// <see cref="ConnectorRefInfo.HasBuiltAsset"/> is <c>false</c> for all branches.
+    /// </para>
+    ///
+    /// <para>
+    /// A 404 (private repo without a token) is treated as "nothing" rather than
+    /// an error so the UI can degrade gracefully.
+    /// </para>
+    /// </summary>
+    public static async Task<ConnectorRefsResult> ListConnectorRefsAsync(
+        string repoSlug, string? etag, string? gitHubToken, ILogger log, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(repoSlug) || !repoSlug.Contains('/'))
+            throw new TemplatePullException(
+                $"Invalid connector repo slug '{repoSlug}'. Expected 'owner/repo'.");
+        repoSlug = repoSlug.Trim().Trim('/');
+
+        using var http = CreateHttpClient(gitHubToken);
+
+        // --- Releases (including pre-releases) ---
+        var releasesUrl = $"https://api.github.com/repos/{repoSlug}/releases?per_page=50";
+        using var relReq = new HttpRequestMessage(HttpMethod.Get, releasesUrl);
+        if (!string.IsNullOrWhiteSpace(etag))
+            relReq.Headers.TryAddWithoutValidation("If-None-Match", etag);
+
+        using var relResp = await http.SendAsync(relReq, ct).ConfigureAwait(false);
+
+        string? newEtag = null;
+        var refs = new List<ConnectorRefInfo>();
+
+        if (relResp.StatusCode == HttpStatusCode.NotModified)
+            return new ConnectorRefsResult(Array.Empty<ConnectorRefInfo>(), etag, NotModified: true);
+
+        if (relResp.StatusCode == HttpStatusCode.NotFound)
+        {
+            log.LogWarning("connector refs: no releases found in {Repo} (404)", repoSlug);
+            // Still try branches below.
+        }
+        else if (relResp.IsSuccessStatusCode)
+        {
+            newEtag = relResp.Headers.ETag?.Tag;
+            var relJson = await relResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var relDoc = JsonDocument.Parse(relJson);
+            if (relDoc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var r in relDoc.RootElement.EnumerateArray())
+                {
+                    // Skip drafts.
+                    if (r.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.True)
+                        continue;
+                    var tag = r.TryGetProperty("tag_name", out var tn) ? tn.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(tag)) continue;
+                    var name = r.TryGetProperty("name", out var nm) ? nm.GetString() : null;
+                    var publishedAt = r.TryGetProperty("published_at", out var pa) ? pa.GetString() : null;
+                    var prerelease = r.TryGetProperty("prerelease", out var pr) && pr.ValueKind == JsonValueKind.True;
+                    // Does this release have a pre-built UE5 plugin zip?
+                    var hasBuilt = r.TryGetProperty("assets", out var assets) &&
+                                   assets.ValueKind == JsonValueKind.Array &&
+                                   assets.EnumerateArray().Any(a =>
+                                   {
+                                       var n = a.TryGetProperty("name", out var an) ? an.GetString() : null;
+                                       return n != null && (
+                                           n.Contains("UE5-plugin", StringComparison.OrdinalIgnoreCase) ||
+                                           (n.Contains("ue5", StringComparison.OrdinalIgnoreCase) &&
+                                            n.Contains("plugin", StringComparison.OrdinalIgnoreCase)));
+                                   });
+
+                    var display = string.IsNullOrWhiteSpace(name) || name == tag ? tag : $"{name} — {tag}";
+                    if (prerelease) display += " (pre)";
+                    if (!hasBuilt) display += " (source-only)";
+                    refs.Add(new ConnectorRefInfo(tag!, display, IsBranch: false, prerelease, hasBuilt, publishedAt));
+                }
+            }
+            log.LogInformation("connector refs: {Repo} → {Count} release(s)", repoSlug, refs.Count);
+        }
+
+        // --- Branches ---
+        var branchesUrl = $"https://api.github.com/repos/{repoSlug}/branches?per_page=100";
+        using var brResp = await http.GetAsync(branchesUrl, ct).ConfigureAwait(false);
+        if (brResp.IsSuccessStatusCode)
+        {
+            var brJson = await brResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var brDoc = JsonDocument.Parse(brJson);
+            if (brDoc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                var branchRefs = new List<ConnectorRefInfo>();
+                foreach (var b in brDoc.RootElement.EnumerateArray())
+                {
+                    var name = b.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+                    branchRefs.Add(new ConnectorRefInfo(
+                        $"branch:{name}", $"{name} (branch, source)", IsBranch: true,
+                        IsPrerelease: false, HasBuiltAsset: false, PublishedAt: null));
+                }
+                refs.AddRange(branchRefs);
+                log.LogInformation("connector refs: {Repo} → {Count} branch(es)", repoSlug, branchRefs.Count);
+            }
+        }
+
+        return new ConnectorRefsResult(refs, newEtag, NotModified: false);
     }
 
     /// <summary>
@@ -538,14 +696,19 @@ public static class TemplatePuller
         var (tag, assetUrl, assetName) = await ResolveConnectorAssetAsync(
                 http, repo, pinned.Length > 0 ? pinned : null, gitHubToken, log, ct)
             .ConfigureAwait(false);
+        var isSourceBuild = assetName is "[branch source]" or "[source zipball]";
         log.LogInformation(
-            "template pull: connector repo={Repo} tag={Tag} asset={Asset}", repo, tag, assetName);
+            "template pull: connector repo={Repo} ref={Tag} asset={Asset} sourceBuild={Source}",
+            repo, tag, assetName, isSourceBuild);
+        if (isSourceBuild)
+            progress?.Report($"downloading connector source for {tag} (will compile)…");
 
         var zipPath = Path.Combine(workDir, "connector.zip");
-        progress?.Report($"downloading connector {tag}…");
+        if (!isSourceBuild)
+            progress?.Report($"downloading connector {tag}…");
         await DownloadAsync(http, assetUrl, zipPath, progress, log, ct).ConfigureAwait(false);
 
-        progress?.Report("merging connector plug-in…");
+        progress?.Report(isSourceBuild ? "merging connector source…" : "merging connector plug-in…");
         var extractDir = Path.Combine(workDir, "connector");
         Directory.CreateDirectory(extractDir);
         ZipFile.ExtractToDirectory(zipPath, extractDir);
@@ -582,29 +745,80 @@ public static class TemplatePuller
     }
 
     /// <summary>
-    /// GET the connector release (a specific <paramref name="tag"/>, or the
-    /// latest when null) and pick its UE5 plug-in <c>.zip</c> asset
-    /// (<c>OrbitConnector-UE5-plugin-*.zip</c>). A pinned tag that 404s is a
-    /// hard error (no silent fallback); a missing UE5-plugin asset on an
-    /// otherwise-valid release is also an error (the source zipball does NOT
-    /// contain the built plug-in + bundled CLI).
+    /// Prefix that the connector version picker places in front of branch ref
+    /// values to distinguish them from release tags.
+    /// </summary>
+    public const string BranchRefPrefix = "branch:";
+
+    /// <summary>
+    /// GET the connector asset (release or branch source) for the given ref.
+    ///
+    /// <para>Resolution order:</para>
+    /// <list type="number">
+    ///   <item><description>
+    ///     If <paramref name="tag"/> starts with <see cref="BranchRefPrefix"/>
+    ///     (e.g. <c>branch:feat/my-branch</c>), strip the prefix and use the
+    ///     GitHub source zipball for that branch directly — no release API lookup.
+    ///     The zipball contains the C++ plug-in source; UBT compiles it as part
+    ///     of the template compile step.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Otherwise try the release API for the tag (or latest when null/empty).
+    ///     Prefer a pre-built <c>OrbitConnector-UE5-plugin-*.zip</c> asset.
+    ///   </description></item>
+    ///   <item><description>
+    ///     If the release tag 404s (e.g. an untagged SHA or a branch name passed
+    ///     without the <c>branch:</c> prefix), fall back to the source zipball for
+    ///     that ref (same path as explicit branch refs) and log a warning.
+    ///   </description></item>
+    /// </list>
+    ///
+    /// <para>
+    /// The returned <c>AssetName</c> uses a <c>[branch source]</c> / <c>[source
+    /// zipball]</c> sentinel when the source path is taken so
+    /// <see cref="MergeConnectorAsync"/> can log whether the merge used a
+    /// pre-built binary or C++ source (which will be compiled by UBT).
+    /// </para>
     /// </summary>
     static async Task<(string Tag, string AssetUrl, string AssetName)> ResolveConnectorAssetAsync(
         HttpClient http, string repoSlug, string? tag, string? gitHubToken, ILogger log, CancellationToken ct)
     {
+        // 1. Explicit branch ref: use source zipball immediately.
+        if (tag is { Length: > 0 } && tag.StartsWith(BranchRefPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var branchName = tag[BranchRefPrefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(branchName))
+                throw new TemplatePullException($"Invalid branch ref '{tag}' — branch name is empty.");
+            var zipballUrl = $"https://api.github.com/repos/{repoSlug}/zipball/{Uri.EscapeDataString(branchName)}";
+            log.LogInformation(
+                "template pull: connector branch ref '{Branch}' → source zipball (will compile)", branchName);
+            return ($"branch:{branchName}", zipballUrl, "[branch source]");
+        }
+
+        // 2. Try the release API for the tag (or latest).
         var apiUrl = tag is { Length: > 0 }
             ? $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag)}"
             : $"https://api.github.com/repos/{repoSlug}/releases/latest";
 
         using var resp = await http.GetAsync(apiUrl, ct).ConfigureAwait(false);
+
         if (resp.StatusCode == HttpStatusCode.NotFound)
         {
-            throw new TemplatePullException(tag is { Length: > 0 }
-                ? $"No connector release tagged '{tag}' found in {repoSlug} (HTTP 404). " +
-                  "Check the tag, clear it to pull the latest connector, or set PRISM_GITHUB_TOKEN if the repo is private."
-                : $"No connector releases found in {repoSlug} (HTTP 404). " +
-                  "If the repo is private, set PRISM_GITHUB_TOKEN.");
+            if (tag is not { Length: > 0 })
+                throw new TemplatePullException(
+                    $"No connector releases found in {repoSlug} (HTTP 404). " +
+                    "If the repo is private, set PRISM_GITHUB_TOKEN.");
+
+            // 3. Tag not found as a release — fall back to source zipball (handles
+            //    branch names passed without the branch: prefix and short SHAs).
+            log.LogWarning(
+                "template pull: connector ref '{Ref}' not found as a release in {Repo}; " +
+                "falling back to source zipball (will compile with UBT)",
+                tag, repoSlug);
+            var zipballUrl = $"https://api.github.com/repos/{repoSlug}/zipball/{Uri.EscapeDataString(tag)}";
+            return (tag, zipballUrl, "[source zipball]");
         }
+
         if (!resp.IsSuccessStatusCode)
             throw HttpFailure(resp, apiUrl, gitHubToken);
 
@@ -649,9 +863,19 @@ public static class TemplatePuller
             }
         }
 
+        // Release exists but has no zip asset — fall back to its own source zipball.
+        if (root.TryGetProperty("zipball_url", out var zb) &&
+            zb.GetString() is { Length: > 0 } sourceZip)
+        {
+            log.LogWarning(
+                "template pull: connector release {Tag} has no UE5-plugin zip asset; " +
+                "using source zipball (will compile with UBT)", resolvedTag);
+            return (resolvedTag!, sourceZip, "[source zipball]");
+        }
+
         throw new TemplatePullException(
             $"Connector release {resolvedTag} in {repoSlug} has no UE5 plug-in .zip asset " +
-            "(expected OrbitConnector-UE5-plugin-<tag>.zip). The source zipball does not contain the built plug-in.");
+            "and no source zipball. Check the release or choose a different connector version.");
     }
 
     // ---- Compile (UnrealBuildTool Editor target) -----------------------

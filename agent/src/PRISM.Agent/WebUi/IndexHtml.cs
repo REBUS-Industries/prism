@@ -559,6 +559,22 @@ internal static class IndexHtml
         </label>
       </div>
       <div class="row">
+        <div style="display:flex;flex-direction:column;gap:6px;width:100%;">
+          <span style="font-size:12px;color:var(--color-text-muted);">Connector version for next pull</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <select id="connectorRefSelect" style="min-width:280px;" title="Connector version to merge on the next pull">
+              <option value="">Latest release (default)</option>
+            </select>
+            <button id="btnConnectorRefsRefresh" class="btn-small" title="Refresh connector releases &amp; branches">↻</button>
+          </div>
+          <div id="connectorCustomRefRow" style="display:none;margin-top:4px;">
+            <input type="text" id="connectorCustomRef" placeholder="e.g. v0.1.28 or feat/my-branch" style="min-width:280px;" autocomplete="off" />
+            <span class="hint" style="display:block;margin-top:3px;">Type any release tag, branch name, or short SHA. Branch refs will be downloaded as C++ source and compiled by UBT.</span>
+          </div>
+          <span class="hint">Releases use pre-built binaries. Branch refs (<code>branch:name</code>) download the connector C++ source and compile it with UBT — only works when <em>Compile project after pull</em> is enabled. This selection is per-pull and is NOT saved to config.</span>
+        </div>
+      </div>
+      <div class="row">
         <label class="toggle" id="visualiserPullConnectorLabel" style="align-self:center;">
           <input type="checkbox" id="visualiserPullConnector" />
           <span>Merge OrbitConnector plug-in into pulled project</span>
@@ -727,6 +743,8 @@ internal static class IndexHtml
   let dirty = false;
   // Repo slug the release dropdown was last populated for (re-fetched when it changes).
   let releasesLoadedForRepo = null;
+  // Repo slug the connector refs dropdown was last populated for.
+  let connRefsLoadedForRepo = null;
 
   // ---- Theme toggle ----
   function applyTheme(theme) {
@@ -855,6 +873,10 @@ internal static class IndexHtml
     if (visualiserEnabled && s.config.unrealTemplateRepo !== releasesLoadedForRepo) {
       releasesLoadedForRepo = s.config.unrealTemplateRepo;
       loadReleases();
+    }
+    if (visualiserEnabled && s.config.orbitConnectorRepo !== connRefsLoadedForRepo) {
+      connRefsLoadedForRepo = s.config.orbitConnectorRepo;
+      loadConnectorRefs();
     }
 
     // LAN URL hint -- show the host:port a remote operator would type.
@@ -1118,18 +1140,97 @@ internal static class IndexHtml
 
   $('btnReleasesRefresh').addEventListener('click', () => loadReleases());
 
+  // ---- Connector version picker (releases + pre-releases + branches) ----
+  async function loadConnectorRefs() {
+    const sel = $('connectorRefSelect');
+    const prev = sel.value;
+    try {
+      const r = await api('/api/visualiser/connector/refs');
+      const refs = (r && r.refs) || [];
+      sel.innerHTML = '';
+
+      // "Latest release" option (empty value = default/configured).
+      const latestOpt = document.createElement('option');
+      latestOpt.value = ''; latestOpt.textContent = 'Latest release (default)';
+      sel.appendChild(latestOpt);
+
+      // Separate into releases and branches.
+      const releases = refs.filter(x => !x.isBranch);
+      const branches = refs.filter(x => x.isBranch);
+
+      if (releases.length > 0) {
+        const grp = document.createElement('optgroup');
+        grp.label = 'Releases';
+        for (const ref of releases) {
+          const o = document.createElement('option');
+          o.value = ref.ref;
+          const date = ref.publishedAt ? ' · ' + new Date(ref.publishedAt).toLocaleDateString() : '';
+          o.textContent = (ref.displayName || ref.ref) + date;
+          if (!ref.hasBuiltAsset) o.textContent += ' (source-only)';
+          grp.appendChild(o);
+        }
+        sel.appendChild(grp);
+      }
+
+      if (branches.length > 0) {
+        const grp = document.createElement('optgroup');
+        grp.label = 'Branches (source — requires Compile after pull)';
+        for (const ref of branches) {
+          const o = document.createElement('option');
+          o.value = ref.ref;
+          // Strip "branch:" prefix for the label; show just the branch name.
+          o.textContent = ref.ref.replace(/^branch:/, '') + ' (branch)';
+          grp.appendChild(o);
+        }
+        sel.appendChild(grp);
+      }
+
+      // "Custom…" option to reveal a free-text input.
+      const custOpt = document.createElement('option');
+      custOpt.value = '__custom__'; custOpt.textContent = 'Custom ref…';
+      sel.appendChild(custOpt);
+
+      if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+      updateCustomRefVisibility();
+    } catch (err) {
+      toast('Could not list connector versions: ' + err.message, 'warn');
+    }
+  }
+
+  function updateCustomRefVisibility() {
+    const sel = $('connectorRefSelect');
+    const row = $('connectorCustomRefRow');
+    if (!sel || !row) return;
+    row.style.display = sel.value === '__custom__' ? '' : 'none';
+  }
+
+  $('connectorRefSelect').addEventListener('change', updateCustomRefVisibility);
+  $('btnConnectorRefsRefresh').addEventListener('click', () => loadConnectorRefs());
+
+  /** Resolve the effective connectorRef from the dropdown + custom input. */
+  function resolveConnectorRef() {
+    const sel = $('connectorRefSelect');
+    if (!sel) return null;
+    if (sel.value === '__custom__') {
+      const v = ($('connectorCustomRef').value || '').trim();
+      return v || null;
+    }
+    return sel.value || null;  // null / '' = latest/default
+  }
+
   // Pull the template. Two-step: the first POST (forceCloseUnreal=false) is
   // refused with HTTP 409 + blockedByUnreal when Unreal Engine is running;
   // we then confirm with the operator and re-POST with forceCloseUnreal=true,
   // which force-closes the editor before pulling. Uses a raw fetch (not api())
   // so the 409 body can be inspected instead of thrown.
-  async function doPull(tag, force) {
+  async function doPull(tag, force, connectorRef) {
     const btn = $('btnPullTemplate');
     btn.disabled = true;
     btn.textContent = force ? 'Closing Unreal…' : 'Pulling…';
     const body = {};
     if (tag) body.tag = tag;
     if (force) body.forceCloseUnreal = true;
+    if (connectorRef) body.connectorRef = connectorRef;
     let res, payload;
     try {
       res = await fetch('/api/visualiser/template/pull', {
@@ -1160,7 +1261,7 @@ internal static class IndexHtml
         btn.textContent = 'Pull selected version';
         return;
       }
-      return doPull(tag, true);
+      return doPull(tag, true, connectorRef);
     }
 
     if (res.status === 409 && payload.alreadyRunning) {
@@ -1180,14 +1281,16 @@ internal static class IndexHtml
 
     if (payload.state) renderTemplatePull(payload.state.templatePull);
     const label = tag ? `version ${tag}` : 'latest UE template';
-    toast(force ? `Closing Unreal, then pulling ${label} — watch the status line.`
-                : `Pulling ${label} — watch the status line.`, 'success');
+    const connLabel = connectorRef ? ` + connector ${connectorRef}` : '';
+    toast(force ? `Closing Unreal, then pulling ${label}${connLabel} — watch the status line.`
+                : `Pulling ${label}${connLabel} — watch the status line.`, 'success');
   }
 
   $('btnPullTemplate').addEventListener('click', async () => {
     if (dirty && !confirm('You have unsaved settings changes. Pull using the last SAVED template root / repo / connector settings?\n\nClick Cancel to save first.')) return;
     const tag = $('templateRelease').value.trim();
-    await doPull(tag, false);
+    const connectorRef = resolveConnectorRef();
+    await doPull(tag, false, connectorRef);
   });
 
   // Install an engine plugin from a URL. Same two-step force-close-Unreal

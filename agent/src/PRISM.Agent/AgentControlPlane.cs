@@ -506,11 +506,20 @@ if (Test-Path '{Esc(exePath)}') {{
     /// before pulling. The default is safe (never auto-kills without explicit
     /// confirmation).
     /// </param>
-    public PullTemplateOutcome PullTemplate(string? pinnedTag = null, bool forceCloseUnreal = false)
+    /// <param name="connectorRef">
+    /// Optional connector version ref override for this pull. When set, overrides
+    /// <see cref="Config.AgentConfig.OrbitConnectorTag"/> for this pull only; the
+    /// persisted config is not updated. Accepts a release tag (e.g. <c>v0.1.28</c>)
+    /// or a branch ref prefixed with <c>branch:</c> (e.g.
+    /// <c>branch:feat/import-progress-overlay</c>) to pull a branch source zipball.
+    /// </param>
+    public PullTemplateOutcome PullTemplate(string? pinnedTag = null, bool forceCloseUnreal = false,
+        string? connectorRef = null)
     {
         var tag = string.IsNullOrWhiteSpace(pinnedTag) ? null : pinnedTag.Trim();
-        _log.LogInformation("template pull requested (tag={Tag} force={Force})",
-            tag ?? "<configured/latest>", forceCloseUnreal);
+        var connRef = string.IsNullOrWhiteSpace(connectorRef) ? null : connectorRef.Trim();
+        _log.LogInformation("template pull requested (tag={Tag} connectorRef={ConnRef} force={Force})",
+            tag ?? "<configured/latest>", connRef ?? "<configured/latest>", forceCloseUnreal);
 
         if (!_templatePullGate.Wait(0))
         {
@@ -568,7 +577,8 @@ if (Test-Path '{Esc(exePath)}') {{
                     configuredTag:  _cfg.UnrealTemplateTag,
                     templateRoot:   _cfg.VisualiserTemplateRoot,
                     connectorRepo:  _cfg.OrbitConnectorRepo,
-                    connectorTag:   _cfg.OrbitConnectorTag,
+                    // connectorRef overrides the persisted config for this pull only.
+                    connectorTag:   connRef ?? _cfg.OrbitConnectorTag,
                     pullConnector:  _cfg.VisualiserPullConnector,
                     compileProject: _cfg.VisualiserCompileProject,
                     engineRoot:     _cfg.UnrealEngineRoot,

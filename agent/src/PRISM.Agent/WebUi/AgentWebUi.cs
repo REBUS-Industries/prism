@@ -56,6 +56,13 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     IReadOnlyList<Visualiser.TemplatePuller.ReleaseInfo>? _releasesCache;
     static readonly TimeSpan _releasesTtl = TimeSpan.FromSeconds(300);
 
+    // Connector refs cache (releases + branches) for the connector version picker.
+    readonly SemaphoreSlim _connRefsGate = new(1, 1);
+    string? _connRefsRepo;
+    string? _connRefsEtag;
+    DateTime _connRefsFetchedAt;
+    IReadOnlyList<Visualiser.TemplatePuller.ConnectorRefInfo>? _connRefsCache;
+
     static readonly JsonSerializerSettings _json = new()
     {
         ContractResolver = new CamelCasePropertyNamesContractResolver(),
@@ -256,11 +263,27 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                         break;
                     }
 
+                case ("GET", "/api/visualiser/connector/refs"):
+                    {
+                        try
+                        {
+                            var refs = await GetConnectorRefsCachedAsync(ct);
+                            await WriteJsonAsync(res, new { ok = true, repo = _cfg.OrbitConnectorRepo, refs });
+                        }
+                        catch (Visualiser.TemplatePullException ex)
+                        {
+                            res.StatusCode = 502;
+                            await WriteJsonAsync(res, new { ok = false, error = ex.Message, refs = Array.Empty<object>() });
+                        }
+                        break;
+                    }
+
                 case ("POST", "/api/visualiser/template/pull"):
                     {
                         var body = await ReadBodyAsync(req);
                         string? tag = null;
                         var force = false;
+                        string? connectorRef = null;
                         if (!string.IsNullOrWhiteSpace(body))
                         {
                             try
@@ -268,10 +291,11 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                                 var probe = JsonConvert.DeserializeObject<PullTemplateBody>(body, _json);
                                 tag = probe?.Tag;
                                 force = probe?.ForceCloseUnreal ?? probe?.Force ?? false;
+                                connectorRef = probe?.ConnectorRef;
                             }
                             catch { /* tolerate junk */ }
                         }
-                        var outcome = _plane.PullTemplate(tag, force);
+                        var outcome = _plane.PullTemplate(tag, force, connectorRef);
                         if (outcome.AlreadyRunning)
                         {
                             res.StatusCode = 409;
@@ -494,6 +518,53 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     }
 
     /// <summary>
+    /// Fetch the configured connector repo's releases + branches, served from
+    /// a 5-min in-memory cache with ETag re-validation. Drives the connector
+    /// version picker on the web UI's Visualiser card.
+    /// </summary>
+    async Task<IReadOnlyList<Visualiser.TemplatePuller.ConnectorRefInfo>> GetConnectorRefsCachedAsync(
+        CancellationToken ct)
+    {
+        var repo = string.IsNullOrWhiteSpace(_cfg.OrbitConnectorRepo)
+            ? Visualiser.TemplatePuller.DefaultConnectorRepo
+            : _cfg.OrbitConnectorRepo.Trim();
+
+        if (_connRefsCache is { } cached &&
+            string.Equals(_connRefsRepo, repo, StringComparison.OrdinalIgnoreCase) &&
+            DateTime.UtcNow - _connRefsFetchedAt < _releasesTtl)
+        {
+            return cached;
+        }
+
+        await _connRefsGate.WaitAsync(ct);
+        try
+        {
+            if (_connRefsCache is { } c2 &&
+                string.Equals(_connRefsRepo, repo, StringComparison.OrdinalIgnoreCase) &&
+                DateTime.UtcNow - _connRefsFetchedAt < _releasesTtl)
+            {
+                return c2;
+            }
+            var sameRepo = string.Equals(_connRefsRepo, repo, StringComparison.OrdinalIgnoreCase);
+            var conditionalEtag = sameRepo ? _connRefsEtag : null;
+            var result = await Visualiser.TemplatePuller.ListConnectorRefsAsync(
+                repo, conditionalEtag, _cfg.GitHubToken, _log, ct);
+            _connRefsRepo = repo;
+            _connRefsFetchedAt = DateTime.UtcNow;
+            if (!result.NotModified)
+            {
+                _connRefsCache = result.Refs;
+                _connRefsEtag = result.ETag;
+            }
+            return _connRefsCache ?? Array.Empty<Visualiser.TemplatePuller.ConnectorRefInfo>();
+        }
+        finally
+        {
+            _connRefsGate.Release();
+        }
+    }
+
+    /// <summary>
     /// Server-Sent Events stream of UE/orchestrator console output for the
     /// <c>/uelogs</c> page. Replays the recent backlog (<c>?n=</c>, default
     /// 1000) then live-appends each new line as the visualiser runs. Tolerates
@@ -681,6 +752,8 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
     sealed class PullTemplateBody
     {
         public string? Tag { get; set; }
+        /// <summary>Connector version ref override: a release tag or <c>branch:name</c> for a branch source build.</summary>
+        public string? ConnectorRef { get; set; }
         /// <summary>Confirm prompt → force-close running Unreal before pulling.</summary>
         public bool? ForceCloseUnreal { get; set; }
         /// <summary>Alias accepted from the admin/contract path.</summary>

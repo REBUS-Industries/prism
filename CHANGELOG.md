@@ -106,6 +106,47 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.35 — 2026-06-05 — Connector version dropdown: releases, pre-releases, and dev branches
+
+### Added — Pick any connector version (including dev branches) in the pull UI
+
+- **Connector version picker** on the agent web UI's Visualiser card: a
+  `<select>` dropdown, populated from a new
+  **`GET /api/visualiser/connector/refs`** endpoint, with three groups:
+  - **Releases** (all releases including **pre-releases**; labelled and
+    annotated as pre-release; pre-built `OrbitConnector-UE5-plugin-*.zip` asset
+    indicated; source-only releases noted separately).
+  - **Branches** (all branches from the connector repo, labelled as `(branch,
+    source — requires Compile after pull)`).
+  - **Custom ref…** — reveals a text input for any arbitrary ref (tag, branch
+    name, short SHA).
+  - Default: **Latest release** (empty = existing configured/default behaviour,
+    preserved for ops that don't select anything). The dropdown is NOT saved to
+    config; it is a per-pull override only.
+- **`ListConnectorRefsAsync`** — fetches releases (ETag-conditional, 304 free)
+  **and** branches (`GET /repos/{owner}/{repo}/branches`) for the configured
+  connector repo in one combined response. Branches are prefixed with `branch:`
+  in the returned `Ref` value so the pull flow distinguishes them.
+- **Branch ref resolution in the pull flow** (`ResolveConnectorAssetAsync`):
+  - `branch:<name>` → directly downloads the source zipball for that branch
+    (`GET /repos/{owner}/{repo}/zipball/{branch}`) and falls through to the
+    existing `.uplugin`-scan + copy path. The C++ source is compiled by UBT as
+    part of the normal `CompileProjectAsync` step (requires
+    `VisualiserCompileProject = true`).
+  - Any release tag that returns HTTP 404 (e.g. a branch name passed without
+    the `branch:` prefix, or a short SHA) falls back to the source zipball for
+    that ref, with a warning logged.
+  - Source-path merges are clearly labelled in progress messages:
+    *"installing connector from branch HEAD feat/foo (source, will compile)"*
+    vs *"downloading connector v0.1.28…"*.
+- The selection is plumbed as `connectorRef` in the pull body →
+  `AgentControlPlane.PullTemplate(connectorRef:)` → `PullAsync(connectorTag:)`
+  — **overrides** the persisted `OrbitConnectorTag` for this pull only (the
+  config value is unchanged).
+- Cache with ETag (same 5-min TTL as template releases; 304 revalidations are
+  free against the GitHub rate limit). Authenticated with the GitHub token when
+  set.
+
 ## v0.3.34 — 2026-06-05 — Install a UE Engine plugin from a URL (agent web UI)
 
 ### Added — Paste a link, install into Engine\Plugins
