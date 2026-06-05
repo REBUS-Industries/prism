@@ -603,7 +603,7 @@ internal static class IndexHtml
           <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Pull UE template</span>
           <div class="actions" style="margin-top:0;align-items:center;">
             <select id="templateRelease" style="min-width:240px;">
-              <option value="">Latest release</option>
+              <option value="latest">Latest release</option>
             </select>
             <button id="btnReleasesRefresh" class="btn-small" title="Refresh the release list from the template repo">↻</button>
             <button id="btnPullTemplate" class="primary">Pull selected version</button>
@@ -977,7 +977,7 @@ internal static class IndexHtml
       const releases = (r && r.releases) || [];
       sel.innerHTML = '';
       const latest = document.createElement('option');
-      latest.value = '';
+      latest.value = 'latest';
       latest.textContent = 'Latest release';
       sel.appendChild(latest);
       for (const rel of releases) {
@@ -1280,7 +1280,7 @@ internal static class IndexHtml
     }
 
     if (payload.state) renderTemplatePull(payload.state.templatePull);
-    const label = tag ? `version ${tag}` : 'latest UE template';
+    const label = (!tag || tag === 'latest') ? 'latest UE template' : `version ${tag}`;
     const connLabel = connectorRef ? ` + connector ${connectorRef}` : '';
     toast(force ? `Closing Unreal, then pulling ${label}${connLabel} — watch the status line.`
                 : `Pulling ${label}${connLabel} — watch the status line.`, 'success');

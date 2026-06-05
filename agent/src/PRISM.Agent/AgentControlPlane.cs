@@ -516,10 +516,22 @@ if (Test-Path '{Esc(exePath)}') {{
     public PullTemplateOutcome PullTemplate(string? pinnedTag = null, bool forceCloseUnreal = false,
         string? connectorRef = null)
     {
-        var tag = string.IsNullOrWhiteSpace(pinnedTag) ? null : pinnedTag.Trim();
+        // "latest" sentinel: the UI sends this explicit string when the operator
+        // selects "Latest release" in the dropdown — it means "bypass any
+        // config-pinned UnrealTemplateTag and always resolve the most recently
+        // published release from GitHub". Distinguish it from null/empty (= "no
+        // explicit selection; fall back to configured tag") so a workstation that
+        // has an old tag persisted in agent-config.json still gets the newest
+        // release when the operator clicks Latest.
+        var rawTag = pinnedTag?.Trim();
+        var wantsLatest = string.Equals(rawTag, "latest", StringComparison.OrdinalIgnoreCase);
+        var tag = (wantsLatest || string.IsNullOrWhiteSpace(rawTag)) ? null : rawTag;
+
         var connRef = string.IsNullOrWhiteSpace(connectorRef) ? null : connectorRef.Trim();
-        _log.LogInformation("template pull requested (tag={Tag} connectorRef={ConnRef} force={Force})",
-            tag ?? "<configured/latest>", connRef ?? "<configured/latest>", forceCloseUnreal);
+        _log.LogInformation(
+            "template pull requested (tag={Tag} wantsLatest={WantsLatest} connectorRef={ConnRef} force={Force})",
+            tag ?? (wantsLatest ? "<latest>" : "<configured/latest>"),
+            wantsLatest, connRef ?? "<configured/latest>", forceCloseUnreal);
 
         if (!_templatePullGate.Wait(0))
         {
@@ -547,7 +559,7 @@ if (Test-Path '{Esc(exePath)}') {{
                 BlockedByUnreal: true, UnrealProcesses: runningUnreal);
         }
 
-        var startedTag = tag ?? (string.IsNullOrWhiteSpace(_cfg.UnrealTemplateTag) ? null : _cfg.UnrealTemplateTag.Trim());
+        var startedTag = tag ?? (wantsLatest ? null : (string.IsNullOrWhiteSpace(_cfg.UnrealTemplateTag) ? null : _cfg.UnrealTemplateTag.Trim()));
         var willClose = runningUnreal.Count > 0;
         SetTemplatePull(TemplatePullStatus.Running(startedTag,
             willClose ? $"closing Unreal ({runningUnreal.Count} process(es))…" : "starting…"));
@@ -574,7 +586,11 @@ if (Test-Path '{Esc(exePath)}') {{
                 var result = await TemplatePuller.PullAsync(
                     repoSlug:       _cfg.UnrealTemplateRepo,
                     requestedTag:   tag,
-                    configuredTag:  _cfg.UnrealTemplateTag,
+                    // When the operator explicitly selected "Latest", pass an empty
+                    // configuredTag so ResolveReleaseAsync sees both as blank and
+                    // calls /releases?per_page=1 — bypassing any old tag that may
+                    // have been persisted in the agent-config.json on this workstation.
+                    configuredTag:  wantsLatest ? "" : _cfg.UnrealTemplateTag,
                     templateRoot:   _cfg.VisualiserTemplateRoot,
                     connectorRepo:  _cfg.OrbitConnectorRepo,
                     // connectorRef overrides the persisted config for this pull only.

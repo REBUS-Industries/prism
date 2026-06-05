@@ -106,6 +106,53 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.37 — 2026-06-05 — Fix "Latest" template dropdown still pulls old version on existing installs
+
+### Fixed — "Latest release" now correctly resolves the newest template even when an old tag is persisted in agent-config.json
+
+**Root cause.** v0.3.36 only blanked the compile-time default of
+`UnrealTemplateTag` in `AgentConfig.cs`. Existing workstations have
+`"v1.0.0-ue5.7"` (or another old value) saved in `agent-config.json` on disk.
+At runtime `_cfg.UnrealTemplateTag = "v1.0.0-ue5.7"` still, and the
+`PullTemplate` control plane fell back to it when the UI sent an empty `tag`:
+
+```
+UI sends tag="" → PullTemplate: tag=null
+                → startedTag = _cfg.UnrealTemplateTag = "v1.0.0-ue5.7"
+                → PullAsync(configuredTag="v1.0.0-ue5.7")
+                → ResolveReleaseAsync resolves that specific old tag ✗
+```
+
+The connector was already `""` in config so it was unaffected, which is why
+the connector resolved latest (v0.4.0) correctly but the template did not.
+
+**Fix — explicit `"latest"` sentinel through the whole call chain.**
+
+1. **`IndexHtml.cs`** — the "Latest release" option in the template version
+   dropdown now has `value="latest"` (was `""`). The `doPull()` function sends
+   `tag: "latest"` in the POST body (a non-empty string is truthy so the existing
+   `if (tag) body.tag = tag` includes it). The toast label handles the sentinel:
+   `(!tag || tag === 'latest') ? 'latest UE template' : 'version ' + tag`.
+
+2. **`AgentControlPlane.PullTemplate`** — detects the sentinel
+   (`wantsLatest = tag?.Trim() === "latest"`) and explicitly **bypasses** the
+   persisted `_cfg.UnrealTemplateTag` by passing `configuredTag: ""` to
+   `PullAsync` (instead of `_cfg.UnrealTemplateTag`). This means both
+   `requestedTag` and `configuredTag` are blank and `ResolveReleaseAsync` calls
+   `TryGetReleaseAsync(null)` → `GET /releases?per_page=1` → newest release. ✓
+
+**Call chain after the fix:**
+```
+UI sends tag="latest" → PullTemplate: wantsLatest=true, tag=null
+                      → PullAsync(requestedTag=null, configuredTag="")
+                      → ResolveReleaseAsync: both blank → TryGetReleaseAsync(null)
+                      → GET /releases?per_page=1 → v1.0.96-ue5.7 (or newest) ✓
+```
+
+Workstations that have a specific tag saved in config (and have NOT selected
+"Latest") continue to use their saved tag as before. The sentinel only fires
+when the dropdown is explicitly on "Latest release".
+
 ## v0.3.36 — 2026-06-05 — Fix "Latest" resolving wrong (old) template/connector version
 
 ### Fixed — "Latest" in the pull dropdown was pulling an old version
