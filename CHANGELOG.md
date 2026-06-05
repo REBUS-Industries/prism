@@ -106,6 +106,44 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.36 — 2026-06-05 — Fix "Latest" resolving wrong (old) template/connector version
+
+### Fixed — "Latest" in the pull dropdown was pulling an old version
+
+Two root causes:
+
+1. **`AgentConfig.UnrealTemplateTag` default was `"v1.0.0-ue5.7"`** — the
+   hardcoded default flowed as `configuredTag` into `TemplatePuller.PullAsync`,
+   which tried to resolve that specific old tag before falling back to "latest".
+   Since the tag still exists on GitHub the fallback never fired, so "Latest" in
+   the dropdown always pulled `v1.0.0-ue5.7`. **Fix:** default changed to `""`
+   (blank). Blank now means *resolve the most recently published release at pull
+   time*, documented in the field comment. Workstations that have
+   `UnrealTemplateTag` set to a specific value in `agent-config.json` are
+   unaffected — the override only applies when the saved value is blank.
+
+2. **`GET /releases/latest` skips pre-releases** — `TryGetReleaseAsync` (used for
+   both the template "latest" path and as a fallback when a configured tag is
+   missing) was calling `GET /repos/{owner}/{repo}/releases/latest`. GitHub's
+   `/releases/latest` endpoint returns the most recent **non-prerelease,
+   non-draft** release, so if newer releases are flagged as pre-release on GitHub
+   (e.g. `v1.0.96-ue5.7`) the endpoint silently returned an older stable one.
+   **Fix:** when `tag` is null, now calls
+   `GET /repos/{owner}/{repo}/releases?per_page=1` (sorted by publication date
+   descending) which returns the most recently published release **regardless of
+   pre-release status**. The same fix is applied to `ResolveConnectorAssetAsync`
+   for the connector "latest" path.
+
+**Verification of the "Latest" call chain after the fix:**
+- Operator selects "Latest" → UI sends empty `tag`
+- `AgentControlPlane.PullTemplate(tag=null)` → `PullAsync(requestedTag=null, configuredTag="")`
+- `ResolveReleaseAsync`: both tags empty → `TryGetReleaseAsync(repo, tag=null)`
+- `TryGetReleaseAsync(null)` → `GET /releases?per_page=1` → most recently published release ✓
+
+**Note:** `OrbitConnectorTag` already defaulted to `""` (blank) — no change needed.
+`ListReleasesAsync` already used `/releases?per_page=50` and did not filter
+pre-releases — already correct.
+
 ## v0.3.35 — 2026-06-05 — Connector version dropdown: releases, pre-releases, and dev branches
 
 ### Added — Pick any connector version (including dev branches) in the pull UI

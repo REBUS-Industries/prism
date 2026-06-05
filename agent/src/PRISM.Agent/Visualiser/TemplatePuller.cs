@@ -600,18 +600,35 @@ public static class TemplatePuller
     }
 
     /// <summary>
-    /// GET a single release (a specific <paramref name="tag"/>, or the latest
-    /// when null) and pick its archive URL. Returns <c>null</c> when the
-    /// release / tag does not exist (HTTP 404) so the caller can fall back;
-    /// throws <see cref="TemplatePullException"/> for any other HTTP failure
-    /// or when a found release exposes no downloadable archive.
+    /// GET a single release (a specific <paramref name="tag"/>, or the most
+    /// recently published release when null) and pick its archive URL. Returns
+    /// <c>null</c> when the release / tag does not exist (HTTP 404) so the
+    /// caller can fall back; throws <see cref="TemplatePullException"/> for any
+    /// other HTTP failure or when a found release exposes no downloadable archive.
+    ///
+    /// <para>
+    /// When <paramref name="tag"/> is null, this method uses
+    /// <c>GET /repos/{owner}/{repo}/releases?per_page=1</c> (sorted by
+    /// publication date descending) rather than <c>/releases/latest</c>.
+    /// The <c>/releases/latest</c> endpoint skips pre-releases, which can
+    /// cause the agent to resolve a much older stable release instead of the
+    /// most recently published one (e.g. returning v1.0.0 instead of v1.0.96
+    /// when v1.0.96 is flagged as a pre-release on GitHub). The list endpoint
+    /// returns all non-draft releases in publish order, so the first entry is
+    /// always the most recently published regardless of pre-release status.
+    /// </para>
     /// </summary>
     static async Task<(string Tag, string ArchiveUrl)?> TryGetReleaseAsync(
         HttpClient http, string repoSlug, string? tag, string? gitHubToken, ILogger log, CancellationToken ct)
     {
-        var apiUrl = tag is { Length: > 0 }
-            ? $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag)}"
-            : $"https://api.github.com/repos/{repoSlug}/releases/latest";
+        // For a specific tag: standard releases/tags/{tag} endpoint.
+        // For "latest": use releases?per_page=1 so pre-releases are included
+        // (releases/latest skips pre-releases, which silently returns a much
+        // older stable release when newer versions are flagged pre-release).
+        bool listEndpoint = tag is not { Length: > 0 };
+        var apiUrl = listEndpoint
+            ? $"https://api.github.com/repos/{repoSlug}/releases?per_page=1"
+            : $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag!)}";
 
         using var resp = await http.GetAsync(apiUrl, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
@@ -620,7 +637,20 @@ public static class TemplatePuller
 
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
+
+        // The list endpoint returns an array; the tags endpoint returns an object.
+        JsonElement root;
+        if (listEndpoint)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Array ||
+                doc.RootElement.GetArrayLength() == 0)
+                return null; // Repo has no releases.
+            root = doc.RootElement[0];
+        }
+        else
+        {
+            root = doc.RootElement;
+        }
 
         var resolvedTag = root.TryGetProperty("tag_name", out var tn) ? tn.GetString() : null;
         if (string.IsNullOrEmpty(resolvedTag)) resolvedTag = tag is { Length: > 0 } ? tag : "latest";
@@ -795,16 +825,20 @@ public static class TemplatePuller
             return ($"branch:{branchName}", zipballUrl, "[branch source]");
         }
 
-        // 2. Try the release API for the tag (or latest).
-        var apiUrl = tag is { Length: > 0 }
-            ? $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag)}"
-            : $"https://api.github.com/repos/{repoSlug}/releases/latest";
+        // 2. Try the release API for the tag (or most recently published release).
+        // Use releases?per_page=1 (not /releases/latest) when resolving "latest"
+        // so pre-releases are included — /releases/latest skips them and can return
+        // a much older stable version instead of the newest release.
+        bool listEndpoint = tag is not { Length: > 0 };
+        var apiUrl = listEndpoint
+            ? $"https://api.github.com/repos/{repoSlug}/releases?per_page=1"
+            : $"https://api.github.com/repos/{repoSlug}/releases/tags/{Uri.EscapeDataString(tag!)}";
 
         using var resp = await http.GetAsync(apiUrl, ct).ConfigureAwait(false);
 
         if (resp.StatusCode == HttpStatusCode.NotFound)
         {
-            if (tag is not { Length: > 0 })
+            if (listEndpoint)
                 throw new TemplatePullException(
                     $"No connector releases found in {repoSlug} (HTTP 404). " +
                     "If the repo is private, set PRISM_GITHUB_TOKEN.");
@@ -815,8 +849,8 @@ public static class TemplatePuller
                 "template pull: connector ref '{Ref}' not found as a release in {Repo}; " +
                 "falling back to source zipball (will compile with UBT)",
                 tag, repoSlug);
-            var zipballUrl = $"https://api.github.com/repos/{repoSlug}/zipball/{Uri.EscapeDataString(tag)}";
-            return (tag, zipballUrl, "[source zipball]");
+            var zipballUrl = $"https://api.github.com/repos/{repoSlug}/zipball/{Uri.EscapeDataString(tag!)}";
+            return (tag!, zipballUrl, "[source zipball]");
         }
 
         if (!resp.IsSuccessStatusCode)
@@ -824,7 +858,23 @@ public static class TemplatePuller
 
         var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
+
+        // The list endpoint returns an array; extract the first (most recent) element.
+        JsonElement root;
+        if (listEndpoint)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Array ||
+                doc.RootElement.GetArrayLength() == 0)
+                throw new TemplatePullException(
+                    $"No connector releases found in {repoSlug}. " +
+                    "If the repo is private, set PRISM_GITHUB_TOKEN.");
+            root = doc.RootElement[0];
+        }
+        else
+        {
+            root = doc.RootElement;
+        }
+
         var resolvedTag = root.TryGetProperty("tag_name", out var tn) ? tn.GetString() : null;
         if (string.IsNullOrEmpty(resolvedTag)) resolvedTag = tag is { Length: > 0 } ? tag : "latest";
 

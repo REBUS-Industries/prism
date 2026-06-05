@@ -69,8 +69,17 @@ public sealed class AgentConfig
     /// <c>startVisualisation</c> envelope arrives without an explicit
     /// <c>templateTag</c>. Tracked in lock-step with the template repo's
     /// release tags; bump after the template publishes a new build.
+    ///
+    /// <para>
+    /// An empty string (the default) means <b>resolve the most recently
+    /// published release at pull time</b> — the agent calls
+    /// <c>GET /repos/{owner}/{repo}/releases?per_page=1</c> (which returns
+    /// the newest release regardless of pre-release status) rather than
+    /// pinning any specific version. Set this to a specific tag (e.g.
+    /// <c>v1.0.0-ue5.7</c>) to lock every workstation to that release.
+    /// </para>
     /// </summary>
-    public string UnrealTemplateTag { get; set; } = "v1.0.0-ue5.7";
+    public string UnrealTemplateTag { get; set; } = "";
 
     /// <summary>
     /// GitHub repository slug (<c>owner/repo</c>) the "pull latest UE
