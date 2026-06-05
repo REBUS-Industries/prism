@@ -614,6 +614,24 @@ internal static class IndexHtml
           </span>
         </div>
       </div>
+      <div class="row">
+        <div>
+          <span class="hint" style="display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em;font-size:11px;">Install Engine Plugin (from URL)</span>
+          <div class="actions" style="margin-top:0;align-items:center;">
+            <input type="text" id="enginePluginUrl" placeholder="https://…/MyPlugin.zip" style="min-width:320px;flex:1 1 320px;" autocomplete="off" />
+            <button id="btnInstallPlugin" class="primary">Install</button>
+            <span id="enginePluginStatus" class="hint" style="align-self:center;"></span>
+          </div>
+          <span class="hint" style="display:block;margin-top:6px;">
+            <strong>The file must contain a <code>Plugins</code> folder, with the plugin
+            files/folders to import inside it.</strong> Those contents are copied into the UE
+            Engine's <code>Engine\Plugins</code> directory (under <em>Unreal Engine root</em>
+            above), overwriting same-named plug-ins. Paste a direct <code>http(s)</code> link to a
+            <code>.zip</code>. If Unreal Engine is running it locks plug-in binaries — you'll be
+            prompted to force-close it first.
+          </span>
+        </div>
+      </div>
       <p class="hint">
         On agent start, if the Visualiser role is enabled but the Unreal
         Engine root above is missing, a structured <code>WARN</code> is
@@ -827,6 +845,7 @@ internal static class IndexHtml
     }
 
     renderTemplatePull(s.templatePull);
+    renderEnginePluginInstall(s.enginePluginInstall);
     renderInstalledTemplate(s.installedTemplate);
 
     const visualiserEnabled = (s.config.roles || []).includes('visualiser');
@@ -995,6 +1014,32 @@ internal static class IndexHtml
     }
   }
 
+  function renderEnginePluginInstall(ep) {
+    const el = $('enginePluginStatus');
+    const btn = $('btnInstallPlugin');
+    if (!el || !btn) return;
+    if (!ep) { el.textContent = ''; return; }
+    const running = ep.state === 'running' || ep.inProgress;
+    btn.disabled = running;
+    if (running) {
+      btn.textContent = 'Installing…';
+      el.style.color = 'var(--color-text-muted)';
+      el.textContent = ep.message || 'installing…';
+    } else {
+      btn.textContent = 'Install';
+      if (ep.state === 'success') {
+        el.style.color = 'var(--color-success)';
+        el.textContent = ep.message || 'installed';
+      } else if (ep.state === 'error') {
+        el.style.color = 'var(--color-error)';
+        el.textContent = 'failed: ' + (ep.message || 'unknown error');
+      } else {
+        el.style.color = 'var(--color-text-muted)';
+        el.textContent = '';
+      }
+    }
+  }
+
   async function refresh() {
     try {
       const s = await api('/api/state');
@@ -1143,6 +1188,69 @@ internal static class IndexHtml
     if (dirty && !confirm('You have unsaved settings changes. Pull using the last SAVED template root / repo / connector settings?\n\nClick Cancel to save first.')) return;
     const tag = $('templateRelease').value.trim();
     await doPull(tag, false);
+  });
+
+  // Install an engine plugin from a URL. Same two-step force-close-Unreal
+  // confirm flow as the template pull (engine plugin DLLs are locked while the
+  // editor is open). Raw fetch so the 409 body can be inspected.
+  async function doInstallPlugin(url, force) {
+    const btn = $('btnInstallPlugin');
+    btn.disabled = true;
+    btn.textContent = force ? 'Closing Unreal…' : 'Installing…';
+    let res, payload;
+    try {
+      res = await fetch('/api/engine-plugin/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(force ? { url, forceCloseUnreal: true } : { url }),
+      });
+      payload = await res.json().catch(() => ({}));
+    } catch (err) {
+      toast('Install failed: ' + err.message, 'error');
+      btn.disabled = false; btn.textContent = 'Install';
+      return;
+    }
+
+    if (res.status === 409 && payload.blockedByUnreal) {
+      if (payload.state) renderEnginePluginInstall(payload.state.enginePluginInstall);
+      const procs = (payload.unrealProcesses || []).map(p => `${p.name} (pid ${p.pid})`).join(', ');
+      const n = payload.count || (payload.unrealProcesses || []).length;
+      const ok = confirm(
+        `Unreal Engine is running (${n} instance(s)):\n  ${procs}\n\n` +
+        'Installing an engine plug-in requires closing it (it locks plug-in binaries). ' +
+        'This will FORCE-CLOSE the Unreal Editor (and end any visualiser session). ' +
+        'Force-close and continue?');
+      if (!ok) {
+        toast('Install cancelled — Unreal is still running.', 'warn');
+        btn.disabled = false; btn.textContent = 'Install';
+        return;
+      }
+      return doInstallPlugin(url, true);
+    }
+
+    if (res.status === 409 && payload.alreadyRunning) {
+      if (payload.state) renderEnginePluginInstall(payload.state.enginePluginInstall);
+      toast('An engine-plugin install is already running.', 'warn');
+      btn.disabled = false; btn.textContent = 'Install';
+      return;
+    }
+
+    if (!res.ok || !payload.ok) {
+      toast('Install failed: ' + (payload.error || `${res.status} ${res.statusText}`), 'error');
+      btn.disabled = false; btn.textContent = 'Install';
+      return;
+    }
+
+    if (payload.state) renderEnginePluginInstall(payload.state.enginePluginInstall);
+    toast(force ? 'Closing Unreal, then installing the plug-in — watch the status line.'
+                : 'Installing the plug-in — watch the status line.', 'success');
+  }
+
+  $('btnInstallPlugin').addEventListener('click', async () => {
+    const url = $('enginePluginUrl').value.trim();
+    if (!url) { toast('Paste a plug-in .zip URL first.', 'warn'); return; }
+    if (!/^https?:\/\//i.test(url)) { toast('URL must start with http:// or https://', 'warn'); return; }
+    await doInstallPlugin(url, false);
   });
 
   $('btnRestart').addEventListener('click', async () => {

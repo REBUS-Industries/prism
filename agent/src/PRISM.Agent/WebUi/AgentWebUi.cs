@@ -313,6 +313,62 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                         break;
                     }
 
+                case ("POST", "/api/engine-plugin/install"):
+                    {
+                        var body = await ReadBodyAsync(req);
+                        string? url = null;
+                        var force = false;
+                        if (!string.IsNullOrWhiteSpace(body))
+                        {
+                            try
+                            {
+                                var probe = JsonConvert.DeserializeObject<InstallPluginBody>(body, _json);
+                                url = probe?.Url;
+                                force = probe?.ForceCloseUnreal ?? probe?.Force ?? false;
+                            }
+                            catch { /* tolerate junk */ }
+                        }
+                        var outcome = _plane.InstallEnginePlugin(url, force);
+                        if (outcome.AlreadyRunning)
+                        {
+                            res.StatusCode = 409;
+                            await WriteJsonAsync(res, new
+                            {
+                                ok = false, alreadyRunning = true, error = outcome.Error, state = BuildState(),
+                            });
+                        }
+                        else if (outcome.BlockedByUnreal)
+                        {
+                            res.StatusCode = 409;
+                            await WriteJsonAsync(res, new
+                            {
+                                ok = false,
+                                blockedByUnreal = true,
+                                count = outcome.UnrealProcesses?.Count ?? 0,
+                                unrealProcesses = (outcome.UnrealProcesses ?? Array.Empty<Visualiser.UnrealProcessGuard.UnrealProc>())
+                                    .Select(p => new { name = p.Name, pid = p.Pid }).ToArray(),
+                                error = outcome.Error,
+                                state = BuildState(),
+                            });
+                        }
+                        else if (!outcome.Started)
+                        {
+                            res.StatusCode = 400;
+                            await WriteJsonAsync(res, new { ok = false, error = outcome.Error, state = BuildState() });
+                        }
+                        else
+                        {
+                            await WriteJsonAsync(res, new
+                            {
+                                ok = true,
+                                installing = true,
+                                message = force ? "closing Unreal, then installing plug-in" : "installing engine plug-in in background",
+                                state = BuildState(),
+                            });
+                        }
+                        break;
+                    }
+
                 case ("POST", "/api/agent/update"):
                     {
                         var body = await ReadBodyAsync(req);
@@ -576,6 +632,14 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 updatedAt    = _plane.TemplatePull.UpdatedAt,
                 inProgress   = _plane.IsTemplatePullInProgress,
             },
+            enginePluginInstall = new
+            {
+                state      = _plane.EnginePluginInstall.State,
+                message    = _plane.EnginePluginInstall.Message,
+                plugins    = _plane.EnginePluginInstall.Plugins,
+                updatedAt  = _plane.EnginePluginInstall.UpdatedAt,
+                inProgress = _plane.IsEnginePluginInstallInProgress,
+            },
             // Durable record of WHICH template release is installed at
             // VisualiserTemplateProjectPath (marker file, config fallback) —
             // independent of the transient templatePull status above, so the
@@ -620,6 +684,13 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
         /// <summary>Confirm prompt → force-close running Unreal before pulling.</summary>
         public bool? ForceCloseUnreal { get; set; }
         /// <summary>Alias accepted from the admin/contract path.</summary>
+        public bool? Force { get; set; }
+    }
+    sealed class InstallPluginBody
+    {
+        public string? Url { get; set; }
+        /// <summary>Confirm prompt → force-close running Unreal before installing.</summary>
+        public bool? ForceCloseUnreal { get; set; }
         public bool? Force { get; set; }
     }
 

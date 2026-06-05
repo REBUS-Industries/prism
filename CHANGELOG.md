@@ -106,6 +106,40 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agent↔server protocol is unchanged (backward-compatible).
 
+## v0.3.34 — 2026-06-05 — Install a UE Engine plugin from a URL (agent web UI)
+
+### Added — Paste a link, install into Engine\Plugins
+
+- **New "Install Engine Plugin (from URL)" section** on the agent web UI: paste
+  an http(s) link to a `.zip`, click **Install**, and watch the
+  download → extract → copy progress + the installed plug-in list inline. The UI
+  notes prominently that **the file must contain a `Plugins` folder with the
+  plug-in files/folders inside it**, which are copied into the UE Engine's
+  `Engine\Plugins` directory.
+- **`EnginePluginInstaller`** (`agent/src/PRISM.Agent/Visualiser/`): validates the
+  URL (http/https only — no `file://`/local paths), stream-downloads to a temp
+  file (20-min timeout, 4 GB cap, actionable HTTP errors), verifies it's a zip
+  (`.zip` or PK magic), extracts, then **locates the single `Plugins` folder**
+  (case-insensitive) at the archive root or one level down — erroring clearly on
+  none/ambiguous. Each entry (file AND folder) inside that `Plugins` folder is
+  copied into `<UnrealEngineRoot>\Engine\Plugins\`, **overwriting same-named
+  plug-ins only** (the rest of `Engine\Plugins` is never touched). Reuses the
+  template-pull robust copy/delete helpers (clear read-only, retry on transient
+  locks) so an existing plug-in's read-only `Binaries` can be replaced; sweeps
+  stale temp dirs and cleans up after itself.
+- **Target** = `Path.Combine(UnrealEngineRoot, "Engine", "Plugins")`; a missing
+  engine root or `Engine\Plugins` is reported with an actionable message.
+- **Unreal-running guard:** engine plug-in DLLs are locked while the editor is
+  open, so the install reuses the same `UnrealProcessGuard`
+  detect → prompt → force-close flow as the template pull. If UE is running the
+  install is refused with HTTP 409 + the process list; the web UI prompts
+  *"Unreal is running (N) — force-close and continue?"*; on confirm it re-invokes
+  with `forceCloseUnreal`, which kills UE, waits for handles to release, then
+  copies. Default is safe (no auto-kill without confirmation).
+- **Endpoint:** `POST /api/engine-plugin/install` (`{ url, force? }`); progress is
+  surfaced via `AgentControlPlane.InstallEnginePlugin` (single-flight gate +
+  status) on `/api/state` as `enginePluginInstall`. No secrets logged.
+
 ## v0.3.33 — 2026-06-04 — /uelogs ignore (exclude) filter
 
 ### Added — Hide noisy UE console lines by pattern

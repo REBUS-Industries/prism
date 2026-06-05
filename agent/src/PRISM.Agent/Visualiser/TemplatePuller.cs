@@ -1112,7 +1112,7 @@ public static class TemplatePuller
     /// with bounded retry + backoff for transient locks. A no-op when the path
     /// does not exist. Throws the last error when exhausted.
     /// </summary>
-    static void ForceDelete(string dir, ILogger log)
+    internal static void ForceDelete(string dir, ILogger log)
     {
         if (!Directory.Exists(dir)) return;
         const int attempts = 6;
@@ -1141,7 +1141,7 @@ public static class TemplatePuller
     /// failure on one file is logged at debug and skipped so the caller's
     /// delete/move still proceeds for the rest.
     /// </summary>
-    static void ClearReadOnly(string dir, ILogger log)
+    internal static void ClearReadOnly(string dir, ILogger log)
     {
         try
         {
@@ -1162,7 +1162,7 @@ public static class TemplatePuller
         catch (Exception ex) { log.LogDebug(ex, "template pull: clear read-only sweep failed for {Dir}", dir); }
     }
 
-    static void CopyDirectory(string sourceDir, string destDir)
+    internal static void CopyDirectory(string sourceDir, string destDir)
     {
         Directory.CreateDirectory(destDir);
         foreach (var dir in Directory.EnumerateDirectories(sourceDir, "*", SearchOption.AllDirectories))

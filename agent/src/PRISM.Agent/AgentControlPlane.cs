@@ -37,6 +37,12 @@ public sealed class AgentControlPlane
     readonly SemaphoreSlim _templatePullGate = new(1, 1);
     volatile TemplatePullStatus _templatePull = TemplatePullStatus.Idle();
 
+    // Single-flight gate + last-known status for the "install engine plugin
+    // from URL" action (mirrors the template-pull pattern). Surfaced on
+    // /api/state so the web UI can watch progress.
+    readonly SemaphoreSlim _enginePluginGate = new(1, 1);
+    volatile EnginePluginInstallStatus _enginePluginInstall = EnginePluginInstallStatus.Idle();
+
     public AgentControlPlane(
         ILogger<AgentControlPlane> log,
         AgentConfig cfg,
@@ -69,6 +75,12 @@ public sealed class AgentControlPlane
 
     /// <summary>True while a template pull is running.</summary>
     public bool IsTemplatePullInProgress => _templatePullGate.CurrentCount == 0;
+
+    /// <summary>Last-known state of the "install engine plugin from URL" action.</summary>
+    public EnginePluginInstallStatus EnginePluginInstall => _enginePluginInstall;
+
+    /// <summary>True while an engine-plugin install is running.</summary>
+    public bool IsEnginePluginInstallInProgress => _enginePluginGate.CurrentCount == 0;
 
     /// <summary>Raised whenever a mutation runs.  Tray + web UI subscribe.</summary>
     public event Action? StateChanged;
@@ -621,6 +633,116 @@ if (Test-Path '{Esc(exePath)}') {{
         Notify();
     }
 
+    // ---- Install engine plugin from URL --------------------------------
+
+    public sealed record InstallEnginePluginOutcome(
+        bool    Started,
+        bool    AlreadyRunning,
+        string? Error,
+        bool    BlockedByUnreal = false,
+        IReadOnlyList<Visualiser.UnrealProcessGuard.UnrealProc>? UnrealProcesses = null);
+
+    /// <summary>
+    /// Download an Unreal Engine plug-in archive from <paramref name="url"/>
+    /// and install its <c>Plugins\</c> contents into
+    /// <c>&lt;UnrealEngineRoot&gt;\Engine\Plugins\</c> in the background.
+    /// Mirrors <see cref="PullTemplate"/>: single-flight gate, progress in
+    /// <see cref="EnginePluginInstall"/>, and the same Unreal-running guard
+    /// (engine plug-in DLLs are locked while the editor is open).
+    /// </summary>
+    /// <param name="url">http(s) URL of a .zip containing a <c>Plugins</c> folder.</param>
+    /// <param name="forceCloseUnreal">
+    /// When false (default) and Unreal is running, the install is NOT started —
+    /// the outcome carries <see cref="InstallEnginePluginOutcome.BlockedByUnreal"/>
+    /// + the process list so the UI can confirm. When true the agent
+    /// force-closes the detected Unreal processes (waiting for their handles to
+    /// release) before copying.
+    /// </param>
+    public InstallEnginePluginOutcome InstallEnginePlugin(string? url, bool forceCloseUnreal = false)
+    {
+        var trimmed = (url ?? "").Trim();
+        _log.LogInformation("engine plugin install requested (force={Force})", forceCloseUnreal);
+
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return new InstallEnginePluginOutcome(false, AlreadyRunning: false, Error: "No URL provided.");
+
+        if (!_enginePluginGate.Wait(0))
+        {
+            _log.LogWarning("engine plugin install ignored — another install is already in progress");
+            return new InstallEnginePluginOutcome(false, AlreadyRunning: true,
+                Error: "Another engine-plugin install is already in progress on this agent.");
+        }
+
+        // Pre-flight: a running editor locks engine plug-in DLLs. Refuse unless
+        // the caller opted into force-close, handing the process list back.
+        var runningUnreal = Visualiser.UnrealProcessGuard.Detect(_log);
+        if (runningUnreal.Count > 0 && !forceCloseUnreal)
+        {
+            _enginePluginGate.Release();
+            _log.LogWarning(
+                "engine plugin install blocked — Unreal Engine is running ({Procs}); operator confirmation required",
+                Visualiser.UnrealProcessGuard.Describe(runningUnreal));
+            return new InstallEnginePluginOutcome(
+                Started: false, AlreadyRunning: false,
+                Error: $"Unreal Engine is running ({runningUnreal.Count} instance(s)): " +
+                       $"{Visualiser.UnrealProcessGuard.Describe(runningUnreal)}. " +
+                       "Installing an engine plug-in requires closing it. Confirm to force-close and continue.",
+                BlockedByUnreal: true, UnrealProcesses: runningUnreal);
+        }
+
+        var willClose = runningUnreal.Count > 0;
+        SetEnginePluginInstall(EnginePluginInstallStatus.Running(
+            willClose ? $"closing Unreal ({runningUnreal.Count} process(es))…" : "starting…"));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var progress = new Progress<string>(msg =>
+                    SetEnginePluginInstall(_enginePluginInstall with { Message = msg, UpdatedAt = DateTime.UtcNow }));
+
+                if (forceCloseUnreal)
+                {
+                    var killed = await Visualiser.UnrealProcessGuard
+                        .ForceCloseAllAsync(progress, _log, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    if (killed > 0)
+                        _log.LogInformation("engine plugin install: force-closed {Killed} Unreal process(es)", killed);
+                }
+
+                var result = await Visualiser.EnginePluginInstaller.InstallAsync(
+                    trimmed, _cfg.UnrealEngineRoot, progress, _log, CancellationToken.None).ConfigureAwait(false);
+
+                _log.LogInformation(
+                    "engine plugin install complete: [{Plugins}] -> {Dir}",
+                    string.Join(", ", result.InstalledPlugins), result.EnginePluginsDir);
+                SetEnginePluginInstall(EnginePluginInstallStatus.Success(result.InstalledPlugins));
+            }
+            catch (Visualiser.EnginePluginInstallException ex)
+            {
+                _log.LogError(ex, "engine plugin install failed");
+                SetEnginePluginInstall(EnginePluginInstallStatus.Error(ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "engine plugin install failed (unexpected)");
+                SetEnginePluginInstall(EnginePluginInstallStatus.Error(ex.Message));
+            }
+            finally
+            {
+                _enginePluginGate.Release();
+            }
+        });
+
+        return new InstallEnginePluginOutcome(true, AlreadyRunning: false, Error: null);
+    }
+
+    void SetEnginePluginInstall(EnginePluginInstallStatus status)
+    {
+        _enginePluginInstall = status;
+        Notify();
+    }
+
     static string Esc(string path) => path.Replace("'", "''");
 }
 
@@ -652,6 +774,31 @@ public sealed record TemplatePullStatus(
 
     public static TemplatePullStatus Error(string? tag, string message) =>
         new("error", tag, message, null, null, null, DateTime.UtcNow);
+}
+
+/// <summary>
+/// Snapshot of the "install engine plugin from URL" action, surfaced on the
+/// agent web UI so an operator can watch progress + the installed plug-in list.
+/// </summary>
+public sealed record EnginePluginInstallStatus(
+    string  State,            // idle | running | success | error
+    string? Message,
+    IReadOnlyList<string>? Plugins,
+    DateTime? UpdatedAt)
+{
+    public static EnginePluginInstallStatus Idle() =>
+        new("idle", null, null, null);
+
+    public static EnginePluginInstallStatus Running(string message) =>
+        new("running", message, null, DateTime.UtcNow);
+
+    public static EnginePluginInstallStatus Success(IReadOnlyList<string> plugins) =>
+        new("success",
+            plugins.Count > 0 ? $"installed {plugins.Count} plug-in(s): {string.Join(", ", plugins)}" : "installed",
+            plugins, DateTime.UtcNow);
+
+    public static EnginePluginInstallStatus Error(string message) =>
+        new("error", message, null, DateTime.UtcNow);
 }
 
 /// <summary>
