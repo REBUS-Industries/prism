@@ -111,6 +111,12 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agentâ†”server protocol is unchanged (backward-compatible).
 
+## v0.3.39 -- 2026-06-08 -- Bundle visualiser orchestrator into agent CI + installer
+
+- Bundle visualiser orchestrator into agent installer; agent CI now builds orchestrator in lockstep and stamps it with the agent version.
+- gent.yml: added isualiser/** to paths trigger so orchestrator changes rebuild the agent package; orchestrator build + zip staging runs before the Inno Setup step and is included in PRISM.Agent-v0.3.39.zip under Visualiser/.
+- isualiser-msi.yml: push trigger removed -- orchestrator now ships bundled with the agent; the separate visualiser MSI workflow is disabled.
+
 ## v0.3.38 -- 2026-06-08 -- Parent model (tree) import
 
 ### Added -- `importMode: 'tree'` skips version check, threads tree-import through all layers

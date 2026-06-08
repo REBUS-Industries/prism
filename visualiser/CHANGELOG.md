@@ -4,6 +4,11 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.22 -- 2026-06-08 -- Bundle visualiser orchestrator into agent CI + installer
+
+- Bundle visualiser orchestrator into agent installer; agent CI now builds orchestrator in lockstep and stamps it with the agent version.
+- Orchestrator ships bundled with the PRISM Agent; the separate isualiser-msi.yml release workflow is disabled.
+
 ## v0.5.21 -- 2026-06-08 -- Parent model (tree) import support
 
 - **RunManifest.cs** -- added ImportMode (string, default "single") and ModelName fields carried from agent protocol through to orchestrator.

@@ -29,6 +29,7 @@ on:
       - 'shared/contracts/**'
       - 'vendor/orbit-monorepo/**'
       - '.github/workflows/agent.yml'
+      - 'visualiser/**'
   workflow_dispatch:
 
 jobs:
@@ -86,25 +87,39 @@ jobs:
 
       - name: Restore + publish Visualiser orchestrator
         # The orchestrator is shipped as a sidecar of the agent so the
-        # WS dispatcher can spawn it from a known on-disk path.
-        # Self-contained multi-file publish — the agent's own payload
-        # carries a *private* .NET 8 runtime that the orchestrator
-        # cannot share (different RID layout), so we bake the runtime
-        # into the orchestrator too. This adds ~70 MB to the agent
-        # installer but removes the otherwise-mandatory workstation
-        # prerequisite of a system-wide .NET 8 install.
-        # NB: this is a sibling artifact to the orchestrator's own
-        # `visualiser-msi.yml` release, which still publishes a
-        # framework-dependent zip for out-of-band installs on
-        # workstations that have .NET 8 pre-installed.
+        # WS dispatcher can spawn it from a known on-disk path
+        # (VisualiserJob.OrchestratorSubDir = "Visualiser"). It no
+        # longer has an independent release; visualiser-msi.yml is
+        # retained as a dev/debug-only workflow (workflow_dispatch only).
+        #
+        # Self-contained multi-file publish: the agent's own payload
+        # carries a private .NET 8 runtime that the orchestrator cannot
+        # share (it is not a system-wide .NET install), so we bake the
+        # runtime into the orchestrator too. This adds ~70 MB to the
+        # agent installer but removes the otherwise-mandatory workstation
+        # prerequisite of a separate .NET 8 system installation.
+        #
+        # Version alignment: on a tag push the orchestrator is stamped
+        # with the same semver as the agent so both ship as a coherent
+        # unit. On a branch / manual build we fall back to 0.0.0 (the
+        # version is bumped in the csproj / Directory.Build.props at
+        # release time, not here).
         working-directory: visualiser
         run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -and $tag -match '^v(\d+\.\d+\.\d+)') {
+            $orchVersion = $Matches[1]
+          } else {
+            $orchVersion = "0.0.0"
+          }
+          Write-Host "Orchestrator version stamp: $orchVersion (tag=$tag)"
           dotnet restore PRISM.Visualiser.sln
           dotnet publish src/PRISM.Visualiser.Orchestrator/PRISM.Visualiser.Orchestrator.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
             -p:PublishSingleFile=false `
+            -p:VisualiserVersion=$orchVersion `
             --no-restore `
             -o publish
 

@@ -1,25 +1,29 @@
 name: visualiser-msi
 
-# Builds the PRISM.Visualiser orchestrator (.NET 8, win-x64, framework-
-# dependent multi-file publish) and publishes the framework-dependent
-# exe + xUnit test results to GH Releases on a tag push.
+# DEV / DEBUG TOOL — the orchestrator now ships bundled inside the PRISM
+# Agent installer (see .github/workflows/agent.yml). Separate
+# `visualiser-v*` releases to REBUS-Industries/prism-visualiser are no
+# longer published.
 #
-# Tag convention: visualiser-v<VisualiserVersion> (see
-# PRISM/visualiser/Directory.Build.props). Plain v* tags from the agent
-# release cycle are intentionally ignored — pipelines are independent.
+# This workflow is retained for:
+#   - PR CI: runs build + test on every visualiser pull_request so
+#     regressions are caught before merging.
+#   - Manual debug: workflow_dispatch lets a developer get a standalone
+#     framework-dependent orchestrator zip (e.g. for hotfixing a single
+#     workstation without a full agent re-install).
 #
-# The orchestrator runs on Windows workstations alongside the PRISM
-# Agent and Unreal Engine. Self-contained publish would balloon the
-# release artifact to ~80MB; the workstations already ship .NET 8 with
-# the agent, so framework-dependent keeps the asset small.
+# The push: trigger (branches: [main] + tags: ['visualiser-v*']) has
+# been removed because:
+#   1. The orchestrator is now versioned and released as part of the
+#      agent (agent.yml stamps it with the agent semver).
+#   2. Keeping automatic tag-push releases would create a confusing
+#      parallel release stream that is no longer the canonical delivery
+#      mechanism.
+#
+# To cut an agent release that includes an orchestrator update, tag the
+# repo with a plain `vX.Y.Z` tag — agent.yml handles everything.
 
 on:
-  push:
-    branches: [main]
-    tags: ['visualiser-v*']
-    paths:
-      - 'visualiser/**'
-      - '.github/workflows/visualiser-msi.yml'
   pull_request:
     paths:
       - 'visualiser/**'
