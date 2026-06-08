@@ -41,7 +41,7 @@ import {
   type ProjectAttachmentRef,
   type StartVisualisationData,
 } from '../../../shared/contracts/agent-protocol.js';
-import { getLatestVersionId, OrbitClientError } from '../orbit/client.js';
+import { getLatestVersionId, listModels, OrbitClientError } from '../orbit/client.js';
 import { sessionRegistry, type AgentConn } from '../ws/sessionRegistry.js';
 import { broadcastJobUpdate } from '../ws/adminProtocol.js';
 import { issueDownloadToken } from '../api/internal.js';
@@ -415,7 +415,10 @@ export async function tryDispatchVisualisation(
   // now. For tree imports the orchestrator uses OrbitImportTree and never
   // needs a versionId, so skip the resolution entirely for that mode.
   let resolvedVersionId = run.versionId ?? null;
-  const isTreeImport = run.importMode === 'tree';
+  let isTreeImport = run.importMode === 'tree';
+  // Effective model name: may be updated by auto-detection below.
+  let effectiveModelName: string | undefined = run.modelName ?? undefined;
+
   if (!resolvedVersionId && !isTreeImport) {
     try {
       const latestId = await getLatestVersionId(
@@ -424,31 +427,87 @@ export async function tryDispatchVisualisation(
         run.modelId,
       );
       if (!latestId) {
-        await releaseVisualiserSlot(reserved.workstationId).catch(() => null);
-        log.warn(
-          { runId: run.id, projectId: run.projectId, modelId: run.modelId, target: run.orbitTarget },
-          'visualiser dispatch: model has no versions yet',
+        // Model has no versions. Before rejecting, check whether it is a
+        // parent container whose submodels hold the actual geometry. A parent
+        // model has no committed versions of its own but has child models
+        // whose names start with `<parentName>/`. If detected, switch to tree
+        // import so the UE connector calls OrbitImportTree instead of
+        // OrbitImport — identical to the caller explicitly setting
+        // importMode='tree' on the POST body.
+        let detectedAsTree = false;
+        try {
+          const { items: allModels } = await listModels(
+            run.orbitTarget as 'prod' | 'dev',
+            run.projectId,
+            { limit: 200 },
+          );
+          // Resolve the model name: prefer what's already on the row (the
+          // caller may have supplied it), otherwise find the name by ID.
+          let modelName = run.modelName ?? null;
+          if (!modelName) {
+            const match = allModels.find((m) => m.id === run.modelId);
+            modelName = match?.name ?? null;
+          }
+          if (modelName) {
+            const prefix = modelName + '/';
+            if (allModels.some((m) => m.name.startsWith(prefix))) {
+              detectedAsTree = true;
+              isTreeImport = true;
+              effectiveModelName = modelName;
+              // Persist the auto-detected tree mode and resolved name so the
+              // admin UI shows the correct state and re-dispatches reuse it.
+              await db
+                .update(visualiserRuns)
+                .set({ importMode: 'tree', modelName, updatedAt: new Date() })
+                .where(eq(visualiserRuns.id, run.id));
+              log.info(
+                { runId: run.id, projectId: run.projectId, modelId: run.modelId, modelName, target: run.orbitTarget },
+                'visualiser dispatch: auto-detected parent model with submodels; switching to tree import',
+              );
+              await appendVisualiserRunLog(
+                run.id,
+                `auto-detected parent model "${modelName}" with submodels; switching to tree import`,
+                { log },
+              );
+            }
+          }
+        } catch (subErr) {
+          // Non-fatal: submodel detection failed. Fall through to
+          // version_unavailable so the caller gets an actionable error.
+          log.warn(
+            { err: subErr, runId: run.id, projectId: run.projectId, modelId: run.modelId },
+            'visualiser dispatch: submodel auto-detection failed; falling back to version_unavailable',
+          );
+        }
+
+        if (!detectedAsTree) {
+          await releaseVisualiserSlot(reserved.workstationId).catch(() => null);
+          log.warn(
+            { runId: run.id, projectId: run.projectId, modelId: run.modelId, target: run.orbitTarget },
+            'visualiser dispatch: model has no versions yet',
+          );
+          // Caller-data problem, NOT a server misconfiguration: the model
+          // exists but has no committed version to stream. Surface a precise
+          // code so the portal doesn't think PRISM itself is broken.
+          return {
+            dispatched: false,
+            error: 'version_unavailable',
+            reason: `model ${run.modelId} in project ${run.projectId} has no versions on ORBIT ${run.orbitTarget} yet`,
+          };
+        }
+      } else {
+        resolvedVersionId = latestId;
+        log.info(
+          { runId: run.id, resolvedVersionId },
+          'visualiser dispatch: resolved latest versionId (none supplied by caller)',
         );
-        // Caller-data problem, NOT a server misconfiguration: the model
-        // exists but has no committed version to stream. Surface a precise
-        // code so the portal doesn't think PRISM itself is broken.
-        return {
-          dispatched: false,
-          error: 'version_unavailable',
-          reason: `model ${run.modelId} in project ${run.projectId} has no versions on ORBIT ${run.orbitTarget} yet`,
-        };
+        await appendVisualiserRunLog(run.id, `resolved latest version ${resolvedVersionId} (none supplied by caller)`, { log });
+        // Persist so the admin UI shows which version is actually running.
+        await db
+          .update(visualiserRuns)
+          .set({ versionId: resolvedVersionId, updatedAt: new Date() })
+          .where(eq(visualiserRuns.id, run.id));
       }
-      resolvedVersionId = latestId;
-      log.info(
-        { runId: run.id, resolvedVersionId },
-        'visualiser dispatch: resolved latest versionId (none supplied by caller)',
-      );
-      await appendVisualiserRunLog(run.id, `resolved latest version ${resolvedVersionId} (none supplied by caller)`, { log });
-      // Persist so the admin UI shows which version is actually running.
-      await db
-        .update(visualiserRuns)
-        .set({ versionId: resolvedVersionId, updatedAt: new Date() })
-        .where(eq(visualiserRuns.id, run.id));
     } catch (err) {
       await releaseVisualiserSlot(reserved.workstationId).catch(() => null);
       const msg = err instanceof OrbitClientError
@@ -501,7 +560,7 @@ export async function tryDispatchVisualisation(
     orbitToken,
     projectId: run.projectId,
     modelId: run.modelId,
-    modelName: run.modelName ?? undefined,
+    modelName: effectiveModelName,
     importMode: isTreeImport ? 'tree' : undefined,
     versionId: resolvedVersionId ?? undefined,
     templateTag: run.templateTag ?? undefined,
@@ -535,7 +594,7 @@ export async function tryDispatchVisualisation(
   await appendVisualiserRunLog(
     run.id,
     isTreeImport
-      ? `dispatched to workstation ${agent.nodeName}; tree import (model: ${run.modelName ?? run.modelId})`
+      ? `dispatched to workstation ${agent.nodeName}; tree import (model: ${effectiveModelName ?? run.modelId})`
       : `dispatched to workstation ${agent.nodeName}; orchestrator importing version ${resolvedVersionId}`,
     { log },
   );
