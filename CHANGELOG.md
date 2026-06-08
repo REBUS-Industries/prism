@@ -13,7 +13,7 @@ Each `## vX.Y.Z` section below is auto-extracted into the matching GitHub
 Release body on tag push (see `.github/workflows/agent.yml`, step *Extract
 release notes from CHANGELOG*). Use the format:
 
-    ## vX.Y.Z — Optional title
+    ## vX.Y.Z â€” Optional title
 
     - Bullet describing change 1
     - Bullet describing change 2
@@ -27,17 +27,22 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ## Unreleased
 
-### Fixed — Visualiser stream no longer drops at ~5 minutes while being watched
+### Investigated â€” Parent-model (tree) import blocked by "no versions yet" error
+
+- **Root cause identified.** `server/src/jobs/dispatcher.ts` (lines ~419â€“439) calls `getLatestVersionId` (ORBIT GraphQL `model.versions(limit:1)`) before launching UE. A parent container model (e.g. `building`) that has no committed versions of its own â€” only submodels like `building/shell` â€” returns `null`, and the dispatcher immediately rejects the run with `version_unavailable`. The UE connector is never reached, which is why v0.4.8/v0.4.9 connector changes had no effect.
+- **Fix specified, not yet implemented.** Full change specification (root cause, 4-layer fix, and test plan) documented in `PRISM/docs/PARENT_MODEL_IMPORT_HANDOFF.md`. The fix introduces an `importMode: 'tree'` flag on the `POST /api/visualiser/streams` API that bypasses version resolution, threads `modelName` + `importMode` through the dispatcher â†’ agent protocol â†’ orchestrator CLI â†’ UE command line, and adds a branch in `FOrbitHeadlessAutoImport.cpp` to call `OrbitImportTree` instead of `OrbitImport`.
+
+### Fixed â€” Visualiser stream no longer drops at ~5 minutes while being watched
 
 - **Root cause.** The signalling-WS JWT had a 300 s (5-minute) TTL and the
   browser player refreshed it only ONCE after connect. Epic's PS frontend
   re-invokes its (synchronous) signalling-URL builder on every auto-reconnect,
   so the first time the signalling socket reconnected after ~5 min it
   re-presented the now-expired token; the server rejected the WS with 4401 and
-  the lib's auto-reconnect could not recover — dropping an actively-watched
+  the lib's auto-reconnect could not recover â€” dropping an actively-watched
   viewer right at the 5-minute mark. (300 s == the reported symptom.)
 - **Web.** `PixelStreamingPlayer.vue` now keeps the cached signalling URL's
-  token fresh — refreshing on a 60 s interval AND immediately on disconnect —
+  token fresh â€” refreshing on a 60 s interval AND immediately on disconnect â€”
   so every (re)connect carries a live JWT. The stable per-viewer `viewerId` is
   preserved across refreshes, so the Wilbur player + controller seat survive.
 - **Server.** `JWT_SIGNALLING_TTL_SEC` default raised **300 -> 3600** (1 hour)
@@ -51,64 +56,74 @@ through unchanged. Lines preceding the first `## v` header (including the
   guarantees a long-watched (input-idle) stream can never be AFK-reaped even if
   a lib default or stray URL param changed.
 
-### Fixed — Visualiser idle reaper now viewer-aware (no more "no activity" false positives)
+### Fixed â€” Visualiser idle reaper now viewer-aware (no more "no activity" false positives)
 
 - **Server.** A live (`streaming`) visualiser run is now only reaped for
-  inactivity when it has **zero connected browser viewers** — never while a
+  inactivity when it has **zero connected browser viewers** â€” never while a
   viewer is watching. The authoritative signal is the count of open viewer
   signalling sockets in `signallingProxyRegistry` (a viewer keeps that socket
   open for the whole session), so a viewer who is merely WATCHING (no
   mouse/keyboard input) is correctly counted as active. This avoids the
   false-positive class where "activity" was conflated with recent
-  signalling/input traffic — in PRISM's non-SFU topology the WebRTC media +
+  signalling/input traffic â€” in PRISM's non-SFU topology the WebRTC media +
   input data channel go peer-to-peer and the signalling stream goes quiet a
   few seconds after negotiation even while the viewer is actively watching.
 - New `server/src/visualiser/idleReaper.ts`: when the last viewer of a run
   disconnects, a per-run countdown starts; any viewer (re)connect cancels it.
   If it elapses the run is ended with a clear, diagnosable reason
   (`no viewers connected for Ns`) and the GPU is reclaimed (agent
-  `cancelVisualisation`, row → `ended` with `failureReason='idle_no_viewers'`,
+  `cancelVisualisation`, row â†’ `ended` with `failureReason='idle_no_viewers'`,
   slot released, signalling sockets closed).
 - Configurable via `VISUALISER_IDLE_TIMEOUT_MS` (default **600000** = 10 min;
   `0` disables). This is **separate from** the pre-`streaming`
-  `VISUALISER_START_TIMEOUT_MS` start timeout — the two are not conflated.
+  `VISUALISER_START_TIMEOUT_MS` start timeout â€” the two are not conflated.
 
-### Docs — Visualiser multi-viewer & session-control API (docs-only)
+### Docs â€” Visualiser multi-viewer & session-control API (docs-only)
 
 - New `docs/API_MULTIVIEW_SESSION_CONTROL.md`: the session lifecycle state
-  machine (`queued→importing→streaming→ended/failed`), every
+  machine (`queuedâ†’importingâ†’streamingâ†’ended/failed`), every
   `/api/visualiser/*` REST endpoint (including the previously-undocumented
-  share-link routes), the server↔agent WS protocol
+  share-link routes), the serverâ†”agent WS protocol
   (`startVisualisation`/`visualisationReady`/`Failed`/`Ended`/`cancelVisualisation`/
   `signallingFrame`/`signallingViewerClose`/`setViewerControl`), the multi-viewer
   model (per-viewer demux, view/control tiers, single-controller lock + control
-  WS, input gate, share links, ≈5-viewer / single-tenant limits), and
+  WS, input gate, share links, â‰ˆ5-viewer / single-tenant limits), and
   end-to-end examples. Cross-linked from `PORTAL_INTEGRATION.md`.
 - OpenAPI (`server/src/docs/openapi.ts`): documented the share-link endpoints
-  (`POST`/`GET /streams/{runId}/shares`, public `…/shares/exchange`,
-  `DELETE …/shares/{id}`) + schemas; added `viewerId`/`tier` to the
+  (`POST`/`GET /streams/{runId}/shares`, public `â€¦/shares/exchange`,
+  `DELETE â€¦/shares/{id}`) + schemas; added `viewerId`/`tier` to the
   signalling-token response; corrected the start-timeout note to the current
   600 s code default.
 
-### Visualiser — OrbitConnector.UE5 import path (feature branch, not yet tagged)
+### Visualiser â€” OrbitConnector.UE5 import path (feature branch, not yet tagged)
 
 - **Agent `AgentConfig.VisualiserConnectorImport`** (`bool?`, tri-state): `true`
   forces the connector-import path, `false` forces the legacy Interchange path,
   `null` (default) lets the orchestrator auto-detect based on whether the fixed
   visualiser project carries a usable `OrbitConnector.UE5` plug-in + `orbit-cli`.
 - **`VisualiserJob`** now always forwards `PRISM_VISUALISER_TEMPLATE_PROJECT`
-  (from `VisualiserTemplateProjectPath`) to the orchestrator — previously
-  full-editor only — and forwards `PRISM_VISUALISER_CONNECTOR_IMPORT` when the
+  (from `VisualiserTemplateProjectPath`) to the orchestrator â€” previously
+  full-editor only â€” and forwards `PRISM_VISUALISER_CONNECTOR_IMPORT` when the
   config is set. It also recognises the orchestrator's
   `prism-visualiser/connector-import/v1` stdout event.
 - Orchestrator + connector details: see `PRISM/visualiser/CHANGELOG.md`
   (v0.5.13), `orbit-connectors` CHANGELOG (v0.1.24), and
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
-- Agent↔server protocol is unchanged (backward-compatible).
+- Agentâ†”server protocol is unchanged (backward-compatible).
 
-## v0.3.37 — 2026-06-05 — Fix "Latest" template dropdown still pulls old version on existing installs
+## v0.3.38 -- 2026-06-08 -- Parent model (tree) import
 
-### Fixed — "Latest release" now correctly resolves the newest template even when an old tag is persisted in agent-config.json
+### Added -- `importMode: 'tree'` skips version check, threads tree-import through all layers
+
+- **Server (POST /api/visualiser/streams).** Accepts importMode: 'tree' in the request body; dispatcher bypasses getLatestVersionId (which returns null for parent/container models with no committed versions of their own) and forwards importMode + modelName via the agent protocol.
+- **Shared contracts (gent-protocol.ts/.json/AgentProtocol.cs).** StartVisualiserPayload gains ImportMode and ModelName fields so the tree-import intent survives the WS hop server -> agent.
+- **Agent (VisualiserJob.cs).** Forwards importMode and modelName as CLI args to the orchestrator process.
+- **Orchestrator (RunManifest.cs, OrbitImportParams.cs, Program.cs, UnrealLauncher.cs).** RunManifest carries the new fields; OrbitImportParams exposes ImportMode; Program.cs branches on 	ree to skip per-version resolution; UnrealLauncher appends -OrbitImportMode=tree -OrbitModelName=<name> to the UE command line.
+- **DB migration  009_visualiser_tree_import.** Adds import_mode and model_name columns to the visualiser-streams table.
+
+## v0.3.37 â€” 2026-06-05 â€” Fix "Latest" template dropdown still pulls old version on existing installs
+
+### Fixed â€” "Latest release" now correctly resolves the newest template even when an old tag is persisted in agent-config.json
 
 **Root cause.** v0.3.36 only blanked the compile-time default of
 `UnrealTemplateTag` in `AgentConfig.cs`. Existing workstations have
@@ -117,49 +132,49 @@ At runtime `_cfg.UnrealTemplateTag = "v1.0.0-ue5.7"` still, and the
 `PullTemplate` control plane fell back to it when the UI sent an empty `tag`:
 
 ```
-UI sends tag="" → PullTemplate: tag=null
-                → startedTag = _cfg.UnrealTemplateTag = "v1.0.0-ue5.7"
-                → PullAsync(configuredTag="v1.0.0-ue5.7")
-                → ResolveReleaseAsync resolves that specific old tag ✗
+UI sends tag="" â†’ PullTemplate: tag=null
+                â†’ startedTag = _cfg.UnrealTemplateTag = "v1.0.0-ue5.7"
+                â†’ PullAsync(configuredTag="v1.0.0-ue5.7")
+                â†’ ResolveReleaseAsync resolves that specific old tag âœ—
 ```
 
 The connector was already `""` in config so it was unaffected, which is why
 the connector resolved latest (v0.4.0) correctly but the template did not.
 
-**Fix — explicit `"latest"` sentinel through the whole call chain.**
+**Fix â€” explicit `"latest"` sentinel through the whole call chain.**
 
-1. **`IndexHtml.cs`** — the "Latest release" option in the template version
+1. **`IndexHtml.cs`** â€” the "Latest release" option in the template version
    dropdown now has `value="latest"` (was `""`). The `doPull()` function sends
    `tag: "latest"` in the POST body (a non-empty string is truthy so the existing
    `if (tag) body.tag = tag` includes it). The toast label handles the sentinel:
    `(!tag || tag === 'latest') ? 'latest UE template' : 'version ' + tag`.
 
-2. **`AgentControlPlane.PullTemplate`** — detects the sentinel
+2. **`AgentControlPlane.PullTemplate`** â€” detects the sentinel
    (`wantsLatest = tag?.Trim() === "latest"`) and explicitly **bypasses** the
    persisted `_cfg.UnrealTemplateTag` by passing `configuredTag: ""` to
    `PullAsync` (instead of `_cfg.UnrealTemplateTag`). This means both
    `requestedTag` and `configuredTag` are blank and `ResolveReleaseAsync` calls
-   `TryGetReleaseAsync(null)` → `GET /releases?per_page=1` → newest release. ✓
+   `TryGetReleaseAsync(null)` â†’ `GET /releases?per_page=1` â†’ newest release. âœ“
 
 **Call chain after the fix:**
 ```
-UI sends tag="latest" → PullTemplate: wantsLatest=true, tag=null
-                      → PullAsync(requestedTag=null, configuredTag="")
-                      → ResolveReleaseAsync: both blank → TryGetReleaseAsync(null)
-                      → GET /releases?per_page=1 → v1.0.96-ue5.7 (or newest) ✓
+UI sends tag="latest" â†’ PullTemplate: wantsLatest=true, tag=null
+                      â†’ PullAsync(requestedTag=null, configuredTag="")
+                      â†’ ResolveReleaseAsync: both blank â†’ TryGetReleaseAsync(null)
+                      â†’ GET /releases?per_page=1 â†’ v1.0.96-ue5.7 (or newest) âœ“
 ```
 
 Workstations that have a specific tag saved in config (and have NOT selected
 "Latest") continue to use their saved tag as before. The sentinel only fires
 when the dropdown is explicitly on "Latest release".
 
-## v0.3.36 — 2026-06-05 — Fix "Latest" resolving wrong (old) template/connector version
+## v0.3.36 â€” 2026-06-05 â€” Fix "Latest" resolving wrong (old) template/connector version
 
-### Fixed — "Latest" in the pull dropdown was pulling an old version
+### Fixed â€” "Latest" in the pull dropdown was pulling an old version
 
 Two root causes:
 
-1. **`AgentConfig.UnrealTemplateTag` default was `"v1.0.0-ue5.7"`** — the
+1. **`AgentConfig.UnrealTemplateTag` default was `"v1.0.0-ue5.7"`** â€” the
    hardcoded default flowed as `configuredTag` into `TemplatePuller.PullAsync`,
    which tried to resolve that specific old tag before falling back to "latest".
    Since the tag still exists on GitHub the fallback never fired, so "Latest" in
@@ -167,9 +182,9 @@ Two root causes:
    (blank). Blank now means *resolve the most recently published release at pull
    time*, documented in the field comment. Workstations that have
    `UnrealTemplateTag` set to a specific value in `agent-config.json` are
-   unaffected — the override only applies when the saved value is blank.
+   unaffected â€” the override only applies when the saved value is blank.
 
-2. **`GET /releases/latest` skips pre-releases** — `TryGetReleaseAsync` (used for
+2. **`GET /releases/latest` skips pre-releases** â€” `TryGetReleaseAsync` (used for
    both the template "latest" path and as a fallback when a configured tag is
    missing) was calling `GET /repos/{owner}/{repo}/releases/latest`. GitHub's
    `/releases/latest` endpoint returns the most recent **non-prerelease,
@@ -182,18 +197,18 @@ Two root causes:
    for the connector "latest" path.
 
 **Verification of the "Latest" call chain after the fix:**
-- Operator selects "Latest" → UI sends empty `tag`
-- `AgentControlPlane.PullTemplate(tag=null)` → `PullAsync(requestedTag=null, configuredTag="")`
-- `ResolveReleaseAsync`: both tags empty → `TryGetReleaseAsync(repo, tag=null)`
-- `TryGetReleaseAsync(null)` → `GET /releases?per_page=1` → most recently published release ✓
+- Operator selects "Latest" â†’ UI sends empty `tag`
+- `AgentControlPlane.PullTemplate(tag=null)` â†’ `PullAsync(requestedTag=null, configuredTag="")`
+- `ResolveReleaseAsync`: both tags empty â†’ `TryGetReleaseAsync(repo, tag=null)`
+- `TryGetReleaseAsync(null)` â†’ `GET /releases?per_page=1` â†’ most recently published release âœ“
 
-**Note:** `OrbitConnectorTag` already defaulted to `""` (blank) — no change needed.
+**Note:** `OrbitConnectorTag` already defaulted to `""` (blank) â€” no change needed.
 `ListReleasesAsync` already used `/releases?per_page=50` and did not filter
-pre-releases — already correct.
+pre-releases â€” already correct.
 
-## v0.3.35 — 2026-06-05 — Connector version dropdown: releases, pre-releases, and dev branches
+## v0.3.35 â€” 2026-06-05 â€” Connector version dropdown: releases, pre-releases, and dev branches
 
-### Added — Pick any connector version (including dev branches) in the pull UI
+### Added â€” Pick any connector version (including dev branches) in the pull UI
 
 - **Connector version picker** on the agent web UI's Visualiser card: a
   `<select>` dropdown, populated from a new
@@ -202,18 +217,18 @@ pre-releases — already correct.
     annotated as pre-release; pre-built `OrbitConnector-UE5-plugin-*.zip` asset
     indicated; source-only releases noted separately).
   - **Branches** (all branches from the connector repo, labelled as `(branch,
-    source — requires Compile after pull)`).
-  - **Custom ref…** — reveals a text input for any arbitrary ref (tag, branch
+    source â€” requires Compile after pull)`).
+  - **Custom refâ€¦** â€” reveals a text input for any arbitrary ref (tag, branch
     name, short SHA).
   - Default: **Latest release** (empty = existing configured/default behaviour,
     preserved for ops that don't select anything). The dropdown is NOT saved to
     config; it is a per-pull override only.
-- **`ListConnectorRefsAsync`** — fetches releases (ETag-conditional, 304 free)
+- **`ListConnectorRefsAsync`** â€” fetches releases (ETag-conditional, 304 free)
   **and** branches (`GET /repos/{owner}/{repo}/branches`) for the configured
   connector repo in one combined response. Branches are prefixed with `branch:`
   in the returned `Ref` value so the pull flow distinguishes them.
 - **Branch ref resolution in the pull flow** (`ResolveConnectorAssetAsync`):
-  - `branch:<name>` → directly downloads the source zipball for that branch
+  - `branch:<name>` â†’ directly downloads the source zipball for that branch
     (`GET /repos/{owner}/{repo}/zipball/{branch}`) and falls through to the
     existing `.uplugin`-scan + copy path. The C++ source is compiled by UBT as
     part of the normal `CompileProjectAsync` step (requires
@@ -223,30 +238,30 @@ pre-releases — already correct.
     that ref, with a warning logged.
   - Source-path merges are clearly labelled in progress messages:
     *"installing connector from branch HEAD feat/foo (source, will compile)"*
-    vs *"downloading connector v0.1.28…"*.
-- The selection is plumbed as `connectorRef` in the pull body →
-  `AgentControlPlane.PullTemplate(connectorRef:)` → `PullAsync(connectorTag:)`
-  — **overrides** the persisted `OrbitConnectorTag` for this pull only (the
+    vs *"downloading connector v0.1.28â€¦"*.
+- The selection is plumbed as `connectorRef` in the pull body â†’
+  `AgentControlPlane.PullTemplate(connectorRef:)` â†’ `PullAsync(connectorTag:)`
+  â€” **overrides** the persisted `OrbitConnectorTag` for this pull only (the
   config value is unchanged).
 - Cache with ETag (same 5-min TTL as template releases; 304 revalidations are
   free against the GitHub rate limit). Authenticated with the GitHub token when
   set.
 
-## v0.3.34 — 2026-06-05 — Install a UE Engine plugin from a URL (agent web UI)
+## v0.3.34 â€” 2026-06-05 â€” Install a UE Engine plugin from a URL (agent web UI)
 
-### Added — Paste a link, install into Engine\Plugins
+### Added â€” Paste a link, install into Engine\Plugins
 
 - **New "Install Engine Plugin (from URL)" section** on the agent web UI: paste
   an http(s) link to a `.zip`, click **Install**, and watch the
-  download → extract → copy progress + the installed plug-in list inline. The UI
+  download â†’ extract â†’ copy progress + the installed plug-in list inline. The UI
   notes prominently that **the file must contain a `Plugins` folder with the
   plug-in files/folders inside it**, which are copied into the UE Engine's
   `Engine\Plugins` directory.
 - **`EnginePluginInstaller`** (`agent/src/PRISM.Agent/Visualiser/`): validates the
-  URL (http/https only — no `file://`/local paths), stream-downloads to a temp
+  URL (http/https only â€” no `file://`/local paths), stream-downloads to a temp
   file (20-min timeout, 4 GB cap, actionable HTTP errors), verifies it's a zip
   (`.zip` or PK magic), extracts, then **locates the single `Plugins` folder**
-  (case-insensitive) at the archive root or one level down — erroring clearly on
+  (case-insensitive) at the archive root or one level down â€” erroring clearly on
   none/ambiguous. Each entry (file AND folder) inside that `Plugins` folder is
   copied into `<UnrealEngineRoot>\Engine\Plugins\`, **overwriting same-named
   plug-ins only** (the rest of `Engine\Plugins` is never touched). Reuses the
@@ -257,53 +272,53 @@ pre-releases — already correct.
   engine root or `Engine\Plugins` is reported with an actionable message.
 - **Unreal-running guard:** engine plug-in DLLs are locked while the editor is
   open, so the install reuses the same `UnrealProcessGuard`
-  detect → prompt → force-close flow as the template pull. If UE is running the
+  detect â†’ prompt â†’ force-close flow as the template pull. If UE is running the
   install is refused with HTTP 409 + the process list; the web UI prompts
-  *"Unreal is running (N) — force-close and continue?"*; on confirm it re-invokes
+  *"Unreal is running (N) â€” force-close and continue?"*; on confirm it re-invokes
   with `forceCloseUnreal`, which kills UE, waits for handles to release, then
   copies. Default is safe (no auto-kill without confirmation).
 - **Endpoint:** `POST /api/engine-plugin/install` (`{ url, force? }`); progress is
   surfaced via `AgentControlPlane.InstallEnginePlugin` (single-flight gate +
   status) on `/api/state` as `enginePluginInstall`. No secrets logged.
 
-## v0.3.33 — 2026-06-04 — /uelogs ignore (exclude) filter
+## v0.3.33 â€” 2026-06-04 â€” /uelogs ignore (exclude) filter
 
-### Added — Hide noisy UE console lines by pattern
+### Added â€” Hide noisy UE console lines by pattern
 
 - The **`/uelogs`** live console page gains an **Ignore** filter alongside the
   existing Include filter. Enter one or more exclude patterns (**one per line
   and/or comma-separated**); a line is hidden if it matches **any** of them.
 - **Precedence:** a line is shown only when it passes the Include filter (if
-  set) **AND** matches **no** Ignore pattern — i.e. Ignore always wins. Both are
+  set) **AND** matches **no** Ignore pattern â€” i.e. Ignore always wins. Both are
   case-insensitive substring matches and apply to **both** the replayed backlog
   and live-appended SSE lines.
 - **Persistence:** the Include and Ignore filters are saved in
   <c>localStorage</c> (per browser), so they survive page reloads and SSE
   reconnects.
-- **Quality of life:** a **✕ ignore** clear button, and **double-click a line**
+- **Quality of life:** a **âœ• ignore** clear button, and **double-click a line**
   (or select text first) to add it to the ignore list via a prompt. The line
   counter now reads **"showing X of Y"** when a filter is active so it's obvious
   filtering is on; the auto-scroll, clear, status indicator, sequence-dedup, and
   the DOM cap (counters stay consistent as capped rows are evicted) all keep
   working. Client-side only, vanilla JS, no new endpoints.
 
-## v0.3.32 — 2026-06-04 — Live UE console-log page in the agent web UI (/uelogs)
+## v0.3.32 â€” 2026-06-04 â€” Live UE console-log page in the agent web UI (/uelogs)
 
-### Added — Stream the Unreal Engine console to the browser, no RDP needed
+### Added â€” Stream the Unreal Engine console to the browser, no RDP needed
 
-- **New `/uelogs` page** (`http://<agent-host>:7421/uelogs`) — a live,
+- **New `/uelogs` page** (`http://<agent-host>:7421/uelogs`) â€” a live,
   auto-scrolling, monospace tail of the Unreal Engine `-game` / editor console
   output for visualiser runs on that workstation. Operators can watch UE logs in
   the browser without remoting into the box. Includes an auto-scroll
   (pin-to-bottom) toggle, a case-insensitive text filter, a clear button, a line
   counter, a timestamp/runId toggle, and a connection-status indicator with
   automatic reconnect. Linked from the Visualiser section of the main agent page.
-- **`GET /api/uelogs/stream` (Server-Sent Events)** — replays the recent backlog
+- **`GET /api/uelogs/stream` (Server-Sent Events)** â€” replays the recent backlog
   (`?n=`, default 1000) then live-appends each new line. Tolerates many
   concurrent viewers (each gets its own bounded subscription) and cleans up on
   client disconnect / agent shutdown; a 15 s heartbeat detects half-open sockets
   and the client de-dupes by sequence number across reconnects.
-- **`UeLogBroadcaster`** — an in-process singleton ring buffer (last
+- **`UeLogBroadcaster`** â€” an in-process singleton ring buffer (last
   **4,000** lines, oldest evicted) + pub/sub. `VisualiserJob` taps it on every
   orchestrator **stdout and stderr** line (the stderr stream carries the UE
   `ue-game` / `ue-editor-stream` console output), tagging each with the `runId`.
@@ -316,11 +331,11 @@ pre-releases — already correct.
 
 - No new secret exposure: the orchestrator already redacts `-OrbitToken` /
   `-RebusApiKey` before they reach its console, and the broadcaster relays
-  console lines verbatim — it never reads agent config or the child environment.
+  console lines verbatim â€” it never reads agent config or the child environment.
 
-## v0.3.31 — 2026-06-03 — Admin Workstations versions stay in sync with the agent's own UI
+## v0.3.31 â€” 2026-06-03 â€” Admin Workstations versions stay in sync with the agent's own UI
 
-### Fixed — Installed UE template / connector version no longer goes stale on the admin Workstations page
+### Fixed â€” Installed UE template / connector version no longer goes stale on the admin Workstations page
 
 - **Root cause (server).** The agent's local web UI reads the on-disk
   `.prism-template.json` marker *live on every request*, but the central admin
@@ -329,13 +344,13 @@ pre-releases — already correct.
   pull or a config mutation, but the server's WS handler dropped **every** hello
   after the first on a given socket (`duplicate hello on same socket; ignoring`).
   So the admin row stayed frozen at whatever was true at initial connect and
-  only ever updated on a full reconnect — diverging from the agent's own UI.
+  only ever updated on a full reconnect â€” diverging from the agent's own UI.
 - **Server.** A re-`hello` on an established connection is now treated as a
   REFRESH of the workstation's self-reported fields (nodeName, formats, slots,
   agent version, rhino version, installed template tag, installed connector
   tag) and broadcasts a workstation update so the admin SPA re-fetches. It does
   NOT create a second `agent_sessions` row, re-run the queued-job dispatch
-  sweep, or touch the admin-managed role flags. (No protocol or schema change —
+  sweep, or touch the admin-managed role flags. (No protocol or schema change â€”
   the `installed_template_tag` / `installed_connector_tag` columns already
   exist.)
 - **Agent.** The heartbeat loop now re-resolves the installed versions every
@@ -343,30 +358,30 @@ pre-releases — already correct.
   the last announcement, so an out-of-band change (a pull that didn't go through
   the control plane, a manual template swap) converges the admin row within one
   heartbeat interval rather than waiting for a reconnect.
-- Agent↔server protocol is unchanged (backward-compatible). Existing
+- Agentâ†”server protocol is unchanged (backward-compatible). Existing
   workstations self-correct on their next connect once the server is deployed;
   no manual re-pull or agent restart is required for the server-side fix.
 
-## v0.3.30 — 2026-06-03 — Self-diagnosing compile failures (surface UBT log + C++ toolchain hint)
+## v0.3.30 â€” 2026-06-03 â€” Self-diagnosing compile failures (surface UBT log + C++ toolchain hint)
 
-### Changed — Template-pull compile errors are now actionable instead of a bare exit code
+### Changed â€” Template-pull compile errors are now actionable instead of a bare exit code
 
 - **Context.** On a workstation without a C++ build toolchain (e.g. a GPU/
   streaming box that only ever *ran* packaged builds), the compile-on-pull step
   fails almost instantly with `UnrealBuildTool exit 6` and
   `Platform Win64 is not a valid platform to build`. That is UBT's platform
   validation failing because there is **no MSVC v143 + Windows SDK** for it to
-  build Win64 with — not an engine-root or project problem (Build.bat + the
+  build Win64 with â€” not an engine-root or project problem (Build.bat + the
   bundled DotNet ran fine and got as far as "Creating makefile").
 - **Self-diagnosing failures.** `TemplatePuller.CompileProjectAsync` now:
   - detects the `is not a valid platform to build` signature and appends a
-    targeted, actionable hint to the `TemplatePullException` — install Visual
+    targeted, actionable hint to the `TemplatePullException` â€” install Visual
     Studio 2022 (or Build Tools) with the **Desktop development with C++**
     workload (MSVC v143 + a Windows 10/11 SDK), then restart the agent and pull
     again; or untick **Compile project after pull** to pull without compiling;
   - appends the tail of UBT's own `Log.txt`
-    (`%LOCALAPPDATA%\UnrealBuildTool\Log.txt`) — which carries the detailed
-    platform/SDK validation lines the redirected stdout summary omits — so the
+    (`%LOCALAPPDATA%\UnrealBuildTool\Log.txt`) â€” which carries the detailed
+    platform/SDK validation lines the redirected stdout summary omits â€” so the
     failure is diagnosable from the agent UI/log alone;
   - runs a **best-effort MSVC toolchain probe** (`vswhere -requires
     Microsoft.VisualStudio.Component.VC.Tools.x86.x64`) *before* compiling and
@@ -375,23 +390,23 @@ pre-releases — already correct.
     falsely refused).
 - **Escape hatch (unchanged, now documented).** Setting
   `VisualiserCompileProject = false` (the **Compile project after pull**
-  checkbox in the agent web UI — live-applied, read at pull time) skips the
-  compile entirely: the pull → connector-merge → install completes and the
+  checkbox in the agent web UI â€” live-applied, read at pull time) skips the
+  compile entirely: the pull â†’ connector-merge â†’ install completes and the
   project is installed un-compiled. Use it when the box runs a pre-built
   engine/project or compiles elsewhere. The compile engine is the configured
   `UnrealEngineRoot` (also web-UI editable), so an operator can point the
   compile at a specific full engine install.
-- No protocol or behaviour change to a working compile path — only failure
+- No protocol or behaviour change to a working compile path â€” only failure
   diagnostics + an early advisory warning.
 
-## v0.3.29 — 2026-06-03 — Installed UE template version is now marker-authoritative + show the merged connector version
+## v0.3.29 â€” 2026-06-03 â€” Installed UE template version is now marker-authoritative + show the merged connector version
 
-### Fixed — Agent reported a stale/incorrect "installed UE template" version
+### Fixed â€” Agent reported a stale/incorrect "installed UE template" version
 
 - **Root cause.** The version surfaced on the admin Workstations page (and the
   agent web UI) comes from `TemplateMarker.Resolve`, which prefers the on-disk
   `.prism-template.json` marker but **fell back to the persisted
-  `AgentConfig.VisualiserTemplateVersion`** whenever that marker was absent —
+  `AgentConfig.VisualiserTemplateVersion`** whenever that marker was absent â€”
   *without checking that the configured project still exists*. The marker was
   also only written by the post-pull control-plane path
   (`AgentControlPlane.PullTemplate`), never by the installer itself, and the
@@ -408,50 +423,50 @@ pre-releases — already correct.
   persisted config tags when the configured project directory still exists on
   disk; otherwise it reports `unknown` rather than a stale, incorrect version.
 
-### Added — Installed OrbitConnector version on the admin Workstations page
+### Added â€” Installed OrbitConnector version on the admin Workstations page
 
 - The admin Workstations row now shows a **`Connector <tag>`** pill next to the
   `UE <tag>` pill for visualiser-capable workstations (previously the connector
   tag was only in the tooltip). The agent already reports
   `installedConnectorTag` on `hello` (since v0.3.24) and the agent web UI
-  already shows it inline — this surfaces it in the admin SPA too. No protocol
+  already shows it inline â€” this surfaces it in the admin SPA too. No protocol
   or schema change (the field already exists end-to-end).
 
 > Operator note: a workstation only refreshes its reported version after the
-> agent re-sends `hello` — i.e. on the next agent (re)connect or the next
+> agent re-sends `hello` â€” i.e. on the next agent (re)connect or the next
 > successful template pull. Existing workstations that show a stale version
-> should be re-pulled (or the agent restarted) once running ≥ v0.3.29 so the
+> should be re-pulled (or the agent restarted) once running â‰¥ v0.3.29 so the
 > installer writes a fresh marker.
 
 
 
-### Fixed — `Access to the path '…\Templates\<Project>' is denied` on template pull
+### Fixed â€” `Access to the path 'â€¦\Templates\<Project>' is denied` on template pull
 
 - **Root cause.** The pull's stage-and-swap step renames the live template
   folder aside before moving the freshly-staged copy into place
-  (`TemplatePuller.InstallProject` → `Directory.Move(dest, backup)`). When the
+  (`TemplatePuller.InstallProject` â†’ `Directory.Move(dest, backup)`). When the
   **Unreal Editor was still running** it held open handles into that project
   tree, so the move failed with `UnauthorizedAccessException` ("Access to the
-  path '…' is denied"). Read-only attributes on git-sourced / UE
+  path 'â€¦' is denied"). Read-only attributes on git-sourced / UE
   `Intermediate`/`Saved` files were a secondary trigger for the recursive
   deletes.
-- **Primary fix — detect → prompt → force-close.** A pull now checks for
+- **Primary fix â€” detect â†’ prompt â†’ force-close.** A pull now checks for
   running Unreal processes (`UnrealEditor`, `UnrealEditor-Cmd`,
   `CrashReportClient`, `UnrealBuildTool`) **before** touching the template
   folder. If any are found and the caller did not opt into force-close, the
   pull is refused and the running instances (names + PIDs + count) are returned.
-  The **agent web UI** shows a confirm prompt — *"Unreal Engine is running (N
+  The **agent web UI** shows a confirm prompt â€” *"Unreal Engine is running (N
   instance(s)). Pulling a new template requires closing it. Force-close and
-  continue?"* — and on confirm re-invokes the pull with `forceCloseUnreal`,
+  continue?"* â€” and on confirm re-invokes the pull with `forceCloseUnreal`,
   which kills the detected process trees (`Process.Kill(entireProcessTree:
   true)`), waits for full exit + file-handle release (poll until gone + settle
-  delay), then runs the normal pull → connector merge → compile. Progress is
-  surfaced in the existing `templatePull` status ("closing Unreal…", then the
+  delay), then runs the normal pull â†’ connector merge â†’ compile. Progress is
+  surfaced in the existing `templatePull` status ("closing Unrealâ€¦", then the
   usual stages). The PRISM orchestrator (`prism-visualiser.exe`) is **never**
   targeted; closing a `UnrealEditor-Cmd` that belongs to a live visualiser
   session is the explicit, operator-confirmed consequence and is called out in
   the prompt.
-- **Defense-in-depth — robust delete/swap.** `InstallProject` now sweeps stale
+- **Defense-in-depth â€” robust delete/swap.** `InstallProject` now sweeps stale
   `.<name>.pull-*` / `<name>.old-*` artifacts from prior aborted runs, strips
   `FileAttributes.ReadOnly` recursively before every delete/move, retries
   delete/move with bounded backoff for transient locks, and on a genuinely
@@ -460,12 +475,12 @@ pre-releases — already correct.
   raw OS error.
 - **Contract + admin parity.** `PullTemplateData` gained an optional `force`
   boolean (`shared/contracts/agent-protocol.{json,ts,cs}`), threaded through the
-  agent WS dispatcher → `AgentControlPlane.PullTemplate(tag, forceCloseUnreal)`,
+  agent WS dispatcher â†’ `AgentControlPlane.PullTemplate(tag, forceCloseUnreal)`,
   the server `POST /:id/pull-template` route, and the admin **Workstations**
   page (its confirm dialog now warns that a running Editor is force-closed and
   sends `force: true`).
 
-## v0.3.27 — 2026-06-03 — Re-bundle the orchestrator (visualiser v0.5.19, import-orientation fix)
+## v0.3.27 â€” 2026-06-03 â€” Re-bundle the orchestrator (visualiser v0.5.19, import-orientation fix)
 
 This is primarily a **release-coordination bump** so workstations get the current
 `prism-visualiser` orchestrator through the normal agent update flow. The agent
@@ -473,45 +488,45 @@ build publishes the orchestrator from source and bundles it under
 `Visualiser/` (see `.github/workflows/agent.yml`), so tagging `v0.3.27` ships:
 
 - **Visualiser orchestrator v0.5.19**, including the **imported-model orientation
-  fix** — the Interchange importer (`import_orbit.py`) now yaws the model root
-  **90° clockwise** about Z (`ORBIT_IMPORT_YAW_DEGREES = +90.0`, overridable via
-  `PRISM_VISUALISER_IMPORT_YAW_DEG`). Plus the v0.5.15–v0.5.18 orchestrator work
+  fix** â€” the Interchange importer (`import_orbit.py`) now yaws the model root
+  **90Â° clockwise** about Z (`ORBIT_IMPORT_YAW_DEGREES = +90.0`, overridable via
+  `PRISM_VISUALISER_IMPORT_YAW_DEG`). Plus the v0.5.15â€“v0.5.18 orchestrator work
   (Portal `-PortalUrl`/`-RebusApiKey`, `-Orbit*` IDs on the UE command line for
   all plugins, deterministic `.uproject` selection, local-template-in-place).
 - The agent features already landed since the last workstation update:
-  v0.3.22 (Portal URL + REBUS API key from the web UI), v0.3.23–v0.3.24
+  v0.3.22 (Portal URL + REBUS API key from the web UI), v0.3.23â€“v0.3.24
   (multi-viewer/doc reconcile), v0.3.25 (authenticated GitHub API calls +
   rate-limit errors), v0.3.26 (GitHub token from the web UI).
 
 > **Connector-import caveat:** the orientation fix lives in the Interchange
 > importer. If a workstation's session uses the connector-import path
 > (`visualiserConnectorImport: true`, or auto-detect when the fixed project
-> bundles `OrbitConnector`), `import_orbit.py` does not run — that path needs the
+> bundles `OrbitConnector`), `import_orbit.py` does not run â€” that path needs the
 > `orbit-connectors` `Yaw = +90` change, or force Interchange with
 > `PRISM_VISUALISER_CONNECTOR_IMPORT=0`.
 
-## v0.3.26 — 2026-06-03 — Set the GitHub token from the agent web UI
+## v0.3.26 â€” 2026-06-03 â€” Set the GitHub token from the agent web UI
 
 ### Added
 
-- **`AgentConfig.GitHubToken`** — the GitHub PAT for the template/connector
+- **`AgentConfig.GitHubToken`** â€” the GitHub PAT for the template/connector
   pull + version picker can now be set from the **agent web UI** (Visualiser/
-  Template card → *GitHub token* field), not just the
+  Template card â†’ *GitHub token* field), not just the
   `PRISM_GITHUB_TOKEN` / `GITHUB_TOKEN` environment variables. It is read at
   pull time, so fixing a rate-limit needs **no OS env var and no restart**.
 - **Token precedence:** the configured `GitHubToken` wins; if blank, the agent
   falls back to `PRISM_GITHUB_TOKEN` then `GITHUB_TOKEN` (existing env behaviour
   preserved). Threaded through **every** agent GitHub call path:
-  `TemplatePuller.CreateHttpClient` → the pull (`PullAsync` → template release
+  `TemplatePuller.CreateHttpClient` â†’ the pull (`PullAsync` â†’ template release
   resolve + connector resolve/merge) and the version-picker
-  (`AgentWebUi` → `ListReleasesAsync`).
+  (`AgentWebUi` â†’ `ListReleasesAsync`).
 
 ### Security
 
 - **`GitHubToken` is a secret, handled exactly like `RebusApiKey`:** persisted
   to `agent-config.json`, **never logged**, and **never echoed back** in
   `/api/config` state (the UI sees only a `gitHubTokenSet` boolean). The web-UI
-  field is write-only — populated from `gitHubTokenSet` (placeholder
+  field is write-only â€” populated from `gitHubTokenSet` (placeholder
   "token set" / "not set"), sent only when the operator types a value, and
   cleared after save. A null/blank update **leaves the stored token unchanged**
   (so an unrelated save never wipes it); only a non-blank value replaces it.
@@ -521,17 +536,17 @@ build publishes the orchestrator from source and bundles it under
 - The actionable rate-limit error now also points operators at the agent web
   UI's *GitHub token* field (in addition to the env var).
 
-## v0.3.25 — 2026-06-03 — Authenticate GitHub API calls + actionable rate-limit errors
+## v0.3.25 â€” 2026-06-03 â€” Authenticate GitHub API calls + actionable rate-limit errors
 
 ### Fixed
 
 - **Template pull / version picker no longer fail with an opaque "GitHub API
   rate limit exceeded".** GitHub's **anonymous** limit is 60 requests/hour per
-  IP; a single pull makes ~2–4 API calls (resolve template release + asset,
-  resolve the `OrbitConnector-UE5` asset, ±a fallback), and the version-picker
+  IP; a single pull makes ~2â€“4 API calls (resolve template release + asset,
+  resolve the `OrbitConnector-UE5` asset, Â±a fallback), and the version-picker
   endpoints add more, so the shared budget is exhausted quickly.
 - The agent already authenticates when `PRISM_GITHUB_TOKEN` / `GITHUB_TOKEN` is
-  set (`CreateHttpClient` sends `Authorization: Bearer`) — the root cause was
+  set (`CreateHttpClient` sends `Authorization: Bearer`) â€” the root cause was
   simply that **no token was configured on the workstation**. A token lifts the
   limit to 5000/hour.
 
@@ -541,27 +556,27 @@ build publishes the orchestrator from source and bundles it under
   `x-ratelimit-remaining: 0` is now recognised as a rate limit (not a generic
   failure) and reports how to fix it (set `PRISM_GITHUB_TOKEN`, with the
   required PAT scope) **and the reset time** from `x-ratelimit-reset` /
-  `Retry-After`. (`TemplatePuller.HttpFailure`; server `GitHubRateLimitError` →
+  `Retry-After`. (`TemplatePuller.HttpFailure`; server `GitHubRateLimitError` â†’
   HTTP 429.)
 - **Cheaper release-list refreshes (agent + server).** Both `/api/visualiser/
   template/releases` (agent web UI) and `/api/workstations/template-releases`
   (server) now cache for **5 minutes** and revalidate with an **`ETag`
-  (`If-None-Match`)** — a `304 Not Modified` does not count against the rate
+  (`If-None-Match`)** â€” a `304 Not Modified` does not count against the rate
   limit. `TemplatePuller.ListReleasesAsync` returns the ETag + a `NotModified`
   flag for the caller's cache.
 - **Server route** authenticates with `PRISM_GITHUB_TOKEN` / `GITHUB_TOKEN`
   (already present) and is wired into `infra/.env.example` +
   `infra/docker-compose.yml` so prod actually carries the token. (Server ships
-  on the rolling `main` deploy — no separate tag.)
+  on the rolling `main` deploy â€” no separate tag.)
 
 ### Docs
 
 - `docs/VISUALISER_CONNECTOR_IMPORT.md`: new "GitHub API token & rate limits"
-  section — where to set `PRISM_GITHUB_TOKEN` on the agent (workstation env var,
+  section â€” where to set `PRISM_GITHUB_TOKEN` on the agent (workstation env var,
   restart the agent) and the server (`infra/.env`), the PAT scope, and the
-  60→5000/hr behaviour.
+  60â†’5000/hr behaviour.
 
-## v0.3.24 — 2026-06-02 — Report the installed UE template version to operators
+## v0.3.24 â€” 2026-06-02 â€” Report the installed UE template version to operators
 
 ### Added
 
@@ -575,7 +590,7 @@ build publishes the orchestrator from source and bundles it under
   (`{ templateTag, connectorTag, pulledAt, repo }`) and persists the same tags
   to `AgentConfig` (`VisualiserTemplateVersion` / `VisualiserConnectorVersion`).
   On startup the agent resolves the installed version from the marker (config
-  value as fallback, else "unknown") — independent of the transient pull status,
+  value as fallback, else "unknown") â€” independent of the transient pull status,
   so it survives agent restarts. New `Visualiser/TemplateMarker` helper.
 - **Protocol (backward-compatible):** the agent `hello` payload gains optional
   `installedTemplateTag` + `installedConnectorTag` fields. Mirrored across all
@@ -596,7 +611,7 @@ build publishes the orchestrator from source and bundles it under
   after a successful pull so the admin row updates without waiting for a
   reconnect. Server ships as a rolling deploy (no separate server tag).
 
-## v0.3.23 — 2026-06-02 — Reconcile VisualiserTemplateProjectPath docs with the local pull flow
+## v0.3.23 â€” 2026-06-02 â€” Reconcile VisualiserTemplateProjectPath docs with the local pull flow
 
 ### Docs
 
@@ -608,17 +623,17 @@ build publishes the orchestrator from source and bundles it under
   reference to the dead AD UNC share as the source of truth (the `MINIMAL_CUBE`
   code default is unchanged). No behaviour change.
 - Companion orchestrator change ships as visualiser **v0.5.16** (open a local
-  template project in place; UNC sources still mirror) — see
+  template project in place; UNC sources still mirror) â€” see
   `visualiser/CHANGELOG.md`.
 
-## v0.3.22 — 2026-06-02 — Portal URL + REBUS API key for the Unreal plug-ins
+## v0.3.22 â€” 2026-06-02 â€” Portal URL + REBUS API key for the Unreal plug-ins
 
 ### Added
 
 - **Portal connection settings on the agent.** New `AgentConfig.PortalUrl`
   (default `https://app.rebus.industries`) and `AgentConfig.RebusApiKey`
   (secret, default empty). Both are settable from the agent web UI's
-  *Visualiser* card — a "Portal URL" text input and a write-only
+  *Visualiser* card â€” a "Portal URL" text input and a write-only
   "Portal API key (REBUS)" password input.
 - **The agent forwards the Portal connection to the orchestrator** via two new
   env vars: `PRISM_PORTAL_URL` and `PRISM_REBUS_API_KEY` (mirroring the
@@ -634,7 +649,7 @@ build publishes the orchestrator from source and bundles it under
   `-OrbitToken=` precedent: it is passed to Unreal on the command line only and
   is NEVER written to any log (the agent and orchestrator log only a
   `set`/`unset` indicator). The web UI `/api/config` state never echoes the
-  value — it returns a `rebusApiKeySet` boolean instead, and the UI shows a
+  value â€” it returns a `rebusApiKeySet` boolean instead, and the UI shows a
   "key set" placeholder. Writes are accepted; reads are masked.
 
 ### Behaviour
@@ -647,15 +662,15 @@ build publishes the orchestrator from source and bundles it under
   visualiser run with no agent restart.
 - Orchestrator companion release: `PRISM/visualiser/CHANGELOG.md` (v0.5.15).
 
-## v0.3.21 — 2026-06-02 — Compile the pulled project so the headless -game launch works
+## v0.3.21 â€” 2026-06-02 â€” Compile the pulled project so the headless -game launch works
 
 ### Fixed
 
 - **A freshly-pulled visualiser project now launches without opening Unreal
   manually first.** The pulled `orbit-ue-template` project and the merged
   `OrbitConnector.UE5` / `glTFRuntime` plug-ins ship C++ **source only** (no
-  `Binaries`), so the orchestrator's headless `UnrealEditor-Cmd … -game`
-  exited immediately — surfaced as
+  `Binaries`), so the orchestrator's headless `UnrealEditor-Cmd â€¦ -game`
+  exited immediately â€” surfaced as
   `ue_game_crashed: UE -game exited (code=1) before registering a streamer`.
   The operator's workaround was to open the project in the editor once to let
   it compile.
@@ -677,7 +692,7 @@ build publishes the orchestrator from source and bundles it under
   the error.
   - The Editor target name is read from `Source\*Editor.Target.cs` when present,
     else defaults to `<ProjectName>Editor` (which UBT also synthesises for a
-    content-only project that enables a code plug-in — the scaffold + connector
+    content-only project that enables a code plug-in â€” the scaffold + connector
     case).
   - The compile is skipped automatically when the project has no C++ source and
     no code plug-in (a pure Blueprint project needs no binaries).
@@ -688,7 +703,7 @@ build publishes the orchestrator from source and bundles it under
   the Visualiser card) to skip the build for a project known to ship prebuilt
   binaries.
 
-## v0.3.20 — 2026-06-02 — Drop redundant template/connector tag inputs from the agent web UI
+## v0.3.20 â€” 2026-06-02 â€” Drop redundant template/connector tag inputs from the agent web UI
 
 ### Changed
 
@@ -711,7 +726,7 @@ build publishes the orchestrator from source and bundles it under
   the web UI simply no longer sends these two keys (ApplyAsync leaves an
   omitted field unchanged), so existing values are preserved.
 
-## v0.3.19 — 2026-06-02 — Template pull: pick a version + merge the OrbitConnector plug-in
+## v0.3.19 â€” 2026-06-02 â€” Template pull: pick a version + merge the OrbitConnector plug-in
 
 ### Added
 
@@ -741,7 +756,7 @@ build publishes the orchestrator from source and bundles it under
     releases (60s cache, `?repo=` override) for the admin SPA, which now shows a
     per-row **version dropdown** next to "Pull template" and forwards the chosen
     tag through the existing `pull-template` route.
-- An explicitly-selected tag is authoritative end-to-end — the agent's
+- An explicitly-selected tag is authoritative end-to-end â€” the agent's
   `requestedTag` path still hard-fails on a 404 (no silent fallback to latest);
   only the *configured default* tag degrades to latest (unchanged from v0.3.18).
 
@@ -749,9 +764,9 @@ build publishes the orchestrator from source and bundles it under
 
 - `TemplatePuller.PullAsync` now takes connector parameters and returns the
   merged connector tag + plug-in list; the web-UI / WS pull status surfaces
-  `… + connector <tag>` on success.
+  `â€¦ + connector <tag>` on success.
 
-## v0.3.18 — 2026-06-02 — Template pull falls back to latest when the pinned tag is missing
+## v0.3.18 â€” 2026-06-02 â€” Template pull falls back to latest when the pinned tag is missing
 
 ### Fixed
 
@@ -764,7 +779,7 @@ build publishes the orchestrator from source and bundles it under
   web-UI status note). An **operator-typed / admin-pinned** tag still hard-fails
   on 404 (with a hint to clear it), since that is an explicit request.
 
-## v0.3.17 — 2026-06-02 — Pull latest UE template onto a workstation
+## v0.3.17 â€” 2026-06-02 â€” Pull latest UE template onto a workstation
 
 - **New "pull latest UE template" action on the agent.** Downloads the latest
   (or a pinned) `orbit-ue-template` GitHub release and installs the contained
@@ -773,8 +788,8 @@ build publishes the orchestrator from source and bundles it under
   pulled project so the next visualiser run uses it. Picks a `.zip` release
   asset when present, else the source `zipball`; honours `PRISM_GITHUB_TOKEN` /
   `GITHUB_TOKEN` for a private template repo.
-  - New agent core: `Visualiser/TemplatePuller.cs` (resolve → download →
-    extract → locate `.uproject` → atomic stage-and-swap install with rollback)
+  - New agent core: `Visualiser/TemplatePuller.cs` (resolve â†’ download â†’
+    extract â†’ locate `.uproject` â†’ atomic stage-and-swap install with rollback)
     + `AgentControlPlane.PullTemplate` with a single-flight gate and a
     `TemplatePullStatus` surfaced on the web UI.
   - New `AgentConfig` fields: `UnrealTemplateRepo` (default
@@ -784,49 +799,49 @@ build publishes the orchestrator from source and bundles it under
   - Agent local web UI (`:7421`): a *Pull latest UE template* button + live
     status line in the Visualiser card, plus editable template root / repo.
   - Admin **Workstations** page: a *Pull template* button (shown for
-    visualiser-capable nodes) → `POST /api/workstations/:id/pull-template` →
-    new `pullTemplate` WS command → agent. Fire-and-forget, mirroring `update`
+    visualiser-capable nodes) â†’ `POST /api/workstations/:id/pull-template` â†’
+    new `pullTemplate` WS command â†’ agent. Fire-and-forget, mirroring `update`
     (the agent runs the pull in the background and reports progress on its own
     web UI). Requires the matching server deploy; older agents ignore the
     unknown message.
 - **Contracts:** added the `pullTemplate` message type + `PullTemplateData` to
   all three mirrors (`agent-protocol.json` / `.ts` / `AgentProtocol.cs`).
 
-## v0.3.16 — 2026-06-02 — Visualiser debug-window / full-editor toggles + 600s start timeout
+## v0.3.16 â€” 2026-06-02 â€” Visualiser debug-window / full-editor toggles + 600s start timeout
 
 ### Added
 
-- **Visualiser debug-window toggle** and **full-editor toggle** in the agent tray Settings form and the agent web UI. Both are live-applied — read at visualiser job launch, so no agent restart is required. Full-editor (open the full Unreal Editor GUI on the workstation alongside the browser stream) supersedes the debug-window (visible headless UE window). Backed by `AgentControlPlane.SetVisualiserDebugWindowAsync` / `SetVisualiserFullEditorAsync` and new `ConfigUpdate` fields (`VisualiserDebugWindow`, `VisualiserFullEditor`, `VisualiserTemplateProjectPath`).
+- **Visualiser debug-window toggle** and **full-editor toggle** in the agent tray Settings form and the agent web UI. Both are live-applied â€” read at visualiser job launch, so no agent restart is required. Full-editor (open the full Unreal Editor GUI on the workstation alongside the browser stream) supersedes the debug-window (visible headless UE window). Backed by `AgentControlPlane.SetVisualiserDebugWindowAsync` / `SetVisualiserFullEditorAsync` and new `ConfigUpdate` fields (`VisualiserDebugWindow`, `VisualiserFullEditor`, `VisualiserTemplateProjectPath`).
 
 ### Changed
 
-- **`VISUALISER_START_TIMEOUT_MS` default 180000 → 600000** (server `.env.example` + `infra/docker-compose.yml` + OpenAPI doc) to cover a cold full-editor first-open (Unreal Editor + shader compile + DDC build on a freshly-cached C++ template). Lean `-game` runs still connect in ~60–90s; this only raises the upper bound before a run is failed.
+- **`VISUALISER_START_TIMEOUT_MS` default 180000 â†’ 600000** (server `.env.example` + `infra/docker-compose.yml` + OpenAPI doc) to cover a cold full-editor first-open (Unreal Editor + shader compile + DDC build on a freshly-cached C++ template). Lean `-game` runs still connect in ~60â€“90s; this only raises the upper bound before a run is failed.
 
 ### Included from main (now tagged)
 
-- **Multi-viewer `Visualiser/SignallingBridge.cs` per-viewer demux** (commit `0daf284`) — opens one local Cirrus/Wilbur WS **per browser viewer** so multiple peers per run are demuxed independently (fixes the 2nd-viewer-freezes-1st bug). Previously hot-patched on PC01 and reported as `v0.3.15`; **v0.3.16 is the first tagged agent build that carries it.** Server-train multi-viewer notes remain under **Unreleased → Visualiser multi-viewer** (server ships as a rolling `main` deploy, not tagged).
+- **Multi-viewer `Visualiser/SignallingBridge.cs` per-viewer demux** (commit `0daf284`) â€” opens one local Cirrus/Wilbur WS **per browser viewer** so multiple peers per run are demuxed independently (fixes the 2nd-viewer-freezes-1st bug). Previously hot-patched on PC01 and reported as `v0.3.15`; **v0.3.16 is the first tagged agent build that carries it.** Server-train multi-viewer notes remain under **Unreleased â†’ Visualiser multi-viewer** (server ships as a rolling `main` deploy, not tagged).
 
-## v0.3.15 — 2026-06-01 — Hardened in-app updater (locked-DLL update failures)
+## v0.3.15 â€” 2026-06-01 â€” Hardened in-app updater (locked-DLL update failures)
 
 ### Fixed
 
-- **In-app updater** now stops every lingering `PRISM.Agent.exe` / `prism-visualiser.exe` / `UnrealEditor*` holder before extracting, then retries `Expand-Archive` with backoff (5 attempts). Previously the updater waited only for the single spawning agent PID; a second agent instance (a scheduled-task relaunch race) or a live orchestrator/UE child kept install DLLs memory-mapped, so the first locked file (e.g. `Accessibility.dll`) aborted the whole update with "Access to the path … is denied" (observed updating RB-DA2-PC01 to v0.3.14).
+- **In-app updater** now stops every lingering `PRISM.Agent.exe` / `prism-visualiser.exe` / `UnrealEditor*` holder before extracting, then retries `Expand-Archive` with backoff (5 attempts). Previously the updater waited only for the single spawning agent PID; a second agent instance (a scheduled-task relaunch race) or a live orchestrator/UE child kept install DLLs memory-mapped, so the first locked file (e.g. `Accessibility.dll`) aborted the whole update with "Access to the path â€¦ is denied" (observed updating RB-DA2-PC01 to v0.3.14).
 
 ### Notes
 
 - Bundles PRISM Visualiser orchestrator **v0.5.14** (deterministic `.uproject` selection).
 
-## v0.3.14 — 2026-06-01 — Rebundle orchestrator v0.5.14 (deterministic .uproject selection)
+## v0.3.14 â€” 2026-06-01 â€” Rebundle orchestrator v0.5.14 (deterministic .uproject selection)
 
-- Agent runtime unchanged from v0.3.13; rebuilt to bundle orchestrator **v0.5.14**, which deterministically picks `<TemplateName>.uproject` — fixing a stale `MyProject.uproject` shadowing `REBUS_Visualiser.uproject` and causing `ue_game_start_timeout` / no PixelStreaming2.
+- Agent runtime unchanged from v0.3.13; rebuilt to bundle orchestrator **v0.5.14**, which deterministically picks `<TemplateName>.uproject` â€” fixing a stale `MyProject.uproject` shadowing `REBUS_Visualiser.uproject` and causing `ue_game_start_timeout` / no PixelStreaming2.
 
-## v0.3.13 — 2026-05-29 — Persist the imported mesh to disk (game launch couldn't find it)
+## v0.3.13 â€” 2026-05-29 â€” Persist the imported mesh to disk (game launch couldn't find it)
 
 > **Follow-up to v0.3.12.** v0.3.12 spawned the mesh cleanly and reached
 > `PRISM_VISUALISER_READY` (assetCount=1, real bounds, framing camera
 > off-origin), but the Phase F `-game` launch logged `LoadErrors: ...
 > dependent package .../scene/StaticMeshes/scene ... does not exist on
-> disk` — the level referenced a mesh package that was never flushed.
+> disk` â€” the level referenced a mesh package that was never flushed.
 
 ### Root cause
 
@@ -836,66 +851,66 @@ the game process can't load the geometry.
 
 ### Fixed
 
-- **`import_orbit.py(.in)`** — `_save_imported_assets()` flushes the imported
+- **`import_orbit.py(.in)`** â€” `_save_imported_assets()` flushes the imported
   asset directory to disk (`save_directory(TARGET_FOLDER, only_if_is_dirty=False, recursive=True)`)
   before saving the level. See `visualiser/CHANGELOG.md` v0.5.11.
 
-## v0.3.12 — 2026-05-29 — Headless-safe mesh spawn (object-spawn helper crashed UE)
+## v0.3.12 â€” 2026-05-29 â€” Headless-safe mesh spawn (object-spawn helper crashed UE)
 
 > **Follow-up to v0.3.11.** v0.3.11's discovery worked (`discovered 1 static
 > mesh asset(s)` on PC01), but spawning that mesh crashed UE with
-> `EXCEPTION_ACCESS_VIOLATION reading 0x40` in EditorFramework →
+> `EXCEPTION_ACCESS_VIOLATION reading 0x40` in EditorFramework â†’
 > `RequestExitWithStatus(1, 3)` (the `exit=3` surfaced as
 > `ue_import_failed`).
 
 ### Root cause
 
-`_spawn_meshes_into_level()` used `EditorActorSubsystem.spawn_actor_from_object(mesh, …)`,
+`_spawn_meshes_into_level()` used `EditorActorSubsystem.spawn_actor_from_object(mesh, â€¦)`,
 whose editor selection / component-visualizer notifications deref null under
 the headless `-NullRHI` PythonScript commandlet. Never hit before because
 every prior run discovered zero meshes; the spawn body never executed.
 
 ### Fixed
 
-- **`import_orbit.py(.in)`** — spawn a plain `StaticMeshActor` via the
+- **`import_orbit.py(.in)`** â€” spawn a plain `StaticMeshActor` via the
   class-spawn path (the same one the lights use cleanly) and assign the mesh
   to its `StaticMeshComponent` with `set_static_mesh()`, instead of
   `spawn_actor_from_object`. See `visualiser/CHANGELOG.md` v0.5.10.
 
-## v0.3.11 — 2026-05-29 — Spawn the imported geometry (model was missing from the lit scene)
+## v0.3.11 â€” 2026-05-29 â€” Spawn the imported geometry (model was missing from the lit scene)
 
 > **Follow-up to v0.3.10.** v0.3.10 lit and framed the level and the PC01
 > run confirmed it: no `NO PLAYERSTART` warning, Directional/Sky lights
 > spawned, streamer reached Active. But `PRISM_VISUALISER_READY` reported
-> **`assetCount: 0`** — the imported model never made it into the level, so
+> **`assetCount: 0`** â€” the imported model never made it into the level, so
 > the stream showed a lit-but-empty world instead of the geometry.
 
 ### Root cause
 
 `InterchangeManager.import_asset(...)` on UE 5.7 returns a **results
 container**, not the array of created assets, so the import driver saw zero
-`StaticMesh`es and spawned no geometry — even though Interchange logged
+`StaticMesh`es and spawned no geometry â€” even though Interchange logged
 `import completed` and the staged glTF carried `meshes=1`. Pre-existing
 (same `assetCount: 0` in the v0.3.9 logs), only made visible once v0.3.10
 lit the scene.
 
 ### Fixed
 
-- **`import_orbit.py(.in)`** — after import, when the return value yields no
+- **`import_orbit.py(.in)`** â€” after import, when the return value yields no
   meshes, force an `AssetRegistry` synchronous scan of the destination
   folder and **enumerate the `StaticMesh` assets Interchange actually
   wrote**, then spawn / bound / frame those. `assetCount` and the
-  `imported bounds … meshes=N` log now reflect the real geometry. Fully
+  `imported bounds â€¦ meshes=N` log now reflect the real geometry. Fully
   model-agnostic; the asset-array return path is still preferred when a UE
   build provides it. See `visualiser/CHANGELOG.md` v0.5.9 for detail.
 
-## v0.3.10 — 2026-05-29 — Light + frame the imported scene so the stream isn't black
+## v0.3.10 â€” 2026-05-29 â€” Light + frame the imported scene so the stream isn't black
 
 > **Fixes the v0.3.9 PC01 symptom: Pixel Streaming reached a fully
 > healthy state (streamer registered with Wilbur, browser connected,
 > WebRTC offer/answer done, video+audio tracks `State=[Active]`, data
 > channel live) but the admin player page showed a SOLID BLACK viewport.
-> Transport was fine — the rendered scene was black.**
+> Transport was fine â€” the rendered scene was black.**
 
 ### Root cause
 
@@ -904,14 +919,14 @@ lit the scene.
 no lights, no sky, no post-process, no PlayerStart, no camera. Meshes
 were spawned at the world origin and the level saved. The `-game` launch
 streams the default player camera, which spawns at world origin facing
-the default direction into an unlit void → every frame is black even
+the default direction into an unlit void â†’ every frame is black even
 though the encoder + WebRTC tracks are live. UE also logged
 `FindPlayerStart: PATHS NOT DEFINED or NO PLAYERSTART with positive
 rating`. Both **lighting** and **camera framing** were missing.
 
 ### Fixed
 
-- **`visualiser` → `import_orbit.py(.in)`** now, after import, computes
+- **`visualiser` â†’ `import_orbit.py(.in)`** now, after import, computes
   the imported geometry bounds, spawns a Directional Light + Sky Light +
   Sky Atmosphere (UE "Basic" daylight set), an unbound PostProcessVolume
   with auto-exposure clamped (anti-black-crush safety net), a framing
@@ -919,19 +934,19 @@ rating`. Both **lighting** and **camera framing** were missing.
   view uses it) positioned at an orbit distance from the bounds centre,
   and a coincident `APlayerStart` (eliminates the `NO PLAYERSTART`
   warning and frames the default pawn on the model). Framing is driven
-  by the computed bounds — model-agnostic, nothing hardcoded. See
+  by the computed bounds â€” model-agnostic, nothing hardcoded. See
   `visualiser/CHANGELOG.md::v0.5.8` for the full breakdown.
 
 Ships as visualiser-v0.5.8 (orchestrator EXE + bundled python templates).
 The v0.3.9 streamer-connected fix is untouched.
 
-## v0.3.9 — 2026-05-29 — Recognise UE 5.7 / Wilbur "streamer registered" log shapes
+## v0.3.9 â€” 2026-05-29 â€” Recognise UE 5.7 / Wilbur "streamer registered" log shapes
 
 > **Removes the `ue_game_start_timeout` 120 s timeout the v0.3.8 PC01
 > run hit at Phase F. UE successfully connected to Wilbur and the
 > handshake completed within ~23 s, but the orchestrator's regex was
 > still the legacy-Cirrus `Streamer connected: orbit_<id>` shape
-> from PS1 — none of the four UE 5.7 / Wilbur registration signals
+> from PS1 â€” none of the four UE 5.7 / Wilbur registration signals
 > matched it, so the watcher never observed the registration and
 > failed open. v0.3.9 swaps in a multi-pattern matcher covering all
 > four shapes plus the legacy fallback.**
@@ -941,7 +956,7 @@ See `visualiser/CHANGELOG.md::v0.5.7` for the full details. In short:
 ### Changed
 
 - **`visualiser/src/PRISM.Visualiser.Orchestrator/PixelStreaming/SignallingSupervisor.cs`**
-  — replaced the single `StreamerConnectedPattern` regex with
+  â€” replaced the single `StreamerConnectedPattern` regex with
   `StreamerConnectedPatterns`, an ordered list of named regex
   patterns (`OnJoined` canonical / `OnJoined` minimal /
   `PlayerJoined` / `EndpointIdConfirm` / `EndpointId` /
@@ -950,7 +965,7 @@ See `visualiser/CHANGELOG.md::v0.5.7` for the full details. In short:
   the diagnostic log line attributes the event to a specific Wilbur
   / UE shape.
 - **`visualiser/src/PRISM.Visualiser.Orchestrator/Unreal/UnrealLauncher.cs`**
-  — `LaunchGameMode` now also copies UE -game stdout/stderr lines
+  â€” `LaunchGameMode` now also copies UE -game stdout/stderr lines
   into a `Channel<string>` exposed via `UnrealGameHandle.Lines`. The
   canonical `LogPixelStreaming2EpicRtc:
   RoomSignallingContextObserver::OnJoined` event lives only on UE's
@@ -968,14 +983,14 @@ See `visualiser/CHANGELOG.md::v0.5.7` for the full details. In short:
 ### Tests
 
 - `tests/PRISM.Visualiser.Orchestrator.Tests/SignallingSupervisorTests.cs`
-  — comprehensive theory covering all five named patterns + a
+  â€” comprehensive theory covering all five named patterns + a
   negative-cases theory rejecting pre-handshake Wilbur noise and
   malformed UE telemetry. Two new async tests pin the front-of-list
   ordering: `OnJoined` wins when the exact PC01 v0.3.8 log replay
   fires, `EndpointId` wins when only Wilbur-side lines are
   available.
 
-## v0.3.8 — 2026-05-28 — Auto-bootstrap PixelStreaming2 / Wilbur (UE 5.5+) on first run
+## v0.3.8 â€” 2026-05-28 â€” Auto-bootstrap PixelStreaming2 / Wilbur (UE 5.5+) on first run
 
 > **Removes the `signalling_not_found` hard-stop the v0.3.7 PC01 run
 > hit at Phase F. UE 5.5+ ships the PixelStreaming2 C++ plugin with
@@ -991,13 +1006,13 @@ See `visualiser/CHANGELOG.md::v0.5.6` for the full details. In short:
 ### Added
 
 - **`visualiser/src/PRISM.Visualiser.Orchestrator/PixelStreaming/SignallingBootstrap.cs`**
-  — new first-run installer that probes for
+  â€” new first-run installer that probes for
   `Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\dist\index.js`,
   and when absent runs `get_ps_servers.bat` (downloads the
   EpicGamesExt/PixelStreamingInfrastructure sources) followed by
   `SignallingWebServer\platform_scripts\cmd\start.bat` (downloads
   Node.js, runs `npm install` across the workspace, compiles the
-  TypeScript packages, then briefly starts wilbur — killed by the
+  TypeScript packages, then briefly starts wilbur â€” killed by the
   bootstrap the moment it logs a listening line). All stdout / stderr
   is forwarded to Serilog under the `ps-bootstrap` channel so the
   full ~1-3 min install transcript is captured in the agent log.
@@ -1008,12 +1023,12 @@ See `visualiser/CHANGELOG.md::v0.5.6` for the full details. In short:
 
 ### Changed
 
-- **`Pipeline/VisualiserPipeline.cs::StartStreamingAsync`** — Phase F
+- **`Pipeline/VisualiserPipeline.cs::StartStreamingAsync`** â€” Phase F
   now calls `SignallingBootstrap.EnsureReadyAsync(install)` before
   `SignallingSupervisor.Resolve`. On already-built engines the
   bootstrap is a single `File.Exists` check and returns
   `AlreadyReady` immediately.
-- **`PixelStreaming/SignallingSupervisor.cs`** — `Resolve` now
+- **`PixelStreaming/SignallingSupervisor.cs`** â€” `Resolve` now
   prefers `SignallingWebServer\dist\index.js` (Wilbur, UE 5.5+) over
   the legacy top-level Cirrus candidates and surfaces the probed
   paths via `SignallingResolveResult.ProbedPaths` so a future
@@ -1022,27 +1037,27 @@ See `visualiser/CHANGELOG.md::v0.5.6` for the full details. In short:
   the wilbur-shipped Node under
   `SignallingWebServer\platform_scripts\cmd\node\node.exe` over the
   legacy `Engine\Binaries\ThirdParty\Node\Win64\node.exe`.
-- **`PixelStreaming/SignallingSupervisor.cs::BuildStartInfo`** — emits
+- **`PixelStreaming/SignallingSupervisor.cs::BuildStartInfo`** â€” emits
   wilbur's `commander`-style CLI shape
   (`--player_port=N --streamer_port=M --serve --console_messages
   verbose --log_config`) when the resolved script is wilbur; falls
   back to legacy Cirrus `--HttpPort=N` for pre-5.5 plugin variants.
-- **`PixelStreaming/SignallingSupervisor.cs`** — ready-line + streamer-
+- **`PixelStreaming/SignallingSupervisor.cs`** â€” ready-line + streamer-
   connected regexes now also match Wilbur log shapes
   (`Listening on :N`, `HTTP webserver listening on port N`,
   `Streamer registered with id orbit_xxx`).
-- **`Pipeline/VisualiserPipeline.cs`** — allocates two distinct
+- **`Pipeline/VisualiserPipeline.cs`** â€” allocates two distinct
   loopback TCP ports for Wilbur (player + streamer) so UE's
   `-PixelStreamingURL=ws://127.0.0.1:<streamer_port>` points at the
   right port. Legacy Cirrus still gets one port.
 - **`PixelStreaming/SignallingHandle`** + **`PixelStreamingSession`**
-  — both expose `PlayerPort` and `StreamerPort` separately. The
+  â€” both expose `PlayerPort` and `StreamerPort` separately. The
   player-facing port (the one surfaced as `PlayerUrl` / `SignallingUrl`
   to the agent) keeps the legacy `TcpPort` alias.
-- **`Models/FailedEvent.cs`** — adds
+- **`Models/FailedEvent.cs`** â€” adds
   `signalling_bootstrap_failed` for the new auto-bootstrap failure
   mode (network outage, npm install failure, `get_ps_servers.bat`
-  missing — i.e. a partially-installed PixelStreaming2 plugin).
+  missing â€” i.e. a partially-installed PixelStreaming2 plugin).
   Existing `signalling_not_found` error message now also names the
   probed file paths so the next operator failure is debuggable
   without going back to source.
@@ -1055,18 +1070,18 @@ See `visualiser/CHANGELOG.md::v0.5.6` for the full details. In short:
   so no template repo bump was needed. Option B from the original
   investigation directive was a no-op.
 - Bootstrap cost on a fresh PC01-class workstation: ~30 s for the
-  `get_ps_servers.bat` clone (≈12 MB), then 60-180 s for the
-  `start.bat` Node.js download (≈30 MB) + npm install (≈150 MB) +
+  `get_ps_servers.bat` clone (â‰ˆ12 MB), then 60-180 s for the
+  `start.bat` Node.js download (â‰ˆ30 MB) + npm install (â‰ˆ150 MB) +
   TypeScript compile. Steady-state cost: one `File.Exists` probe.
   Total disk footprint after bootstrap: ~250 MB inside the UE plugin
   tree (not duplicated under `%LOCALAPPDATA%`).
 - The bootstrap probes `start.bat` for the first listening line and
-  kills the process tree — the build artefacts (`dist/`, `node/`,
+  kills the process tree â€” the build artefacts (`dist/`, `node/`,
   `node_modules/`) survive the kill, so subsequent Phase F runs can
   launch wilbur directly via the supervisor without going through
   start.bat again.
 
-## v0.3.7 — 2026-05-28 — Fix orchestrator missing UE marker because of `[ts][ch]LogPython:` prefix
+## v0.3.7 â€” 2026-05-28 â€” Fix orchestrator missing UE marker because of `[ts][ch]LogPython:` prefix
 
 > **Fixes the visualiser run still reporting `ue_import_failed: UE
 > exited without a ready marker (exit=0)` even though v0.3.6's UE log
@@ -1080,7 +1095,7 @@ See `visualiser/CHANGELOG.md::v0.5.5` for the full details. In short:
 ### Fixed
 
 - **`visualiser/src/PRISM.Visualiser.Orchestrator/Unreal/UnrealLauncher.cs`**
-  — `ParseLine` and `ParseMvrLine` now use a shared `TryFindMarker`
+  â€” `ParseLine` and `ParseMvrLine` now use a shared `TryFindMarker`
   helper that locates the marker substring anywhere in the line via
   `IndexOf` instead of `StartsWith`. This lets the orchestrator
   recognise marker emissions even when UE prefixes them with the
@@ -1090,26 +1105,26 @@ See `visualiser/CHANGELOG.md::v0.5.5` for the full details. In short:
   (`PRISM_VISUALISER_READY`, `PRISM_VISUALISER_ERROR`,
   `PRISM_VISUALISER_MVR_READY`, `PRISM_VISUALISER_MVR_ERROR`).
 - **`visualiser/tests/PRISM.Visualiser.Orchestrator.Tests/MvrGdtfDetectorTests.cs`**
-  — added regression tests covering both the column-zero shape (still
+  â€” added regression tests covering both the column-zero shape (still
   works) and the UE-prefixed shape (the v0.3.6 PC01 capture). Plus
   direct unit tests on the new `TryFindMarker` helper.
 
 ### Notes
 
 - Closes [#23](https://github.com/REBUS-ORBIT/prism/issues/23).
-- v0.3.5 fixed the commandlet flag (`-ExecutePythonScript` →
+- v0.3.5 fixed the commandlet flag (`-ExecutePythonScript` â†’
   `-script`); v0.3.6 fixed the Interchange API drift; v0.3.7 fixes
   the marker-parsing gap that was hiding the now-clean import behind
   a misleading "no marker" failure code. Failure-mode progression so
-  far: `exit=-1` (no commandlet) → `exit=3` (Interchange/Slate gap)
-  → `exit=0 + no marker` (parse miss) → expected next is either
+  far: `exit=-1` (no commandlet) â†’ `exit=3` (Interchange/Slate gap)
+  â†’ `exit=0 + no marker` (parse miss) â†’ expected next is either
   `ready/v1` end-to-end or a Phase F (Pixel Streaming) bring-up
   failure now that Phase E is fully wired.
 - No agent-side C# logic changes outside the version bump; the
   orchestrator DLL ships inside the agent MSI so the v0.3.7 agent
   release picks up the fix transparently.
 
-## v0.3.6 — 2026-05-28 — Fix UE 5.7 Interchange API drift + drop Slate-bound AssetImportTask fallback
+## v0.3.6 â€” 2026-05-28 â€” Fix UE 5.7 Interchange API drift + drop Slate-bound AssetImportTask fallback
 
 > **Fixes the visualiser run failing at the import phase with UE
 > exit code 3 after v0.3.5 unblocked the commandlet. Two cascading
@@ -1120,23 +1135,23 @@ See `visualiser/CHANGELOG.md::v0.5.4` for the full details. In short:
 
 ### Fixed
 
-- **`Unreal/PythonScripts/import_orbit.py.in`** — switched the
+- **`Unreal/PythonScripts/import_orbit.py.in`** â€” switched the
   Interchange singleton accessor from the pre-5.5
   `unreal.InterchangeManager.get_interchange_manager()` (removed in UE
   5.7, surfaced as `AttributeError: type object 'InterchangeManager'
   has no attribute 'get_interchange_manager'`) to the canonical 5.5+
   name `get_interchange_manager_scripted()`. The legacy name is kept
   as a best-effort fallback for older 5.x point releases.
-- **`Unreal/PythonScripts/import_orbit.py.in`** — `import_asset` is
+- **`Unreal/PythonScripts/import_orbit.py.in`** â€” `import_asset` is
   now called with the correct UE 5.5+ signature
   `import_asset(content_path, source_data, import_asset_parameters)`:
   source data is built explicitly via
   `unreal.InterchangeManager.create_source_data(file_name)` and the
   destination content path is passed as the FIRST positional argument
   rather than as a non-existent field on `ImportAssetParameters`. The
-  speculative `import_asset_with_params` branch is gone — that method
+  speculative `import_asset_with_params` branch is gone â€” that method
   was never present on the 5.5+ binding.
-- **`Unreal/PythonScripts/import_orbit.py.in`** — dropped the
+- **`Unreal/PythonScripts/import_orbit.py.in`** â€” dropped the
   `AssetImportTask` fallback path (`_import_via_asset_task`). The
   fallback was Slate-bound: `AssetImportTask` routes through the
   import-settings dialog even with `automated=True`, and Slate is
@@ -1147,25 +1162,25 @@ See `visualiser/CHANGELOG.md::v0.5.4` for the full details. In short:
   Any Interchange failure now bubbles up to the existing
   `_emit_error("import_failed", ...)` path, which is the correct
   surface for the orchestrator's structured `failed/v1` event.
-- **`Unreal/PythonScripts/import_orbit.py`** — the lintable twin is
+- **`Unreal/PythonScripts/import_orbit.py`** â€” the lintable twin is
   kept in sync with the `.py.in` template so artists who lint the
   script outside the UE editor see the same body.
 
 ### Notes
 
 - Closes [#21](https://github.com/REBUS-ORBIT/prism/issues/21).
-- v0.3.5 fixed the commandlet flag (`-ExecutePythonScript` →
+- v0.3.5 fixed the commandlet flag (`-ExecutePythonScript` â†’
   `-script`) so the python script starts; v0.3.6 fixes the very
   next failure mode the script hits when it does. Failure-mode
   progression so far: `exit=-1` (no commandlet)
-  → `exit=3` (commandlet ran, hit Interchange/Slate gap)
-  → expected next is either `ready/v1` end-to-end or a Phase F
+  â†’ `exit=3` (commandlet ran, hit Interchange/Slate gap)
+  â†’ expected next is either `ready/v1` end-to-end or a Phase F
   bring-up failure now that import lands.
-- No agent / orchestrator C# changes — the UE invocation,
+- No agent / orchestrator C# changes â€” the UE invocation,
   ready-marker contract, and Cirrus signalling supervisor are
   untouched. Server image is unchanged at the v0.3.5 build.
 
-## v0.3.5 — 2026-05-28 — Fix `-ExecutePythonScript` rejected by UE commandlet
+## v0.3.5 â€” 2026-05-28 â€” Fix `-ExecutePythonScript` rejected by UE commandlet
 
 > **Fixes the visualiser run failing at the import phase with
 > `LogEditorPythonExecuter: Error: -ExecutePythonScript cannot be used by a
@@ -1179,7 +1194,7 @@ See `visualiser/CHANGELOG.md::v0.5.4` for the full details. In short:
   invocation for the Phase E (glTF) and Phase J (MVR/GDTF) import passes
   combined `-run=PythonScript` with `-ExecutePythonScript=<path>`. UE 5.7
   enters `PythonScriptCommandlet` mode whenever `-run=PythonScript` is on
-  the command line, and that commandlet only accepts `-script=<path>` —
+  the command line, and that commandlet only accepts `-script=<path>` â€”
   `-ExecutePythonScript` is the editor-startup (non-commandlet) form and
   the commandlet explicitly rejects it at startup with the
   `LogEditorPythonExecuter: Error:` line above. The result was that
@@ -1192,21 +1207,21 @@ See `visualiser/CHANGELOG.md::v0.5.4` for the full details. In short:
 ### Notes
 
 - The streaming (Phase F) launch path (`BuildGameStartInfoCore` /
-  `LaunchGameMode`) was already correct — it never passes `-run=` or
-  `-NullRHI` and uses the `-game -RenderOffScreen -PixelStreamingURL=…`
+  `LaunchGameMode`) was already correct â€” it never passes `-run=` or
+  `-NullRHI` and uses the `-game -RenderOffScreen -PixelStreamingURL=â€¦`
   PS2 form, so the D3D12 RHI + NVENC pipeline lights up normally once
   the import phase succeeds.
 - No changes to the orchestrator/agent protocol, the ready-marker
   contract, the Cirrus signalling supervisor, or the v0.3.4 ORBIT API
   fixes (`HttpOrbitApi.cs`).
 - The user-visible UE log signature for v0.3.5 should be:
-  `[VisualiserJob] orchestrator stderr … -run=PythonScript -script=…`
-  followed by `LogPython: …` and (in Phase F) `LogPixelStreaming2:
+  `[VisualiserJob] orchestrator stderr â€¦ -run=PythonScript -script=â€¦`
+  followed by `LogPython: â€¦` and (in Phase F) `LogPixelStreaming2:
   Streamer started`.
 
 ---
 
-## v0.3.4 — 2026-05-28 — Fix `scaffold_failed: 404 on version REST endpoint`
+## v0.3.4 â€” 2026-05-28 â€” Fix `scaffold_failed: 404 on version REST endpoint`
 
 > **Fixes `scaffold_failed: GET api/v1/projects/.../versions/... failed with HTTP 404`
 > when the visualiser orchestrator tries to fetch version metadata from ORBIT.**
@@ -1217,7 +1232,7 @@ See `visualiser/CHANGELOG.md::v0.5.4` for the full details. In short:
   calling `GET /api/v1/projects/{projectId}/versions/{versionId}` to resolve a
   version's root object id. This REST endpoint does not exist in the ORBIT server
   (which is GraphQL-first). The call now uses the ORBIT GraphQL endpoint
-  (`POST /graphql` with `query Version { project { version { referencedObject … } } }`)
+  (`POST /graphql` with `query Version { project { version { referencedObject â€¦ } } }`)
   which returns the same data correctly.
 - **Orchestrator object endpoint** (`EndpointTemplates.Object`): corrected from
   `api/v1/projects/{0}/objects/{1}` to `objects/{0}/{1}/single` (the actual Speckle
@@ -1231,13 +1246,13 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 - **Blob integrity check removed** (`OrbitApi/BlobDownloader.cs`): the post-download
   SHA256 hash check was comparing the ORBIT blob id (a 10-char server-assigned string)
-  against the SHA256 of the downloaded bytes — guaranteed never to match. Since ORBIT
+  against the SHA256 of the downloaded bytes â€” guaranteed never to match. Since ORBIT
   blob ids are opaque server identifiers, the integrity check is removed; the server id
   is the authoritative content address and is used as the cache key directly.
 
 ---
 
-## v0.3.3 — 2026-05-28 — Fix `scaffold_failed: versionId empty string`
+## v0.3.3 â€” 2026-05-28 â€” Fix `scaffold_failed: versionId empty string`
 
 > **Fixes `scaffold_failed: The value cannot be an empty string or composed entirely
 > of whitespace. (Parameter 'versionId')` when starting a visualiser stream without
@@ -1259,7 +1274,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   `--version` (which the orchestrator accepts syntactically but then fails
   deep inside `OrbitReceivePipeline.ReceiveAsync` with `ArgumentException`),
   the agent now emits a `visualisationFailed` envelope immediately with a
-  clear message: "versionId is required but was not provided…". This turns an
+  clear message: "versionId is required but was not providedâ€¦". This turns an
   opaque `scaffold_failed` into a user-readable failure on older server builds.
 
 ### Root cause chain (for the record)
@@ -1268,15 +1283,15 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 2. Server stores `versionId: null` in DB; dispatcher sends `versionId: undefined`
    in the `startVisualisation` envelope.
 3. Agent's `VisualiserJob.StartAsync` builds CLI args as
-   `"--version", data.VersionId ?? string.Empty` → passes `""` to the orchestrator.
+   `"--version", data.VersionId ?? string.Empty` â†’ passes `""` to the orchestrator.
 4. System.CommandLine accepts `--version ""` as valid (an argument was supplied).
 5. Orchestrator calls `OrbitReceivePipeline.ReceiveAsync(projectId, versionId: "")`.
-6. `ArgumentException.ThrowIfNullOrWhiteSpace(versionId)` throws →
-   caught by the generic `receive+stage` handler → `scaffold_failed` event.
+6. `ArgumentException.ThrowIfNullOrWhiteSpace(versionId)` throws â†’
+   caught by the generic `receive+stage` handler â†’ `scaffold_failed` event.
 
 ---
 
-## v0.3.2 — 2026-05-27 — Orchestrator UE pre-flight diagnostics + path hardening
+## v0.3.2 â€” 2026-05-27 â€” Orchestrator UE pre-flight diagnostics + path hardening
 
 > **Fixes the `ue_root_not_found` failure on PC01 that blocked the first
 > live `startVisualisation` end-to-end test.** Root cause was a
@@ -1288,42 +1303,42 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 > without stripping wrapping whitespace / trailing separators / mixed
 > path separators. Either condition alone is enough for the probe to
 > miss a perfectly good UE install. The pre-flight error message also
-> told operators nothing actionable — "env var is set but does not
+> told operators nothing actionable â€” "env var is set but does not
 > point at a valid UE 5.7 install" with zero detail about which probe
 > ran, what value was tried, or which file was missing.
 
 ### Fixed
 
-- **Orchestrator — `UnrealEnvironment.NormalizeRoot`** now strips
+- **Orchestrator â€” `UnrealEnvironment.NormalizeRoot`** now strips
   leading/trailing whitespace, BOM (`\uFEFF`), zero-width
   spaces/joiners (`\u200B`/`\u200C`/`\u200D`), and trailing directory
   separators before resolving via `Path.GetFullPath`. Interior
-  whitespace is preserved — Windows paths legitimately contain spaces
+  whitespace is preserved â€” Windows paths legitimately contain spaces
   (`C:\Program Files`), so a blanket whitespace filter would mangle
   the value. The canonical form is used for every subsequent
   `Directory.Exists` / `File.Exists` check.
-- **Orchestrator — `UnrealEnvironment.ResolveDetailed`** is a new
+- **Orchestrator â€” `UnrealEnvironment.ResolveDetailed`** is a new
   diagnostic API that returns per-probe outcomes
   (`UnrealProbeOutcome`) alongside the resolved install. Each outcome
   captures the source (EnvironmentVariable / DefaultPath / Registry),
   the raw + normalized roots, directory existence, expected editor
   path, editor existence, and a human-readable failure reason. The
   legacy `TryResolve` is preserved as a thin wrapper.
-- **Orchestrator — `Program.RunPhaseFAsync`** now logs every probe
+- **Orchestrator â€” `Program.RunPhaseFAsync`** now logs every probe
   outcome (Information for the match, Warning for each miss) and folds
   the diagnostics into the `failed/v1` event's message field. Operators
   reading the agent log can now see at a glance whether the directory
   was wrong, missing, or just lacked the editor binary instead of the
   opaque "env var is set but invalid" string.
-- **Agent — `VisualiserJob`** now normalizes the `UnrealEngineRoot`
+- **Agent â€” `VisualiserJob`** now normalizes the `UnrealEngineRoot`
   config value (same BOM/whitespace strip as the orchestrator, minus
-  the `Path.GetFullPath` step — the agent runs as a service and we
+  the `Path.GetFullPath` step â€” the agent runs as a service and we
   don't want it resolving relative paths against
   `%ProgramFiles%\PRISM.Agent`) before assigning to the child
   process's `UNREAL_ENGINE_ROOT` env var. Logs both raw and
   normalized forms so future field reports include the exact value
   the orchestrator saw.
-- **Agent — `AgentConfig.Load`** now reads the config file as raw
+- **Agent â€” `AgentConfig.Load`** now reads the config file as raw
   bytes and explicitly strips a UTF-8 BOM preamble before deserializing,
   then runs every path-like property through `SanitizePathLike`. The
   System.Text.Json parser tolerates document-level BOMs but the BOM
@@ -1333,13 +1348,13 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Added
 
-- **Tests — `UnrealEnvironmentTests`** gained 9 new cases covering
+- **Tests â€” `UnrealEnvironmentTests`** gained 9 new cases covering
   trailing-backslash roots, BOM-prefixed roots, forward-slash roots,
   diagnostic population on missing directory, diagnostic population
   on partial install (dir exists but editor missing), and the
   `NormalizeRoot` edge cases (empty string, whitespace-only,
   invisible-only, interior whitespace preservation).
-- **Tests — `VisualiserJobTests`** gained `NormalizeUnrealRoot` cases
+- **Tests â€” `VisualiserJobTests`** gained `NormalizeUnrealRoot` cases
   covering BOM, zero-width space, leading/trailing whitespace, empty
   input, and the happy path that preserves the trailing separator
   (which is the orchestrator's job to strip, not the agent's).
@@ -1351,29 +1366,29 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   ```
   ue_root_not_found: UNREAL_ENGINE_ROOT is set but does not point at a
   valid UE 5.7 install. | [EnvironmentVariable] raw=C:\Wrong\Path
-  normalized=C:\Wrong\Path — directory does not exist: C:\Wrong\Path |
-  [DefaultPath] path=C:\Program Files\Epic Games\UE_5.7 — directory
+  normalized=C:\Wrong\Path â€” directory does not exist: C:\Wrong\Path |
+  [DefaultPath] path=C:\Program Files\Epic Games\UE_5.7 â€” directory
   does not exist: C:\Program Files\Epic Games\UE_5.7 | [Registry]
-  path=<unset> — HKLM\SOFTWARE\EpicGames\Unreal Engine\5.7\InstalledDirectory not present
+  path=<unset> â€” HKLM\SOFTWARE\EpicGames\Unreal Engine\5.7\InstalledDirectory not present
   ```
 - The same trace also lands in the per-run orchestrator log at
   `%LOCALAPPDATA%\PRISM.Visualiser\runs\<runId>\logs\orchestrator.log`
   with structured fields.
 
-## v0.3.1 — 2026-05-27 — Tray menu: Visualiser role checkbox
+## v0.3.1 â€” 2026-05-27 â€” Tray menu: Visualiser role checkbox
 
-- **Agent — Tray context menu** now includes a `Visualiser` role checkbox
+- **Agent â€” Tray context menu** now includes a `Visualiser` role checkbox
   alongside the existing Conversion, Layering, and Receive items.  Reads its
   initial checked state from `agent-config.json` on startup, toggles
   `AgentConfig.Roles` and persists via `SetRolesAsync` (same pattern as the
   other role checkboxes), and refreshes on every `ContextMenuStrip.Opening`
   event so the menu always reflects the latest config.
 
-## v0.3.0 — 2026-05-27 — Visualiser agent integration: agent now actually spawns the orchestrator
+## v0.3.0 â€” 2026-05-27 â€” Visualiser agent integration: agent now actually spawns the orchestrator
 
-> **The fix for the missing agent ↔ orchestrator glue.** Through the
+> **The fix for the missing agent â†” orchestrator glue.** Through the
 > v0.2.x line, the agent's `startVisualisation` WS handler was still the
-> Phase A scaffold stub from v0.1.37 — it logged a warning and acked
+> Phase A scaffold stub from v0.1.37 â€” it logged a warning and acked
 > `accepted: false` with reason `"visualiser orchestrator not yet
 > implemented"`. The Phase B/C/E/F/J orchestrator builds shipped as a
 > standalone `PRISM.Visualiser.Orchestrator.exe` release artefact
@@ -1384,16 +1399,16 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Added
 
-- **Agent — `VisualiserJob`** (`agent/src/PRISM.Agent/Pipeline/VisualiserJob.cs`,
+- **Agent â€” `VisualiserJob`** (`agent/src/PRISM.Agent/Pipeline/VisualiserJob.cs`,
   new): owns the lifecycle of a single `prism-visualiser.exe` child
   process (the orchestrator csproj's `<AssemblyName>` is
   `prism-visualiser`, not its project filename) spawned in response
   to a `startVisualisation` envelope. Resolves the orchestrator EXE on
-  disk (env-var override → agent-config override → `{InstallDir}\Visualiser\
-  prism-visualiser.exe` → legacy `PRISM.Visualiser.Orchestrator.exe`
-  fallback → conventional Program Files), derives the orchestrator's
+  disk (env-var override â†’ agent-config override â†’ `{InstallDir}\Visualiser\
+  prism-visualiser.exe` â†’ legacy `PRISM.Visualiser.Orchestrator.exe`
+  fallback â†’ conventional Program Files), derives the orchestrator's
   `--server prod|dev` selector
-  from the `orbitServerUrl` host (anything matching `orbit-dev` → dev,
+  from the `orbitServerUrl` host (anything matching `orbit-dev` â†’ dev,
   else prod), and forwards the `orbitToken` to the child as the
   matching `ORBIT_PAT_PROD` / `ORBIT_PAT_DEV` env var. Spawns the
   orchestrator with `stream --project <id> --model <id> --version
@@ -1414,7 +1429,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   `JobObject`). The stderr pump is wired straight into the agent's
   Serilog channel so UE / Python / Cirrus errors surface in the
   agent log without separate plumbing.
-- **Agent — `VisualiserRunRegistry`** (`agent/src/PRISM.Agent/Visualiser/VisualiserRunRegistry.cs`,
+- **Agent â€” `VisualiserRunRegistry`** (`agent/src/PRISM.Agent/Visualiser/VisualiserRunRegistry.cs`,
   new): per-process map of active `VisualiserJob` instances keyed by
   `runId`. `TryStart` reserves a slot atomically (refuses duplicates
   + enforces `VisualiserMaxConcurrent` as a defensive in-agent cap
@@ -1423,14 +1438,14 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   fires `RequestCancel` for every active run on agent shutdown so a
   `taskkill /IM PRISM.Agent.exe` doesn't leave orphaned UE / Cirrus
   processes behind.
-- **Agent — `AgentConfig.VisualiserOrchestratorPath`**
+- **Agent â€” `AgentConfig.VisualiserOrchestratorPath`**
   (`agent/src/PRISM.Agent/Config/AgentConfig.cs`): optional absolute
   path to the orchestrator EXE. Takes precedence over the on-disk
   probe order. Intended for dev / smoke-test workflows where the
   agent is running from a build folder and the orchestrator lives
   somewhere else; the production installer leaves this null and the
   bundled-sidecar path resolves.
-- **CI — `agent.yml` bundles the orchestrator into the installer
+- **CI â€” `agent.yml` bundles the orchestrator into the installer
   payload** (`.github/workflows/agent.yml`): new
   `Restore + publish Visualiser orchestrator` step runs
   `dotnet publish` against `visualiser/PRISM.Visualiser.sln` with
@@ -1441,20 +1456,20 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   `recursesubdirs` for the payload glob, so the bundled orchestrator
   installs to `{app}\Visualiser\PRISM.Visualiser.Orchestrator.exe`
   automatically. The stage step now hard-fails the build if the
-  orchestrator EXE is missing from the payload — releases without
+  orchestrator EXE is missing from the payload â€” releases without
   the sidecar are no longer possible. Adds ~70 MB to the agent
   installer.
 
 ### Changed
 
-- **Agent — `AgentMessageDispatcher.HandleStartVisualisation` is no
+- **Agent â€” `AgentMessageDispatcher.HandleStartVisualisation` is no
   longer a stub** (`agent/src/PRISM.Agent/Ws/AgentMessageDispatcher.cs`).
   The handler now resolves a `VisualiserJob` from DI via
   `VisualiserRunRegistry.TryStart`, acks `accepted: true`, and
   spawns the orchestrator in the background. Duplicate runIds and
   cap-exhausted requests still ack-reject (`accepted: false` with
   reason `"visualiser slot unavailable"`).
-- **Agent — `HandleCancelVisualisation` actually cancels** the
+- **Agent â€” `HandleCancelVisualisation` actually cancels** the
   registered run by looking it up in `VisualiserRunRegistry` and
   calling `RequestCancel`. Unknown runIds (e.g. a
   `cancelVisualisation` from the server's `start_timeout` path that
@@ -1465,7 +1480,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 ### Operational notes
 
 - The orchestrator's existing standalone release pipeline
-  (`visualiser-msi.yml` → `REBUS-ORBIT/prism-visualiser`) is
+  (`visualiser-msi.yml` â†’ `REBUS-ORBIT/prism-visualiser`) is
   unchanged. The standalone artefact remains framework-dependent
   (`--self-contained false`) and is the right binary for out-of-band
   installs on workstations that already have .NET 8 installed
@@ -1476,7 +1491,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   `C:\ProgramData\PRISM.Agent\logs\agent.log` (and via the admin UI
   log forward):
 
-      INF [AgentMessageDispatcher] startVisualisation accepted for runId=<uuid> ... — spawning orchestrator
+      INF [AgentMessageDispatcher] startVisualisation accepted for runId=<uuid> ... â€” spawning orchestrator
       INF [VisualiserJob] spawned orchestrator pid=<pid> runId=<uuid> server=prod ...
       INF [VisualiserJob] orchestrator reports ready runId=<uuid> signallingUrl=ws://127.0.0.1:<port>/ ...
 
@@ -1488,12 +1503,12 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Bumped
 
-- `agent/src/PRISM.Agent/PRISM.Agent.csproj` → `0.3.0`
-- `server/package.json` + `server/package-lock.json` → `0.3.0`
-  (no functional server changes — bumped in lock-step with the agent
+- `agent/src/PRISM.Agent/PRISM.Agent.csproj` â†’ `0.3.0`
+- `server/package.json` + `server/package-lock.json` â†’ `0.3.0`
+  (no functional server changes â€” bumped in lock-step with the agent
   so the milestone tag publishes a matching `prism-server:v0.3.0`
   image)
-- `visualiser/Directory.Build.props` — unchanged at `0.5.1`; the
+- `visualiser/Directory.Build.props` â€” unchanged at `0.5.1`; the
   bundled orchestrator binary is built from the same source as
   `visualiser-v0.5.0` and reuses that release's binary surface.
 
@@ -1501,7 +1516,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ## Unreleased
 
-### Added — Visualiser multi-viewer (shareable links + control tiers)
+### Added â€” Visualiser multi-viewer (shareable links + control tiers)
 
 > Shipped to prod as a rolling `main` deploy at commit `0daf284`
 > (`ghcr.io/rebus-orbit/prism-server:sha-0daf284` on VM 211); not yet cut as
@@ -1512,26 +1527,26 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   view-only / control permission tiers, a single-controller lock, and
   shareable links. Opening a 2nd viewer no longer freezes the 1st (the
   original single-WS demux bug).
-- **`server/src/ws/signallingProxyRegistry.ts`** — rewritten for per-viewer
+- **`server/src/ws/signallingProxyRegistry.ts`** â€” rewritten for per-viewer
   routing, the controller lock, and control-channel subscriptions.
-- **`agent/src/PRISM.Agent/Visualiser/SignallingBridge.cs`** — refactored to
+- **`agent/src/PRISM.Agent/Visualiser/SignallingBridge.cs`** â€” refactored to
   open one local Cirrus/Wilbur WS **per viewer** so each browser peer is
   demuxed independently (fixes the freeze/disconnect when a second viewer
   joined).
-- **New migration `0006_visualiser_share_links.sql`** — `visualiser_share_links`
+- **New migration `0006_visualiser_share_links.sql`** â€” `visualiser_share_links`
   table (`run_id` FK cascade, `token_hash` unique, `tier` default `view`,
   `created_by`, `expires_at`, `revoked_at`).
 - **New `/viewer/` page + share-link endpoints** for minting/redeeming view
   and control links.
 - Integration contract documented in `visualiser/PRISM-INTEGRATION.md`.
 
-### Verified — TURN / coturn for off-LAN viewers
+### Verified â€” TURN / coturn for off-LAN viewers
 
 - `coturn/coturn:4.6` on VM 211 (`/home/rebus/coturn/`, `network_mode=host`,
-  UDP+TCP `:3478` + TLS `:5349`, relay `52000–56999`) confirmed healthy with a
+  UDP+TCP `:3478` + TLS `:5349`, relay `52000â€“56999`) confirmed healthy with a
   `static-auth-secret` byte-identical to `prism-server`'s `TURN_SECRET`.
   `generateTurnCredential` (`server/src/visualiser/turnCredentials.ts`) returns
-  `turn:visualiser.rebus.industries:3478` + `turns:…:5349`, username
+  `turn:visualiser.rebus.industries:3478` + `turns:â€¦:5349`, username
   `<exp>:<runid-seg>`, `base64(HMAC-SHA1(secret, username))`, `ttl 86400`.
   `:3478` is internet-reachable; UniFi DNAT for the relay UDP range + `5349/TLS`
   is the one item still to confirm.
@@ -1552,26 +1567,26 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Added
 
-- **Server — Fastify `trustProxy: true`** (`server/src/main.ts`): without
+- **Server â€” Fastify `trustProxy: true`** (`server/src/main.ts`): without
   this, `req.ip` returns the immediate TCP peer (the external Caddy LXC,
   `10.0.200.251`) instead of honouring `X-Forwarded-For`, so every
   `agent_sessions.remote_addr` row landed pointing at the proxy. Safe
-  to enable unconditionally — prism-server is only reachable from the
+  to enable unconditionally â€” prism-server is only reachable from the
   proxy pair or other hosts on the private `10.0.200.0/24` VLAN.
-- **Server — `host` field on `/api/workstations`** (`server/src/api/workstations.ts`):
+- **Server â€” `host` field on `/api/workstations`** (`server/src/api/workstations.ts`):
   list + get responses now include `host`, populated from the most
   recently active `agent_sessions.remote_addr` for that workstation
   (preferring the row with the freshest heartbeat). Returns `null`
   when no agent session exists.
-- **Server — IP normalisation on WS hello**
+- **Server â€” IP normalisation on WS hello**
   (`server/src/ws/agentProtocol.ts`): the captured peer address is now
   stripped of any `::ffff:` IPv4-mapped IPv6 prefix before being
   persisted into `agent_sessions.remote_addr`, so dual-stack listeners
   produce the bare IPv4 form everyone expects (`10.0.10.202`, not
   `::ffff:10.0.10.202`).
-- **Web — `Workstation.host` typed client field** (`web/src/shared/api.ts`):
+- **Web â€” `Workstation.host` typed client field** (`web/src/shared/api.ts`):
   surfaces the new server field to all consumers.
-- **Web — `workstationWebUiHost` / `workstationWebUiUrl` accept an
+- **Web â€” `workstationWebUiHost` / `workstationWebUiUrl` accept an
   optional `host` parameter** (`web/src/shared/workstationUrl.ts`).
   New precedence: live IP > `nodeName.dnsSuffix` > bare `nodeName`.
   Both call sites (`Workstations.vue` and `FlowEditor.vue`) thread
@@ -1581,7 +1596,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Notes
 
-- No DB schema changes — `agent_sessions.remote_addr` already existed
+- No DB schema changes â€” `agent_sessions.remote_addr` already existed
   on the schema; we now just normalise it on insert and surface it on
   the API.
 - `agent_sessions` rows are deleted on socket close, so an offline
@@ -1592,11 +1607,11 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ---
 
-## v0.2.2 — 2026-05-27 — Fix drizzle migration journal drift
+## v0.2.2 â€” 2026-05-27 â€” Fix drizzle migration journal drift
 
 > Coordinated patch release that fixes the bootstrap crash blocking every
 > fresh build of `prism-server` off `main` since the Phase G migration was
-> regenerated. **No functional code changes** — only a duplicate migration
+> regenerated. **No functional code changes** â€” only a duplicate migration
 > file (byte-identical to its sibling) plus version metadata.
 
 ### Fixed
@@ -1620,8 +1635,8 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Bumped (version metadata only)
 
-- `agent/src/PRISM.Agent/PRISM.Agent.csproj` → `0.2.2`
-- `server/package.json` + `server/package-lock.json` → `0.2.2`
+- `agent/src/PRISM.Agent/PRISM.Agent.csproj` â†’ `0.2.2`
+- `server/package.json` + `server/package-lock.json` â†’ `0.2.2`
 
 ### Operational notes
 
@@ -1633,10 +1648,10 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ---
 
-## v0.2.1 — 2026-05-27 — Release-hygiene hotfix for the v0.2.0 milestone
+## v0.2.1 â€” 2026-05-27 â€” Release-hygiene hotfix for the v0.2.0 milestone
 
 > Coordinated patch release that fixes the two regressions surfaced by the
-> v0.2.0 tag push. **No functional code changes** — only version metadata
+> v0.2.0 tag push. **No functional code changes** â€” only version metadata
 > and a regenerated server lockfile.
 
 ### Fixed
@@ -1662,12 +1677,12 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Bumped (version metadata only)
 
-- `agent/src/PRISM.Agent/PRISM.Agent.csproj` → `0.2.1`
-- `server/package.json` → `0.2.1`
-- `visualiser/Directory.Build.props` → `VisualiserVersion = 0.5.1`
+- `agent/src/PRISM.Agent/PRISM.Agent.csproj` â†’ `0.2.1`
+- `server/package.json` â†’ `0.2.1`
+- `visualiser/Directory.Build.props` â†’ `VisualiserVersion = 0.5.1`
   (separately-tracked semver stream, per
   [`docs/RELEASE_STRATEGY.md`](docs/RELEASE_STRATEGY.md); no
-  `visualiser-v*` tag is cut for this release — the orchestrator's
+  `visualiser-v*` tag is cut for this release â€” the orchestrator's
   shipped binary is unchanged from `visualiser-v0.5.0` /
   `visualiser-v0.2.0`).
 
@@ -1681,7 +1696,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ---
 
-## v0.1.42 — 2026-05-27 — Visualiser Phase K: portal contract finalisation, hardening, v0.2.0 milestone prep
+## v0.1.42 â€” 2026-05-27 â€” Visualiser Phase K: portal contract finalisation, hardening, v0.2.0 milestone prep
 
 > **Phase K of the Visualiser feature - the final phase before the v0.2.0
 > milestone tag.** Ships the complete portal contract surface in the
@@ -1832,7 +1847,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ---
 
-## v0.1.41 — 2026-05-27 — Visualiser Phase J server: project attachments + MVR forwarding
+## v0.1.41 â€” 2026-05-27 â€” Visualiser Phase J server: project attachments + MVR forwarding
 
 > **Phase J of the Visualiser feature (server + web half).** Adds the
 > portal-uploaded project-attachments surface and wires it through to the
@@ -1840,7 +1855,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 > lighting-design files alongside the converted glTF. The matching
 > orchestrator-side detector + `import_mvr.py` ships in
 > `feat/visualiser-phase-j-orchestrator` (visualiser v0.5.0); the two
-> stacks are deliberately independent — neither side requires the other
+> stacks are deliberately independent â€” neither side requires the other
 > to compile.
 
 ### Added
@@ -1852,41 +1867,41 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   `StartVisualisation`. Older orchestrators ignore the field; the
   visualiser dispatcher omits it entirely when the project has no live
   attachments to keep the wire envelope identical to Phase G.
-- **Server — `project_attachments` table + migration
+- **Server â€” `project_attachments` table + migration
   `0005_project_attachments.sql`** (`server/src/db/schema.ts`,
   `server/src/db/migrations/`): id (uuid), projectId, filename,
   contentType, sizeBytes, storagePath, uploadedByApiKeyId FK to
   `api_keys` (ON DELETE SET NULL), uploadedAt, soft-delete `deletedAt`,
   and a `project_attachments_project_idx` btree to keep the per-project
   list query cheap.
-- **Server — REST surface `/api/projects/:projectId/attachments`**
+- **Server â€” REST surface `/api/projects/:projectId/attachments`**
   (`server/src/api/projectAttachments.ts`):
-  - `POST   /:projectId/attachments` — multipart upload, 50 MB cap,
+  - `POST   /:projectId/attachments` â€” multipart upload, 50 MB cap,
     mime/extension whitelist (`.mvr`, `.gdtf`, `.zip` /
-    `application/mvr|gdtf|zip|octet-stream`). 201 → public attachment
+    `application/mvr|gdtf|zip|octet-stream`). 201 â†’ public attachment
     row; 415 on banned type; 413 on overflow.
-  - `GET    /:projectId/attachments` — newest-first list of live rows.
-  - `GET    /:projectId/attachments/:id` — streams the body with the
+  - `GET    /:projectId/attachments` â€” newest-first list of live rows.
+  - `GET    /:projectId/attachments/:id` â€” streams the body with the
     recorded content-type.
-  - `DELETE /:projectId/attachments/:id` — soft-deletes the row and
+  - `DELETE /:projectId/attachments/:id` â€” soft-deletes the row and
     unlinks the on-disk body.
   Bodies live under
   `${PRISM_DATA_DIR ?? '/data/prism'}/project-attachments/<projectId>/<id>-<filename>`.
-- **Server — `visualiser:attach_project_files` API-key scope**
+- **Server â€” `visualiser:attach_project_files` API-key scope**
   (`server/src/api/keys.ts`): split off from `visualiser:create_stream`
   so a read-only "start a stream" key can't silently upload assets,
   and the portal can mint two keys with different lifetimes. Admin
   sessions and ORBIT bearers bypass scope checks as before.
-- **Server — visualiser dispatcher forwards attachments**
+- **Server â€” visualiser dispatcher forwards attachments**
   (`server/src/jobs/dispatcher.ts`): exported `loadAttachmentRefs()`
   helper builds the `ProjectAttachmentRef[]` for the run's project
   (newest-first, soft-deletes excluded, `downloadUrl` derived from
   `PUBLIC_BASE_URL`); `tryDispatchVisualisation()` attaches the array
   to the outgoing `startVisualisation` envelope when non-empty.
-- **Web — `projectAttachmentsApi` client** (`web/src/shared/api.ts`):
+- **Web â€” `projectAttachmentsApi` client** (`web/src/shared/api.ts`):
   `list`, `upload`, `downloadUrl`, `remove`. **Append-only** to keep
   the file mergeable with the Phase I worker that's also extending it.
-- **Web — admin `ProjectAttachments.vue` page**
+- **Web â€” admin `ProjectAttachments.vue` page**
   (`web/src/admin/pages/ProjectAttachments.vue`, routed at
   `#/visualiser/attachments`, linked under "Visualiser" in the sidebar
   as a sub-nav row): per-project drag-drop upload, live list with
@@ -1896,7 +1911,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 ### Tests
 
 - `server/tests/api.projectAttachments.test.ts` (13 cases): full HTTP
-  surface — happy-path upload, 401 without auth, 403 without scope,
+  surface â€” happy-path upload, 401 without auth, 403 without scope,
   415 on banned mime / extension, 413 on >50 MB upload, 400 on empty,
   list newest-first (filters by projectId + excludes soft-deletes),
   GET streams body, DELETE soft-deletes + unlinks body + drops from
@@ -1915,12 +1930,12 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   scopes for "full visualiser ops" but read-only stream keys can't
   unilaterally inject assets into projects.
 - Storage is intentionally local-FS (under `PRISM_DATA_DIR`) rather
-  than ORBIT's MinIO — these blobs are PRISM-internal staging inputs
+  than ORBIT's MinIO â€” these blobs are PRISM-internal staging inputs
   for the visualiser orchestrator, not first-class project artefacts.
 
 ---
 
-## v0.1.40 — 2026-05-27 — Visualiser Phase I: Pixel Streaming player + agent signalling bridge
+## v0.1.40 â€” 2026-05-27 â€” Visualiser Phase I: Pixel Streaming player + agent signalling bridge
 
 > **Phase I of the Visualiser feature.** Replaces Phase G's `<iframe>`
 > placeholder in the admin debug viewer with a real Pixel Streaming
@@ -1935,7 +1950,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Added
 
-- **Web — `PixelStreamingPlayer.vue`** (new, `web/src/admin/components/`):
+- **Web â€” `PixelStreamingPlayer.vue`** (new, `web/src/admin/components/`):
   thin Vue wrapper around the PS frontend lib. Builds a fresh signalling
   URL on each (re)connect by fetching a new JWT via
   `POST /api/visualiser/streams/:runId/signalling-token`, mounts the
@@ -1945,42 +1960,42 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   before the RTCPeerConnection is created. Surfaces `connecting` /
   `streaming` / `failed` state with the disconnect reason string when
   available.
-- **Web — `VisualiserViewer.vue` rewrite**: drops the iframe shim;
+- **Web â€” `VisualiserViewer.vue` rewrite**: drops the iframe shim;
   embeds `<PixelStreamingPlayer>` instead. Status pill + TURN-unset
   hint + stop button preserved. Metadata poll dropped from 5s to 10s
   now that the WebRTC stream owns its own connection.
-- **Web — `VisualiserRun.turn` typed field** (`web/src/shared/api.ts`):
+- **Web â€” `VisualiserRun.turn` typed field** (`web/src/shared/api.ts`):
   surfaces the optional TURN bundle the server now attaches to the
   single-row GET response. The bundle is fresh per request (24h coturn
   TTL handles renewal naturally).
-- **Server — `GET /api/visualiser/streams/:runId` includes a fresh
+- **Server â€” `GET /api/visualiser/streams/:runId` includes a fresh
   TURN credential** (`server/src/api/visualiser.ts`): only when the
   run is `streaming`; the list endpoint stays unchanged so the bundle
   doesn't leak into admin polling caches. The credential is
   HMAC-derived per call from `TURN_SECRET`, no persistence required.
-- **Agent — `SignallingBridge.cs`** (new,
+- **Agent â€” `SignallingBridge.cs`** (new,
   `agent/src/PRISM.Agent/Visualiser/`): per-runId bidirectional
   WebSocket bridge that splices the PRISM server uplink to the
   orchestrator's local Cirrus signalling endpoint. Forwards
-  server→agent text + binary frames verbatim onto the local socket,
+  serverâ†’agent text + binary frames verbatim onto the local socket,
   and pumps the reverse channel into `signallingFrame` envelopes back
   upstream. Reassembles fragmented messages, propagates close events,
   and disposes cleanly even when the peer is slow.
-- **Agent — `SignallingBridgeRegistry.cs`** (new, same folder): owns
+- **Agent â€” `SignallingBridgeRegistry.cs`** (new, same folder): owns
   the lifecycle of every active bridge on this agent. Lazy-creates a
   bridge against the default local Cirrus URL
   (`ws://127.0.0.1:8888/`, overridable via `PRISM_VISUALISER_CIRRUS_URL`)
   when the upcoming orchestrator hasn't yet registered the actual URL,
   and provides `RegisterLocalCirrus(runId, url)` for the orchestrator
   to call from its `ready/v1` emit once Phase E/F merge.
-- **Agent — `AgentMessageDispatcher.HandleSignallingFrame` real impl**
+- **Agent â€” `AgentMessageDispatcher.HandleSignallingFrame` real impl**
   (`agent/src/PRISM.Agent/Ws/AgentMessageDispatcher.cs`): replaces
   the Phase G log-and-drop stub. Decodes the envelope, fetches the
   bridge from the registry, and forwards on a background task so the
   WS pump thread is never blocked.
-- **Agent — DI registration of `SignallingBridgeRegistry`** as a
+- **Agent â€” DI registration of `SignallingBridgeRegistry`** as a
   singleton in `Program.cs`.
-- **Agent — `PRISM.Agent.Tests` xunit project** (new, `agent/tests/`):
+- **Agent â€” `PRISM.Agent.Tests` xunit project** (new, `agent/tests/`):
   six tests over `SignallingBridge` against an in-process WebSocket
   echo server (round-trips text + binary frames, preserves ordering,
   disposes cleanly, no-ops when closed, surfaces failure on
@@ -1989,7 +2004,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ### Changed
 
-- **Web — `web/package.json`**: adds the
+- **Web â€” `web/package.json`**: adds the
   `@epicgames-ps/lib-pixelstreamingfrontend-ue5.5@1.2.5` dependency
   (Epic's officially-published frontend; API-compatible with UE 5.7
   streamers per Epic's release notes). Lockfile updated.
@@ -2000,12 +2015,12 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   and the player wiring goes all the way through to the agent's WS
   inbox. Real video gates on Phase D's `v1.0.0-ue5.7` artist template
   + a workstation with UE 5.7 + GPU + NVENC + Phase H's coturn
-  reachable from both the browser and the workstation — all of which
+  reachable from both the browser and the workstation â€” all of which
   are out of scope for Phase I's automated coverage. Unit tests
   (`SignallingBridgeTests` + Phase G's existing server suite) are the
   in-tree coverage.
 - **Frontend lib choice.** Epic publishes
-  `lib-pixelstreamingfrontend-ue5.5` (latest stable; supports 5.5 →
+  `lib-pixelstreamingfrontend-ue5.5` (latest stable; supports 5.5 â†’
   5.7 streamers) and a separate `lib-pixelstreamingfrontend-ui-ue5.5`
   UI helper. We use only the core library and render our own
   status chrome; the UI lib's `Application` class would add ~80 KB
@@ -2014,7 +2029,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   Cirrus's `config` message. We monkey-patch
   `WebRtcPlayerController.handleOnConfigMessage` to merge our
   PRISM-minted bundle into that list before the RTCPeerConnection is
-  created — using the public lib surface (the `webRtcController`
+  created â€” using the public lib surface (the `webRtcController`
   property is exposed on `PixelStreaming`). If Epic ever changes the
   handler name in a major release, the fallback is to vendor the lib
   from `EpicGamesExt/PixelStreamingInfrastructure` UE5.7 branch and
@@ -2022,7 +2037,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ---
 
-## v0.1.39 — 2026-05-27 — Visualiser Phase H: coturn TURN server + env wiring
+## v0.1.39 â€” 2026-05-27 â€” Visualiser Phase H: coturn TURN server + env wiring
 
 > **Phase H of the Visualiser feature.** Stands up the WebRTC media
 > relay (`coturn` on VM 211, public DNS
@@ -2034,22 +2049,22 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 > backed by a workstation behind PRISM.
 >
 > Co-released with `v0.1.39` of the agent. The agent has **no code
-> change** in this release — it ships only the csproj version bump so
+> change** in this release â€” it ships only the csproj version bump so
 > the agent + server release tags stay in lockstep.
 
 ### Added
 
 - **TURN deployment artifacts** (outside the PRISM repo, under
   `D:\Documents\Claude\REBUS System\TURN\`):
-    - `docker-compose.yml` — `coturn/coturn:4.6`, `network_mode: host`
-      (required for the wide UDP relay range — initially `49152-65535`,
+    - `docker-compose.yml` â€” `coturn/coturn:4.6`, `network_mode: host`
+      (required for the wide UDP relay range â€” initially `49152-65535`,
       narrowed to `52000-56999` post-merge to avoid the WireGuard
       `51820/udp` listener; see "Updated" section below), volume-mounts
       for `turnserver.conf` and `/etc/letsencrypt`.
-    - `turnserver.conf` — `use-auth-secret` (RFC 7635), realm
+    - `turnserver.conf` â€” `use-auth-secret` (RFC 7635), realm
       `visualiser.rebus.industries`, `external-ip=185.48.165.165/10.0.200.211`,
       relay range `52000-56999/udp` (was `49152-65535/udp` at initial
-      Phase H merge — see "Updated" section below for the WireGuard
+      Phase H merge â€” see "Updated" section below for the WireGuard
       collision rationale), denied-peer-ip ranges for every
       RFC-1918 / loopback / link-local / documentation block with
       narrow `allowed-peer-ip` exceptions for the REBUS workstation
@@ -2058,16 +2073,16 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
       string that the operator sed-replaces at deploy time. **No real
       secret is committed**; secret generation is gated on operator
       action.
-    - `SETUP_NOTES.md` — ten-step deploy runbook covering secret
+    - `SETUP_NOTES.md` â€” ten-step deploy runbook covering secret
       generation, SCP to VM 211, sed-replace, PRISM `.env` update,
       `docker compose up -d`, public + internal DNS, certbot for the
       `turns://` TLS cert on port 5349, certbot deploy-hook to
       `docker restart coturn` on renewal, and smoke tests against the
       WebRTC Trickle ICE sample page.
-    - `UNIFI_RULES.md` — copy-pasteable port-forward table for the
+    - `UNIFI_RULES.md` â€” copy-pasteable port-forward table for the
       UniFi gateway: `coturn-stun-udp` 3478/udp, `coturn-stun-tcp`
       3478/tcp, `coturn-tls` 5349/tcp, `coturn-relay-udp`
-      52000-56999/udp (narrowed from `49152-65535/udp` post-merge —
+      52000-56999/udp (narrowed from `49152-65535/udp` post-merge â€”
       see "Updated" section below), all targeting `10.0.200.211`.
       Includes the "until these rules are applied" symptom matrix for
       diagnosing no-relay-candidates failures.
@@ -2082,22 +2097,22 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 - **PRISM server env passthrough** (`infra/docker-compose.yml` +
   `infra/.env.example`):
-    - `TURN_SECRET` — shared with coturn's `static-auth-secret`.
-      Empty → `turn: null` sentinel (Phase G behaviour); set →
+    - `TURN_SECRET` â€” shared with coturn's `static-auth-secret`.
+      Empty â†’ `turn: null` sentinel (Phase G behaviour); set â†’
       `turnCredentials.ts` mints real RFC 7635 credentials.
-    - `TURN_REALM` — default `visualiser.rebus.industries`.
-    - `JWT_SIGNALLING_SECRET` — HS256 signing key for the 5-minute
+    - `TURN_REALM` â€” default `visualiser.rebus.industries`.
+    - `JWT_SIGNALLING_SECRET` â€” HS256 signing key for the 5-minute
       WS-signalling tokens. Independent of `TURN_SECRET`.
-    - `VISUALISER_START_TIMEOUT_MS` — default `180000` (180s),
+    - `VISUALISER_START_TIMEOUT_MS` â€” default `180000` (180s),
       matches the measured first-cold-start envelope.
-  No code change in the server itself — `turnCredentials.ts` already
+  No code change in the server itself â€” `turnCredentials.ts` already
   read these vars in Phase G; this PR just wires them through the
   container env in production.
 
-- **`infra/SETUP_NOTES.md`** (new) — companion to `DEPLOY.md`
+- **`infra/SETUP_NOTES.md`** (new) â€” companion to `DEPLOY.md`
   documenting the adjacent infra dependencies PRISM relies on but
   does not own (coturn, Caddy, UniFi). Includes the full
-  `infra/.env.example → /opt/prism/.env → compose → process.env →
+  `infra/.env.example â†’ /opt/prism/.env â†’ compose â†’ process.env â†’
   turnCredentials.ts` wiring diagram and the recommended deploy
   ordering for first-time stand-up.
 
@@ -2105,14 +2120,14 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 - **No code change on the server.** Phase G's `turnCredentials.ts`,
   `signallingToken.ts`, `dispatcher.ts`, `signallingProxy.ts`, etc.
-  already implement the full credential + signalling surface — Phase
+  already implement the full credential + signalling surface â€” Phase
   H is purely the operational config that lets that surface produce
   real (rather than sentinel) values in production.
 - **No code change on the agent** beyond the version bump. The agent
   release tag is held in lockstep with the server image tag, so a
   Phase H deploy produces a `prism-agent-v0.1.39` MSI that is a
   byte-identical mirror of `v0.1.38` apart from
-  `AssemblyInformationalVersion`. Acceptable trade — keeps the
+  `AssemblyInformationalVersion`. Acceptable trade â€” keeps the
   release matrix simple.
 - The TURN secret itself is intentionally **not** generated by the
   Phase H PR. Secret generation is gated on operator authorization
@@ -2132,7 +2147,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 ### Operator runbook (post-merge)
 
 1. Generate `TURN_SECRET` and `JWT_SIGNALLING_SECRET`
-   (`openssl rand -hex 32` — two independent values).
+   (`openssl rand -hex 32` â€” two independent values).
 2. Stage `D:\Documents\Claude\REBUS System\TURN\{docker-compose.yml,turnserver.conf}`
    onto VM 211 at `~rebus/coturn/`. Sed-replace the placeholder.
 3. Edit `/opt/prism/.env`: add `TURN_SECRET`, `TURN_REALM`,
@@ -2141,21 +2156,21 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
    `IPv4. Listener opened on : 0.0.0.0:3478` in logs.
 5. `cd /opt/prism && docker compose restart prism-server`.
 6. Apply UniFi rules per `TURN/UNIFI_RULES.md`.
-7. Add public A record `visualiser.rebus.industries →
-   185.48.165.165` at the registrar (✅ live as of 2026-05-27) and
-   an internal A record `visualiser.rebus.industries → 10.0.200.211`
+7. Add public A record `visualiser.rebus.industries â†’
+   185.48.165.165` at the registrar (âœ… live as of 2026-05-27) and
+   an internal A record `visualiser.rebus.industries â†’ 10.0.200.211`
    on DC1.
 8. Issue the TLS cert via `certbot certonly --standalone` on VM 211.
    Uncomment the `cert=` / `pkey=` lines in `turnserver.conf` and
    restart coturn.
 9. Smoke-test using the WebRTC Trickle ICE page from a cellular
-   connection — expect `relay` candidates from `185.48.165.165` to
+   connection â€” expect `relay` candidates from `185.48.165.165` to
    appear within ~2 s.
 
 ### Updated post-merge (2026-05-27)
 
-- **Public DNS A record `visualiser.rebus.industries →
-  185.48.165.165` is ✅ live as of 2026-05-27.** Step 7 of the
+- **Public DNS A record `visualiser.rebus.industries â†’
+  185.48.165.165` is âœ… live as of 2026-05-27.** Step 7 of the
   operator runbook is therefore complete on the public-DNS side; the
   internal AD DNS record (DC1) and the certbot/TLS step still need
   operator attention.
@@ -2177,7 +2192,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 
 ---
 
-## v0.1.38 — 2026-05-27 — Visualiser Phase G: server API + WS signalling proxy + admin UI
+## v0.1.38 â€” 2026-05-27 â€” Visualiser Phase G: server API + WS signalling proxy + admin UI
 
 > **Phase G of the Visualiser feature.** Wires up the portal-facing
 > `/api/visualiser/streams` REST surface, the bidirectional WS signalling
@@ -2186,7 +2201,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 > plan: PRISM admin UI (or `curl`) can start a stream, get a signalling
 > URL, and a co-located browser can connect.
 >
-> Co-released with `v0.1.38` of the agent — the only agent-side change
+> Co-released with `v0.1.38` of the agent â€” the only agent-side change
 > in Phase G is a new `signallingFrame` WS handler stub so the server's
 > outbound envelopes have a place to land. The local-Cirrus hop on the
 > agent side wires up when the orchestrator branch (Phases B-F) merges
@@ -2195,41 +2210,41 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
 ### Added
 
 - **Shared contracts** (`AgentProtocol.cs`, `agent-protocol.ts`,
-  `agent-protocol.json`): two new envelopes — `VisualisationEnded`
-  (agent → server, terminal cleanup after TTL expiry / UE exit /
+  `agent-protocol.json`): two new envelopes â€” `VisualisationEnded`
+  (agent â†’ server, terminal cleanup after TTL expiry / UE exit /
   browser disconnect) and `SignallingFrame` (bidirectional, either
   `payload` text or `payloadB64` base64-encoded binary). Verified by
   `npm run validate:contracts` (21 message types across all three
   representations).
-- **Server REST API** — new file `server/src/api/visualiser.ts`
+- **Server REST API** â€” new file `server/src/api/visualiser.ts`
   registering five routes under `/api/visualiser`:
     - `POST /streams` (requires `visualiser:create_stream` scope or
-      admin session) — synchronous start. Validates the body, inserts a
+      admin session) â€” synchronous start. Validates the body, inserts a
       `queued` row, dispatches `startVisualisation` to the least-loaded
       eligible workstation via `tryDispatchVisualisation`, awaits the
       agent's `visualisationReady` / `visualisationFailed` reply through
       a per-runId Promise registry (timeout configurable via
       `VISUALISER_START_TIMEOUT_MS`, default 180s). Returns the plan's
-      `prism-visualiser/ready/v1` shape — `runId`, `signallingUrl`,
+      `prism-visualiser/ready/v1` shape â€” `runId`, `signallingUrl`,
       `playerUrl`, `streamerId`, `turn: { urls, username, credential,
-      ttl } | null` — on success; the `failed/v1` shape with a
+      ttl } | null` â€” on success; the `failed/v1` shape with a
       machine-readable `code` (`start_timeout`, `agent_failed`,
       `no_workstation_available`, `all_workstations_busy`,
       `misconfigured`, `agent_send_failed`) on failure.
     - `GET  /streams` and `GET /streams/:runId` for polling (admin
       auth).
     - `DELETE /streams/:runId` (caller must be the API key that
-      started the run, or admin) — sends best-effort
+      started the run, or admin) â€” sends best-effort
       `cancelVisualisation`, transitions row to `ended`, releases the
       workstation slot.
-    - `POST /streams/:runId/signalling-token` — mints a 5-minute HS256
+    - `POST /streams/:runId/signalling-token` â€” mints a 5-minute HS256
       JWT scoped to one runId. Returns 503 with a clear error when
       `JWT_SIGNALLING_SECRET` is unset rather than minting an unverifiable
       token.
-    - `GET  /workstations` (admin only) — list of eligible visualiser
+    - `GET  /workstations` (admin only) â€” list of eligible visualiser
       workstations + their current load, for the start-stream
       dropdown.
-- **Server WS signalling proxy** —
+- **Server WS signalling proxy** â€”
   `server/src/ws/signallingProxy.ts` mounts a websocket route at
   `/ws/visualiser/:runId/signalling?token=<jwt>`. Verifies the JWT
   against `expectedRunId`, refuses non-`streaming` runs (4409),
@@ -2239,7 +2254,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   `signallingFrame`s from the agent fan out to every browser socket
   for that runId. Binary frames are base64-wrapped into
   `payloadB64`; text frames go through as `payload`. PRISM does not
-  parse the Pixel Streaming sub-protocol — the wrappers are opaque
+  parse the Pixel Streaming sub-protocol â€” the wrappers are opaque
   envelopes. The registry is extracted into
   `signallingProxyRegistry.ts` to break the import cycle with
   `agentProtocol.ts`.
@@ -2253,21 +2268,21 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   `visualisationEnded` handler runs the same cleanup path (terminal
   state, no waiter to fire). The `signallingFrame` handler dispatches
   to `signallingProxyRegistry.forwardAgentToBrowser`.
-- **Server TURN credential generator** —
-  `server/src/visualiser/turnCredentials.ts` implements RFC 7635 §3
+- **Server TURN credential generator** â€”
+  `server/src/visualiser/turnCredentials.ts` implements RFC 7635 Â§3
   long-term credentials (`base64(HMAC-SHA1(TURN_SECRET, "<exp>:<tag>"))`
   with `exp = now + ttlSeconds`). Returns `null` sentinel when
   `TURN_SECRET` is unset so the portal can still receive the rest of
-  the ready response — Phase H wires the real coturn deploy. Honours
+  the ready response â€” Phase H wires the real coturn deploy. Honours
   `TURN_REALM` (default `visualiser.rebus.industries`) and
   `TURN_URLS_OVERRIDE` for staging.
-- **Server signalling token issuer** —
+- **Server signalling token issuer** â€”
   `server/src/visualiser/signallingToken.ts` implements hand-rolled
   HS256 JWT issue/verify against `JWT_SIGNALLING_SECRET`. Each token
   carries `runId` + 5-minute `exp`; verify enforces signature,
   expiry, and an `expectedRunId` match so a leaked token can't be
   replayed against a different run.
-- **Server run registry** — `server/src/visualiser/runRegistry.ts`,
+- **Server run registry** â€” `server/src/visualiser/runRegistry.ts`,
   the per-runId Promise map that bridges the synchronous POST
   request to the agent's async WS reply. Supports timeout, supersede,
   and abandon.
@@ -2278,18 +2293,18 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   picks the least-loaded `can_visualise = true` workstation, and
   reserves a slot atomically via `UPDATE workstations SET
   current_visualiser_load = current_visualiser_load + 1 WHERE id = ?
-  AND current_visualiser_load < slots RETURNING …`. The
+  AND current_visualiser_load < slots RETURNING â€¦`. The
   optimistic-update pattern means concurrent dispatchers race
   cleanly: the loser sees zero rows and tries the next candidate.
   Rollback on agent ws send failure clamps the counter at zero via
   `GREATEST(current_visualiser_load - 1, 0)`. New
   `releaseVisualiserSlot(workstationId)` is called from every
   terminal-state agent envelope and from the DELETE endpoint.
-- **Database** (`schema.ts` → `0004_visualiser_phase_g.sql`):
+- **Database** (`schema.ts` â†’ `0004_visualiser_phase_g.sql`):
   `workstations.current_visualiser_load int NOT NULL DEFAULT 0`,
   `visualiser_runs.player_url text`,
   `visualiser_runs.failure_reason varchar(64)`, and
-  `visualiser_runs.requested_by_api_key_id uuid` with `FK → api_keys.id
+  `visualiser_runs.requested_by_api_key_id uuid` with `FK â†’ api_keys.id
   ON DELETE SET NULL`.
 - **OpenAPI** (`server/src/docs/openapi.ts`): documents all five
   `/api/visualiser/*` paths with request / response schemas, the
@@ -2299,7 +2314,7 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
   the deployment root rather than under `/v1`. Phase K writes the
   narrative companion docs.
 - **Web admin UI**:
-    - `web/src/admin/pages/Visualiser.vue` — table of recent runs,
+    - `web/src/admin/pages/Visualiser.vue` â€” table of recent runs,
       live duration ticker on streaming rows, ORBIT project-name
       resolution (cached client-side), per-row Stop + Open viewer
       action buttons, and a Start-stream modal that reuses
@@ -2307,25 +2322,25 @@ primary blocker; the object and blob path fixes prevent the next 404s in the pip
       `GET /api/visualiser/workstations` for the (optional)
       workstation dropdown. Polls every 5s while any non-terminal
       run exists; stops automatically when everything settles.
-    - `web/src/admin/pages/VisualiserViewer.vue` — minimal `<iframe>`
-      shim pointing at the orchestrator's `playerUrl` with a Loading…
+    - `web/src/admin/pages/VisualiserViewer.vue` â€” minimal `<iframe>`
+      shim pointing at the orchestrator's `playerUrl` with a Loadingâ€¦
       overlay and per-status placeholder copy. Phase I replaces this
       with a real Pixel Streaming embed driven by the new signalling
       WS proxy.
-    - `web/src/shared/api.ts` — new `visualiserApi` client with
+    - `web/src/shared/api.ts` â€” new `visualiserApi` client with
       `listStreams` / `getStream` / `startStream` / `stopStream` /
       `listWorkstations` / `signallingToken`, plus typed
       `VisualiserRun`, `VisualiserReadyEvent`, `VisualiserTurnBundle`,
       `VisualiserWorkstation`, `VisualiserStartBody`,
       `VisualiserStatus` interfaces.
-    - `web/src/admin/App.vue` + `web/src/admin/main.ts` — new
+    - `web/src/admin/App.vue` + `web/src/admin/main.ts` â€” new
       "Visualiser" sidebar entry (between Pipeline and API keys) and
       routes `/visualiser` + `/visualiser/:runId`.
 
 ### Agent (v0.1.38)
 
 - **AgentMessageDispatcher**: new `MessageType.SignallingFrame`
-  branch wired up. The handler is a Phase G stub — the orchestrator-
+  branch wired up. The handler is a Phase G stub â€” the orchestrator-
   side bridge that forwards to local Cirrus lands when the
   orchestrator branch merges in. Until then the agent logs at debug
   and drops the frame, so the server-side proxy stays connected for
@@ -2350,21 +2365,21 @@ runs in-process with no Postgres dependency.
 - The signalling-token route returns 503 (rather than 500) when
   `JWT_SIGNALLING_SECRET` is unset so operators see a clear
   "misconfigured, can't mint a token" signal rather than a generic
-  server error — same shape as the TURN sentinel.
+  server error â€” same shape as the TURN sentinel.
 - The admin Visualiser nav entry sits between Pipeline and API keys
   rather than between Pipeline and Workstations as the spec
-  suggested — that placement keeps the role-management surfaces
+  suggested â€” that placement keeps the role-management surfaces
   (Workstations, API keys) adjacent in the sidebar and matches the
-  current "Workstations → role pills → Visualiser stream consumer"
+  current "Workstations â†’ role pills â†’ Visualiser stream consumer"
   reading order.
 - The `signallingFrame` envelope carries either `payload` (string)
   or `payloadB64` (base64-encoded binary), with exactly one set per
   frame. This is slightly more explicit than the spec's `raw
-  binary/text payload` phrasing — Newtonsoft.Json round-trips a
+  binary/text payload` phrasing â€” Newtonsoft.Json round-trips a
   byte[] field through base64 by default but the explicit field
   split lets the JSON Schema validator catch malformed envelopes.
 - The full `POST /api/visualiser/streams` integration test (Fastify
-  inject + mocked WS gateway) was deferred — the suite would need a
+  inject + mocked WS gateway) was deferred â€” the suite would need a
   full Postgres fixture which the server doesn't yet have any
   integration-test infrastructure for. The dispatcher unit tests
   cover the same selection / reservation surface; the API route's
@@ -2384,11 +2399,11 @@ runs in-process with no Postgres dependency.
 
 ---
 
-## v0.1.37 — 2026-05-27 — Visualiser role plumbing (no orchestrator yet)
+## v0.1.37 â€” 2026-05-27 â€” Visualiser role plumbing (no orchestrator yet)
 
-> **Phase A of the Visualiser feature.** This release lands the *plumbing* —
+> **Phase A of the Visualiser feature.** This release lands the *plumbing* â€”
 > role flag, settings storage, contracts, DB schema, dispatcher branch,
-> and admin/agent UI — but **no orchestrator binary, no Unreal Engine
+> and admin/agent UI â€” but **no orchestrator binary, no Unreal Engine
 > integration, and no signalling proxy**. The agent's `startVisualisation`
 > WS handler intentionally acks `accepted: false` with reason
 > `"visualiser orchestrator not yet implemented"`. Wiring to a real
@@ -2398,29 +2413,29 @@ runs in-process with no Postgres dependency.
 
 - **Shared contracts** (`shared/contracts/AgentProtocol.cs`,
   `agent-protocol.ts`, `agent-protocol.json`): `Visualiser` added to the
-  `AgentRole` enum. Four new `MessageType`s — `startVisualisation`,
-  `cancelVisualisation` (server → agent), `visualisationReady`,
-  `visualisationFailed` (agent → server) — with matching `*Data`
+  `AgentRole` enum. Four new `MessageType`s â€” `startVisualisation`,
+  `cancelVisualisation` (server â†’ agent), `visualisationReady`,
+  `visualisationFailed` (agent â†’ server) â€” with matching `*Data`
   payload records covering `runId`, ORBIT credentials, project / model /
   version ids, template tag, signalling URL, stream id, expiry, and
   error fields. Verified by `npm run validate:contracts` (19 message
   types across all three representations).
-- **Database schema** (`server/src/db/schema.ts` →
+- **Database schema** (`server/src/db/schema.ts` â†’
   `0003_visualiser.sql`): `workstations.can_visualise boolean DEFAULT
   false`, `api_keys.scopes jsonb DEFAULT '[]'::jsonb`, and a new
   `visualiser_runs` table keyed by `status varchar(16)` enum (`queued |
   importing | streaming | failed | ended`) with FK back to
   `workstations`. Indexes on `status`, `created_at`, and `project_id`.
-- **Server — `tryDispatchVisualisation(runId, log)`**
+- **Server â€” `tryDispatchVisualisation(runId, log)`**
   (`server/src/jobs/dispatcher.ts`): new exported function that picks
   an eligible agent purely by `workstation.is_enabled +
   workstation.can_visualise + slots_busy < slots` (no
-  `supportedFormats` check — the visualiser stream is format-agnostic
+  `supportedFormats` check â€” the visualiser stream is format-agnostic
   at this layer), sends the `startVisualisation` envelope over the
   existing agent WS session, and transitions the row to `importing`.
-  No API caller wired yet — that's Phase G.
+  No API caller wired yet â€” that's Phase G.
 - **Agent config** (`agent/src/PRISM.Agent/Config/AgentConfig.cs`): four
-  new fields persisted via the existing JSON write path —
+  new fields persisted via the existing JSON write path â€”
   `UnrealEngineRoot` (default `C:\Program Files\Epic Games\UE_5.7\`),
   `UnrealTemplateTag` (default `v1.0.0-ue5.7`), `VisualiserMaxConcurrent`
   (default `1`), `VisualiserGpuCheck` (default `true`). `AgentControlPlane`
@@ -2438,7 +2453,7 @@ runs in-process with no Postgres dependency.
   `startVisualisation` and `cancelVisualisation` cases land, log a
   clear `WARN`, and ack with `Accepted = false, Reason = "visualiser
   orchestrator not yet implemented"`. These intentionally do nothing
-  with the payload beyond logging — Phase F/G will replace this stub
+  with the payload beyond logging â€” Phase F/G will replace this stub
   with a real `VisualiserSession` handoff and the reverse-channel
   `visualisationReady` / `visualisationFailed` envelopes.
 - **Agent startup validation** (`agent/src/PRISM.Agent/AgentService.cs`):
@@ -2446,9 +2461,9 @@ runs in-process with no Postgres dependency.
   `Directory.Exists(Config.UnrealEngineRoot)` on startup and emits a
   loud `Log.Warning` (`Visualiser role enabled but UE root not found:
   ...`) if it's missing. The agent continues running so the other
-  roles still work — the dispatcher filters this box out via
+  roles still work â€” the dispatcher filters this box out via
   `can_visualise` until the admin corrects the config.
-- **Admin UI — `can_visualise` role pill**
+- **Admin UI â€” `can_visualise` role pill**
   (`web/src/admin/pages/Workstations.vue`,
   `web/src/shared/api.ts`,
   `server/src/api/workstations.ts`): new toggle alongside
@@ -2472,14 +2487,14 @@ runs in-process with no Postgres dependency.
 ### Notes
 
 - WS handlers return `accepted: false` until the orchestrator binary
-  lands in Phase F. The whole release is *plumbing only* — admins can
+  lands in Phase F. The whole release is *plumbing only* â€” admins can
   toggle workstations into the visualiser pool and configure UE
   settings on each agent, but the next dispatcher hop will hit the
   stub above and refuse the run cleanly.
 
 ---
 
-## v0.1.36 — 2026-05-27 — Updater hotfix
+## v0.1.36 â€” 2026-05-27 â€” Updater hotfix
 
 > **Recovery note for v0.1.34 / v0.1.35 users:** the existing in-app
 > updater **cannot** install v0.1.36 because of the same
@@ -2501,7 +2516,7 @@ runs in-process with no Postgres dependency.
   default `powershell.exe` (Windows PowerShell 5.1 / .NET Framework 4.x)
   loads the older `System.IO.Compression.FileSystem.dll`, which only
   has `(string, string, Encoding)`. PowerShell's method binder tried to
-  coerce `$true` → `System.Text.Encoding` and threw immediately
+  coerce `$true` â†’ `System.Text.Encoding` and threw immediately
   (`Cannot convert value "True" to type "System.Text.Encoding"`). The
   agent then quietly relaunched the OLD binary, which on every "Update"
   click landed back in the same broken updater. **No v0.1.34 or v0.1.35
@@ -2525,7 +2540,7 @@ runs in-process with no Postgres dependency.
   `InvalidOperationException("Another update is already in progress on
   this agent.")` instead of queueing. Stops a remote (WS) and a local
   (tray "Check for Updates") update from racing on the same temp zip
-  and install dir — a scenario that may have contributed to the
+  and install dir â€” a scenario that may have contributed to the
   "file is being used by another process" report on top of the primary
   `ExtractToDirectory` crash.
 - **`Updater.IsUpdateInProgress`** public read-only probe so the tray
@@ -2567,31 +2582,31 @@ runs in-process with no Postgres dependency.
 
 ### Files touched
 
-- `agent/src/PRISM.Agent/Tray/Updater.cs` — the PowerShell here-string
+- `agent/src/PRISM.Agent/Tray/Updater.cs` â€” the PowerShell here-string
   (extract + verification), `SemaphoreSlim` gate, stale-zip delete,
   `FileShare.Read`, scoped streams.
-- `agent/src/PRISM.Agent/AgentControlPlane.cs` — `UpdateOutcome` record
+- `agent/src/PRISM.Agent/AgentControlPlane.cs` â€” `UpdateOutcome` record
   gains `AlreadyRunning`; `CheckAndApplyUpdateAsync` short-circuits on
   `Updater.IsUpdateInProgress` and catches `InvalidOperationException`
   from the background `Task.Run`.
-- `agent/src/PRISM.Agent/Ws/AgentMessageDispatcher.cs` — `HandleUpdate`
+- `agent/src/PRISM.Agent/Ws/AgentMessageDispatcher.cs` â€” `HandleUpdate`
   inspects the outcome and logs WARN for benign already-running races.
-- `agent/src/PRISM.Agent/Tray/PrismTrayContext.cs` — `OnCheckUpdate`
+- `agent/src/PRISM.Agent/Tray/PrismTrayContext.cs` â€” `OnCheckUpdate`
   early-return + `InstallUpdateAsync` `InvalidOperationException`
   branch.
-- `agent/src/PRISM.Agent/WebUi/AgentWebUi.cs` — `POST /api/agent/update`
+- `agent/src/PRISM.Agent/WebUi/AgentWebUi.cs` â€” `POST /api/agent/update`
   returns 409 with `alreadyRunning: true` when a download is in flight.
-- `agent/src/PRISM.Agent/PRISM.Agent.csproj` — version bumped
-  `0.1.35` → `0.1.36` (all four fields).
+- `agent/src/PRISM.Agent/PRISM.Agent.csproj` â€” version bumped
+  `0.1.35` â†’ `0.1.36` (all four fields).
 
 ---
 
-## v0.1.35 — 2026-05-27
+## v0.1.35 â€” 2026-05-27
 
 PRISM logo branding across every agent surface a user sees: Windows
 Explorer / Task Manager / taskbar entry, Alt-Tab thumbnail, system-tray
 icon, the local web UI header, and the Start Menu + Desktop shortcuts
-created by the wizard installer. No behavioural changes — the WS
+created by the wizard installer. No behavioural changes â€” the WS
 protocol, scheduled task, updater, and Rhino pipeline are byte-for-byte
 identical to v0.1.34.
 
@@ -2622,10 +2637,10 @@ identical to v0.1.34.
 - **PRISM logo in the agent web UI header**
   (`agent/src/PRISM.Agent/WebUi/IndexHtml.cs` +
   `WebUi/AgentWebUi.cs`): the header now opens with an `<img>` tag
-  whose `src` is a `data:image/png;base64,…` URL. `AgentWebUi` reads
+  whose `src` is a `data:image/png;base64,â€¦` URL. `AgentWebUi` reads
   `Assets/prism-logo.png` once on first request, base64-encodes it,
   and caches the rendered HTML for the process lifetime via a
-  `Lazy<string>`. The 91 KB PNG becomes ~122 KB inline — still a
+  `Lazy<string>`. The 91 KB PNG becomes ~122 KB inline â€” still a
   rounding error on the agent's localhost loopback. Falls back to an
   empty `src` if the asset is missing, in which case the page hides
   the broken-image glyph via `img[src=""] { display: none; }`.
@@ -2634,7 +2649,7 @@ identical to v0.1.34.
   Start Menu "PRISM Agent Web UI", and the optional desktop shortcut
   all explicitly target `{app}\Assets\PRISM.Agent.ico`. Crucial for
   the Web UI shortcut, whose `Filename:` is `http://localhost:7421/`
-  — Windows would otherwise render the default browser icon and the
+  â€” Windows would otherwise render the default browser icon and the
   shortcut would be visually indistinguishable from any other
   bookmark. The Start Menu group as a whole now reads as a coherent
   PRISM-branded entry.
@@ -2648,7 +2663,7 @@ identical to v0.1.34.
   generator used to produce `Assets/PRISM.Agent.ico`. Loads the
   source PNG via `System.Drawing.Image.FromFile`, rasterises each
   requested size with `HighQualityBicubic` interpolation, encodes
-  each frame as PNG, and writes a hand-rolled `ICONDIR` + N ×
+  each frame as PNG, and writes a hand-rolled `ICONDIR` + N Ã—
   `ICONDIRENTRY` + payload container so the .ico stays compact
   (~80 KB instead of >250 KB the all-BMP fallback would produce).
   Re-run when the upstream `PRISM/prism-logo.png` changes.
@@ -2661,13 +2676,13 @@ identical to v0.1.34.
   retired. The tray icon loads `Assets/PRISM.Agent.ico` from
   `AppContext.BaseDirectory` and uses it unchanged for the
   Connected, Connecting, and Stopped states. Connection state stays
-  discoverable through the existing tooltip ("PRISM Agent —
-  Connected / Connecting… / Stopped") and the disabled
-  `Status: …` menu item; both already update on every WS reconnect /
+  discoverable through the existing tooltip ("PRISM Agent â€”
+  Connected / Connectingâ€¦ / Stopped") and the disabled
+  `Status: â€¦` menu item; both already update on every WS reconnect /
   disconnect event. The amber-circle fallback is preserved as
   `LoadLogoIcon()`'s exception/missing-file branch so the tray never
   starts without an icon. Honours the v0.1.34 `SessionId == 0`
-  headless guard — `PrismTrayContext` is only constructed in
+  headless guard â€” `PrismTrayContext` is only constructed in
   interactive sessions, and `LoadLogoIcon()` is invoked from the
   type initialiser as part of that construction.
 
@@ -2675,7 +2690,7 @@ identical to v0.1.34.
 
 - **Existing v0.1.34 agents need exactly one update cycle to migrate.**
   The new `Assets/` folder, the updated tray icon, and the inline
-  web-UI logo all live in the v0.1.35 publish payload — the in-app
+  web-UI logo all live in the v0.1.35 publish payload â€” the in-app
   updater (`Updater.DownloadAndInstallAsync`) extracts the zip on
   top of the install dir, so the assets land in
   `C:\Program Files\PRISM.Agent\Assets\` automatically after the
@@ -2686,7 +2701,7 @@ identical to v0.1.34.
   `NotifyIcon.Icon` on a live process is a process restart. The
   built-in `Restart` button on the web UI and the scheduled-task
   auto-relaunch both handle this.
-- **No code-signing** still — same posture as v0.1.34 (parked).
+- **No code-signing** still â€” same posture as v0.1.34 (parked).
 - **No DB schema changes, no protocol changes, no server changes.**
   The server image is rebuilt by `server-image` CI because the
   workflow's path filter includes `agent/install/**`, but the
@@ -2695,12 +2710,12 @@ identical to v0.1.34.
 
 ---
 
-## v0.1.34 — 2026-05-27
+## v0.1.34 â€” 2026-05-27
 
 UX + resilience pass on the in-app updater. Triggered by a v0.1.32
 field report from RB-DA2-PC02 ("agent closes but there is no install
 window pop up") that the diagnostic subagent traced to the v0.1.32
-silent-by-design PowerShell helper — not to Windows Defender. **No
+silent-by-design PowerShell helper â€” not to Windows Defender. **No
 code-signing in this release**: Defender was conclusively ruled out
 (zero quarantine/block events for `PRISM.Agent.exe` or the update
 zip across the entire log history on PC02), so AD CS signing is
@@ -2708,36 +2723,36 @@ parked for a future cycle.
 
 ### Added
 
-- **Agent — visible "Update available" dialog**
+- **Agent â€” visible "Update available" dialog**
   (`agent/.../Tray/UpdateAvailableDialog.cs`): replaces the v0.1.32
   bare-`MessageBox` Yes/No prompt with a proper WinForms dialog that
   shows the new tag, current version, download size (parsed from
   `assets[].size` on the GitHub release JSON), and a scrollable
   preview of the release `body` (release notes). Buttons are
   `Update now` / `Cancel`; `Esc` and the X both cancel safely.
-- **Agent — visible "Updating…" progress form**
+- **Agent â€” visible "Updatingâ€¦" progress form**
   (`agent/.../Tray/UpdateProgressForm.cs`): non-modal progress dialog
   shown while `Updater.DownloadAndInstallAsync` runs.  Wired to the
   existing `IProgress<int>` so the bar tracks real download bytes
   (not just a marquee); flips to indeterminate marquee right before
   `Application.Exit()` so the user sees the handoff to the
   PowerShell helper instead of a dead-looking window.
-- **Agent — visible PowerShell helper window**
+- **Agent â€” visible PowerShell helper window**
   (`Tray/Updater.cs`): the post-`Application.Exit` extract/relaunch
   PowerShell child now runs with `CreateNoWindow=false` /
   `WindowStyle=Normal` and mirrors every step line to `Write-Host`
   (in addition to the durable `%TEMP%\PRISM.Agent.Update.log` file
   the diagnostic-on-next-startup hook already inspected). The user
-  sees `update script started → waiting for agent pid N to exit →
-  agent exited → extracting … → extraction complete → launching new
-  agent → launched` while it happens. On any `FATAL` line the
+  sees `update script started â†’ waiting for agent pid N to exit â†’
+  agent exited â†’ extracting â€¦ â†’ extraction complete â†’ launching new
+  agent â†’ launched` while it happens. On any `FATAL` line the
   console pauses with `Read-Host 'Press Enter to close'` so the
   operator can copy the diagnostic instead of watching the window
   vanish. On the happy path it auto-closes a couple of seconds
   after `launched`. Pre-v0.1.34 used `CreateNoWindow=true` /
   `-WindowStyle Hidden`, which was the proximate cause of the
   RB-DA2-PC02 user report.
-- **Agent — post-update tray balloon**
+- **Agent â€” post-update tray balloon**
   (`Tray/PrismTrayContext.cs` + `Tray/Updater.cs`): on startup the
   tray now checks `Updater.ConsumeLastUpdateSuccess()` and, when the
   marker file matches the running assembly version, fires
@@ -2745,36 +2760,36 @@ parked for a future cycle.
   running v{currentVersion} ({tag}).", ToolTipIcon.Info)` ~2.5 s
   after the icon is realised. The marker is read-and-delete so the
   balloon fires exactly once per actual upgrade.
-- **Agent — `Updater.ConsumeLastUpdateSuccess()` + NewVersion
+- **Agent â€” `Updater.ConsumeLastUpdateSuccess()` + NewVersion
   marker** (`Tray/Updater.cs`): `DownloadAndInstallAsync` now stashes
   the target tag in `%TEMP%\PRISM.Agent.Update.NewVersion` BEFORE
   calling `Application.Exit()`, so the relaunched agent can show the
   post-update balloon without grep-ing the diagnostic log. Stale
   markers (older than 10 min) or markers whose recorded version
   doesn't match the running assembly are deleted silently.
-- **Agent — scheduled-task `AtStartup` trigger**
+- **Agent â€” scheduled-task `AtStartup` trigger**
   (`agent/install/install.ps1`): the `PRISM.Agent` task now carries
-  two triggers — the existing `AtLogOn -User <currentUser>` plus a
+  two triggers â€” the existing `AtLogOn -User <currentUser>` plus a
   new `AtStartup`. Combined with the pre-existing `RestartCount=3` /
   `RestartInterval=1m` settings, this means a botched updater that
   exits without successfully relaunching the new agent gets up to
   three additional restart attempts at 1-minute intervals from
   Task Scheduler, AND another shot at boot. Run level remains
   `Highest`; logon type remains `Interactive` (preserving the
-  existing principal — no LogonType change required).
-- **Agent — session 0 guard** (`Program.cs`): if the agent is ever
-  launched in session 0 (no interactive desktop — for example when
+  existing principal â€” no LogonType change required).
+- **Agent â€” session 0 guard** (`Program.cs`): if the agent is ever
+  launched in session 0 (no interactive desktop â€” for example when
   the `AtStartup` trigger is reconfigured to fire pre-logon via
   `S4U` / `Password` logon type), the process forces headless mode
   so the WS + HTTP services still come up cleanly without
   attempting to create a tray icon or message boxes that would
-  throw on session 0. Defensive insurance — the shipped principal
+  throw on session 0. Defensive insurance â€” the shipped principal
   is still `Interactive`, so the guard is a no-op on standard
   installs.
 
 ### Changed
 
-- **Agent — `Updater.UpdateInfo` carries SizeBytes + Notes**
+- **Agent â€” `Updater.UpdateInfo` carries SizeBytes + Notes**
   (`Tray/Updater.cs`): `CheckForUpdateAsync` now also parses the zip
   asset's `size` field and the release `body` field so the
   "Update available" dialog can render real numbers and the GitHub
@@ -2783,7 +2798,7 @@ parked for a future cycle.
 
 ### Notes
 
-- **First update from v0.1.32 / v0.1.33 → v0.1.34 still uses the
+- **First update from v0.1.32 / v0.1.33 â†’ v0.1.34 still uses the
   OLD silent updater.** The visible-window + tray-balloon + richer
   prompt only applies to updates from v0.1.34 onwards, because the
   updater that runs is whichever one is baked into the currently
@@ -2794,7 +2809,7 @@ parked for a future cycle.
   installer (`PRISM.Agent-Setup-v0.1.34.exe`).
 - **No code-signing** in this release. The PC02 diagnostic
   (`agent-transcripts/.../5ecfd18c-...`) showed no Windows Defender
-  involvement in the original "no install window" report — the
+  involvement in the original "no install window" report â€” the
   fix is squarely a UX / visibility one. AD CS signing remains
   parked for a future release where there's a real Authenticode-
   related symptom to address.
@@ -2802,25 +2817,25 @@ parked for a future cycle.
   the agent already runs is unsigned). On workstations where IT
   policy blocks unsigned scripts, the helper is still invoked with
   `-ExecutionPolicy Bypass` from the parent process, matching the
-  v0.1.32–v0.1.33 behaviour.
+  v0.1.32â€“v0.1.33 behaviour.
 
 ---
 
-## v0.1.33 — 2026-05-27
+## v0.1.33 â€” 2026-05-27
 
 Adds **remote restart** and **remote update** controls. Admins no longer
 have to RDP into a workstation to kick the agent or to make it pull the
-latest GitHub release — both actions are reachable from the PRISM admin
+latest GitHub release â€” both actions are reachable from the PRISM admin
 Workstations page and from the agent's own web UI.
 
 ### Added
 
 - **Agent protocol** (`shared/contracts/agent-protocol.{json,ts}` +
   `shared/contracts/AgentProtocol.cs`): two new server -> agent message
-  types — `restart` (optional `reason`) and `update` (optional `tag`
+  types â€” `restart` (optional `reason`) and `update` (optional `tag`
   to pin a release). Older agents (pre-v0.1.33) silently ignore them.
 
-- **Agent — local web UI** (`PRISM/agent/.../WebUi/`): new
+- **Agent â€” local web UI** (`PRISM/agent/.../WebUi/`): new
   `POST /api/agent/restart` and `POST /api/agent/update` endpoints,
   surfaced as **Check for updates** + **Restart agent** buttons in a
   new "Agent lifecycle" card at the bottom of `http://<host>:7421/`.
@@ -2828,23 +2843,23 @@ Workstations page and from the agent's own web UI.
   version}` when already on the latest tag, or `{ok, downloading:
   true, tag}` while it pulls the new zip in the background.
 
-- **Agent — WS handler** (`PRISM/agent/.../Ws/AgentMessageDispatcher.cs`):
+- **Agent â€” WS handler** (`PRISM/agent/.../Ws/AgentMessageDispatcher.cs`):
   inbound `restart` / `update` envelopes are routed to
   `AgentControlPlane.RestartAsync` / `CheckAndApplyUpdateAsync`. The
   same methods back both the local HTTP endpoints and the admin-driven
   WS commands, so there is exactly one code path per action.
 
-- **Agent — `AgentControlPlane`**: `RestartAsync` schedules a tiny
+- **Agent â€” `AgentControlPlane`**: `RestartAsync` schedules a tiny
   hidden PowerShell helper that waits for the agent's PID to exit and
   then relaunches `PRISM.Agent.exe` (same pattern as the in-app
   updater), then exits with code 2 so the Scheduled Task's
   `RestartCount=3` also fires as a belt-and-braces fallback.
   `CheckAndApplyUpdateAsync` reuses
   `Updater.CheckForUpdateAsync` + `DownloadAndInstallAsync` exactly as
-  the tray menu does — including the v0.1.32 `IsInstallDirWritable`
+  the tray menu does â€” including the v0.1.32 `IsInstallDirWritable`
   pre-flight and `%TEMP%\PRISM.Agent.Update.log` diagnostic trail.
 
-- **Server — admin API** (`PRISM/server/src/api/workstations.ts`):
+- **Server â€” admin API** (`PRISM/server/src/api/workstations.ts`):
   `POST /api/workstations/:id/restart` and
   `POST /api/workstations/:id/update` (admin session required).
   Look the workstation up by id, find the live agent in
@@ -2853,14 +2868,14 @@ Workstations page and from the agent's own web UI.
   503 if no agent is currently connected. The update endpoint
   optionally accepts `{tag: "v0.1.33"}` to pin a release.
 
-- **Server — outbound dispatchers**
+- **Server â€” outbound dispatchers**
   (`PRISM/server/src/ws/agentProtocol.ts`): new `sendRestartToAgent` /
   `sendUpdateToAgent` helpers wrap the `sessionRegistry` lookup +
   `socket.send(JSON.stringify(envelope(...)))` pattern that the job
   dispatcher uses, so the admin routes don't reach into WS plumbing
   directly.
 
-- **Web — typed client** (`web/src/shared/api.ts`):
+- **Web â€” typed client** (`web/src/shared/api.ts`):
   `workstationsApi.restart(id, reason?)` and
   `workstationsApi.updateAgent(id, tag?)` helpers. The admin
   Workstations page wires per-row buttons in a follow-up commit.
@@ -2876,14 +2891,14 @@ Workstations page and from the agent's own web UI.
   the v0.1.32 update-installer rollout documented above.
 
 - The agent's own web UI works against any agent v0.1.33+ regardless
-  of server version — the buttons hit the local HTTP listener directly.
+  of server version â€” the buttons hit the local HTTP listener directly.
 
 ---
 
-## v0.1.32 — 2026-05-26
+## v0.1.32 â€” 2026-05-26
 
 Fix the in-app updater silently failing on workstations whose interactive
-user is not a local administrator. Symptom: clicking **Check for updates →
+user is not a local administrator. Symptom: clicking **Check for updates â†’
 Yes** flashed a CMD/PowerShell window for ~1 s and then nothing happened
 (version unchanged, tray came back at the old version after the scheduled
 task auto-restarted).
@@ -2907,7 +2922,7 @@ task auto-restarted).
     tray surfaces via `MessageBox`. No more silent CMD-flash mystery.
 - **Brief CMD/console flash before update**: the spawned PowerShell
   used `-WindowStyle Hidden`, which only hides the window *after* it's
-  created — there was always a 0.5–1 s flash. Switched to
+  created â€” there was always a 0.5â€“1 s flash. Switched to
   `ProcessStartInfo.CreateNoWindow = true`, which the kernel applies
   before any console host appears. Update now runs fully silently.
 - **Updater script logs to `%TEMP%\PRISM.Agent.Update.log`**: the
@@ -2924,15 +2939,15 @@ task auto-restarted).
 
 - For workstations already on v0.1.31 with a non-admin login user, the
   in-app update to v0.1.32 will fail with the new clear error message.
-  Re-run **PRISM.Agent-Setup-v0.1.32.exe** (right-click → Run as
+  Re-run **PRISM.Agent-Setup-v0.1.32.exe** (right-click â†’ Run as
   administrator) once to apply the ACL grant. From v0.1.32 onward,
   every future update goes through cleanly without elevation.
 
 ---
 
-## v0.1.31 — 2026-05-26
+## v0.1.31 â€” 2026-05-26
 
-Web UI hardening: fixes the Save → 500 ACL crash, makes LAN access work
+Web UI hardening: fixes the Save â†’ 500 ACL crash, makes LAN access work
 out of the box, restyles the page to match the PRISM admin UI, and adds
 proper Start Menu shortcuts.
 
@@ -2976,7 +2991,7 @@ proper Start Menu shortcuts.
   `prism.rebus.industries`.
 
 - **Inno installer (`PRISM.Agent.iss`)**: adds proper Start Menu
-  shortcuts (`PRISM Agent` → launches the tray app, `Web UI` → opens
+  shortcuts (`PRISM Agent` â†’ launches the tray app, `Web UI` â†’ opens
   the browser page, `Uninstall PRISM Agent`) and an optional Desktop
   shortcut behind a `[Tasks]` checkbox (default off). `AllowNoIcons=no`
   guarantees the Start Menu group is created.
@@ -2989,11 +3004,11 @@ proper Start Menu shortcuts.
 
 ---
 
-## v0.1.30 — 2026-05-26
+## v0.1.30 â€” 2026-05-26
 
 Adds a real Windows wizard installer (`PRISM.Agent-Setup-vX.Y.Z.exe`,
 built with Inno Setup) so workstation install no longer requires
-"download zip → unblock → expand → invoke install.ps1" plumbing.
+"download zip â†’ unblock â†’ expand â†’ invoke install.ps1" plumbing.
 
 ### Added
 
@@ -3040,7 +3055,7 @@ built with Inno Setup) so workstation install no longer requires
 
 ---
 
-## v0.1.29 — 2026-05-26
+## v0.1.29 â€” 2026-05-26
 
 Gives the agent a local **web UI** so operators can configure all
 settings and pause/resume the watcher from a browser instead of
@@ -3051,7 +3066,7 @@ the heartbeat that has been reporting `slotsBusy=0` since phase 3.
 
 - **agent web UI** (`PRISM/agent/.../WebUi/`): the agent now serves a
   single-page configuration site on `http://localhost:7421/` (right-click
-  the tray icon → **🌐 Open Web UI**). Backed by a tiny `HttpListener`
+  the tray icon â†’ **ðŸŒ Open Web UI**). Backed by a tiny `HttpListener`
   hosted service plus an `AgentControlPlane` singleton that the tray + the
   web UI both mutate, so `nodeName`, `slots`, `roles`, watcher pause/resume,
   Rhino version, log dir, and the web UI's own `webUiPort` /
@@ -3075,7 +3090,7 @@ the heartbeat that has been reporting `slotsBusy=0` since phase 3.
 
 ---
 
-## v0.1.28 — 2026-05-26
+## v0.1.28 â€” 2026-05-26
 
 Adds the `prism-assimp` pre-conversion sidecar so uploads in the
 glTF/Collada/Blender/USDZ/DirectX/PLY/STL family no longer get rejected
@@ -3141,7 +3156,7 @@ how to ingest.
   (`aiProcess_PreTransformVertices`) and uses identity for all
   per-leaf transforms. Trade-off: layer hierarchy degrades to "one
   OBJ group per scene mesh" until pyassimp's matrix decode is fixed.
-- **assimp service — Collada validator + error reporting**:
+- **assimp service â€” Collada validator + error reporting**:
   `aiProcess_ValidateDataStructure` was rejecting valid
   Rhino-exported Collada files (e.g. duplicate camera names from
   `View-Front`/`View-Top`/`View-Right`/`View-Front` duplicates),
@@ -3150,7 +3165,7 @@ how to ingest.
   added an `_assimp_last_error()` helper that calls
   `aiGetErrorString` over ctypes so the orchestrator now sees the
   real `libassimp` reason in the exception message.
-- **assimp service — Collada layer names**: Rhino exports its
+- **assimp service â€” Collada layer names**: Rhino exports its
   layer names on `<node name="Brep">`-style attributes, but
   Assimp's Collada loader puts the synthetic `<node id="...">`
   GUID in `aiNode.mName` and pyassimp 4.1.4 then truncates that
@@ -3170,7 +3185,7 @@ how to ingest.
 
 ---
 
-## v0.1.27 — 2026-05-26
+## v0.1.27 â€” 2026-05-26
 
 Consolidation release. Bakes in every hotpatch carried by VM 211 and PC02
 since v0.1.26 so we have a clean rollback target.
@@ -3211,8 +3226,8 @@ since v0.1.26 so we have a clean rollback target.
 - **agent (connector)**: deduplication phase rewritten to run the HEAD
   probes in parallel chunks of 16 with continuous progress reporting.
   A representative DWG with 6 137 objects went from ~8 minutes of silent
-  "checking server…" (sequential HEAD requests over ~80 ms RTT) down to
-  ~30 seconds with a visible `Checking server… N/M (K new)` ticker.
+  "checking serverâ€¦" (sequential HEAD requests over ~80 ms RTT) down to
+  ~30 seconds with a visible `Checking serverâ€¦ N/M (K new)` ticker.
   Also dropped the redundant `progress?.Report(("Done", 100))` at the
   end of `SendAsync` that was racing the `Complete` message.
 
@@ -3232,7 +3247,7 @@ since v0.1.26 so we have a clean rollback target.
 
 ### Submodule
 
-- `vendor/orbit-monorepo` → `e942678` on `prism-connector-fixes`.
+- `vendor/orbit-monorepo` â†’ `e942678` on `prism-connector-fixes`.
   Carries the three connector / SDK fixes above (parallel dedup +
   late-progress drop + `DefaultValueHandling.Include` + `OrbitType`
   overrides).
@@ -3248,43 +3263,43 @@ This release replaces the hotpatched DLLs on PC02 and the manually-built
 
 ---
 
-## v0.1.26 — 2026-05-25
+## v0.1.26 â€” 2026-05-25
 
 ### Fixed
 
-- **agent**: `swap_yz` matrix flipped from `Rx(-90°)` to `Rx(+90°)`
+- **agent**: `swap_yz` matrix flipped from `Rx(-90Â°)` to `Rx(+90Â°)`
   (`PRISM/agent/src/PRISM.Agent/Pipeline/RhinoAxisSwap.cs`). With our standard
-  Y-up OBJ test bundle, `Rx(-90°)` from v0.1.25 landed the model upside-down.
-  `Rx(+90°)` produces `(x, y, z) → (x, -z, y)`; determinant is still `+1`, so
+  Y-up OBJ test bundle, `Rx(-90Â°)` from v0.1.25 landed the model upside-down.
+  `Rx(+90Â°)` produces `(x, y, z) â†’ (x, -z, y)`; determinant is still `+1`, so
   triangle winding, normals, and UVs stay consistent.
 
 ### Matrix history (for the curious)
 
 | Version  | Matrix                            | Det | Result on Y-up OBJ test bundle      |
 |----------|-----------------------------------|-----|-------------------------------------|
-| v0.1.24  | reflection `(x,y,z) → (x,z,y)`   | -1  | mirrored — front faced *away*       |
-| v0.1.25  | `Rx(-90°)`  `(x,y,z) → (x,z,-y)` | +1  | rotated, but upside-down            |
-| v0.1.26  | `Rx(+90°)`  `(x,y,z) → (x,-z,y)` | +1  | **right-side-up, front-facing**     |
+| v0.1.24  | reflection `(x,y,z) â†’ (x,z,y)`   | -1  | mirrored â€” front faced *away*       |
+| v0.1.25  | `Rx(-90Â°)`  `(x,y,z) â†’ (x,z,-y)` | +1  | rotated, but upside-down            |
+| v0.1.26  | `Rx(+90Â°)`  `(x,y,z) â†’ (x,-z,y)` | +1  | **right-side-up, front-facing**     |
 
 **Note**: tag `v0.1.25` and `v0.1.26` both point at commit `2355ddb`. The
-commit subject line was written before the `Rx(-90°) → Rx(+90°)` flip and
+commit subject line was written before the `Rx(-90Â°) â†’ Rx(+90Â°)` flip and
 still reads "now applies -90 degree X rotation". The code in that SHA is
-v0.1.26 (`Rx(+90°)`). Verified visually against the test bundle at
+v0.1.26 (`Rx(+90Â°)`). Verified visually against the test bundle at
 `https://orbit.rebus.industries/projects/932088aa79/models/683af13566`
 (screenshots in [`docs/swap-yz-v0.1.26/`](docs/swap-yz-v0.1.26/)).
 
 ---
 
-## v0.1.25 — 2026-05-25
+## v0.1.25 â€” 2026-05-25
 
 ### Changed
 
-- **agent**: `swap_yz` matrix replaced reflection with `Rx(-90°)` rotation
-  to preserve handedness. Superseded by v0.1.26 — see matrix history above.
+- **agent**: `swap_yz` matrix replaced reflection with `Rx(-90Â°)` rotation
+  to preserve handedness. Superseded by v0.1.26 â€” see matrix history above.
 
 ---
 
-## v0.1.24 — 2026-05-25
+## v0.1.24 â€” 2026-05-25
 
 ### Fixed
 
@@ -3300,7 +3315,7 @@ v0.1.26 (`Rx(+90°)`). Verified visually against the test bundle at
 
 ---
 
-## v0.1.23 — 2026-05-24
+## v0.1.23 â€” 2026-05-24
 
 ### Added
 
@@ -3321,20 +3336,20 @@ v0.1.26 (`Rx(+90°)`). Verified visually against the test bundle at
 
 ### Submodule
 
-- `vendor/orbit-monorepo` → `0e76a3b` on `prism-connector-fixes`. Brings in
+- `vendor/orbit-monorepo` â†’ `0e76a3b` on `prism-connector-fixes`. Brings in
   the connector texture / UV fixes (basecolor classifier, opaque-white
   diffuse promotion, missing-texture warnings, render-mesh merging across
   the OBJ+MTL+texture path).
 
 ---
 
-## server hotpatch `92d1c8c` — 2026-05-24
+## server hotpatch `92d1c8c` â€” 2026-05-24
 
 ### Fixed
 
 - **server (ws)**: `pollLayers` no longer gets stuck on `"walking layer
   table"`. `PRISM/server/src/ws/agentProtocol.ts` had a fire-and-forget
-  `socket.on('message', …)` that allowed Progress and Layers DB writes to
+  `socket.on('message', â€¦)` that allowed Progress and Layers DB writes to
   race; whichever landed second won, often clobbering the Layers result back
   to `extracting-layers` / `"walking layer table"`. Fix serialises
   per-connection handlers via a `pendingHandler` promise chain so

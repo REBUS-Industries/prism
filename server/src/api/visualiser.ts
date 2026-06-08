@@ -82,6 +82,14 @@ const FAILED_SCHEMA_VERSION = 'prism-visualiser/failed/v1';
 const startBody = z.object({
   projectId:   z.string().min(1),
   modelId:     z.string().min(1),
+  /** Human-readable ORBIT model path (e.g. 'building'). Required when importMode='tree'. */
+  modelName:   z.string().optional(),
+  /**
+   * 'tree'   = the modelId is a parent with no versions of its own; the UE connector
+   *            calls OrbitImportTree(projectId, modelName) to pull all submodels.
+   * 'single' = default; a specific version is resolved and imported.
+   */
+  importMode:  z.enum(['single', 'tree']).default('single'),
   versionId:   z.string().min(1).optional(),
   /** Optional ORBIT target — defaults to `prod` to match the jobs surface. */
   orbitTarget: z.enum(['prod', 'dev']).default('prod'),
@@ -161,6 +169,8 @@ function toPublicRun(row: VisualiserRun, opts?: { withTurn?: boolean; workstatio
     orbitTarget: row.orbitTarget,
     projectId: row.projectId,
     modelId: row.modelId,
+    modelName: row.modelName,
+    importMode: row.importMode,
     versionId: row.versionId,
     templateTag: row.templateTag,
     workstationId: row.workstationId,
@@ -238,6 +248,8 @@ const plugin: FastifyPluginAsync = async (app) => {
         orbitTarget: parsed.data.orbitTarget,
         projectId: parsed.data.projectId,
         modelId: parsed.data.modelId,
+        modelName: parsed.data.modelName ?? null,
+        importMode: parsed.data.importMode ?? 'single',
         versionId: parsed.data.versionId ?? null,
         templateTag: parsed.data.templateTag ?? null,
         ttlSeconds: parsed.data.ttlSeconds ?? null,

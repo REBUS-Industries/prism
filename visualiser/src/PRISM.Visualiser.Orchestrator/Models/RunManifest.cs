@@ -14,4 +14,6 @@ public sealed record RunManifest(
     ServerConfig Server,
     int SignallingPortHint,
     string LogsDirectory,
-    bool DryRun);
+    bool DryRun,
+    string ModelName = "",
+    string ImportMode = "single");

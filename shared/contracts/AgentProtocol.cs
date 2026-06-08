@@ -327,8 +327,10 @@ public sealed class StartVisualisationData
     [JsonProperty("orbitToken")]     public string OrbitToken     { get; set; } = "";
     [JsonProperty("projectId")]      public string ProjectId      { get; set; } = "";
     [JsonProperty("modelId")]        public string ModelId        { get; set; } = "";
-    [JsonProperty("versionId",       NullValueHandling = NullValueHandling.Ignore)] public string? VersionId      { get; set; }
-    [JsonProperty("templateTag",     NullValueHandling = NullValueHandling.Ignore)] public string? TemplateTag    { get; set; }
+    [JsonProperty("modelName",        NullValueHandling = NullValueHandling.Ignore)] public string? ModelName      { get; set; }
+    [JsonProperty("importMode",       NullValueHandling = NullValueHandling.Ignore)] public string? ImportMode     { get; set; }
+    [JsonProperty("versionId",        NullValueHandling = NullValueHandling.Ignore)] public string? VersionId      { get; set; }
+    [JsonProperty("templateTag",      NullValueHandling = NullValueHandling.Ignore)] public string? TemplateTag    { get; set; }
     [JsonProperty("signallingUrl",   NullValueHandling = NullValueHandling.Ignore)] public string? SignallingUrl  { get; set; }
     [JsonProperty("ttlSeconds",      NullValueHandling = NullValueHandling.Ignore)] public int?    TtlSeconds     { get; set; }
     /// <summary>

@@ -42,4 +42,6 @@ public sealed record OrbitImportParams(
     string ModelId,
     string VersionId,
     string Token,
-    string Target = "");
+    string Target     = "",
+    string ModelName  = "",
+    string ImportMode = "single");

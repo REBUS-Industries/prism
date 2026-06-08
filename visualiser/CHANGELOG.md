@@ -4,7 +4,14 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
-## v0.5.20 — full-editor mode runs the connector-import pipeline (live model + plugins)
+## v0.5.21 -- 2026-06-08 -- Parent model (tree) import support
+
+- **RunManifest.cs** -- added ImportMode (string, default "single") and ModelName fields carried from agent protocol through to orchestrator.
+- **OrbitImportParams.cs** -- added ImportMode property; AppendOrbitArgs emits -OrbitImportMode=tree and -OrbitModelName=<name> when set.
+- **Program.cs** -- branches on importMode == "tree" to skip per-version resolution entirely; passes modelName directly to OrbitImportParams so the UE process receives the tree-import directive.
+- **UnrealLauncher.cs** -- appends the new -OrbitImportMode and -OrbitModelName args to the UE command line.
+
+## v0.5.20 â€” full-editor mode runs the connector-import pipeline (live model + plugins)
 
 > When PRISM opens the FULL editor (`fullEditor`/`--full-editor`) for a
 > workstation it now runs the SAME plug-in pipeline as the headless `-game`
@@ -14,13 +21,13 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 
 ### Changed
 
-- **`Program.cs` (`RunPhaseFAsync`, `fullEditor` branch)** — full-editor now
+- **`Program.cs` (`RunPhaseFAsync`, `fullEditor` branch)** â€” full-editor now
   resolves the ORBIT bearer token and attaches it to `OrbitImportParams`
   (`orbitImport with { Token = token }`) whenever a model is targeted, then
   launches `LaunchFullEditorStreaming` with that full identity. Previously the
   branch prepared the BARE fixed template and left `Token` empty, so
   `AppendOrbitArgs` skipped `-OrbitToken=` and the connector could not
-  authenticate/pull — the editor opened on an empty template. The fixed project
+  authenticate/pull â€” the editor opened on an empty template. The fixed project
   is the same connector-bearing project the `-game` path uses
   (`PrepareTemplateProjectAsync`); a connector-plugin detection warning is logged
   if the project doesn't ship the plug-in, and a `connector-import/v1` event is
@@ -36,18 +43,18 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 > pinned to **v0.1.30** on the workstation so the editor build has the in-editor
 > auto-import.
 
-## v0.5.19 — import orientation is CLOCKWISE (flip default yaw to +90)
+## v0.5.19 â€” import orientation is CLOCKWISE (flip default yaw to +90)
 
-> Corrects the direction shipped in v0.5.18: the imported model needs a 90°
+> Corrects the direction shipped in v0.5.18: the imported model needs a 90Â°
 > **clockwise** yaw about Z, not anticlockwise. The default `ORBIT_IMPORT_YAW_DEGREES`
 > flips from `-90.0` to **`+90.0`**.
 
 ### Fixed
 
-- **`Unreal/PythonScripts/import_orbit.py(.in)`** — `ORBIT_IMPORT_YAW_DEGREES`
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** â€” `ORBIT_IMPORT_YAW_DEGREES`
   default is now **`+90.0`** (was `-90.0`). Per the verified sign convention (UE
-  left-handed, Z-up; a *positive* yaw turns +X→+Y = **clockwise** top-down), a
-  positive yaw gives the requested 90° clockwise rotation. The framing camera
+  left-handed, Z-up; a *positive* yaw turns +Xâ†’+Y = **clockwise** top-down), a
+  positive yaw gives the requested 90Â° clockwise rotation. The framing camera
   reuses the same constant via `_rotate_yaw_about_z`, so it stays aligned with
   the rotated model automatically. Env override
   `PRISM_VISUALISER_IMPORT_YAW_DEG` unchanged (now `-90` flips, `0` disables,
@@ -55,79 +62,79 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 - **Connector-import handoff** (`docs/VISUALISER_CONNECTOR_IMPORT.md`) updated:
   the recommended `orbit-connectors` companion change is now `Yaw = +90` (CW).
 
-## v0.5.18 — fix imported model orientation (90° anticlockwise yaw about Z)
+## v0.5.18 â€” fix imported model orientation (90Â° anticlockwise yaw about Z)
 
-> Models imported via the **Interchange** path came in yawed 90° from the
-> correct orientation. The importer now rotates the imported model root 90°
+> Models imported via the **Interchange** path came in yawed 90Â° from the
+> correct orientation. The importer now rotates the imported model root 90Â°
 > anticlockwise (counter-clockwise) about the vertical Z axis.
 
 ### Fixed
 
-- **`Unreal/PythonScripts/import_orbit.py(.in)`** — the spawned `StaticMeshActor`
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** â€” the spawned `StaticMeshActor`
   model root is now yawed by a single named constant `ORBIT_IMPORT_YAW_DEGREES`
   (default **`-90.0`**). Sign reasoning: UE is left-handed, Z-up, and a *positive*
-  yaw turns +X→+Y (clockwise top-down), so a 90° **anticlockwise** turn is a
+  yaw turns +Xâ†’+Y (clockwise top-down), so a 90Â° **anticlockwise** turn is a
   **negative** yaw. The framing camera's bounds center is rotated by the same
   yaw (`_rotate_yaw_about_z`) so the model stays in frame. There was **no prior
   rotation** anywhere (the meshes spawned at identity; `CoordinateTransform.cs`
-  only scales ×100 and mirrors Y for handedness), so this is not stacked on top
+  only scales Ã—100 and mirrors Y for handedness), so this is not stacked on top
   of an existing correction.
 - Overridable per workstation without a rebuild via the env var
   **`PRISM_VISUALISER_IMPORT_YAW_DEG`** (e.g. `90` to flip direction, `0` to
   disable, `180` to reverse).
 
-### Connector-import path — handoff (NOT fixed here)
+### Connector-import path â€” handoff (NOT fixed here)
 
-- The connector-import path (orbit-cli pull → glTFRuntime runtime load inside the
+- The connector-import path (orbit-cli pull â†’ glTFRuntime runtime load inside the
   `-game` instance) applies its own load transform in the **`OrbitConnector.UE5`**
   plugin (C++ in the separate `orbit-connectors` repo), which is **not vendored
-  into this checkout** — so it is not changed here. If that path shows the same
-  90° error, add the equivalent +90° CCW (−90° yaw) about Z where glTFRuntime's
+  into this checkout** â€” so it is not changed here. If that path shows the same
+  90Â° error, add the equivalent +90Â° CCW (âˆ’90Â° yaw) about Z where glTFRuntime's
   load transform / the spawned actor rotation is configured (e.g. the
   `FglTFRuntimeStaticMeshConfig` / actor `Rotation`, or `FOrbitHeadlessAutoImport`
-  spawn). See `docs/VISUALISER_CONNECTOR_IMPORT.md` → "Imported model orientation".
+  spawn). See `docs/VISUALISER_CONNECTOR_IMPORT.md` â†’ "Imported model orientation".
 
-## v0.5.17 — expose the ORBIT project/model/version on the UE command line for ALL plugins
+## v0.5.17 â€” expose the ORBIT project/model/version on the UE command line for ALL plugins
 
 > The ORBIT session identity (`-OrbitServer=` / `-OrbitProject=` / `-OrbitModel=`
 > / `-OrbitVersion=` / `-OrbitTarget=`) was previously emitted only on the
 > connector-import `-game` launch. It is now emitted on **every** streaming
 > launch path so any UE plugin/module (e.g. the Portal plugin) can read the IDs
 > as the UE-native shared variable via
-> `FParse::Value(FCommandLine::Get(), TEXT("OrbitProject="), Out)` — not just the
+> `FParse::Value(FCommandLine::Get(), TEXT("OrbitProject="), Out)` â€” not just the
 > connector's import code.
 
 ### Changed
 
-- **`Unreal/UnrealLauncher.cs`** — new shared `AppendOrbitArgs(psi, orbitImport)`
+- **`Unreal/UnrealLauncher.cs`** â€” new shared `AppendOrbitArgs(psi, orbitImport)`
   helper (factored out of `BuildGameStartInfoCore`) now appends the `-Orbit*`
   identity tokens on BOTH the streaming `-game` path AND the full-editor + stream
   path (`BuildFullEditorStreamingStartInfoCore`). The launch log lines report the
   ORBIT project/model/version (not secret); the bearer `-OrbitToken=` is emitted
   only when present and is NEVER logged (only `set (redacted)` / `<unset>`),
   exactly like `-RebusApiKey=`.
-- **`Program.cs::RunPhaseFAsync`** — builds the `OrbitImportParams` identity from
+- **`Program.cs::RunPhaseFAsync`** â€” builds the `OrbitImportParams` identity from
   the run manifest for **every** session (full-editor, connector-import, and
   Interchange), and adds the bearer token only on the connector-import path
-  (`orbitImport with { Token = … }`). Threaded through
+  (`orbitImport with { Token = â€¦ }`). Threaded through
   `VisualiserPipeline.StartStreamingAsync` to `LaunchFullEditorStreaming` as well
   as `LaunchGameMode`.
-- **`Unreal/OrbitImportParams.cs`** — doc updated: the record is now the general
+- **`Unreal/OrbitImportParams.cs`** â€” doc updated: the record is now the general
   ORBIT session-identity carrier (consumed by the connector AND other plugins),
   not connector-only.
 
 ### Docs
 
-- **`docs/VISUALISER_CONNECTOR_IMPORT.md`** — new "ORBIT IDs as a UE command-line
+- **`docs/VISUALISER_CONNECTOR_IMPORT.md`** â€” new "ORBIT IDs as a UE command-line
   variable (all launch paths)" section with a per-path table, the canonical
   `FParse` accessor snippet for plugin authors, and a recommended companion
   `UOrbitSessionSubsystem` shape for the `orbit-connectors` repo (out of scope
-  here — that plugin source is not vendored into this checkout).
+  here â€” that plugin source is not vendored into this checkout).
 
-## v0.5.16 — open a local template project in place (no redundant LOCALAPPDATA mirror)
+## v0.5.16 â€” open a local template project in place (no redundant LOCALAPPDATA mirror)
 
 > Reconciles `TemplateProjectProvider` with the agent's "pull latest UE
-> template" flow (agent v0.3.19–v0.3.21), which now downloads, connector-merges,
+> template" flow (agent v0.3.19â€“v0.3.21), which now downloads, connector-merges,
 > and **compiles** the project locally under `C:\PRISM\Templates\<name>` and
 > repoints `VisualiserTemplateProjectPath` there. Mirroring that already-local,
 > already-built project into `%LOCALAPPDATA%` was a redundant second copy.
@@ -139,17 +146,17 @@ The orchestrator versions independently of the PRISM Agent. The bump is
   directly from `VisualiserTemplateProjectPath`; UE writes
   Saved/Intermediate/shader-cache into the project tree (fine on a local drive,
   wiped by the next agent pull's atomic swap). This affects **both** consumers
-  of `Prepare` — the full-editor path and the connector-import/streaming path —
+  of `Prepare` â€” the full-editor path and the connector-import/streaming path â€”
   so the connector now detects the plug-in and launches `-game` against the
   same in-place dir.
 - **UNC / mapped-network sources still mirror** to
   `%LOCALAPPDATA%\PRISM.Visualiser\templates\<name>` via robocopy `/E /XO`
-  (unchanged fallback — opening a `.uproject` off a share is slow/fragile). The
+  (unchanged fallback â€” opening a `.uproject` off a share is slow/fragile). The
   branch uses `IsLocalSource` (UNC `\\` check + `DriveInfo.DriveType`:
   Fixed/Removable/Ram = local; Network/unknown = remote/copy). Anything
   unclassifiable falls back to copy, so nothing regresses.
 - **Default template source** changed from the dead AD UNC share
-  `\\fs.ad.rebus.industries\…\REBUS_TEMPLATE` to the local
+  `\\fs.ad.rebus.industries\â€¦\REBUS_TEMPLATE` to the local
   `C:\PRISM\Templates\REBUSVis` (the agent-pull install location;
   `REBUSVis` is the `orbit-ue-template` `.uproject` base name). Only used when
   `PRISM_VISUALISER_TEMPLATE_PROJECT` is unset (orchestrator run without the
@@ -161,7 +168,7 @@ The orchestrator versions independently of the PRISM Agent. The bump is
   message, and log strings (no longer claim the AD share is the source of
   truth). Updated `docs/VISUALISER_CONNECTOR_IMPORT.md` + `visualiser/HANDOFF.md`.
 
-## v0.5.15 — forward external Portal connection to the Unreal plug-ins
+## v0.5.15 â€” forward external Portal connection to the Unreal plug-ins
 
 > The PRISM agent now forwards an external "Portal" connection (set from the
 > agent web UI) to the orchestrator via `PRISM_PORTAL_URL` /
@@ -170,7 +177,7 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 
 ### Added
 
-- **`Unreal/PortalSettings.cs`** — new record carrying the Portal `Url` (not
+- **`Unreal/PortalSettings.cs`** â€” new record carrying the Portal `Url` (not
   secret) and `ApiKey` (secret). `PortalSettings.FromEnvironment()` reads
   `PRISM_PORTAL_URL` / `PRISM_REBUS_API_KEY` (returns `null` when neither is
   set).
@@ -185,12 +192,12 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 
 ### Security
 
-- The **`RebusApiKey` is never logged** — exactly like the existing
+- The **`RebusApiKey` is never logged** â€” exactly like the existing
   `-OrbitToken=`. The launch log lines report the Portal URL (not secret) and a
   `set (redacted)` / `<unset>` indicator for the key only; the value appears
   solely on the UE command line.
 
-## v0.5.14 — deterministic .uproject selection (fixes stray MyProject.uproject shadowing)
+## v0.5.14 â€” deterministic .uproject selection (fixes stray MyProject.uproject shadowing)
 
 > Follow-up fix to the fixed-project visualiser path. The local template cache is
 > a persistent robocopy `/E /XO` mirror (no `/PURGE`), so a stale
@@ -203,13 +210,13 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 
 ### Changed
 
-- **`Pipeline/TemplateProjectProvider.cs`** — new `SelectUproject(dest, name, source)`
+- **`Pipeline/TemplateProjectProvider.cs`** â€” new `SelectUproject(dest, name, source)`
   prefers the descriptor whose name matches the template/source directory
   (`REBUS_Visualiser`), falls back to the most recently modified, and logs a
   loud warning about any extra descriptors so the cache/source can be cleaned up.
   Selection is now deterministic regardless of alphabetical ordering. (#33)
 
-## v0.5.13 — OrbitConnector.UE5 import path (fixed project + connector pull)
+## v0.5.13 â€” OrbitConnector.UE5 import path (fixed project + connector pull)
 
 > Adds a third import mechanism to the streaming pipeline: instead of pulling
 > ORBIT over the orchestrator's own REST receive, writing glTF to disk, and
@@ -226,34 +233,34 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 
 ### How a path is chosen (precedence)
 
-1. `--full-editor` (or `PRISM_VISUALISER_FULL_EDITOR=1`) — unchanged; opens the
+1. `--full-editor` (or `PRISM_VISUALISER_FULL_EDITOR=1`) â€” unchanged; opens the
    fixed project in the editor and uses editor-driven streaming.
-2. **Connector import** (new) — used when **either** `--connector-import true` /
+2. **Connector import** (new) â€” used when **either** `--connector-import true` /
    `PRISM_VISUALISER_CONNECTOR_IMPORT=1` is set, **or** (auto-detect, the env/flag
    unset) the fixed template project resolves and contains a usable
    `OrbitConnector.UE5` plug-in + `orbit-cli.exe`. Explicit `--connector-import
    false` / `=0` forces it off.
-3. **Interchange** (existing default) — the fallback whenever connector import is
+3. **Interchange** (existing default) â€” the fallback whenever connector import is
    off, the fixed project is absent, or preparing it throws.
 
 ### Added
 
-- **`Unreal/OrbitConnectorLocator.cs`** — `Detect(projectRoot)` reports whether a
+- **`Unreal/OrbitConnectorLocator.cs`** â€” `Detect(projectRoot)` reports whether a
   project carries the built `OrbitConnector.UE5` plug-in (`OrbitConnector.uplugin`
   under `Plugins/OrbitConnector/`) and the bundled `orbit-cli.exe`. Returns
   `IsUsable` + a human `Reason` when not.
-- **`Unreal/OrbitImportParams.cs`** — record carrying
+- **`Unreal/OrbitImportParams.cs`** â€” record carrying
   `{Server, ProjectId, ModelId, VersionId, Token, Target}` for the headless
   launch.
-- **`Program.cs`** — `--connector-import` option (`bool?`, tri-state) +
+- **`Program.cs`** â€” `--connector-import` option (`bool?`, tri-state) +
   `PRISM_VISUALISER_CONNECTOR_IMPORT` env; `TryPrepareConnectorImportAsync`
   (decision + fixed-project prep + token resolution) and a
   `prism-visualiser/connector-import/v1` stdout event so the agent/log can see
   which path was taken.
-- **`Pipeline/VisualiserPipeline.cs`** — `StartStreamingAsync` accepts
+- **`Pipeline/VisualiserPipeline.cs`** â€” `StartStreamingAsync` accepts
   `OrbitImportParams?`; `ResolveOrbitTokenAsync` exposes the bearer token for the
   connector launch.
-- **`Unreal/UnrealLauncher.cs`** — the `-game` launch appends
+- **`Unreal/UnrealLauncher.cs`** â€” the `-game` launch appends
   `-OrbitServer= -OrbitProject= -OrbitModel= [-OrbitVersion=] [-OrbitToken=]
   [-OrbitTarget=]` when import params are supplied, and now omits the level
   positional arg when the fixed project has no recorded startup map (so UE boots
@@ -270,11 +277,11 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 
 ### Tests
 
-- `ConnectorImportTests.cs` — locator detect (usable / cli-missing /
+- `ConnectorImportTests.cs` â€” locator detect (usable / cli-missing /
   project-missing) and `-game` start-info arg surface (tokens present/absent,
-  empty-level omission). 130 → 136 tests, all green.
+  empty-level omission). 130 â†’ 136 tests, all green.
 
-## v0.5.12 — Allocate a distinct Wilbur SFU port (fixes editor-stream auto-start)
+## v0.5.12 â€” Allocate a distinct Wilbur SFU port (fixes editor-stream auto-start)
 
 > Full-editor Pixel Streaming auto-start was firing correctly but the browser
 > never received a stream. The editor log looked like the streamer simply
@@ -285,7 +292,7 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 >     LogPixelStreaming2: Streamer reconnecting... Attempt 74
 >
 > (74 attempts over ~3 min, never connected). This is NOT a project/plugin
-> problem — the editor cvars (`EditorStartOnLaunch`, `EditorSource`,
+> problem â€” the editor cvars (`EditorStartOnLaunch`, `EditorSource`,
 > `EditorUseRemoteSignallingServer`) were read correctly from `DefaultGame.ini`
 > this time and `StartStreaming` fired (`Streamer is already streaming...`).
 
@@ -295,29 +302,29 @@ Wilbur binds the player port AND the streamer port from our CLI overrides, but
 its SFU port was left unset so it fell back to the value baked into the engine
 `config.json` (`sfu_port: 8889`). On this workstation 8889 was already in use,
 so Wilbur logged its ready line (`Listening for streamer connections on port
-54168` — which our ready-line matcher accepted, letting the orchestrator launch
+54168` â€” which our ready-line matcher accepted, letting the orchestrator launch
 UE) and then **threw an unhandled `Error: listen EADDRINUSE :::8889` and the
 node process died**. By the time the editor's streamer tried to connect, the
 signalling server it was told to use was already gone.
 
 ### Changed
 
-- **`VisualiserPipeline`** — allocate a distinct, free `sfuPort` (different from
+- **`VisualiserPipeline`** â€” allocate a distinct, free `sfuPort` (different from
   both player and streamer) for Wilbur runs and forward it to the supervisor.
-- **`SignallingSupervisor.BuildStartInfo` / `StartAsync`** — accept `sfuPort`
+- **`SignallingSupervisor.BuildStartInfo` / `StartAsync`** â€” accept `sfuPort`
   and emit `--sfu_port=<port>` so Wilbur never falls back to the fixed 8889.
-- **`SignallingSupervisor.StartAsync`** — defense-in-depth: after the ready
+- **`SignallingSupervisor.StartAsync`** â€” defense-in-depth: after the ready
   line, give the process a 750 ms grace window and fail fast with a clear error
   if it exited (catches any future post-ready bind crash instead of handing back
   a handle to a dead server).
 - Tests updated to assert `--sfu_port` is emitted for Wilbur.
 
-## v0.5.11 — Persist the imported mesh to disk (game launch couldn't find it)
+## v0.5.11 â€” Persist the imported mesh to disk (game launch couldn't find it)
 
 > With v0.5.10's mesh spawning cleanly, the import finally reached
 > `PRISM_VISUALISER_READY` with `assetCount: 1`, real bounds
 > (`center=(2170803,0,-495081) radius=989724 meshes=1 actors=1`) and a
-> framing camera positioned off-origin at the model — no crash. But the
+> framing camera positioned off-origin at the model â€” no crash. But the
 > Phase F `-game` launch then logged:
 >
 >     LoadErrors: Warning: While trying to load package
@@ -325,7 +332,7 @@ signalling server it was told to use was already gone.
 >       .../scene/StaticMeshes/scene was not available ...
 >     FPackageName: Skipped package ... does not exist on disk ...
 >
-> so the streamed scene was lit + framed but **model-less** — the level
+> so the streamed scene was lit + framed but **model-less** â€” the level
 > referenced a mesh package that wasn't on disk.
 
 ### Root cause
@@ -337,27 +344,27 @@ mesh package the Phase F `-game` process can't load.
 
 ### Changed
 
-- **`Unreal/PythonScripts/import_orbit.py(.in)`** — new
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** â€” new
   `_save_imported_assets()` calls `save_directory(TARGET_FOLDER, only_if_is_dirty=False, recursive=True)`
   to flush the imported asset(s) to disk **before** `_save_current_level()`,
   so the saved map's geometry dependency actually exists on disk for the
   game launch. Logged as `saved imported assets under <folder>`.
 
-## v0.5.10 — Headless-safe mesh spawn (object-spawn helper crashed UE)
+## v0.5.10 â€” Headless-safe mesh spawn (object-spawn helper crashed UE)
 
-> v0.5.9's discovery worked — the PC01 run logged `discovered 1 static mesh
-> asset(s)` — but the moment there was a real mesh to place, UE crashed:
+> v0.5.9's discovery worked â€” the PC01 run logged `discovered 1 static mesh
+> asset(s)` â€” but the moment there was a real mesh to place, UE crashed:
 > `EXCEPTION_ACCESS_VIOLATION reading address 0x0000000000000040` in
 > `UnrealEditor-EditorFramework.dll`, callstack through
-> `PythonScriptPlugin → UnrealEd → EditorFramework`, then
-> `FPlatformMisc::RequestExitWithStatus(1, 3)` — i.e. the `exit=3` the
+> `PythonScriptPlugin â†’ UnrealEd â†’ EditorFramework`, then
+> `FPlatformMisc::RequestExitWithStatus(1, 3)` â€” i.e. the `exit=3` the
 > orchestrator surfaced as `ue_import_failed`. No `imported bounds` /
 > `framing camera` / `PRISM_VISUALISER_READY` line was reached.
 
 ### Root cause
 
 `_spawn_meshes_into_level()` placed each imported mesh with
-`EditorActorSubsystem.spawn_actor_from_object(mesh, …)`. That object-spawn
+`EditorActorSubsystem.spawn_actor_from_object(mesh, â€¦)`. That object-spawn
 helper fires **editor selection + component-visualizer notifications**
 (EditorFramework) that dereference a null pointer under the headless
 `PythonScriptCommandlet` (`-NullRHI`, Slate not initialised). It never
@@ -368,7 +375,7 @@ that notification.
 
 ### Changed
 
-- **`Unreal/PythonScripts/import_orbit.py(.in)`** — `_spawn_meshes_into_level()`
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** â€” `_spawn_meshes_into_level()`
   no longer calls `spawn_actor_from_object`. It now spawns a plain
   `StaticMeshActor` via `_spawn_actor_from_class()` (the same proven path
   the Directional/Sky lights use) and assigns the imported mesh to the
@@ -376,10 +383,10 @@ that notification.
   wrapped so a property-set failure degrades gracefully instead of taking
   down the commandlet. Bounds / framing / save / `READY` all run as before.
 
-## v0.5.9 — Spawn the imported geometry (import_asset returns no assets)
+## v0.5.9 â€” Spawn the imported geometry (import_asset returns no assets)
 
 > v0.5.8 lit and framed the level (Directional/Sky lights, framing camera,
-> PlayerStart) and the PC01 run confirmed all of that landed — no
+> PlayerStart) and the PC01 run confirmed all of that landed â€” no
 > `NO PLAYERSTART` warning, lights spawned, streamer reached Active. But
 > the `PRISM_VISUALISER_READY` line reported **`assetCount: 0`** and the
 > camera fell back to its origin framing, so the streamed scene was a
@@ -393,14 +400,14 @@ created assets. `_normalise_imported_assets()` therefore yielded an empty
 list even though Interchange logged `import completed` and wrote the
 `StaticMesh` into the destination folder (the staged glTF had
 `meshes=1 materials=1`). With zero meshes in hand, `_spawn_meshes_into_level()`
-spawned **no** geometry actors — the level got lights + camera but no
+spawned **no** geometry actors â€” the level got lights + camera but no
 model. This was pre-existing (the same `assetCount: 0` appears in the
 v0.3.9 run logs); it was masked by the black frame until v0.5.8 lit the
 scene.
 
 ### Changed
 
-- **`Unreal/PythonScripts/import_orbit.py(.in)`** — when the import return
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** â€” when the import return
   value yields no `StaticMesh` (the normal UE 5.7 case), the driver now
   **discovers the assets Interchange actually wrote**:
   - `_scan_assets()` forces a synchronous `AssetRegistry.scan_paths_synchronous([TARGET_FOLDER], force_rescan=True)`
@@ -410,17 +417,17 @@ scene.
     `StaticMesh` instances. These are then spawned, bounds-computed, and
     framed exactly as before.
   - Logged as `discovered N static mesh asset(s) in <folder> after import`,
-    so `assetCount` / `imported bounds … meshes=N actors=N` now reflect the
+    so `assetCount` / `imported bounds â€¦ meshes=N actors=N` now reflect the
     real geometry instead of 0.
 - Model-agnostic and additive: if a future UE build *does* return the asset
   array, that path is still preferred and the discovery fallback is skipped.
 
-## v0.5.8 — Light + frame the imported scene so the stream isn't black
+## v0.5.8 â€” Light + frame the imported scene so the stream isn't black
 
-> The v0.3.9 PC01 run reached a fully healthy Pixel Streaming state —
+> The v0.3.9 PC01 run reached a fully healthy Pixel Streaming state â€”
 > UE registered with Wilbur, the browser connected, WebRTC offer/answer
 > completed, and both video+audio tracks went `State=[Active]` with a
-> live data channel — but the admin player page showed a **solid black**
+> live data channel â€” but the admin player page showed a **solid black**
 > viewport. Transport was never the problem; the *rendered scene* was
 > black.
 
@@ -432,35 +439,35 @@ UE level: no Directional Light, no Sky Light, no Sky Atmosphere, no
 PostProcessVolume, no PlayerStart, and no camera. It then spawned the
 imported static meshes at the world origin and saved. The Phase F
 `-game` launch streams the default player camera, which spawns at world
-origin with default orientation into an unlit void — so every streamed
+origin with default orientation into an unlit void â€” so every streamed
 frame is black even though the encoder, WebRTC tracks, and data channel
 are all live. UE also logged `LogGameMode: FindPlayerStart: PATHS NOT
 DEFINED or NO PLAYERSTART with positive rating` for the same reason
-(no PlayerStart in the blank level). Two missing pieces — **lighting**
-and **camera framing** — combined to produce the black frame.
+(no PlayerStart in the blank level). Two missing pieces â€” **lighting**
+and **camera framing** â€” combined to produce the black frame.
 
 ### Changed
 
-- **`Unreal/PythonScripts/import_orbit.py(.in)`** — after the Interchange
+- **`Unreal/PythonScripts/import_orbit.py(.in)`** â€” after the Interchange
   glTF import the driver now makes the level actually viewable:
-  - **Bounds** — `_compute_bounds()` unions the imported `StaticMesh`
+  - **Bounds** â€” `_compute_bounds()` unions the imported `StaticMesh`
     asset bounding boxes (CPU-side, reliable under `-NullRHI`; meshes are
     spawned at origin with identity transform so world bounds == local
     box). Falls back to `Actor.get_actor_bounds()` if an asset can't
-    report a box. Logged as `imported bounds center=(…) radius=…`.
-  - **Lighting** — `_add_lighting()` spawns a movable **Directional
+    report a box. Logged as `imported bounds center=(â€¦) radius=â€¦`.
+  - **Lighting** â€” `_add_lighting()` spawns a movable **Directional
     Light** (atmosphere sun, intensity 10), a **Sky Atmosphere**, and a
-    movable **Sky Light** (real-time capture, intensity 1) — the UE
+    movable **Sky Light** (real-time capture, intensity 1) â€” the UE
     "Basic" daylight set, which exposes correctly under default
     auto-exposure.
-  - **Exposure safety net** — `_add_post_process()` spawns an unbound
+  - **Exposure safety net** â€” `_add_post_process()` spawns an unbound
     **PostProcessVolume** with auto-exposure clamped
-    (`auto_exposure_min/max_brightness` 0.5–2.0, bias 1.0) so an
+    (`auto_exposure_min/max_brightness` 0.5â€“2.0, bias 1.0) so an
     empty/dark frame can't crush to black and a bright sky can't blow the
     model out. Override flags are set best-effort across naming
     conventions; the lit scene already guarantees a visible frame so this
     is belt-and-suspenders.
-  - **Framing** — `_frame_view()` places a `CameraActor` at
+  - **Framing** â€” `_frame_view()` places a `CameraActor` at
     `center + normalize(1,-1,0.6) * radius * 2.5` looking at the centre
     (FOV 50, `auto_activate_for_player = PLAYER0`,
     `find_camera_component_when_view_target = True`) so the streamed
@@ -476,11 +483,11 @@ and **camera framing** — combined to produce the black frame.
 This is a Python-driver-only change; the Phase F streamer-connected path
 (v0.5.7) is untouched.
 
-## v0.5.7 — Recognise UE 5.7 / Wilbur "streamer registered" log shapes
+## v0.5.7 â€” Recognise UE 5.7 / Wilbur "streamer registered" log shapes
 
 > The v0.5.6 PC01 run got past the `signalling_not_found` hard-stop and
 > the Wilbur signalling server bootstrapped + handshook with UE
-> cleanly within ~23 s — but the orchestrator timed out at 120 s with
+> cleanly within ~23 s â€” but the orchestrator timed out at 120 s with
 > `ue_game_start_timeout: UE did not register a streamer with Cirrus
 > within 120s`. Root cause: the v0.3.8 `StreamerConnectedPattern`
 > regex was inherited verbatim from the legacy Cirrus signalling
@@ -496,20 +503,20 @@ PixelStreaming 2 (UE 5.5+) reorganised the signalling protocol around
 EpicRtc. Every successful streamer registration emits at least these
 four log lines:
 
-1. **UE-side, canonical** — `LogPixelStreaming2EpicRtc:
+1. **UE-side, canonical** â€” `LogPixelStreaming2EpicRtc:
    RoomSignallingContextObserver::OnJoined. Local participant joined
    the room. roomId=[orbit_<id>] localParticipantId=[orbit_<id>]
    state=[Joined]`
-2. **UE-side, simpler form** — `LogPixelStreaming2RTC: Player
+2. **UE-side, simpler form** â€” `LogPixelStreaming2RTC: Player
    (orbit_<id>) joined`
-3. **Wilbur-side** — `info: > UnknownStreamer ::
+3. **Wilbur-side** â€” `info: > UnknownStreamer ::
    {"id":"orbit_<id>",...,"type":"endpointId"}` (UE introducing its
    id to Wilbur)
-4. **Wilbur-side** — `info: < orbit_<id> ::
+4. **Wilbur-side** â€” `info: < orbit_<id> ::
    {"type":"endpointIdConfirm","committedId":"orbit_<id>"}`
    (Wilbur acknowledging the streamer id)
 
-Lines 1–2 only ever appear on UE's stdout; lines 3–4 only appear on
+Lines 1â€“2 only ever appear on UE's stdout; lines 3â€“4 only appear on
 Wilbur's stdout. The previous orchestrator only watched Wilbur's
 stdout and only matched the legacy `Streamer connected: ...` shape,
 so it was blind to all four.
@@ -517,7 +524,7 @@ so it was blind to all four.
 ### Changed
 
 - **`PixelStreaming/SignallingSupervisor.cs::StreamerConnectedPattern`**
-  → replaced with `StreamerConnectedPatterns`, an ordered list of
+  â†’ replaced with `StreamerConnectedPatterns`, an ordered list of
   `NamedStreamerPattern(string Name, Regex Pattern)` records covering
   the four UE 5.7 / Wilbur shapes plus a `LegacyCirrus` fallback for
   graceful degradation on pre-PS2 environments. Order is canonical-
@@ -534,7 +541,7 @@ so it was blind to all four.
   matched pattern doesn't carry one (e.g. the bare-signal `OnJoined`
   fallback).
 - **`Unreal/UnrealLauncher.cs::LaunchGameMode` / `UnrealGameHandle`**
-  — UE -game stdout / stderr is now copied into a per-handle
+  â€” UE -game stdout / stderr is now copied into a per-handle
   `Channel<string>` exposed via `UnrealGameHandle.Lines` (mirrors
   `SignallingHandle.Lines`). Lines still flow to the existing
   `ue-game` Serilog channel; the new channel is purely additive so
@@ -549,7 +556,7 @@ so it was blind to all four.
   `StartStreamingAsync` log line additionally carries the matched
   pattern name + the captured streamer id (or `(none)`) for
   diagnostic parity with the new event surface.
-- **`Pipeline/VisualiserPipeline.cs`** — emits a one-line diagnostic
+- **`Pipeline/VisualiserPipeline.cs`** â€” emits a one-line diagnostic
   the moment the watcher fires:
   `phase-f: streamer registered (matched <pattern-name>)
   elapsed=<X.X>s`. Surfaces the elapsed time so a future regression
@@ -559,14 +566,14 @@ so it was blind to all four.
 ### Tests
 
 - **`tests/PRISM.Visualiser.Orchestrator.Tests/SignallingSupervisorTests.cs`**
-  — replaced the legacy-Cirrus-only theory with a comprehensive theory
+  â€” replaced the legacy-Cirrus-only theory with a comprehensive theory
   covering all five named patterns (asserting both the captured id
   AND the matched-pattern name), plus a separate theory covering the
   bare-signal `OnJoined` fallback (empty id, canonical pattern name).
 - New negative-cases theory rejects the pre-handshake Wilbur noise
   (`identify` / `config` / `ping` JSON, `New streamer connection`),
   malformed UE telemetry (`state=[Joining]` / Player joined without
-  parens), and arbitrary log channels — guards against a regex-too-
+  parens), and arbitrary log channels â€” guards against a regex-too-
   greedy regression.
 - `AwaitStreamerConnectedAsync_FiresOnCanonicalOnJoined_FromUeStdout`
   pins the canonical pattern as the front-of-list winner when the
@@ -588,11 +595,11 @@ so it was blind to all four.
   `VisualiserPipeline` and the tests, so there are no out-of-tree
   callers in this repo.
 - The `LegacyCirrus` pattern preserves all previously-recognised
-  shapes — environments still on the legacy Cirrus signalling server
+  shapes â€” environments still on the legacy Cirrus signalling server
   continue to work; the diagnostic line just reports
   `matched=LegacyCirrus`.
 
-## v0.5.6 — Auto-bootstrap PixelStreaming2 / Wilbur on first run (UE 5.5+)
+## v0.5.6 â€” Auto-bootstrap PixelStreaming2 / Wilbur on first run (UE 5.5+)
 
 > **Closes [REBUS-ORBIT/prism#25](https://github.com/REBUS-ORBIT/prism/issues/25).**
 >
@@ -601,7 +608,7 @@ so it was blind to all four.
 > not be located under 'C:\Program Files\Epic Games\UE_5.7\Engine\
 > Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer'.
 > Is the PixelStreaming2 plugin installed?`. The PixelStreaming2 C++
-> plugin **was** installed — but the Node.js signalling server it
+> plugin **was** installed â€” but the Node.js signalling server it
 > needs is fetched on demand via `get_ps_servers.bat`, and that
 > script hadn't been run yet. v0.5.6 makes the orchestrator do the
 > bootstrap itself.
@@ -610,10 +617,10 @@ so it was blind to all four.
 
 PS2 (UE 5.5+) split the signalling server out of the C++ plugin:
 
-- **Stays with the engine launcher install (✅)**: the C++
+- **Stays with the engine launcher install (âœ…)**: the C++
   PixelStreaming2 plugin under `Engine\Plugins\Media\PixelStreaming2\`
   and its launch script `get_ps_servers.bat`.
-- **Fetched on demand (✗ until v0.5.6)**: the `SignallingWebServer\`
+- **Fetched on demand (âœ— until v0.5.6)**: the `SignallingWebServer\`
   TypeScript sources (cloned by `get_ps_servers.bat` from
   `github.com/EpicGamesExt/PixelStreamingInfrastructure`), `node.exe`
   (downloaded by `start.bat`), and the compiled
@@ -621,7 +628,7 @@ PS2 (UE 5.5+) split the signalling server out of the C++ plugin:
 
 The previous orchestrator probed for `cirrus.js` / `Cirrus.js` /
 `main.js` / `server.js` / `index.js` directly under
-`SignallingWebServer\` — the *pre-5.5* layout — and surfaced
+`SignallingWebServer\` â€” the *pre-5.5* layout â€” and surfaced
 `signalling_not_found` when none existed. Even after running
 `get_ps_servers.bat` manually the probe would still miss, because
 PS2's signalling server is named "Wilbur" and lives at
@@ -629,8 +636,8 @@ PS2's signalling server is named "Wilbur" and lives at
 
 ### Added
 
-- **`PixelStreaming/SignallingBootstrap.cs`** — new first-run
-  installer. `EnsureReadyAsync(UnrealInstall, …)`:
+- **`PixelStreaming/SignallingBootstrap.cs`** â€” new first-run
+  installer. `EnsureReadyAsync(UnrealInstall, â€¦)`:
   1. probes for `dist\index.js` and short-circuits when present;
   2. runs `Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\get_ps_servers.bat /v 5.7`
      to download the EpicGamesExt PixelStreamingInfrastructure
@@ -639,8 +646,8 @@ PS2's signalling server is named "Wilbur" and lives at
      --publicip 127.0.0.1 -- --player_port 65000 --streamer_port 65001
      --serve --console_messages verbose --log_config`, watches stdout
      for the first listening-line / "starting" log, then kills the
-     entire process tree — the build artefacts (`dist/`, `node/`,
-     `node_modules/`, `Common/dist`, `Signalling/dist`, …) survive
+     entire process tree â€” the build artefacts (`dist/`, `node/`,
+     `node_modules/`, `Common/dist`, `Signalling/dist`, â€¦) survive
      the kill;
   4. writes a marker under
      `%LOCALAPPDATA%\PRISM.Visualiser\state\signalling_ready_<sha>.flag`
@@ -655,11 +662,11 @@ PS2's signalling server is named "Wilbur" and lives at
 
 ### Changed
 
-- **`Pipeline/VisualiserPipeline.cs::StartStreamingAsync`** — Phase F
+- **`Pipeline/VisualiserPipeline.cs::StartStreamingAsync`** â€” Phase F
   now calls `SignallingBootstrap.EnsureReadyAsync` before
   `SignallingSupervisor.Resolve`. On steady state this is a single
-  `File.Exists` check (~µs).
-- **`PixelStreaming/SignallingSupervisor.cs::Resolve`** — probes
+  `File.Exists` check (~Âµs).
+- **`PixelStreaming/SignallingSupervisor.cs::Resolve`** â€” probes
   `SignallingWebServer\dist\index.js` first (Wilbur, UE 5.5+);
   falls back to the legacy top-level Cirrus candidates only if
   Wilbur isn't there. The new `IsWilbur` flag on
@@ -667,7 +674,7 @@ PS2's signalling server is named "Wilbur" and lives at
   `BuildStartInfo` emits. Probed paths are surfaced via
   `ProbedPaths` so a future `signalling_not_found` event can list
   the exact files inspected.
-- **`PixelStreaming/SignallingSupervisor.cs::BuildStartInfo`** —
+- **`PixelStreaming/SignallingSupervisor.cs::BuildStartInfo`** â€”
   emits wilbur's `commander`-style CLI:
   `node dist\index.js --player_port=N --streamer_port=M --serve
   --console_messages verbose --log_config`. Working directory is
@@ -676,7 +683,7 @@ PS2's signalling server is named "Wilbur" and lives at
   Legacy Cirrus `--HttpPort=N` still emitted when `IsWilbur` is
   false (pre-5.5 plugin variants we don't formally support but
   might still encounter on customer workstations).
-- **`PixelStreaming/SignallingSupervisor.cs`** — `StartAsync` now
+- **`PixelStreaming/SignallingSupervisor.cs`** â€” `StartAsync` now
   takes separate `playerPort` + `streamerPort` arguments. Ready-
   line + streamer-connected regexes extended to also match wilbur
   log shapes (`HTTP webserver listening on port N`,
@@ -688,15 +695,15 @@ PS2's signalling server is named "Wilbur" and lives at
   built wilbur's `dist/`. Falls back to the legacy
   `Engine\Binaries\ThirdParty\Node\Win64\node.exe` only when the
   wilbur bundle isn't there.
-- **`PixelStreaming/PixelStreamingSession.cs`** — exposes
+- **`PixelStreaming/PixelStreamingSession.cs`** â€” exposes
   `StreamerPort` alongside `SignallingPort`. The player-facing
   `PlayerUrl` / `SignallingUrl` still derive from the player port,
   so the ready/v1 wire format is unchanged.
-- **`Pipeline/VisualiserPipeline.cs`** — allocates two distinct
+- **`Pipeline/VisualiserPipeline.cs`** â€” allocates two distinct
   TCP ports on the Wilbur path; UE's `-PixelStreamingURL` now
   points at the streamer port (was: the player port, which Wilbur
   doesn't accept streamer connections on).
-- **`Models/FailedEvent.cs`** — adds
+- **`Models/FailedEvent.cs`** â€” adds
   `CodeSignallingBootstrapFailed = "signalling_bootstrap_failed"`.
   The `signalling_not_found` message string now lists the actual
   probed paths.
@@ -716,13 +723,13 @@ workstation.
 
 ### Tests
 
-- **`SignallingBootstrapTests`** — pure-function surface coverage:
+- **`SignallingBootstrapTests`** â€” pure-function surface coverage:
   `IsReady` disk probe, marker path stability across UE-root casing
   variation, marker uniqueness across UE versions, `WilburReadyPattern`
   matches against five known shapes + three negatives, arg
   tokeniser handles quoted paths, hard-pinned canonical relative
   paths.
-- **`SignallingSupervisorTests`** — adds three new cases:
+- **`SignallingSupervisorTests`** â€” adds three new cases:
   `Resolve_PrefersWilburEntrypoint_OverLegacyCirrusCandidates`,
   `Resolve_FallsBackToLegacyCirrus_WhenWilburMissing`, and
   `BuildStartInfo_Wilbur_EmitsCommanderStyleArgs` /
@@ -737,14 +744,14 @@ workstation.
   (verified on `v0.1.0-ue5.7-scaffold`), so no template repo bump
   was needed.
 - Failure-mode progression so far:
-  `exit=-1` (no commandlet) → `exit=3` (Interchange/Slate gap) →
-  `exit=0 + no marker` (parse miss) → `signalling_not_found`
-  (wilbur not bootstrapped) → expected next is either
+  `exit=-1` (no commandlet) â†’ `exit=3` (Interchange/Slate gap) â†’
+  `exit=0 + no marker` (parse miss) â†’ `signalling_not_found`
+  (wilbur not bootstrapped) â†’ expected next is either
   `ready/v1` end-to-end or a downstream Phase F failure
   (UE -game registration, TURN handshake) that we'll document in
   a v0.5.7+ follow-up.
 
-## v0.5.5 — Fix marker parser stripped by UE `[ts][ch]LogPython:` log prefix
+## v0.5.5 â€” Fix marker parser stripped by UE `[ts][ch]LogPython:` log prefix
 
 > **Closes [REBUS-ORBIT/prism#23](https://github.com/REBUS-ORBIT/prism/issues/23).**
 >
@@ -779,26 +786,26 @@ launcher fell through to the no-marker failure path on
 `process.WaitForExitAsync` returning `exit=0`. The same parsing
 bug affected all four prefixes:
 
-- `ReadyMarkerPrefix` — `PRISM_VISUALISER_READY ` (Phase E)
-- `ErrorMarkerPrefix` — `PRISM_VISUALISER_ERROR ` (Phase E)
-- `MvrReadyMarkerPrefix` — `PRISM_VISUALISER_MVR_READY ` (Phase J)
-- `MvrErrorMarkerPrefix` — `PRISM_VISUALISER_MVR_ERROR ` (Phase J)
+- `ReadyMarkerPrefix` â€” `PRISM_VISUALISER_READY ` (Phase E)
+- `ErrorMarkerPrefix` â€” `PRISM_VISUALISER_ERROR ` (Phase E)
+- `MvrReadyMarkerPrefix` â€” `PRISM_VISUALISER_MVR_READY ` (Phase J)
+- `MvrErrorMarkerPrefix` â€” `PRISM_VISUALISER_MVR_ERROR ` (Phase J)
 
 Why this didn't surface earlier: every previous PC01 run failed
-*before* `_emit_ready` ran (no commandlet → wrong python flag →
-Interchange API drift → Slate assertion). v0.3.6 / v0.5.4 was the
+*before* `_emit_ready` ran (no commandlet â†’ wrong python flag â†’
+Interchange API drift â†’ Slate assertion). v0.3.6 / v0.5.4 was the
 first run that completes the script and emits the marker, exposing
 the parse gap.
 
 ### Fixed
 
-- **`Unreal/UnrealLauncher.cs::TryFindMarker`** (new) — small public
+- **`Unreal/UnrealLauncher.cs::TryFindMarker`** (new) â€” small public
   helper that locates a marker prefix anywhere in a line via
   `IndexOf`, returning the trimmed JSON payload via an `out`
   parameter. Single implementation shared by both `ParseLine` (Phase
   E) and `ParseMvrLine` (Phase J), so the four marker prefixes are
   guaranteed to follow the same parsing contract.
-- **`Unreal/UnrealLauncher.cs::ParseLine`** — now calls
+- **`Unreal/UnrealLauncher.cs::ParseLine`** â€” now calls
   `TryFindMarker(line, ReadyMarkerPrefix, out var json)` /
   `TryFindMarker(line, ErrorMarkerPrefix, out var json)` instead of
   the column-zero `StartsWith` checks. Recognises the marker even
@@ -806,15 +813,15 @@ the parse gap.
   bare `PRISM_VISUALISER_READY {...}` form unchanged (preserves
   backwards compatibility with any non-UE harness that prints the
   marker directly).
-- **`Unreal/UnrealLauncher.cs::ParseMvrLine`** — symmetric fix for
+- **`Unreal/UnrealLauncher.cs::ParseMvrLine`** â€” symmetric fix for
   the Phase J markers using the same helper.
 
 ### Trade-off
 
 A hostile downstream string that embedded the marker substring
 mid-line could in principle spoof a marker. The scanner is only
-attached to UE child-process stdout / stderr — never to anything
-user-facing — and UE-side log lines never contain user-controlled
+attached to UE child-process stdout / stderr â€” never to anything
+user-facing â€” and UE-side log lines never contain user-controlled
 JSON outside our own `print`s, so the additional permissiveness is
 safe for the commandlet contract. Documented inline on
 `TryFindMarker` so future readers don't tighten the regex without
@@ -823,18 +830,18 @@ context.
 ### Tests
 
 - **`tests/PRISM.Visualiser.Orchestrator.Tests/MvrGdtfDetectorTests.cs`**
-  — extended with four new tests:
+  â€” extended with four new tests:
   - `ParseMvrLine_Recognises_Markers_When_Prefixed_By_UE_Log_Header`
-    — exact `[ts][  0]LogPython:` shape on both ready / error MVR
+    â€” exact `[ts][  0]LogPython:` shape on both ready / error MVR
     markers.
-  - `ParseLine_Recognises_Ready_And_Error_Markers` — covers the
+  - `ParseLine_Recognises_Ready_And_Error_Markers` â€” covers the
     bare column-zero form for the Phase E markers (was previously
     only tested for the MVR variants).
   - `ParseLine_Recognises_Markers_When_Prefixed_By_UE_Log_Header`
-    — uses the verbatim line shape captured from the v0.3.6 PC01
+    â€” uses the verbatim line shape captured from the v0.3.6 PC01
     run that triggered #23.
   - `TryFindMarker_Returns_True_With_Trimmed_Payload_When_Prefix_Present`
-    + `TryFindMarker_Returns_False_When_Prefix_Absent` — direct
+    + `TryFindMarker_Returns_False_When_Prefix_Absent` â€” direct
     unit tests on the new helper, including the trailing-whitespace
     trim contract.
 
@@ -843,7 +850,7 @@ PRISM.Visualiser.sln -c Release`.
 
 ### Notes
 
-- No `BuildStartInfoCore` / `BuildMvrStartInfoCore` changes — the
+- No `BuildStartInfoCore` / `BuildMvrStartInfoCore` changes â€” the
   `-stdout -FullStdOutLogOutput` flags stay; the parser learns to
   cope with the prefix UE has been adding all along. Removing the
   flags would lose error-path log fidelity (the same flags are what
@@ -854,18 +861,18 @@ PRISM.Visualiser.sln -c Release`.
   end-to-end or surface its own `signalling_*` / `ue_game_*` failure
   code.
 
-## v0.5.4 — Fix UE 5.7 Interchange API drift + drop Slate-bound AssetImportTask fallback
+## v0.5.4 â€” Fix UE 5.7 Interchange API drift + drop Slate-bound AssetImportTask fallback
 
 > **Fixes the Phase E UE import on PC01 (and any other UE 5.7
 > workstation) failing with `ue_import_failed: UE exited without a
 > ready marker (exit=3)`. With v0.5.3, `import_orbit.py` finally
 > starts inside `PythonScriptCommandlet`; v0.5.4 fixes the very next
-> bug the script hits — two cascading UE-API regressions previously
+> bug the script hits â€” two cascading UE-API regressions previously
 > masked because the commandlet never started.**
 
 ### Root cause
 
-#### Bug 1 — `InterchangeManager.get_interchange_manager()` removed in 5.7
+#### Bug 1 â€” `InterchangeManager.get_interchange_manager()` removed in 5.7
 
 `_import_via_interchange` in `import_orbit.py.in` called
 `unreal.InterchangeManager.get_interchange_manager()`, which was the
@@ -882,7 +889,7 @@ LogPython: Warning: Interchange import failed; falling back to
 The first-line warning then drove execution into the
 `AssetImportTask` fallback branch (Bug 2).
 
-#### Bug 2 — `AssetImportTask` is Slate-bound, crashes under `-NullRHI`
+#### Bug 2 â€” `AssetImportTask` is Slate-bound, crashes under `-NullRHI`
 
 The `_import_via_asset_task` fallback used
 `unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])`.
@@ -890,7 +897,7 @@ Even with `task.set_editor_property("automated", True)`,
 `AssetImportTask` internally routes through Slate (the
 import-settings dialog still constructs Slate widgets so the
 factory can read the user's last choices). Slate is NOT initialised
-when UE runs as `PythonScriptCommandlet` with `-NullRHI` — the very
+when UE runs as `PythonScriptCommandlet` with `-NullRHI` â€” the very
 next line in the per-run `REBUSVis.log` is the assertion:
 
 ```text
@@ -904,14 +911,14 @@ UE then `RequestExit(1, 3, ...)`'s out, the orchestrator's
 `UnrealLauncher.SafeExitCode` reports `3`, and the failure surfaces
 as `ue_import_failed: UE exited without a ready marker (exit=3)`.
 
-#### Bug 3 (latent) — `ImportAssetParameters.destination_path`
+#### Bug 3 (latent) â€” `ImportAssetParameters.destination_path`
 
 `_build_import_parameters` set
 `params.destination_path = target_folder`. That field doesn't exist
 on UE 5.5+'s `ImportAssetParameters` (`reimport_asset`,
 `reimport_source_index`, `is_automated`, `follow_redirectors`,
 `override_pipelines`, `import_level`, `destination_name`,
-`replace_existing`, plus the `on_*_done` callbacks — that's the full
+`replace_existing`, plus the `on_*_done` callbacks â€” that's the full
 shape). Setting an unknown attribute on an `unreal.Object` subclass
 raises `AttributeError` on 5.7. Even if Bugs 1 + 2 had been fixed,
 the parameter object would have failed to construct.
@@ -923,32 +930,32 @@ on the parameters object.
 ### Fixed
 
 - **`Unreal/PythonScripts/import_orbit.py.in::_get_interchange_manager`**
-  (new) — try `get_interchange_manager_scripted` first; fall back to
+  (new) â€” try `get_interchange_manager_scripted` first; fall back to
   the legacy `get_interchange_manager` name on older 5.x point
   releases for diagnostic value; raise a `RuntimeError` with a
   user-actionable message if neither attribute exists.
 - **`Unreal/PythonScripts/import_orbit.py.in::_import_via_interchange`**
-  — built `source_data` explicitly via
+  â€” built `source_data` explicitly via
   `unreal.InterchangeManager.create_source_data(gltf_path)`, called
   `manager.import_asset(target_folder, source_data, params)` with
   the canonical 5.5+ signature, and removed the speculative
   `import_asset_with_params` branch (that method was never on the
   binding).
 - **`Unreal/PythonScripts/import_orbit.py.in::_build_import_parameters`**
-  — removed the bogus `destination_path` attribute set; kept
+  â€” removed the bogus `destination_path` attribute set; kept
   `is_automated`, `replace_existing`, added `follow_redirectors`.
   The destination content path is now exclusively the first
   positional argument to `import_asset`.
-- **`Unreal/PythonScripts/import_orbit.py.in::main`** — dropped the
+- **`Unreal/PythonScripts/import_orbit.py.in::main`** â€” dropped the
   `try/except` that wrapped `_import_via_interchange` and the
   `_import_via_asset_task` fallback it called. Removed the entire
   `_import_via_asset_task` function. Interchange is now required;
   any Interchange failure bubbles up to the outer try/except, which
   already emits `PRISM_VISUALISER_ERROR ... import_failed` and
-  `sys.exit(1)` — the canonical structured failure surface for the
+  `sys.exit(1)` â€” the canonical structured failure surface for the
   orchestrator. The orchestrator's `UnrealLauncher.WaitForReadyMarker`
   treats this as `ue_import_failed` with exit code 6.
-- **`Unreal/PythonScripts/import_orbit.py`** — lintable twin updated
+- **`Unreal/PythonScripts/import_orbit.py`** â€” lintable twin updated
   in lock-step with the template so the body matches exactly.
 
 ### Not in scope
@@ -956,9 +963,9 @@ on the parameters object.
 - **`prism-visualiser.exe` is unsigned** (no Authenticode signature
   on the framework-dependent publish), so first-run SmartScreen /
   Defender may show a one-time warning on a fresh workstation. This
-  is the same posture as v0.5.3 — separate ticket if a UAC prompt
+  is the same posture as v0.5.3 â€” separate ticket if a UAC prompt
   recurs across sessions.
-- **MVR / GDTF Phase J import script (`import_mvr.py.in`)** —
+- **MVR / GDTF Phase J import script (`import_mvr.py.in`)** â€”
   intentionally untouched. The MVR DMX-plugin path uses
   `AssetImportTask` (DMX factory class) but is invoked under a
   separate UE pass for which the `-NullRHI` constraint may need to
@@ -967,7 +974,7 @@ on the parameters object.
 
 ### Tests
 
-- No new unit tests — the fix lives entirely in the Python script
+- No new unit tests â€” the fix lives entirely in the Python script
   and exercises UE-side behaviour that requires a real UE 5.7
   install. Existing C# orchestrator + scaffolder tests
   (`UnrealEnvironmentTests`, `MvrGdtfDetectorTests`,
@@ -976,11 +983,11 @@ on the parameters object.
   (`{{RUN_ID}}` / `{{GLTF_PATH}}` / `{{TARGET_FOLDER}}` /
   `{{LEVEL_NAME}}`) is unchanged in this PR.
 - End-to-end verification: dispatch a visualiser stream against PC01
-  after installing the v0.3.6 agent MSI — the per-run
+  after installing the v0.3.6 agent MSI â€” the per-run
   `REBUSVis.log` should reach `PRISM_VISUALISER_READY` instead of
   stopping at `Assertion failed: CurrentApplication.IsValid()`.
 
-## v0.5.3 — Fix `ue_import_failed: UE exited without a ready marker (exit=-1)`
+## v0.5.3 â€” Fix `ue_import_failed: UE exited without a ready marker (exit=-1)`
 
 > **Fixes the Phase E UE import on PC01 (and any other UE 5.7 workstation):
 > `UnrealEditor-Cmd.exe` was being launched with the wrong python-script
@@ -994,7 +1001,7 @@ on the parameters object.
 `BuildMvrStartInfoCore`) passed `-ExecutePythonScript=<path>` alongside
 `-run=PythonScript`. That combination drives UE into the
 `PythonScriptCommandlet` code path, which only honours `-Script=<path>`
-— it explicitly rejects `-ExecutePythonScript`. The PC01 `REBUSVis.log`
+â€” it explicitly rejects `-ExecutePythonScript`. The PC01 `REBUSVis.log`
 under `%LOCALAPPDATA%\PRISM.Visualiser\runs\<runId>\REBUSVis\Saved\Logs\`
 shows the diagnostic in plain text every time:
 
@@ -1014,14 +1021,14 @@ executed.
 
 ### Fixed
 
-- **`Unreal/UnrealLauncher.cs::BuildStartInfoCore`** — replace
+- **`Unreal/UnrealLauncher.cs::BuildStartInfoCore`** â€” replace
   `-ExecutePythonScript=<path>` with `-script=<path>`. Matching XML doc
   comments updated to the canonical UE 5.7 commandlet form
   (`UnrealEditor-Cmd.exe <project> -run=PythonScript -script=<py>`).
-- **`Unreal/UnrealLauncher.cs::BuildMvrStartInfoCore`** — same fix for
+- **`Unreal/UnrealLauncher.cs::BuildMvrStartInfoCore`** â€” same fix for
   the Phase J MVR/GDTF second pass; both UE invocations were broken
   identically.
-- **`Unreal/PythonScripts/import_orbit.py` / `import_orbit.py.in`** —
+- **`Unreal/PythonScripts/import_orbit.py` / `import_orbit.py.in`** â€”
   doc-comment header updated so artists who read the rendered script
   see the actual command line the orchestrator now uses.
 
@@ -1030,7 +1037,7 @@ executed.
 - **`prism-visualiser.exe` is unsigned** (no Authenticode signature on
   the framework-dependent publish), so first-run SmartScreen / Defender
   may show a warning on a fresh workstation. This is a one-time
-  interactive prompt — not the UAC elevation prompt — and it does NOT
+  interactive prompt â€” not the UAC elevation prompt â€” and it does NOT
   block subsequent launches once the operator accepts. The agent
   scheduled task on PC01 (`RunLevel=Highest`, `LogonType=Interactive`)
   was verified to spawn the orchestrator without UAC on this release:
@@ -1042,16 +1049,16 @@ executed.
 
 ### Tests
 
-- No new unit tests — the wrong-arg failure is a UE-side behaviour that
+- No new unit tests â€” the wrong-arg failure is a UE-side behaviour that
   needs a real UE install to exercise. The existing
   `MvrGdtfDetectorTests` keep using `UnrealLauncher.RenderMvrTemplate`
   and `UnrealLauncher.ParseMvrLine`, which are unaffected.
 - End-to-end verification: dispatch a visualiser stream against PC01
-  after installing the v0.5.3 orchestrator zip — `REBUSVis.log` should
+  after installing the v0.5.3 orchestrator zip â€” `REBUSVis.log` should
   reach `PRISM_VISUALISER_READY` instead of stopping at
   `LogPythonScriptCommandlet: Error: -Script argument not specified`.
 
-## v0.5.2 — UE pre-flight diagnostics + path normalization
+## v0.5.2 â€” UE pre-flight diagnostics + path normalization
 
 Surfaced the `ue_root_not_found` failure mode that blocked PC01's first
 end-to-end live run. Two layered fixes; either alone would have been
@@ -1060,14 +1067,14 @@ enough to mask the other for another release.
 ### Path normalization (`Unreal/UnrealEnvironment.cs`)
 
 - `NormalizeRoot(string)` strips leading/trailing whitespace, BOMs
-  (`\uFEFF`), zero-width spaces/joiners (`\u200B`–`\u200D`), and
+  (`\uFEFF`), zero-width spaces/joiners (`\u200B`â€“`\u200D`), and
   trailing directory separators before resolving the value via
   `Path.GetFullPath`. The canonical form is what every subsequent
   `Directory.Exists` / `File.Exists` check sees. Interior whitespace
-  is preserved — `C:\Program Files\Epic Games\UE_5.7` is a legal
+  is preserved â€” `C:\Program Files\Epic Games\UE_5.7` is a legal
   Windows path and a blanket whitespace filter would mangle it. The
   `Path.GetFullPath` call also collapses mixed separators
-  (`C:/Foo\Bar` → `C:\Foo\Bar`) and is wrapped in try/catch for
+  (`C:/Foo\Bar` â†’ `C:\Foo\Bar`) and is wrapped in try/catch for
   illegal-character inputs so a malformed config never crashes the
   pre-flight.
 - `ProbeFromRoot(root, source, probe)` is the new per-probe core. It
@@ -1091,10 +1098,10 @@ enough to mask the other for another release.
 
       ue_root_not_found: UNREAL_ENGINE_ROOT is set but does not point
       at a valid UE 5.7 install. | [EnvironmentVariable] raw=C:\Wrong
-      normalized=C:\Wrong — directory does not exist: C:\Wrong |
-      [DefaultPath] path=C:\Program Files\Epic Games\UE_5.7 —
+      normalized=C:\Wrong â€” directory does not exist: C:\Wrong |
+      [DefaultPath] path=C:\Program Files\Epic Games\UE_5.7 â€”
       directory does not exist: C:\Program Files\Epic Games\UE_5.7 |
-      [Registry] path=<unset> — HKLM\SOFTWARE\EpicGames\Unreal
+      [Registry] path=<unset> â€” HKLM\SOFTWARE\EpicGames\Unreal
       Engine\5.7\InstalledDirectory not present
 
 ### Tests
@@ -1106,13 +1113,13 @@ enough to mask the other for another release.
   whitespace preservation). Full orchestrator suite now 90 tests, all
   green.
 
-## v0.5.0 — Phase J: MVR/GDTF detection + import
+## v0.5.0 â€” Phase J: MVR/GDTF detection + import
 
 End state: the orchestrator detects MVR (My Virtual Rig) scene files and
 GDTF (General Device Type Format) fixtures in either the staged ORBIT
 scene or the per-run `attachments/` directory, and runs a SECOND UE
 editor pass to import them via the DMX plugin before the streaming-ready
-event fires. Mesh-only scenes are unchanged — the new path is fully
+event fires. Mesh-only scenes are unchanged â€” the new path is fully
 opt-in based on detector output.
 
 ### MVR/GDTF detector (`Unreal/MvrGdtfDetector.cs`)
@@ -1123,12 +1130,12 @@ opt-in based on detector output.
   AND enumerates `{runStageDir}/attachments/*.mvr` / `*.gdtf` on disk.
   Returns a deduplicated `MvrGdtfPaths` record with `HasAny` shortcut.
 - Speckle objects are surfaced today via Phase C's `FallbackConverter`
-  as `StagedUnknown` records — the detector parses the preserved
+  as `StagedUnknown` records â€” the detector parses the preserved
   `RawJson` looking for a `displayValue` / `blobPath` / `filePath`
   string. A future Phase-J converter that emits typed
   `StagedMvr` / `StagedGdtf` subtypes can short-circuit this branch.
 - Path extraction is tolerant: unknown body shape just means "no path
-  for this node" — already-logged Phase C fallback warning is enough.
+  for this node" â€” already-logged Phase C fallback warning is enough.
 
 ### import_mvr.py.in (`Unreal/PythonScripts/`)
 
@@ -1137,7 +1144,7 @@ opt-in based on detector output.
   `{{GDTF_PATHS_JSON}}`, `{{TARGET_FOLDER}}`, `{{LEVEL_NAME}}`.
 - GDTF fixtures are imported FIRST via the `AssetImportTask` + DMX
   plugin's GDTF import factory (class name varies across UE 5.x point
-  releases — `DMXImportGDTFFactory` / `DMXGDTFImportFactory` /
+  releases â€” `DMXImportGDTFFactory` / `DMXGDTFImportFactory` /
   `UDMXGDTFImportFactory`; the script tolerates all three via
   `getattr` chains). MVR scenes import second so they can resolve
   their fixture references.
@@ -1149,7 +1156,7 @@ opt-in based on detector output.
   { code, message }` + `sys.exit(1)` on failure. Per-file errors are
   warned-and-continued rather than aborting the whole pass.
 - The artist who lands `v1.0.0-ue5.7` MUST validate these calls against
-  the installed UE version's DMX plugin surface — the header comment
+  the installed UE version's DMX plugin surface â€” the header comment
   calls this out explicitly.
 
 ### UnrealLauncher.LaunchMvrImportAsync (`Unreal/UnrealLauncher.cs`)
@@ -1172,7 +1179,7 @@ opt-in based on detector output.
 - `ImportAsync` now optionally takes the `StagedScene` + `runStageDir`
   so it can run the detector + (conditionally) the second UE pass
   inline. If `MvrGdtfPaths.HasAny == false` the method returns
-  exactly as Phase E did — no behavioural regression for mesh-only
+  exactly as Phase E did â€” no behavioural regression for mesh-only
   scenes.
 - An MVR import failure (python error, no marker, timeout) does NOT
   abort the run: the glTF geometry is already imported and the level
@@ -1197,28 +1204,28 @@ opt-in based on detector output.
 4. **Detector handles both sources at once.** Speckle MVR object +
    filesystem GDTF, both returned and deduplicated.
 
-End-to-end (real MVR file → UE DMX plugin → MVR actor in level)
+End-to-end (real MVR file â†’ UE DMX plugin â†’ MVR actor in level)
 gates on the `v1.0.0-ue5.7` template + a workstation with the DMX
 plugin enabled. Out of scope for this release.
 
-## v0.4.0 — Phase F: Pixel Streaming 2 bring-up on localhost
+## v0.4.0 â€” Phase F: Pixel Streaming 2 bring-up on localhost
 
 End state: the orchestrator no longer exits with code `9` after the
-import — it brings Cirrus + UE up under PixelStreaming 2 on localhost,
+import â€” it brings Cirrus + UE up under PixelStreaming 2 on localhost,
 emits the final `prism-visualiser/ready/v1` JSON line on stdout with
 real local URLs, and blocks until UE exits or external cancellation
 (Ctrl+C / SIGTERM). The end-to-end "browser sees the stream" check
 still gates on (a) a workstation with UE 5.7 installed, (b) Phase D's
 `v1.0.0-ue5.7` artist template, and (c) a GPU with hardware NVENC.
 
-### PixelStreaming components (`PixelStreaming/`, BUILD.md §4)
+### PixelStreaming components (`PixelStreaming/`, BUILD.md Â§4)
 
-- `PortAllocator` — TCP / UDP port allocation via the
+- `PortAllocator` â€” TCP / UDP port allocation via the
   `IPAddress.Loopback:0` bind-and-release trick. Includes a
   "N distinct ports in one shot" helper that binds all sockets in
   parallel for guaranteed uniqueness (the per-call variant can race
   the OS into handing out the same port twice on a tight loop).
-- `SignallingSupervisor` — locates Cirrus under
+- `SignallingSupervisor` â€” locates Cirrus under
   `<UE_ROOT>\Engine\Plugins\Media\PixelStreaming2\Resources\WebServers\SignallingWebServer\`
   and Node at
   `<UE_ROOT>\Engine\Binaries\ThirdParty\Node\Win64\node.exe`. Spawns
@@ -1228,15 +1235,15 @@ still gates on (a) a workstation with UE 5.7 installed, (b) Phase D's
   Node binary paths can be overridden for local smoke testing via
   `PRISM_VISUALISER_CIRRUS_SCRIPT` / `PRISM_VISUALISER_NODE_EXE` env
   vars.
-- `PixelStreamingSession` — composes `UnrealGameHandle` +
+- `PixelStreamingSession` â€” composes `UnrealGameHandle` +
   `SignallingHandle`, exposes `RunUntilExitAsync` (block until UE
   exits or cancellation), and `ShutdownAsync` (kill UE FIRST, then
   Cirrus, with a `5s` grace period before the JobObject
-  KILL_ON_JOB_CLOSE backstop catches anything stuck — UE-first
+  KILL_ON_JOB_CLOSE backstop catches anything stuck â€” UE-first
   ordering keeps the shutdown log clean of WebRTC peer-disconnect
   spam).
 
-### UnrealLauncher — game-mode launch (BUILD.md §4)
+### UnrealLauncher â€” game-mode launch (BUILD.md Â§4)
 
 `UnrealLauncher.LaunchGameMode` adds the `-game` invocation alongside
 the existing import path. We keep `UnrealEditor-Cmd.exe` (NOT
@@ -1261,12 +1268,12 @@ UnrealEditor-Cmd.exe <project>.uproject /Game/REBUS/Maps/Imported_<runId> -game 
 ```
 
 PS2 (UE 5.5+) deprecated `-PixelStreamingIP` / `-PixelStreamingPort`
-in favour of `-PixelStreamingURL`; the plan §Risks calls this out
+in favour of `-PixelStreamingURL`; the plan Â§Risks calls this out
 and the launcher uses only the new form.
 
 ### Pipeline + CLI
 
-- `VisualiserPipeline.StartStreamingAsync` — Phase F continuation:
+- `VisualiserPipeline.StartStreamingAsync` â€” Phase F continuation:
   resolve Cirrus + Node, allocate ports, spawn Cirrus, wait for
   ready, spawn UE -game, wait for streamer-connected. Returns a
   live `PixelStreamingSession` the caller emits the ready event
@@ -1274,7 +1281,7 @@ and the launcher uses only the new form.
   missing, Node missing, signalling timeout, streamer-connected
   timeout, UE crashed before streamer connected) to a
   matching `prism-visualiser/failed/v1` event + exit code.
-- `Program.RunPhaseFAsync` — replaces the old `RunPhaseEAsync`'s
+- `Program.RunPhaseFAsync` â€” replaces the old `RunPhaseEAsync`'s
   `exit 9` after `imported/v1`. The orchestrator now goes all the
   way through to either a real streaming-ready state (emit
   `ready/v1`, block until UE exits / Ctrl+C, exit 0) or one of the
@@ -1294,15 +1301,15 @@ and the launcher uses only the new form.
 
 3 new xUnit `[Fact]` classes (covers Phase F smoke tests 11, 13, 15):
 
-- `PortAllocatorTests` — allocates 5 distinct ephemeral TCP ports
+- `PortAllocatorTests` â€” allocates 5 distinct ephemeral TCP ports
   in a tight loop and asserts each is bindable; mirrors the same
   contract for UDP; covers the hint-honouring helper.
-- `SignallingSupervisorTests` — drives the ready-line + streamer
+- `SignallingSupervisorTests` â€” drives the ready-line + streamer
   -connected parsers against the three known PS2 log shapes and
   noisy fixtures; exercises `AwaitReadyAsync` via a synthetic
   `IAsyncEnumerable<string>` so no real Cirrus process is needed;
   covers env-var overrides for smoke testing.
-- `PixelStreamingSessionShutdownTests` — verifies the static
+- `PixelStreamingSessionShutdownTests` â€” verifies the static
   `PixelStreamingSession.ShutdownAsync` cleanup helper kills UE
   before Cirrus, waits for each to exit before moving to the next,
   is no-op-safe when UE has already exited, and tolerates a
@@ -1312,7 +1319,7 @@ End-to-end (browser-sees-stream) coverage stays out of scope until
 the artist-populated `v1.0.0-ue5.7` template lands and a
 UE-installed workstation is available.
 
-## v0.3.0 — Phase E: UE Python import + editor scaffold
+## v0.3.0 â€” Phase E: UE Python import + editor scaffold
 
 End state: the orchestrator opens a fully imported UE project but does
 not yet stream pixels. Pixel Streaming bring-up is Phase F. The `stream`
@@ -1320,11 +1327,11 @@ subcommand (without `--dry-run`) now layers a UE editor invocation on
 top of the Phase C glTF stage, then exits with code `9` (NotImplemented)
 once the imported level is on disk.
 
-### UE environment + template management (BUILD.md §3.1)
+### UE environment + template management (BUILD.md Â§3.1)
 
 - `UnrealEnvironment` resolves a UE 5.7 install in priority order:
-  `UNREAL_ENGINE_ROOT` env var → default
-  `C:\Program Files\Epic Games\UE_5.7\` → registry
+  `UNREAL_ENGINE_ROOT` env var â†’ default
+  `C:\Program Files\Epic Games\UE_5.7\` â†’ registry
   `HKLM\SOFTWARE\EpicGames\Unreal Engine\5.7\InstalledDirectory`.
   Validates `Engine\Binaries\Win64\UnrealEditor-Cmd.exe` is present; an
   env var that points at a missing root surfaces `EnvVarSet=true` so the
@@ -1347,16 +1354,16 @@ once the imported level is on disk.
   with the rendered script, the project flag, and headless flags
   (`-unattended -nullrhi -nosplash -nopause -log`). stdout / stderr
   are line-buffered through `ProcessSupervisor`; the launcher
-  greps for `PRISM_VISUALISER_READY {…}` / `PRISM_VISUALISER_ERROR {…}`
+  greps for `PRISM_VISUALISER_READY {â€¦}` / `PRISM_VISUALISER_ERROR {â€¦}`
   markers, enforces the 600s timeout, and surfaces a structured
   `ImportResult`.
 
-### Python import script (BUILD.md §3.2)
+### Python import script (BUILD.md Â§3.2)
 
 - `import_orbit.py.in` drives UE 5.7's Interchange framework directly
   (`unreal.InterchangeManager` + `ImportAssetParameters`). Falls back
   to `unreal.AssetImportTask` if the Interchange API surface differs
-  on the installed engine; tolerates `EditorAssetLibrary` →
+  on the installed engine; tolerates `EditorAssetLibrary` â†’
   `EditorAssetSubsystem` deprecation via `getattr` lookups. Idempotent
   per-run, emits the `PRISM_VISUALISER_READY` JSON line on success,
   and `PRISM_VISUALISER_ERROR` + `sys.exit(1)` on failure.
@@ -1364,7 +1371,7 @@ once the imported level is on disk.
   template can be Python-lint-checked outside the UE editor. The
   scaffolder always renders from `import_orbit.py.in`.
 
-### Pipeline orchestration (BUILD.md §3.3)
+### Pipeline orchestration (BUILD.md Â§3.3)
 
 - `VisualiserPipeline` wraps Phase C's
   `OrbitReceivePipeline.ReceiveAsync` + `SceneFlattener.Flatten` +
@@ -1376,13 +1383,13 @@ once the imported level is on disk.
 ### CLI
 
 - `stream` (without `--dry-run`) now emits, in order:
-  `prism-visualiser/staged/v1` (Phase C, unchanged) → after a
+  `prism-visualiser/staged/v1` (Phase C, unchanged) â†’ after a
   successful UE import, `prism-visualiser/imported/v1` with the
   resolved project path / level path / `assetCount` /
-  `importDurationMs` → exits `9` (NotImplemented) until Phase F lands.
+  `importDurationMs` â†’ exits `9` (NotImplemented) until Phase F lands.
 - New failure event `prism-visualiser/failed/v1` reports phase /
   code / message. New exit codes: `4` (UE root not found),
-  `5` (UE import timed out), `6` (UE import failed — non-zero
+  `5` (UE import timed out), `6` (UE import failed â€” non-zero
   editor exit or python error marker on stdout). The dry-run path
   and exit codes `0` / `1` / `9` / `64` are unchanged.
 
@@ -1391,13 +1398,13 @@ once the imported level is on disk.
 13 new xUnit `[Fact]`s across three classes (UnrealEnvironment
 resolution, TemplateFetcher cache hit / miss / tampering,
 ProjectScaffolder zip-extract + uproject / ini rewrite + python
-render — including ini round-trip parse and nested-zip flattening).
+render â€” including ini round-trip parse and nested-zip flattening).
 UE-dependent end-to-end coverage stays out of scope until the
 artist-populated `v1.0.0-ue5.7` template lands and a UE-installed
 workstation is available; this is documented in each new test
 class's XML doc.
 
-## v0.2.0 — Phase C: ORBIT receive pipeline + glTF staging
+## v0.2.0 â€” Phase C: ORBIT receive pipeline + glTF staging
 
 First substantive build on top of the Phase B scaffold. The `stream`
 subcommand (without `--dry-run`) now does real work: authenticates,
@@ -1405,17 +1412,17 @@ fetches the version's full object tree, stages it as a glTF + sidecar
 manifest, then exits with code `9` (NotImplemented) until Phase D/E
 land the UE bring-up.
 
-### Receive pipeline (BUILD.md §1)
+### Receive pipeline (BUILD.md Â§1)
 
 - Composite `IOrbitTokenSource`: env vars (`ORBIT_PAT_PROD` /
-  `ORBIT_PAT_DEV`) → `%LOCALAPPDATA%\PRISM.Visualiser\auth\<server>.json`
-  → fail-with-OrbitAuthException. Mirrors the Rhino-connector token
+  `ORBIT_PAT_DEV`) â†’ `%LOCALAPPDATA%\PRISM.Visualiser\auth\<server>.json`
+  â†’ fail-with-OrbitAuthException. Mirrors the Rhino-connector token
   store schema (`prism-visualiser/auth/v1`).
 - `HttpOrbitApi` over `HttpClient` + Polly: bearer auth, 3-attempt
   exponential back-off on 408/429/5xx, source-generated JSON
   serialisation for AOT/trim safety.
 - `OrbitReceivePipeline.ReceiveAsync(projectId, versionId)`:
-  resolve version → BFS the object tree (cache-first, max 8 parallel
+  resolve version â†’ BFS the object tree (cache-first, max 8 parallel
   HTTP fetches, content-hash de-dup), pre-resolve every `@blob:HASH`
   texture in parallel, then convert.
 - `ContentAddressedCache`: SHA256-keyed, two-char shard layout under
@@ -1424,12 +1431,12 @@ land the UE bring-up.
 - `BlobDownloader`: cache-first, parallel-on-miss with bounded
   concurrency, server-content integrity check on every fetch.
 
-### glTF staging (BUILD.md §2)
+### glTF staging (BUILD.md Â§2)
 
-- `MeshConverter`: Speckle face encoding `[n,v0..vn-1, n,v0...]` →
+- `MeshConverter`: Speckle face encoding `[n,v0..vn-1, n,v0...]` â†’
   fan-triangulated glTF index buffer; positions / normals / vertex
   colours / texcoords all round-trip.
-- `MaterialConverter`: `RenderMaterial` → glTF PBR metallic-roughness
+- `MaterialConverter`: `RenderMaterial` â†’ glTF PBR metallic-roughness
   with diffuse / base-colour / emissive / normal channels. The
   `@blob:HASH` placeholder scheme resolves through the run's blob map.
 - `DataObjectConverter`: generic Speckle objects whose
@@ -1439,12 +1446,12 @@ land the UE bring-up.
   `unknown_objects.jsonl` next to the staged glTF and surfaces as a
   `StagedUnknown`. Phase J (MVR / lighting) supersedes the fallback
   for the corresponding types.
-- `CoordinateTransform`: ORBIT (Z-up RH, m) → UE (Z-up LH, cm).
+- `CoordinateTransform`: ORBIT (Z-up RH, m) â†’ UE (Z-up LH, cm).
   Mirror Y, scale by 100. Applied per-vertex during glTF write,
   never as a per-node transform.
 - `SceneFlattener` + `GltfWriter` (SharpGLTF): one big glTF per
   import + a `scene_manifest.json` sidecar mapping each Speckle
-  source object → glTF node index → layer path. Buffers + textures
+  source object â†’ glTF node index â†’ layer path. Buffers + textures
   are written as external files; the writer round-trips the result
   through `ModelRoot.Load` with strict validation.
 
@@ -1465,7 +1472,7 @@ land the UE bring-up.
 material blob resolution, fallback sidecar, deep-tree round-trip,
 hit/miss flow). The existing 4 ready-handshake tests continue to pass.
 
-## v0.1.0 — Phase B scaffold
+## v0.1.0 â€” Phase B scaffold
 
 - System.CommandLine CLI with `stream` + `cache` subcommands
 - `--dry-run` emits a syntactically valid `prism-visualiser/ready/v1`

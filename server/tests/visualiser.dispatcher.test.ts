@@ -181,7 +181,7 @@ vi.mock('../src/api/internal.js', () => ({
 // SUT (imported after mocks so the mocks win)
 // -----------------------------------------------------------------------------
 import { tryDispatchVisualisation, releaseVisualiserSlot, loadAttachmentRefs } from '../src/jobs/dispatcher.js';
-import { OrbitClientError } from '../src/orbit/client.js';
+import { OrbitClientError, getLatestVersionId } from '../src/orbit/client.js';
 
 function makeAgent(opts: Partial<{ sessionId: string; machineId: string; workstationId: string; slots: number; connectedAtMs: number }> = {}) {
   return {
@@ -215,6 +215,8 @@ function makeRun(overrides: Record<string, unknown> = {}) {
     orbitTarget: 'prod',
     projectId: 'p-1',
     modelId:   'm-1',
+    modelName: null,
+    importMode: 'single',
     // Default to a concrete version so the common-case tests skip the
     // ORBIT "resolve latest version" round-trip; the version-resolution
     // tests below explicitly pass `versionId: null` to exercise it.
@@ -397,6 +399,47 @@ describe('tryDispatchVisualisation', () => {
     state.run = null;
     const out = await tryDispatchVisualisation('missing', log);
     expect(out).toMatchObject({ dispatched: false, error: 'invalid_state' });
+  });
+
+  it('dispatches a tree import without calling getLatestVersionId', async () => {
+    state.run = makeRun({ versionId: null, importMode: 'tree', modelName: 'building' });
+    state.workstations = [makeWs({ id: 'ws-1', machineId: 'mach-1' })];
+    state.agents = [makeAgent({ slots: 1 })];
+    state.reservationOutcomes = [[{ id: 'ws-1', currentVisualiserLoad: 1 }]];
+
+    const out = await tryDispatchVisualisation('run-1', log);
+    expect(out.dispatched).toBe(true);
+
+    expect(getLatestVersionId).not.toHaveBeenCalled();
+
+    const sent = JSON.parse(state.agents[0]!.socket.send.mock.calls[0]![0]);
+    expect(sent.type).toBe('startVisualisation');
+    expect(sent.data.importMode).toBe('tree');
+    expect(sent.data.modelName).toBe('building');
+    expect(sent.data.versionId).toBeUndefined();
+  });
+
+  it('dispatches a tree import even when the model has no versions on ORBIT', async () => {
+    state.run = makeRun({ versionId: null, importMode: 'tree', modelName: 'building' });
+    state.workstations = [makeWs({ id: 'ws-1', machineId: 'mach-1' })];
+    state.agents = [makeAgent({ slots: 1 })];
+    state.reservationOutcomes = [[{ id: 'ws-1', currentVisualiserLoad: 1 }]];
+    state.latestVersion = null;
+
+    const out = await tryDispatchVisualisation('run-1', log);
+    expect(out.dispatched).toBe(true);
+  });
+
+  it('still rejects a single-mode model with no versions as version_unavailable', async () => {
+    state.run = makeRun({ versionId: null, importMode: 'single' });
+    state.workstations = [makeWs({ id: 'ws-1', machineId: 'mach-1' })];
+    state.agents = [makeAgent({ slots: 1 })];
+    state.reservationOutcomes = [[{ id: 'ws-1', currentVisualiserLoad: 1 }]];
+    state.latestVersion = null;
+
+    const out = await tryDispatchVisualisation('run-1', log);
+    expect(out).toMatchObject({ dispatched: false, error: 'version_unavailable' });
+    if (!out.dispatched) expect(out.reason).toMatch(/no versions/);
   });
 });
 

@@ -227,19 +227,16 @@ public sealed class VisualiserJob
 
         _runId = data.RunId;
 
-        // The orchestrator's --version flag is required and ThrowIfNullOrWhiteSpace
-        // rejects an empty string deep in OrbitReceivePipeline.ReceiveAsync,
-        // surfacing as an opaque scaffold_failed error. Fail fast here so the
-        // admin log shows a clear message instead.
-        // The server dispatcher resolves the latest version when the caller omits
-        // versionId, so this branch only fires on mis-configured callers or very
-        // old server builds.
-        if (string.IsNullOrWhiteSpace(data.VersionId))
+        // For single-model imports the orchestrator requires a concrete versionId.
+        // For tree imports (importMode="tree") the connector calls OrbitImportTree
+        // instead, so no versionId is needed — skip this check in that case.
+        if (string.IsNullOrWhiteSpace(data.VersionId) && data.ImportMode != "tree")
         {
             var err =
-                "versionId is required but was not provided in the startVisualisation " +
-                "envelope. The PRISM server should resolve the latest version before " +
-                "dispatching. Upgrade the server to v0.3.3+ or supply an explicit versionId.";
+                "versionId is required for single-model imports but was not provided in " +
+                "the startVisualisation envelope. The PRISM server should resolve the latest " +
+                "version before dispatching. Upgrade the server to v0.3.3+ or supply an " +
+                "explicit versionId, or set importMode='tree' for parent models.";
             _log.LogError("visualiser job: {Error}", err);
             EmitFailed(err);
             _registry.Remove(_runId);
@@ -266,20 +263,32 @@ public sealed class VisualiserJob
         var serverSelector = ResolveServerSelector(data.OrbitServerUrl);
         var portHint = ResolveSignallingPortHint(data.Slot);
 
-        // The orchestrator's --version flag conflicts with its
-        // System.CommandLine version option, so we pass the ORBIT
-        // version id as a positional flag.
         var args = new List<string>
         {
             "stream",
             "--server",                serverSelector,
             "--project",               data.ProjectId,
             "--model",                 data.ModelId,
-            "--version",               data.VersionId!,
             "--run-id",                data.RunId,
             "--signalling-port-hint",  portHint.ToString(),
             "--json",
         };
+
+        if (!string.IsNullOrWhiteSpace(data.VersionId))
+        {
+            args.Add("--version");
+            args.Add(data.VersionId);
+        }
+        if (!string.IsNullOrWhiteSpace(data.ModelName))
+        {
+            args.Add("--model-name");
+            args.Add(data.ModelName);
+        }
+        if (!string.IsNullOrWhiteSpace(data.ImportMode) && data.ImportMode != "single")
+        {
+            args.Add("--import-mode");
+            args.Add(data.ImportMode);
+        }
 
         var psi = new ProcessStartInfo
         {

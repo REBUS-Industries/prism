@@ -412,11 +412,11 @@ export async function tryDispatchVisualisation(
   }
 
   // If the caller omitted versionId ("use the latest"), resolve it from ORBIT
-  // now. The orchestrator's --version flag is required and ThrowIfNullOrWhiteSpace
-  // rejects an empty string with a confusing scaffold_failed error, so we must
-  // hand the agent a concrete version id — never an empty string.
+  // now. For tree imports the orchestrator uses OrbitImportTree and never
+  // needs a versionId, so skip the resolution entirely for that mode.
   let resolvedVersionId = run.versionId ?? null;
-  if (!resolvedVersionId) {
+  const isTreeImport = run.importMode === 'tree';
+  if (!resolvedVersionId && !isTreeImport) {
     try {
       const latestId = await getLatestVersionId(
         run.orbitTarget as 'prod' | 'dev',
@@ -501,7 +501,9 @@ export async function tryDispatchVisualisation(
     orbitToken,
     projectId: run.projectId,
     modelId: run.modelId,
-    versionId: resolvedVersionId,
+    modelName: run.modelName ?? undefined,
+    importMode: isTreeImport ? 'tree' : undefined,
+    versionId: resolvedVersionId ?? undefined,
     templateTag: run.templateTag ?? undefined,
     signallingUrl: run.signallingUrl ?? undefined,
     ttlSeconds: run.ttlSeconds ?? undefined,
@@ -530,7 +532,13 @@ export async function tryDispatchVisualisation(
     .where(eq(visualiserRuns.id, run.id));
 
   log.info({ runId: run.id, nodeName: agent.nodeName, sessionId: agent.sessionId }, 'visualiser run dispatched');
-  await appendVisualiserRunLog(run.id, `dispatched to workstation ${agent.nodeName}; orchestrator importing version ${resolvedVersionId}`, { log });
+  await appendVisualiserRunLog(
+    run.id,
+    isTreeImport
+      ? `dispatched to workstation ${agent.nodeName}; tree import (model: ${run.modelName ?? run.modelId})`
+      : `dispatched to workstation ${agent.nodeName}; orchestrator importing version ${resolvedVersionId}`,
+    { log },
+  );
   return {
     dispatched: true,
     workstationId: reserved.workstationId,

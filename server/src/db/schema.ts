@@ -240,6 +240,8 @@ export const visualiserRuns = pgTable('visualiser_runs', {
   orbitTarget: varchar('orbit_target', { length: 8 }).notNull().default('prod'),
   projectId:   varchar('project_id', { length: 32 }).notNull(),
   modelId:     varchar('model_id',   { length: 32 }).notNull(),
+  modelName:   varchar('model_name', { length: 256 }),
+  importMode:  varchar('import_mode', { length: 8 }).notNull().default('single'),
   versionId:   varchar('version_id', { length: 64 }),
   // UE template tag (e.g. `v1.0.0-ue5.7`). Resolved from
   // agent_config.UnrealTemplateTag at dispatch time; persisted on the row so

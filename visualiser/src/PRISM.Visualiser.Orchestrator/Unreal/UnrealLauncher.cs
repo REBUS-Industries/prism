@@ -597,6 +597,17 @@ public sealed class UnrealLauncher
             psi.ArgumentList.Add(string.Format(
                 CultureInfo.InvariantCulture, "-OrbitTarget={0}", orbitImport.Target));
         }
+        if (!string.IsNullOrWhiteSpace(orbitImport.ModelName))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitModelName={0}", orbitImport.ModelName));
+        }
+        if (!string.IsNullOrWhiteSpace(orbitImport.ImportMode) &&
+            !orbitImport.ImportMode.Equals("single", StringComparison.OrdinalIgnoreCase))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitImportMode={0}", orbitImport.ImportMode));
+        }
     }
 
     /// <summary>

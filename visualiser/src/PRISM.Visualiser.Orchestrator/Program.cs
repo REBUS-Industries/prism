@@ -277,9 +277,10 @@ internal static class Program
         var modelOption = new Option<string>(
             name: "--model",
             description: "ORBIT model id.") { IsRequired = true };
-        var versionOption = new Option<string>(
+        var versionOption = new Option<string?>(
             name: "--version",
-            description: "ORBIT version id (resolved object root).") { IsRequired = true };
+            description: "ORBIT version id (resolved object root). Required for single-model imports; omit for tree imports.")
+            { IsRequired = false };
         var runIdOption = new Option<string>(
             name: "--run-id",
             description: "Caller-supplied run UUID. Echoed in the ready event.")
@@ -320,6 +321,16 @@ internal static class Program
                 "uses the connector when the fixed template project is configured AND ships the " +
                 "connector plug-in + orbit-cli, else falls back to Interchange.");
 
+        var modelNameOption = new Option<string?>(
+            name: "--model-name",
+            description: "ORBIT model name/path (e.g. 'building'). Required when --import-mode=tree.");
+
+        var importModeOption = new Option<string>(
+            name: "--import-mode",
+            description: "Import mode: 'single' (default) or 'tree' (pull all submodels via OrbitImportTree).")
+            .FromAmong("single", "tree");
+        importModeOption.SetDefaultValue("single");
+
         var cmd = new Command("stream",
             "Launch a Pixel-Streaming session for an ORBIT model version.")
         {
@@ -334,6 +345,8 @@ internal static class Program
             debugWindowOption,
             fullEditorOption,
             connectorImportOption,
+            modelNameOption,
+            importModeOption,
         };
 
         cmd.SetHandler(async (InvocationContext ctx) =>
@@ -341,11 +354,13 @@ internal static class Program
             var server = ctx.ParseResult.GetValueForOption(serverOption)!;
             var project = ctx.ParseResult.GetValueForOption(projectOption)!;
             var model = ctx.ParseResult.GetValueForOption(modelOption)!;
-            var version = ctx.ParseResult.GetValueForOption(versionOption)!;
+            var version = ctx.ParseResult.GetValueForOption(versionOption) ?? "";
             var runId = ctx.ParseResult.GetValueForOption(runIdOption)!;
             var portHint = ctx.ParseResult.GetValueForOption(portHintOption);
             var json = ctx.ParseResult.GetValueForOption(jsonOption);
             var dryRun = ctx.ParseResult.GetValueForOption(dryRunOption);
+            var modelName = ctx.ParseResult.GetValueForOption(modelNameOption) ?? "";
+            var importMode = ctx.ParseResult.GetValueForOption(importModeOption) ?? "single";
             // Debug-window mode is opt-in via either the CLI flag or the
             // env var, so it can be toggled on PC01 without a rebuild.
             var debugWindow = ctx.ParseResult.GetValueForOption(debugWindowOption)
@@ -382,7 +397,9 @@ internal static class Program
                     Server: ServerConfig.Resolve(server),
                     SignallingPortHint: portHint,
                     LogsDirectory: logsDir,
-                    DryRun: dryRun);
+                    DryRun: dryRun,
+                    ModelName: modelName,
+                    ImportMode: importMode);
 
                 logger.Information(
                     "stream: server={Server} project={ProjectId} model={ModelId} version={VersionId} portHint={PortHint} dryRun={DryRun}",
@@ -636,7 +653,9 @@ internal static class Program
             ModelId: manifest.ModelId,
             VersionId: manifest.VersionId,
             Token: string.Empty,
-            Target: manifest.Server.Name);
+            Target: manifest.Server.Name,
+            ModelName: manifest.ModelName,
+            ImportMode: manifest.ImportMode);
         if (fullEditor)
         {
             // Full-editor mode now runs the SAME plug-in pipeline as the headless

@@ -244,7 +244,11 @@ export interface StartVisualisationData {
   orbitToken: string;
   projectId: string;
   modelId: string;
-  /** Optional ORBIT version to materialise. When omitted the agent picks the latest. */
+  /** Human-readable ORBIT model name/path (e.g. 'building'). Required for importMode='tree'. */
+  modelName?: string;
+  /** 'tree' = OrbitImportTree; omitted/undefined = single-version import (default). */
+  importMode?: 'single' | 'tree';
+  /** Omitted for tree imports. Required for single-version imports. */
   versionId?: string;
   /** UE template tag the orchestrator should run against (e.g. `v1.0.0-ue5.7`). */
   templateTag?: string;
