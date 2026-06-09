@@ -79,7 +79,7 @@ export async function tryDispatch(jobId: string, log: FastifyBaseLogger): Promis
   const wsByMachine = new Map(wsRows.map((w) => [w.machineId, w]));
 
   const eligible: AgentConn[] = [];
-  for (const conn of sessionRegistry.allAgents()) {
+  for (const conn of await sessionRegistry.allAgents()) {
     const w = wsByMachine.get(conn.machineId);
     if (!w || !w.isEnabled) continue;
     if (isReceive) {
@@ -143,7 +143,7 @@ export async function tryDispatch(jobId: string, log: FastifyBaseLogger): Promis
     };
     try {
       agent.socket.send(JSON.stringify(envelope('pollLayers', poll, randomUUID())));
-      agent.slotsBusy += 1;
+      await sessionRegistry.reserveSlot(agent.workstationId);
     } catch (err) {
       log.warn({ err, agentSessionId: agent.sessionId }, 'agent ws send (pollLayers) failed; will requeue');
       return { dispatched: false, reason: 'agent send failed' };
@@ -215,7 +215,7 @@ export async function tryDispatch(jobId: string, log: FastifyBaseLogger): Promis
 
   try {
     agent.socket.send(JSON.stringify(envelope('assign', assign, randomUUID())));
-    agent.slotsBusy += 1;
+    await sessionRegistry.reserveSlot(agent.workstationId);
   } catch (err) {
     log.warn({ err, agentSessionId: agent.sessionId }, 'agent ws send failed; will requeue');
     return { dispatched: false, reason: 'agent send failed' };
@@ -320,7 +320,7 @@ export async function tryDispatchVisualisation(
   // Whether the operator-requested workstation was seen online + enabled +
   // visualiser-capable (regardless of whether it had a free slot).
   let sawPreferred = false;
-  for (const conn of sessionRegistry.allAgents()) {
+  for (const conn of await sessionRegistry.allAgents()) {
     const w = wsByMachine.get(conn.machineId);
     if (!w || !w.isEnabled) continue;
     if (!w.canVisualise) continue;

@@ -110,7 +110,7 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
     clearInterval(pingInterval);
     if (conn) {
       childLog.info({ sessionId: conn.sessionId, nodeName: conn.nodeName, code, reason: reason.toString() }, 'agent ws closed');
-      sessionRegistry.removeAgent(conn.sessionId);
+      await sessionRegistry.removeAgent(conn.sessionId);
       try {
         await db.delete(agentSessions).where(eq(agentSessions.id, conn.sessionId));
         broadcastWorkstationUpdate({ id: conn.workstationId, online: false });
@@ -133,6 +133,8 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
         if (!conn) return;
         conn.lastHeartbeat = new Date();
         conn.slotsBusy = msg.data.slotsBusy;
+        void sessionRegistry.syncSlotsBusy(conn.workstationId, conn.slotsBusy);
+        void sessionRegistry.refreshPresence(conn.workstationId);
         await db
           .update(agentSessions)
           .set({ lastHeartbeat: conn.lastHeartbeat, slotsBusy: conn.slotsBusy })
@@ -263,7 +265,7 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
         // Free the agent's slot — the pollLayers job is done from the
         // agent's perspective. The follow-up convert dispatch will pick
         // up a fresh slot (possibly on a different workstation).
-        conn.slotsBusy = Math.max(0, conn.slotsBusy - 1);
+        await sessionRegistry.releaseConversionSlot(conn.workstationId);
         broadcastJobUpdate(msg.data.jobId, {
           status: 'awaiting_selection',
           currentStage: 'awaiting_selection',
@@ -397,7 +399,7 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
       lastHeartbeat: new Date(),
       remoteAddr,
     };
-    sessionRegistry.addAgent(conn);
+    await sessionRegistry.addAgent(conn);
 
     const welcome: WelcomeData = {
       sessionId: session.id,
