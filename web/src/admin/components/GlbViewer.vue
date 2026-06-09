@@ -17,11 +17,16 @@
  * three r151+ renamed the aoMap UV channel from `uv2` to `uv1`; we duplicate
  * `uv` into BOTH so ambient occlusion shows regardless of the runtime version.
  */
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { MATERIAL_SLOTS, type MaterialSlot } from '../../shared/api';
+import {
+  MATERIAL_SLOTS,
+  DEFAULT_MATERIAL_PARAMETERS,
+  type MaterialParameters,
+  type MaterialSlot,
+} from '../../shared/api';
 
 type SlotSources = Partial<Record<MaterialSlot, string | null>>;
 type Shape = 'sphere' | 'cube' | 'plane';
@@ -29,7 +34,14 @@ type Shape = 'sphere' | 'cube' | 'plane';
 const props = defineProps<{
   /** slot -> texture URL (blob URL pre-save, or /api/textures/:id/download). */
   sources?: SlotSources;
+  /** Complete PBR parameter set, applied live onto the material. */
+  parameters?: MaterialParameters;
 }>();
+
+const params = computed<MaterialParameters>(() => ({
+  ...DEFAULT_MATERIAL_PARAMETERS,
+  ...(props.parameters ?? {}),
+}));
 
 const wrapRef = ref<HTMLDivElement | null>(null);
 const activeShape = ref<Shape>('sphere');
@@ -49,8 +61,11 @@ const loader = new THREE.TextureLoader();
 const loadedTextures: Partial<Record<MaterialSlot, THREE.Texture>> = {};
 const currentUrls: Partial<Record<MaterialSlot, string | null>> = {};
 
-const DISPLACEMENT_SCALE = 0.08;
-const NEUTRAL_BASE = 0x8a8a8a;
+// Track the last structural state we pushed so we only flag a (costly) shader
+// recompile when `side` / `transparent` actually flip — plain scalar/colour
+// tweaks are uniform updates and need no needsUpdate.
+let lastTransparent = false;
+let lastSide: THREE.Side = THREE.FrontSide;
 
 function buildGeometry(shape: Shape): THREE.BufferGeometry {
   let geo: THREE.BufferGeometry;
@@ -71,6 +86,11 @@ function buildGeometry(shape: Shape): THREE.BufferGeometry {
 function configureTexture(slot: MaterialSlot, tex: THREE.Texture): void {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
+  // Seed tiling/offset so a freshly loaded map is correct on its first frame;
+  // applyParameters keeps them live thereafter via the texture matrix (no
+  // per-tick needsUpdate, which would re-upload the image).
+  tex.repeat.set(params.value.tilingX, params.value.tilingY);
+  tex.offset.set(params.value.offsetX, params.value.offsetY);
   // Colour maps live in sRGB; data maps (normal/roughness/metalness/ao/
   // displacement/alpha) stay linear (the loader's NoColorSpace default).
   if (slot === 'albedo' || slot === 'emissive') tex.colorSpace = THREE.SRGBColorSpace;
@@ -88,37 +108,18 @@ function disposeSlot(slot: MaterialSlot): void {
 
 function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
   if (!material) return;
+  // Map references only — every scalar/colour comes from applyParameters so the
+  // stored PBR parameters stay the single source of truth (e.g. a roughnessMap
+  // is scaled by the `roughness` multiplier, not reset to 1).
   switch (slot) {
-    case 'albedo':
-      material.map = tex;
-      material.color.set(tex ? 0xffffff : NEUTRAL_BASE);
-      break;
-    case 'normal':
-      material.normalMap = tex;
-      break;
-    case 'roughness':
-      material.roughnessMap = tex;
-      material.roughness = 1;
-      break;
-    case 'metallic':
-      material.metalnessMap = tex;
-      material.metalness = tex ? 1 : 0;
-      break;
-    case 'ao':
-      material.aoMap = tex;
-      break;
-    case 'emissive':
-      material.emissiveMap = tex;
-      material.emissive.set(tex ? 0xffffff : 0x000000);
-      break;
-    case 'opacity':
-      material.alphaMap = tex;
-      material.transparent = !!tex;
-      break;
-    case 'displacement':
-      material.displacementMap = tex;
-      material.displacementScale = tex ? DISPLACEMENT_SCALE : 0;
-      break;
+    case 'albedo':       material.map = tex; break;
+    case 'normal':       material.normalMap = tex; break;
+    case 'roughness':    material.roughnessMap = tex; break;
+    case 'metallic':     material.metalnessMap = tex; break;
+    case 'ao':           material.aoMap = tex; break;
+    case 'emissive':     material.emissiveMap = tex; break;
+    case 'opacity':      material.alphaMap = tex; break;
+    case 'displacement': material.displacementMap = tex; break;
   }
 }
 
@@ -137,7 +138,49 @@ function applySources(next: SlotSources | undefined): void {
     }
     assignMap(slot, tex);
   }
+  // Maps added/removed → recompile, then re-apply parameters (transparent
+  // depends on alphaMap presence; new maps need current tiling/offset).
   material.needsUpdate = true;
+  applyParameters();
+}
+
+/**
+ * Mutate every PBR property in place from the current `parameters`. Colours and
+ * scalars are uniform updates (cheap); only a side/transparent flip flags a
+ * shader recompile. Texture tiling/offset ride the texture matrix so no
+ * per-tick image re-upload is needed.
+ */
+function applyParameters(): void {
+  if (!material) return;
+  const p = params.value;
+
+  material.color.set(p.baseColor);
+  material.roughness = p.roughness;
+  material.metalness = p.metallic;
+  material.emissive.set(p.emissiveColor);
+  material.emissiveIntensity = p.emissiveIntensity;
+  material.opacity = p.opacity;
+  material.aoMapIntensity = p.aoIntensity;
+  material.displacementScale = p.displacementScale;
+  material.displacementBias = p.displacementBias;
+  material.normalScale.set(p.normalScale, p.flipNormalY ? -p.normalScale : p.normalScale);
+
+  for (const slot of MATERIAL_SLOTS) {
+    const tex = loadedTextures[slot];
+    if (!tex) continue;
+    tex.repeat.set(p.tilingX, p.tilingY);
+    tex.offset.set(p.offsetX, p.offsetY);
+  }
+
+  const nextTransparent = p.opacity < 1 || !!material.alphaMap;
+  const nextSide: THREE.Side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+  material.transparent = nextTransparent;
+  material.side = nextSide;
+  if (nextTransparent !== lastTransparent || nextSide !== lastSide) {
+    material.needsUpdate = true;
+    lastTransparent = nextTransparent;
+    lastSide = nextSide;
+  }
 }
 
 function setShape(shape: Shape): void {
@@ -206,15 +249,16 @@ onMounted(() => {
   controls.maxDistance = 12;
 
   material = new THREE.MeshStandardMaterial({
-    color: NEUTRAL_BASE,
+    color: 0xffffff,
     roughness: 1,
     metalness: 0,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
   });
   mesh = new THREE.Mesh(buildGeometry(activeShape.value), material);
   scene.add(mesh);
 
   applySources(props.sources);
+  applyParameters();
 
   resizeObs = new ResizeObserver(() => resize());
   resizeObs.observe(wrap);
@@ -223,6 +267,7 @@ onMounted(() => {
 });
 
 watch(() => props.sources, (next) => applySources(next), { deep: true });
+watch(() => props.parameters, () => applyParameters(), { deep: true });
 
 onBeforeUnmount(() => {
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }

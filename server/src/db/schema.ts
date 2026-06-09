@@ -425,6 +425,11 @@ export const materials = pgTable('materials', {
   name:        varchar('name', { length: 256 }).notNull(),
   description: text('description'),
   tags:        text('tags').array().notNull().default(sql`'{}'::text[]`),
+  // Editable PBR parameters (scalar/colour overrides applied on top of the
+  // assigned texture maps) that map onto a three.js MeshStandardMaterial.
+  // Stored as a partial — only keys the user has changed are persisted; the
+  // REST layer fills the rest from DEFAULT_MATERIAL_PARAMETERS at read time.
+  parameters:  jsonb('parameters').notNull().default(sql`'{}'::jsonb`),
   // Auto-set to the albedo texture when that slot is assigned.
   thumbnailTextureId: uuid('thumbnail_texture_id').references((): any => textures.id, { onDelete: 'set null' }),
   createdByAdminId:   uuid('created_by_admin_id').references(() => adminUsers.id, { onDelete: 'set null' }),

@@ -12,17 +12,32 @@
 import { ref } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
 import TexturePickerModal from './TexturePickerModal.vue';
+import ParamSlider from './ParamSlider.vue';
+import ParamColor from './ParamColor.vue';
 import {
   SLOT_LABELS,
   texturesApi,
   type ApiError,
+  type MaterialParameters,
   type MaterialSlot,
   type MaterialSlotTexture,
   type Texture,
 } from '../../shared/api';
 
-const props = defineProps<{ slot: MaterialSlot; texture: MaterialSlotTexture | null }>();
-const emit = defineEmits<{ assign: [slot: MaterialSlot, texture: Texture]; remove: [slot: MaterialSlot] }>();
+const props = defineProps<{
+  slot: MaterialSlot;
+  texture: MaterialSlotTexture | null;
+  params: MaterialParameters;
+}>();
+const emit = defineEmits<{
+  assign: [slot: MaterialSlot, texture: Texture];
+  remove: [slot: MaterialSlot];
+  'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean }];
+}>();
+
+function onParam<K extends keyof MaterialParameters>(key: K, value: MaterialParameters[K]): void {
+  emit('param-change', { key, value });
+}
 
 const pickerOpen = ref(false);
 const uploading = ref(false);
@@ -74,6 +89,120 @@ function onPicked(tex: Texture): void {
     </div>
 
     <div v-if="error" class="tn-error">{{ error }}</div>
+
+    <div class="tn-params nodrag nopan">
+      <ParamColor
+        v-if="slot === 'albedo'"
+        label="Base Color"
+        :sublabel="texture ? 'tints the map' : 'flat color'"
+        :model-value="params.baseColor"
+        @update:model-value="(v) => onParam('baseColor', v)"
+      />
+
+      <ParamSlider
+        v-else-if="slot === 'roughness'"
+        label="Roughness"
+        :sublabel="texture ? 'map multiplier' : 'flat value'"
+        :min="0"
+        :max="1"
+        :step="0.01"
+        :model-value="params.roughness"
+        @update:model-value="(v) => onParam('roughness', v)"
+      />
+
+      <ParamSlider
+        v-else-if="slot === 'metallic'"
+        label="Metallic"
+        :sublabel="texture ? 'map multiplier' : 'flat value'"
+        :min="0"
+        :max="1"
+        :step="0.01"
+        :model-value="params.metallic"
+        @update:model-value="(v) => onParam('metallic', v)"
+      />
+
+      <template v-else-if="slot === 'emissive'">
+        <ParamColor
+          label="Emissive"
+          sublabel="emission color"
+          :model-value="params.emissiveColor"
+          @update:model-value="(v) => onParam('emissiveColor', v)"
+        />
+        <ParamSlider
+          label="Intensity"
+          :sublabel="texture ? 'map intensity' : null"
+          :min="0"
+          :max="5"
+          :step="0.1"
+          :model-value="params.emissiveIntensity"
+          @update:model-value="(v) => onParam('emissiveIntensity', v)"
+        />
+      </template>
+
+      <ParamSlider
+        v-else-if="slot === 'opacity'"
+        label="Opacity"
+        :sublabel="texture ? 'map multiplier' : 'flat value'"
+        :min="0"
+        :max="1"
+        :step="0.01"
+        :model-value="params.opacity"
+        @update:model-value="(v) => onParam('opacity', v)"
+      />
+
+      <template v-else-if="slot === 'normal'">
+        <ParamSlider
+          label="Normal Strength"
+          :sublabel="texture ? null : 'needs a normal map'"
+          :min="0"
+          :max="2"
+          :step="0.01"
+          :model-value="params.normalScale"
+          @update:model-value="(v) => onParam('normalScale', v)"
+        />
+        <label class="tn-check">
+          <input
+            type="checkbox"
+            class="nodrag nopan"
+            :checked="params.flipNormalY"
+            @change="onParam('flipNormalY', ($event.target as HTMLInputElement).checked)"
+          />
+          Flip Y (green channel)
+        </label>
+      </template>
+
+      <ParamSlider
+        v-else-if="slot === 'ao'"
+        label="AO Intensity"
+        :sublabel="texture ? 'map intensity' : 'needs an AO map'"
+        :min="0"
+        :max="1"
+        :step="0.01"
+        :model-value="params.aoIntensity"
+        @update:model-value="(v) => onParam('aoIntensity', v)"
+      />
+
+      <template v-else-if="slot === 'displacement'">
+        <ParamSlider
+          label="Displacement"
+          :sublabel="texture ? 'map scale' : 'needs a height map'"
+          :min="0"
+          :max="0.5"
+          :step="0.005"
+          :model-value="params.displacementScale"
+          @update:model-value="(v) => onParam('displacementScale', v)"
+        />
+        <ParamSlider
+          label="Bias"
+          sublabel="offset"
+          :min="-0.5"
+          :max="0.5"
+          :step="0.005"
+          :model-value="params.displacementBias"
+          @update:model-value="(v) => onParam('displacementBias', v)"
+        />
+      </template>
+    </div>
 
     <input
       ref="fileInput"
@@ -129,6 +258,23 @@ function onPicked(tex: Texture): void {
   margin: 0 10px 10px; font-size: 11px;
   color: var(--color-error);
 }
+.tn-params {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+}
+.tn-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.tn-check input { width: 13px; height: 13px; cursor: pointer; }
 button.danger { color: var(--color-error); }
 button.danger:hover { border-color: var(--color-error); }
 </style>

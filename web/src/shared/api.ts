@@ -1012,6 +1012,69 @@ export interface MaterialSlotAssignment {
   texture: MaterialSlotTexture;
 }
 
+/**
+ * Per-material PBR parameters — scalar/colour values that exist independently
+ * of whether a texture is assigned to a slot. They map onto a three.js
+ * `MeshStandardMaterial` (GlbViewer applies them live) and persist per material
+ * as a partial JSON object server-side. Mirrors
+ * server/src/materials/parameters.ts; keep the two in sync.
+ */
+export interface MaterialParameters {
+  /** material.color — also tints the albedo map when one is assigned. */
+  baseColor: string;
+  /** material.roughness — multiplies the roughnessMap when present. */
+  roughness: number;
+  /** material.metalness — multiplies the metalnessMap when present. */
+  metallic: number;
+  /** material.emissive. */
+  emissiveColor: string;
+  /** material.emissiveIntensity. */
+  emissiveIntensity: number;
+  /** material.opacity (+ transparent when < 1 or an alphaMap is present). */
+  opacity: number;
+  /** material.normalScale (x = y, then y negated when flipNormalY). */
+  normalScale: number;
+  /** material.aoMapIntensity. */
+  aoIntensity: number;
+  /** material.displacementScale. */
+  displacementScale: number;
+  /** material.displacementBias. */
+  displacementBias: number;
+  /** every assigned map's repeat.x. */
+  tilingX: number;
+  /** every assigned map's repeat.y. */
+  tilingY: number;
+  /** every assigned map's offset.x. */
+  offsetX: number;
+  /** every assigned map's offset.y. */
+  offsetY: number;
+  /** material.side — DoubleSide when true, FrontSide otherwise. */
+  doubleSided: boolean;
+  /** negate material.normalScale.y. */
+  flipNormalY: boolean;
+}
+
+/** Canonical defaults — mirror server DEFAULT_MATERIAL_PARAMETERS. Merged over
+ *  whatever partial the API returns so the editor always has a complete set. */
+export const DEFAULT_MATERIAL_PARAMETERS: MaterialParameters = {
+  baseColor: '#ffffff',
+  roughness: 1.0,
+  metallic: 0.0,
+  emissiveColor: '#000000',
+  emissiveIntensity: 1.0,
+  opacity: 1.0,
+  normalScale: 1.0,
+  aoIntensity: 1.0,
+  displacementScale: 0.05,
+  displacementBias: 0.0,
+  tilingX: 1.0,
+  tilingY: 1.0,
+  offsetX: 0.0,
+  offsetY: 0.0,
+  doubleSided: false,
+  flipNormalY: false,
+};
+
 export interface MaterialDetail {
   id: string;
   name: string;
@@ -1022,6 +1085,8 @@ export interface MaterialDetail {
   createdByApiKeyId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Complete PBR parameter set (server merges stored partial over defaults). */
+  parameters: MaterialParameters;
   slotsTotal: number;
   slotsFilled: number;
   slots: MaterialSlotAssignment[];
@@ -1057,6 +1122,14 @@ export const materialsApi = {
     api.post<MaterialDetail>('/api/materials', body),
   update: (id: string, body: { name?: string; description?: string | null; tags?: string[] }) =>
     api.put<MaterialDetail>(`/api/materials/${id}`, body),
+  /**
+   * Merge a PARTIAL PBR parameters patch (e.g. `{ roughness: 0.4 }`). The
+   * server shallow-merges it into the stored jsonb without touching
+   * name/description/tags and returns the refreshed full detail. Used by the
+   * editor for live (debounced) slider/colour edits.
+   */
+  updateParameters: (id: string, partial: Partial<MaterialParameters>) =>
+    api.put<MaterialDetail>(`/api/materials/${id}/parameters`, partial),
   remove: (id: string) => api.delete<void>(`/api/materials/${id}`),
   /** Assign an existing texture to a slot; returns the refreshed detail. */
   assignSlot: (id: string, slot: MaterialSlot, textureId: string) =>

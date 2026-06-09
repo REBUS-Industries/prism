@@ -27,20 +27,47 @@ import TextureNode from './TextureNode.vue';
 import MaterialOutputNode from './MaterialOutputNode.vue';
 import {
   MATERIAL_SLOTS,
+  type MaterialParameters,
   type MaterialSlot,
   type MaterialSlotAssignment,
   type MaterialSlotTexture,
   type Texture,
 } from '../../shared/api';
 
-const props = defineProps<{ slots: MaterialSlotAssignment[] }>();
-const emit = defineEmits<{ assign: [slot: MaterialSlot, texture: Texture]; unassign: [slot: MaterialSlot] }>();
+const props = defineProps<{ slots: MaterialSlotAssignment[]; parameters: MaterialParameters }>();
+const emit = defineEmits<{
+  assign: [slot: MaterialSlot, texture: Texture];
+  unassign: [slot: MaterialSlot];
+  'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean }];
+}>();
 
 const interactionMode = ref<'pan' | 'select'>('pan');
 
-const ROW_GAP = 240;
+// Nodes carry their slot's PBR controls now, so their height varies with the
+// slot (number of controls) and whether a texture is assigned (preview vs the
+// shorter empty state). Lay them out by cumulative estimated height + a gap so
+// the column never overlaps regardless of state. Estimates are biased slightly
+// high; fit-view zooms the column to frame, so a little slack is harmless.
 const OUTPUT_X = 440;
-const OUTPUT_Y = ((MATERIAL_SLOTS.length - 1) * ROW_GAP) / 2;
+const NODE_GAP = 44;
+const HEADER_H = 36;
+const TEX_AREA_FILLED = 200;
+const TEX_AREA_EMPTY = 90;
+const OUTPUT_H = 250;
+const PARAM_H: Record<MaterialSlot, number> = {
+  albedo: 70,
+  roughness: 70,
+  metallic: 70,
+  ao: 70,
+  opacity: 70,
+  normal: 104,
+  emissive: 130,
+  displacement: 130,
+};
+
+function nodeHeight(slot: MaterialSlot, isFilled: boolean): number {
+  return HEADER_H + (isFilled ? TEX_AREA_FILLED : TEX_AREA_EMPTY) + PARAM_H[slot];
+}
 
 const lookup = computed<Partial<Record<MaterialSlot, MaterialSlotTexture>>>(() => {
   const m: Partial<Record<MaterialSlot, MaterialSlotTexture>> = {};
@@ -54,11 +81,21 @@ const filled = computed<Partial<Record<MaterialSlot, boolean>>>(() => {
   return m;
 });
 
+const layout = computed<{ ys: number[]; total: number }>(() => {
+  const ys: number[] = [];
+  let y = 0;
+  for (const slot of MATERIAL_SLOTS) {
+    ys.push(y);
+    y += nodeHeight(slot, !!lookup.value[slot]) + NODE_GAP;
+  }
+  return { ys, total: Math.max(0, y - NODE_GAP) };
+});
+
 const nodes = computed<Node[]>(() => {
   const texNodes: Node[] = MATERIAL_SLOTS.map((slot, i) => ({
     id: `slot-${slot}`,
     type: 'texture',
-    position: { x: 0, y: i * ROW_GAP },
+    position: { x: 0, y: layout.value.ys[i]! },
     data: { slot, texture: lookup.value[slot] ?? null },
     draggable: false,
     sourcePosition: Position.Right,
@@ -66,7 +103,7 @@ const nodes = computed<Node[]>(() => {
   const outputNode: Node = {
     id: 'material',
     type: 'materialOutput',
-    position: { x: OUTPUT_X, y: OUTPUT_Y },
+    position: { x: OUTPUT_X, y: Math.max(0, (layout.value.total - OUTPUT_H) / 2) },
     data: { filled: filled.value },
     draggable: false,
     targetPosition: Position.Left,
@@ -102,6 +139,9 @@ function onAssign(slot: MaterialSlot, texture: Texture): void {
 function onUnassign(slot: MaterialSlot): void {
   emit('unassign', slot);
 }
+function onParamChange(change: { key: keyof MaterialParameters; value: number | string | boolean }): void {
+  emit('param-change', change);
+}
 </script>
 
 <template>
@@ -125,8 +165,10 @@ function onUnassign(slot: MaterialSlot): void {
         <TextureNode
           :slot="nodeProps.data.slot"
           :texture="nodeProps.data.texture"
+          :params="parameters"
           @assign="onAssign"
           @remove="onUnassign"
+          @param-change="onParamChange"
         />
       </template>
 

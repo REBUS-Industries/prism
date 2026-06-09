@@ -9,12 +9,18 @@
  * as a ZIP (texture bodies + a manifest), or created in bulk by importing a
  * Megascans-style ZIP whose entries are matched to slots by filename.
  *
+ * Each material also carries editable PBR `parameters` (base colour,
+ * roughness/metallic/opacity, emissive, UV tiling/offset, etc. — see
+ * materials/parameters.ts) stored as a partial jsonb and served complete via
+ * read-time defaulting. They map onto a three.js MeshStandardMaterial.
+ *
  * Surface:
  *
  *   GET    /api/materials                     list (q / tags / cursor / limit)
  *   POST   /api/materials                     create blank material      (write)
- *   GET    /api/materials/:id                 full detail (slots + textures)
- *   PUT    /api/materials/:id                 rename / retag             (write)
+ *   GET    /api/materials/:id                 full detail (slots + textures + parameters)
+ *   PUT    /api/materials/:id                 rename / retag / set params (write)
+ *   PUT    /api/materials/:id/parameters      merge PBR parameters       (write)
  *   DELETE /api/materials/:id                 soft-delete                (delete)
  *   PUT    /api/materials/:id/slots/:slot     assign a texture to a slot (write)
  *   DELETE /api/materials/:id/slots/:slot     clear a slot               (write)
@@ -37,6 +43,12 @@ import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
 import { ALLOWED_SLOTS, detectSlot, imageContentType, isImageFilename, isMaterialSlot } from '../materials/slots.js';
+import {
+  type MaterialParameters,
+  type MaterialParametersPatch,
+  materialParametersSchema,
+  mergeParameters,
+} from '../materials/parameters.js';
 
 const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/prism';
 const TEXTURES_ROOT = resolve(DATA_DIR, 'textures');
@@ -60,9 +72,18 @@ const updateBody = z.object({
   name: z.string().min(1).max(256).optional(),
   description: z.string().max(8192).nullable().optional(),
   tags: tagsSchema.optional(),
+  parameters: materialParametersSchema.optional(),
 });
 
 const assignBody = z.object({ textureId: z.string().uuid() });
+
+/** A read-modify-write-free shallow jsonb merge of a validated parameters
+ * partial onto whatever is already stored — mirrors the `jobs.outputs`
+ * merge in api/internal.ts. The column is NOT NULL, but COALESCE keeps the
+ * expression safe against any legacy NULL. */
+function parametersMergeSql(patch: MaterialParametersPatch) {
+  return sql`COALESCE(${materials.parameters}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`;
+}
 
 /** Sanitise a filename for use on disk / inside the export ZIP. */
 function sanitiseFilename(input: string): string {
@@ -117,6 +138,7 @@ interface MaterialDetail {
   createdByApiKeyId: string | null;
   createdAt: string;
   updatedAt: string;
+  parameters: MaterialParameters;
   slotsTotal: number;
   slotsFilled: number;
   slots: SlotAssignment[];
@@ -170,6 +192,7 @@ async function loadDetail(id: string): Promise<MaterialDetail | null> {
     createdByApiKeyId: m.createdByApiKeyId,
     createdAt: m.createdAt.toISOString(),
     updatedAt: m.updatedAt.toISOString(),
+    parameters: mergeParameters(m.parameters),
     slotsTotal: SLOTS_TOTAL,
     slotsFilled: slots.length,
     slots,
@@ -279,10 +302,33 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (parsed.data.name !== undefined) patch.name = parsed.data.name;
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     if (parsed.data.tags !== undefined) patch.tags = parsed.data.tags;
+    if (parsed.data.parameters !== undefined) patch.parameters = parametersMergeSql(parsed.data.parameters);
 
     const updated = await db
       .update(materials)
       .set(patch)
+      .where(and(eq(materials.id, parsedId.data.id), isNull(materials.deletedAt)))
+      .returning({ id: materials.id });
+    if (!updated[0]) return reply.code(404).send({ error: 'not found' });
+    return reply.send(await loadDetail(parsedId.data.id));
+  });
+
+  /* ---------- PUT /api/materials/:id/parameters ---------- */
+  // Focused endpoint for live PBR edits: accepts a partial parameters object,
+  // shallow-merges it into the stored jsonb and bumps updatedAt, without
+  // touching name/description/tags. The SPA debounces slider/colour changes
+  // here so they never clobber the metadata form.
+  app.put<{ Params: { id: string }; Body: unknown }>('/:id/parameters', {
+    preHandler: [requireAuth, requireScope('materials:write')],
+  }, async (req, reply) => {
+    const parsedId = idParam.safeParse(req.params);
+    if (!parsedId.success) return reply.code(400).send({ error: 'invalid id' });
+    const parsed = materialParametersSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid body', issues: parsed.error.issues });
+
+    const updated = await db
+      .update(materials)
+      .set({ parameters: parametersMergeSql(parsed.data), updatedAt: new Date() })
       .where(and(eq(materials.id, parsedId.data.id), isNull(materials.deletedAt)))
       .returning({ id: materials.id });
     if (!updated[0]) return reply.code(404).send({ error: 'not found' });
@@ -409,7 +455,12 @@ const plugin: FastifyPluginAsync = async (app) => {
       manifestSlots[r.slot] = { textureId: r.textureId, filename: name, contentType: r.contentType };
     }
 
-    const manifest = { materialId: material.id, name: material.name, slots: manifestSlots };
+    const manifest = {
+      materialId: material.id,
+      name: material.name,
+      parameters: mergeParameters(material.parameters),
+      slots: manifestSlots,
+    };
     const zipName = `${sanitiseFilename(material.name)}.zip`;
 
     const archive = new ZipArchive({ zlib: { level: 9 } });

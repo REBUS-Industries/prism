@@ -7,16 +7,19 @@
  * the graph update instantly; name / description / tags save via PUT. Export
  * downloads the material ZIP; delete soft-deletes and returns to the library.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import PbrNodeGraph from '../components/PbrNodeGraph.vue';
 import GlbViewer from '../components/GlbViewer.vue';
+import ParamSlider from '../components/ParamSlider.vue';
 import {
   materialsApi,
   texturesApi,
   MATERIAL_SLOTS,
+  DEFAULT_MATERIAL_PARAMETERS,
   type ApiError,
   type MaterialDetail,
+  type MaterialParameters,
   type MaterialSlot,
   type MaterialSlotAssignment,
   type Texture,
@@ -35,6 +38,14 @@ const tags = ref('');
 const saving = ref(false);
 const saveError = ref<string | null>(null);
 const slotError = ref<string | null>(null);
+
+// Live-editable PBR parameters. Kept separate from `material` so rapid slider
+// edits update the viewer instantly without round-tripping the slot/metadata
+// state; persistence is coalesced + debounced through `pendingPatch`.
+const parameters = ref<MaterialParameters>({ ...DEFAULT_MATERIAL_PARAMETERS });
+const paramError = ref<string | null>(null);
+const pendingPatch: Partial<MaterialParameters> = {};
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const sources = computed<Partial<Record<MaterialSlot, string>>>(() => {
   const map: Partial<Record<MaterialSlot, string>> = {};
@@ -60,6 +71,7 @@ async function reload(): Promise<void> {
   try {
     const m = await materialsApi.get(props.id);
     material.value = m;
+    parameters.value = { ...DEFAULT_MATERIAL_PARAMETERS, ...m.parameters };
     syncForm(m);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load material';
@@ -139,6 +151,32 @@ async function save(): Promise<void> {
   }
 }
 
+function onParamChange({ key, value }: { key: keyof MaterialParameters; value: number | string | boolean }): void {
+  if (!material.value) return;
+  parameters.value = { ...parameters.value, [key]: value } as MaterialParameters;
+  Object.assign(pendingPatch, { [key]: value });
+  scheduleParamFlush(material.value.id);
+}
+
+function scheduleParamFlush(id: string): void {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => void flushParams(id), 350);
+}
+
+async function flushParams(id: string): Promise<void> {
+  flushTimer = null;
+  const patch: Partial<MaterialParameters> = { ...pendingPatch };
+  for (const k of Object.keys(pendingPatch) as Array<keyof MaterialParameters>) delete pendingPatch[k];
+  if (Object.keys(patch).length === 0) return;
+  paramError.value = null;
+  try {
+    await materialsApi.updateParameters(id, patch);
+  } catch (err) {
+    paramError.value = (err as ApiError).message ?? 'failed to save parameters';
+    console.error('material parameter save failed', err);
+  }
+}
+
 function exportZip(): void {
   if (!material.value) return;
   const a = document.createElement('a');
@@ -161,6 +199,14 @@ async function remove(): Promise<void> {
 }
 
 watch(() => props.id, () => void reload(), { immediate: true });
+
+onBeforeUnmount(() => {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+    if (material.value) void flushParams(material.value.id);
+  }
+});
 </script>
 
 <template>
@@ -185,15 +231,22 @@ watch(() => props.id, () => void reload(), { immediate: true });
 
       <div v-if="saveError" class="error-box">{{ saveError }}</div>
       <div v-if="slotError" class="error-box">{{ slotError }}</div>
+      <div v-if="paramError" class="error-box">{{ paramError }}</div>
 
       <div class="body">
         <div class="graph-pane">
-          <PbrNodeGraph :slots="material.slots" @assign="onAssign" @unassign="onUnassign" />
+          <PbrNodeGraph
+            :slots="material.slots"
+            :parameters="parameters"
+            @assign="onAssign"
+            @unassign="onUnassign"
+            @param-change="onParamChange"
+          />
         </div>
 
         <div class="side-pane">
           <div class="viewer-pane">
-            <GlbViewer :sources="sources" />
+            <GlbViewer :sources="sources" :parameters="parameters" />
           </div>
 
           <div class="card meta">
@@ -215,6 +268,43 @@ watch(() => props.id, () => void reload(), { immediate: true });
                 {{ saving ? 'Saving…' : 'Save' }}
               </button>
             </div>
+          </div>
+
+          <div class="card settings">
+            <div class="settings-head">
+              <span>Material Settings</span>
+              <span class="muted small">applied to every map</span>
+            </div>
+            <div class="settings-grid">
+              <ParamSlider
+                label="Tiling X" :min="0.1" :max="16" :step="0.1"
+                :model-value="parameters.tilingX"
+                @update:model-value="(v) => onParamChange({ key: 'tilingX', value: v })"
+              />
+              <ParamSlider
+                label="Tiling Y" :min="0.1" :max="16" :step="0.1"
+                :model-value="parameters.tilingY"
+                @update:model-value="(v) => onParamChange({ key: 'tilingY', value: v })"
+              />
+              <ParamSlider
+                label="Offset X" :min="-2" :max="2" :step="0.01"
+                :model-value="parameters.offsetX"
+                @update:model-value="(v) => onParamChange({ key: 'offsetX', value: v })"
+              />
+              <ParamSlider
+                label="Offset Y" :min="-2" :max="2" :step="0.01"
+                :model-value="parameters.offsetY"
+                @update:model-value="(v) => onParamChange({ key: 'offsetY', value: v })"
+              />
+            </div>
+            <label class="settings-check">
+              <input
+                type="checkbox"
+                :checked="parameters.doubleSided"
+                @change="onParamChange({ key: 'doubleSided', value: ($event.target as HTMLInputElement).checked })"
+              />
+              Double-sided
+            </label>
           </div>
         </div>
       </div>
@@ -260,6 +350,18 @@ button.danger:hover { border-color: var(--color-error); }
 .field textarea { resize: vertical; font-family: inherit; }
 .small { font-size: 12px; }
 .meta-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+.settings { display: flex; flex-direction: column; gap: 12px; }
+.settings-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  font-size: 13px; font-weight: 700; color: var(--color-text);
+}
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
+.settings-check {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--color-text-muted); cursor: pointer;
+}
+.settings-check input { width: 14px; height: 14px; cursor: pointer; }
 
 @media (max-width: 1100px) {
   .body { grid-template-columns: 1fr; }
