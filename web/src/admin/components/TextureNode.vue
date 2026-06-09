@@ -52,7 +52,7 @@ function onPicked(tex: Texture): void {
 </script>
 
 <template>
-  <div class="texture-node">
+  <div class="texture-node nodrag nopan">
     <div class="tn-head">{{ SLOT_LABELS[slot] }}</div>
 
     <div v-if="texture" class="tn-assigned">

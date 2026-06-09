@@ -61,7 +61,6 @@ const nodes = computed<Node[]>(() => {
     position: { x: 0, y: i * ROW_GAP },
     data: { slot, texture: lookup.value[slot] ?? null },
     draggable: false,
-    selectable: false,
     sourcePosition: Position.Right,
   }));
   const outputNode: Node = {
@@ -70,7 +69,6 @@ const nodes = computed<Node[]>(() => {
     position: { x: OUTPUT_X, y: OUTPUT_Y },
     data: { filled: filled.value },
     draggable: false,
-    selectable: false,
     targetPosition: Position.Left,
   };
   return [...texNodes, outputNode];
@@ -114,7 +112,7 @@ function onUnassign(slot: MaterialSlot): void {
       :fit-view-on-init="true"
       :nodes-draggable="false"
       :nodes-connectable="false"
-      :elements-selectable="interactionMode === 'select'"
+      :elements-selectable="true"
       :pan-on-drag="interactionMode === 'pan'"
       :selection-key-code="interactionMode === 'select' ? true : 'Shift'"
       :selection-mode="SelectionMode.Partial"
@@ -183,6 +181,14 @@ function onUnassign(slot: MaterialSlot): void {
   border-radius: var(--radius-lg);
   background: var(--color-bg);
   overflow: hidden;
+}
+
+/* Vue Flow writes an inline pointer-events onto each node wrapper, derived from
+   its selectable/draggable state; force it back on so node controls stay
+   clickable in every interaction mode. !important is required to beat the
+   inline style. */
+.graph-wrap :deep(.vue-flow__node) {
+  pointer-events: all !important;
 }
 
 /* Select mode neutralises Vue Flow's grab/pointer pane cursors so left-drag

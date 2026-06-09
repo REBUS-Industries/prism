@@ -13,7 +13,7 @@ defineProps<{ filled: Partial<Record<MaterialSlot, boolean>> }>();
 </script>
 
 <template>
-  <div class="output-node">
+  <div class="output-node nodrag nopan">
     <div class="on-head">PBR Material</div>
     <div class="on-rows">
       <div v-for="slot in MATERIAL_SLOTS" :key="slot" class="on-row">
