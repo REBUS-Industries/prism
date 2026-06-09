@@ -111,6 +111,10 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agentâ†”server protocol is unchanged (backward-compatible).
 
+## v0.3.40 -- 2026-06-09 -- Bundle visualiser v0.5.23 orbit-cli server URL fix
+
+- Bundle visualiser v0.5.23 -- fixes orbit-cli pull using server alias instead of URL; import now resolves against the self-hosted ORBIT instance
+
 ## v0.3.39 -- 2026-06-08 -- Bundle visualiser orchestrator into agent CI + installer
 
 - Bundle visualiser orchestrator into agent installer; agent CI now builds orchestrator in lockstep and stamps it with the agent version.
