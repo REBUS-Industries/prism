@@ -126,7 +126,7 @@ jobs:
             set -euo pipefail
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
-            docker compose pull prism-server
-            docker compose up -d prism-server prism-web prism-router
-            docker compose ps prism-server prism-web prism-router
+            docker compose pull prism-server prism-materials
+            docker compose up -d prism-server prism-materials prism-web prism-router
+            docker compose ps prism-server prism-materials prism-web prism-router
           REMOTE

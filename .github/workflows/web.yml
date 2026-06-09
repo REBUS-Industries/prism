@@ -73,6 +73,6 @@ jobs:
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
             docker compose pull prism-web
-            docker compose up -d prism-server prism-web prism-router
-            docker compose ps prism-server prism-web prism-router
+            docker compose up -d prism-server prism-materials prism-web prism-router
+            docker compose ps prism-server prism-materials prism-web prism-router
           REMOTE
