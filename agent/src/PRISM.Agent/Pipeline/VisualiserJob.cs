@@ -289,6 +289,11 @@ public sealed class VisualiserJob
             args.Add("--import-mode");
             args.Add(data.ImportMode);
         }
+        if (data.SubmodelIds is { Length: > 0 })
+        {
+            args.Add("--submodel-ids");
+            args.Add(string.Join(",", data.SubmodelIds));
+        }
 
         var psi = new ProcessStartInfo
         {

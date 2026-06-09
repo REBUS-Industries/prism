@@ -16,4 +16,5 @@ public sealed record RunManifest(
     string LogsDirectory,
     bool DryRun,
     string ModelName = "",
-    string ImportMode = "single");
+    string ImportMode = "single",
+    string SubmodelIds = "");

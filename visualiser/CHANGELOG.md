@@ -4,6 +4,10 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.24 -- 2026-06-09 -- Pass explicit submodel IDs through dispatch chain
+
+- Pass explicit submodel IDs through dispatch chain; UE connector now receives -OrbitSubmodelIds= arg and can bypass orbit-cli models lookup to pull correct submodels directly
+
 ## v0.5.23 -- 2026-06-09 -- Fix orbit-cli pull: pass server URL instead of alias
 
 - Fix orbit-cli pull: pass server URL to -OrbitServer= instead of alias 'prod' so orbit-cli resolves the correct self-hosted ORBIT instance.

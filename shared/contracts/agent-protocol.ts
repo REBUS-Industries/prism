@@ -264,6 +264,16 @@ export interface StartVisualisationData {
    * keep working.
    */
   attachments?: ProjectAttachmentRef[];
+  /**
+   * Explicit submodel IDs for tree imports, pre-resolved by the server.
+   * When present and non-empty the orchestrator/connector skips the
+   * `orbit-cli models --under` lookup and directly imports these IDs,
+   * avoiding pagination issues where the CLI's default page size misses
+   * models beyond the first page.
+   * Omitted for single-version imports and when the caller already
+   * knows which submodels to pull.
+   */
+  submodelIds?: string[];
 }
 
 /** Server -> agent: tear down a previously-started visualisation run. */

@@ -282,6 +282,11 @@
           "type": "array",
           "items": { "$ref": "#/definitions/ProjectAttachmentRef" },
           "description": "Phase J — project-level lighting design files (MVR / GDTF) the orchestrator stages alongside the glTF. Omitted (not [])  when empty so older orchestrators keep working."
+        },
+        "submodelIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Explicit submodel IDs for tree imports, pre-resolved by the server. When present and non-empty the connector skips the orbit-cli models --under lookup and directly imports these IDs. Omitted for single-version imports."
         }
       }
     },

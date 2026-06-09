@@ -331,6 +331,14 @@ internal static class Program
             .FromAmong("single", "tree");
         importModeOption.SetDefaultValue("single");
 
+        var submodelIdsOption = new Option<string?>(
+            name: "--submodel-ids",
+            description:
+                "Comma-separated list of ORBIT model IDs to import directly (tree mode). " +
+                "When provided, the connector skips the orbit-cli models --under lookup and " +
+                "imports exactly these submodel IDs, avoiding pagination issues where the " +
+                "CLI default page size misses models beyond the first page.");
+
         var cmd = new Command("stream",
             "Launch a Pixel-Streaming session for an ORBIT model version.")
         {
@@ -347,6 +355,7 @@ internal static class Program
             connectorImportOption,
             modelNameOption,
             importModeOption,
+            submodelIdsOption,
         };
 
         cmd.SetHandler(async (InvocationContext ctx) =>
@@ -361,6 +370,7 @@ internal static class Program
             var dryRun = ctx.ParseResult.GetValueForOption(dryRunOption);
             var modelName = ctx.ParseResult.GetValueForOption(modelNameOption) ?? "";
             var importMode = ctx.ParseResult.GetValueForOption(importModeOption) ?? "single";
+            var submodelIds = ctx.ParseResult.GetValueForOption(submodelIdsOption) ?? "";
             // Debug-window mode is opt-in via either the CLI flag or the
             // env var, so it can be toggled on PC01 without a rebuild.
             var debugWindow = ctx.ParseResult.GetValueForOption(debugWindowOption)
@@ -399,7 +409,8 @@ internal static class Program
                     LogsDirectory: logsDir,
                     DryRun: dryRun,
                     ModelName: modelName,
-                    ImportMode: importMode);
+                    ImportMode: importMode,
+                    SubmodelIds: submodelIds);
 
                 logger.Information(
                     "stream: server={Server} project={ProjectId} model={ModelId} version={VersionId} portHint={PortHint} dryRun={DryRun}",
@@ -655,7 +666,8 @@ internal static class Program
             Token: string.Empty,
             Target: manifest.Server.Name,
             ModelName: manifest.ModelName,
-            ImportMode: manifest.ImportMode);
+            ImportMode: manifest.ImportMode,
+            SubmodelIds: manifest.SubmodelIds);
         if (fullEditor)
         {
             // Full-editor mode now runs the SAME plug-in pipeline as the headless

@@ -340,6 +340,15 @@ public sealed class StartVisualisationData
     /// don't know about the field keep working.
     /// </summary>
     [JsonProperty("attachments", NullValueHandling = NullValueHandling.Ignore)] public ProjectAttachmentRef[]? Attachments { get; set; }
+    /// <summary>
+    /// Explicit submodel IDs for tree imports, pre-resolved by the server.
+    /// When non-null and non-empty the connector skips the
+    /// <c>orbit-cli models --under</c> lookup and directly imports these IDs,
+    /// avoiding pagination issues where the CLI's default page size misses
+    /// models beyond the first page. Null/omitted for single-version imports
+    /// and when no explicit submodel list was provided.
+    /// </summary>
+    [JsonProperty("submodelIds", NullValueHandling = NullValueHandling.Ignore)] public string[]? SubmodelIds { get; set; }
 }
 
 /// <summary>

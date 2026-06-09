@@ -608,6 +608,11 @@ public sealed class UnrealLauncher
             psi.ArgumentList.Add(string.Format(
                 CultureInfo.InvariantCulture, "-OrbitImportMode={0}", orbitImport.ImportMode));
         }
+        if (!string.IsNullOrWhiteSpace(orbitImport.SubmodelIds))
+        {
+            psi.ArgumentList.Add(string.Format(
+                CultureInfo.InvariantCulture, "-OrbitSubmodelIds={0}", orbitImport.SubmodelIds));
+        }
     }
 
     /// <summary>

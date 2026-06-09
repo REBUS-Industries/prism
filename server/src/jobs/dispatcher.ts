@@ -418,6 +418,9 @@ export async function tryDispatchVisualisation(
   let isTreeImport = run.importMode === 'tree';
   // Effective model name: may be updated by auto-detection below.
   let effectiveModelName: string | undefined = run.modelName ?? undefined;
+  // Explicit submodel IDs resolved during auto-detection — forwarded to the
+  // agent so the connector skips the orbit-cli models --under lookup.
+  let resolvedSubmodelIds: string[] | undefined;
 
   if (!resolvedVersionId && !isTreeImport) {
     try {
@@ -450,10 +453,15 @@ export async function tryDispatchVisualisation(
           }
           if (modelName) {
             const prefix = modelName + '/';
-            if (allModels.some((m) => m.name.startsWith(prefix))) {
+            const submodels = allModels.filter((m) => m.name.startsWith(prefix));
+            if (submodels.length > 0) {
               detectedAsTree = true;
               isTreeImport = true;
               effectiveModelName = modelName;
+              // Collect up to 50 submodel IDs so the connector can skip the
+              // orbit-cli models --under lookup (which has a low default page
+              // size that misses models beyond the first page).
+              resolvedSubmodelIds = submodels.slice(0, 50).map((m) => m.id);
               // Persist the auto-detected tree mode and resolved name so the
               // admin UI shows the correct state and re-dispatches reuse it.
               await db
@@ -461,12 +469,16 @@ export async function tryDispatchVisualisation(
                 .set({ importMode: 'tree', modelName, updatedAt: new Date() })
                 .where(eq(visualiserRuns.id, run.id));
               log.info(
-                { runId: run.id, projectId: run.projectId, modelId: run.modelId, modelName, target: run.orbitTarget },
+                {
+                  runId: run.id, projectId: run.projectId, modelId: run.modelId,
+                  modelName, target: run.orbitTarget, submodelCount: submodels.length,
+                  submodelIds: resolvedSubmodelIds,
+                },
                 'visualiser dispatch: auto-detected parent model with submodels; switching to tree import',
               );
               await appendVisualiserRunLog(
                 run.id,
-                `auto-detected parent model "${modelName}" with submodels; switching to tree import`,
+                `auto-detected parent model "${modelName}" with ${submodels.length} submodels; switching to tree import`,
                 { log },
               );
             }
@@ -567,6 +579,7 @@ export async function tryDispatchVisualisation(
     signallingUrl: run.signallingUrl ?? undefined,
     ttlSeconds: run.ttlSeconds ?? undefined,
     attachments: attachmentRefs.length > 0 ? attachmentRefs : undefined,
+    submodelIds: resolvedSubmodelIds && resolvedSubmodelIds.length > 0 ? resolvedSubmodelIds : undefined,
   };
 
   try {
