@@ -7,12 +7,14 @@
  * slot list); assign / unassign bubble out so the parent can persist them and
  * refresh the live preview.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import {
   VueFlow,
+  Panel,
   Handle,
   MarkerType,
   Position,
+  SelectionMode,
   type Edge,
   type Node,
 } from '@vue-flow/core';
@@ -33,6 +35,8 @@ import {
 
 const props = defineProps<{ slots: MaterialSlotAssignment[] }>();
 const emit = defineEmits<{ assign: [slot: MaterialSlot, texture: Texture]; unassign: [slot: MaterialSlot] }>();
+
+const interactionMode = ref<'pan' | 'select'>('pan');
 
 const ROW_GAP = 240;
 const OUTPUT_X = 440;
@@ -103,14 +107,18 @@ function onUnassign(slot: MaterialSlot): void {
 </script>
 
 <template>
-  <div class="graph-wrap">
+  <div class="graph-wrap" :class="{ 'select-mode': interactionMode === 'select' }">
     <VueFlow
       :nodes="nodes"
       :edges="edges"
       :fit-view-on-init="true"
       :nodes-draggable="false"
       :nodes-connectable="false"
-      :elements-selectable="false"
+      :elements-selectable="interactionMode === 'select'"
+      :pan-on-drag="interactionMode === 'pan'"
+      :selection-key-code="interactionMode === 'select' ? true : 'Shift'"
+      :selection-mode="SelectionMode.Partial"
+      :delete-key-code="null"
       :zoom-on-double-click="false"
       :min-zoom="0.2"
       :max-zoom="1.5"
@@ -130,6 +138,38 @@ function onUnassign(slot: MaterialSlot): void {
 
       <Background pattern-color="var(--color-border)" :gap="22" />
       <Controls :show-interactive="false" />
+
+      <Panel position="top-left" class="mode-toggle">
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: interactionMode === 'pan' }"
+          :aria-pressed="interactionMode === 'pan'"
+          title="Pan — drag the canvas to move"
+          aria-label="Pan mode"
+          @click="interactionMode = 'pan'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
+            <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" />
+            <path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" />
+            <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: interactionMode === 'select' }"
+          :aria-pressed="interactionMode === 'select'"
+          title="Select — drag the canvas to box-select"
+          aria-label="Select mode"
+          @click="interactionMode = 'select'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
+          </svg>
+        </button>
+      </Panel>
     </VueFlow>
   </div>
 </template>
@@ -143,6 +183,51 @@ function onUnassign(slot: MaterialSlot): void {
   border-radius: var(--radius-lg);
   background: var(--color-bg);
   overflow: hidden;
+}
+
+/* Select mode neutralises Vue Flow's grab/pointer pane cursors so left-drag
+   reads as a selection gesture rather than a pan. */
+.graph-wrap.select-mode :deep(.vue-flow__pane) {
+  cursor: default;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+.mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.mode-btn:hover {
+  background: var(--color-bg-hover);
+  border-color: transparent;
+  color: var(--color-text);
+}
+.mode-btn.active,
+.mode-btn.active:hover {
+  background: var(--orbit-primary);
+  border-color: var(--orbit-primary);
+  color: #fff;
+}
+.mode-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 </style>
 
