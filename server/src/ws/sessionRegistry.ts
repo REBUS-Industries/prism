@@ -194,8 +194,10 @@ class Registry {
     if (conn && conn.socket.readyState === conn.socket.OPEN) {
       try { conn.socket.send(payload); return true; } catch { return false; }
     }
+    // No local socket — cross-process dispatch via Redis pub/sub.
+    // The agent-service process that holds the socket is subscribed and will forward.
     await redisRegistry.publishDispatch(workstationId, payload);
-    return false;
+    return true;
   }
 
   // ------------------------------------------------------------------
@@ -206,12 +208,26 @@ class Registry {
   removeAdmin(id: string): void { this.admins.delete(id); }
   allAdmins(): AdminConn[] { return [...this.admins.values()]; }
 
-  /** Fan a serialised message to every admin whose subscriptions include `topic`. */
-  broadcastAdmin(topic: string, frame: string): void {
+  /**
+   * Fan a serialised message to process-local admin sockets whose subscriptions
+   * include `topic`. Does NOT publish to Redis — safe to call from a Redis
+   * subscriber without creating a feedback loop.
+   */
+  broadcastAdminLocal(topic: string, frame: string): void {
     for (const a of this.admins.values()) {
       if (!a.subscriptions.has(topic) && !a.subscriptions.has('*')) continue;
       try { a.socket.send(frame); } catch { /* ignore broken sockets */ }
     }
+  }
+
+  /**
+   * Fan a serialised message to every admin whose subscriptions include `topic`
+   * AND publish the event to Redis so other processes (e.g. visualiser-service)
+   * can fan out to their own local admin sockets.
+   */
+  broadcastAdmin(topic: string, frame: string): void {
+    this.broadcastAdminLocal(topic, frame);
+    void redisRegistry.publishAdminBroadcast(topic, frame);
   }
 }
 

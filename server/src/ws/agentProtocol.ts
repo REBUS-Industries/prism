@@ -15,6 +15,7 @@ import { and, eq, notInArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { agentSessions, jobLogs, jobs, visualiserRuns, workstations } from '../db/schema.js';
 import { sessionRegistry, type AgentConn } from './sessionRegistry.js';
+import { redisRegistry } from './redisRegistry.js';
 import {
   envelope, PROTOCOL_VERSION,
   type AgentToServerMsg, type HelloData, type RestartData, type UpdateData, type PullTemplateData, type WelcomeData,
@@ -111,6 +112,7 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
     if (conn) {
       childLog.info({ sessionId: conn.sessionId, nodeName: conn.nodeName, code, reason: reason.toString() }, 'agent ws closed');
       await sessionRegistry.removeAgent(conn.sessionId);
+      await redisRegistry.unsubscribeFromDispatch(conn.workstationId);
       try {
         await db.delete(agentSessions).where(eq(agentSessions.id, conn.sessionId));
         broadcastWorkstationUpdate({ id: conn.workstationId, online: false });
@@ -400,6 +402,9 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
       remoteAddr,
     };
     await sessionRegistry.addAgent(conn);
+    await redisRegistry.subscribeToDispatch(conn.workstationId, (payload) => {
+      if (socket.readyState === socket.OPEN) socket.send(payload);
+    });
 
     const welcome: WelcomeData = {
       sessionId: session.id,

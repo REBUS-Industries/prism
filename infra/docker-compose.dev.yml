@@ -69,6 +69,9 @@ services:
     depends_on:
       - prism-server
       - prism-web
+      - prism-agent
+      - prism-visualiser
+      - prism-materials
     ports:
       - "8765:80"
     volumes:
@@ -101,6 +104,85 @@ services:
       - prism-data:/data/prism
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8766/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prism-visualiser:
+    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
+    command: ["node", "dist/server/src/visualiser-service.js"]
+    container_name: prism-visualiser
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      PORT: 8768
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
+      REDIS_URL: "redis://redis:6379"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      TURN_SECRET: "${TURN_SECRET:-}"
+      TURN_REALM: "${TURN_REALM:-visualiser.rebus.industries}"
+      JWT_SIGNALLING_SECRET: "${JWT_SIGNALLING_SECRET:-}"
+      JWT_SIGNALLING_TTL_SEC: "${JWT_SIGNALLING_TTL_SEC:-3600}"
+      VISUALISER_START_TIMEOUT_MS: "${VISUALISER_START_TIMEOUT_MS:-600000}"
+      VISUALISER_IDLE_TIMEOUT_MS: "${VISUALISER_IDLE_TIMEOUT_MS:-600000}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8768/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prism-agent:
+    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
+    command: ["node", "dist/server/src/agent-service.js"]
+    container_name: prism-agent
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      PORT: 8767
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
+      REDIS_URL: "redis://redis:6379"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      UPLOAD_DIR: "/var/lib/prism/uploads"
+      ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
+      PRISM_GITHUB_TOKEN: "${PRISM_GITHUB_TOKEN:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      - prism-uploads:/var/lib/prism/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8767/health"]
       interval: 30s
       timeout: 5s
       retries: 3

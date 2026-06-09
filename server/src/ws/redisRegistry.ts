@@ -22,9 +22,10 @@ import { redis as sharedRedis } from '../jobs/redis.js';
 const AGENT_TTL_SECONDS = 90; // 3× heartbeat interval (heartbeat = 15 s)
 
 const KEY = {
-  agent:    (wid: string) => `prism:registry:agent:${wid}`,
-  online:   ()            => `prism:registry:agents:online`,
-  dispatch: (wid: string) => `prism:registry:dispatch:${wid}`,
+  agent:          (wid: string) => `prism:registry:agent:${wid}`,
+  online:         ()            => `prism:registry:agents:online`,
+  dispatch:       (wid: string) => `prism:registry:dispatch:${wid}`,
+  adminBroadcast: ()            => 'prism:registry:admin:broadcast',
 } as const;
 
 export interface AgentMeta {
@@ -232,6 +233,42 @@ class RedisRegistry {
       await this.subClient.unsubscribe(channel);
     } catch (err) {
       this.warn('unsubscribeFromDispatch', err);
+    }
+  }
+
+  /**
+   * Publish an admin broadcast event to all subscribed processes.
+   * Used by `sessionRegistry.broadcastAdmin` so every process that holds
+   * admin sockets (e.g. the visualiser-service) receives the event.
+   */
+  async publishAdminBroadcast(topic: string, frame: string): Promise<void> {
+    if (FALLBACK) return;
+    try {
+      await this.cmd.publish(KEY.adminBroadcast(), JSON.stringify({ topic, frame }));
+    } catch (err) {
+      this.warn('publishAdminBroadcast', err);
+    }
+  }
+
+  /**
+   * Subscribe to cross-process admin broadcast events.
+   * The handler receives the topic and serialised frame for each published message.
+   * Intended for use by the visualiser-service to fan out to its local admin sockets.
+   */
+  async subscribeToAdminBroadcast(handler: (topic: string, frame: string) => void): Promise<void> {
+    if (FALLBACK) return;
+    try {
+      const sub = this.getSubClient();
+      const channel = KEY.adminBroadcast();
+      this.handlers.set(channel, (msg) => {
+        try {
+          const parsed = JSON.parse(msg) as { topic: string; frame: string };
+          handler(parsed.topic, parsed.frame);
+        } catch { /* ignore malformed messages */ }
+      });
+      await sub.subscribe(channel);
+    } catch (err) {
+      this.warn('subscribeToAdminBroadcast', err);
     }
   }
 

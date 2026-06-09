@@ -141,13 +141,12 @@ export async function tryDispatch(jobId: string, log: FastifyBaseLogger): Promis
       fileUrl: fileUrl!,
       format: job.format,
     };
-    try {
-      agent.socket.send(JSON.stringify(envelope('pollLayers', poll, randomUUID())));
-      await sessionRegistry.reserveSlot(agent.workstationId);
-    } catch (err) {
-      log.warn({ err, agentSessionId: agent.sessionId }, 'agent ws send (pollLayers) failed; will requeue');
+    const pollSent = await sessionRegistry.sendToAgent(agent.workstationId, JSON.stringify(envelope('pollLayers', poll, randomUUID())));
+    if (!pollSent) {
+      log.warn({ agentSessionId: agent.sessionId }, 'agent ws send (pollLayers) failed; will requeue');
       return { dispatched: false, reason: 'agent send failed' };
     }
+    await sessionRegistry.reserveSlot(agent.workstationId);
 
     await db
       .update(jobs)
@@ -213,13 +212,12 @@ export async function tryDispatch(jobId: string, log: FastifyBaseLogger): Promis
     options,
   };
 
-  try {
-    agent.socket.send(JSON.stringify(envelope('assign', assign, randomUUID())));
-    await sessionRegistry.reserveSlot(agent.workstationId);
-  } catch (err) {
-    log.warn({ err, agentSessionId: agent.sessionId }, 'agent ws send failed; will requeue');
+  const assignSent = await sessionRegistry.sendToAgent(agent.workstationId, JSON.stringify(envelope('assign', assign, randomUUID())));
+  if (!assignSent) {
+    log.warn({ agentSessionId: agent.sessionId }, 'agent ws send failed; will requeue');
     return { dispatched: false, reason: 'agent send failed' };
   }
+  await sessionRegistry.reserveSlot(agent.workstationId);
 
   await db
     .update(jobs)
@@ -582,14 +580,13 @@ export async function tryDispatchVisualisation(
     submodelIds: resolvedSubmodelIds && resolvedSubmodelIds.length > 0 ? resolvedSubmodelIds : undefined,
   };
 
-  try {
-    agent.socket.send(JSON.stringify(envelope('startVisualisation', payload, randomUUID())));
-  } catch (err) {
+  const visSent = await sessionRegistry.sendToAgent(agent.workstationId, JSON.stringify(envelope('startVisualisation', payload, randomUUID())));
+  if (!visSent) {
     // Roll back the reservation; the API caller will see `agent_send_failed`
     // and the next dispatcher cycle (or the next POST) can retry.
     await releaseVisualiserSlot(reserved.workstationId).catch(() => null);
-    log.warn({ err, agentSessionId: agent.sessionId }, 'visualiser ws send failed; rolling back reservation');
-    return { dispatched: false, error: 'agent_send_failed', reason: 'agent ws send threw' };
+    log.warn({ agentSessionId: agent.sessionId }, 'visualiser ws send failed; rolling back reservation');
+    return { dispatched: false, error: 'agent_send_failed', reason: 'agent ws send failed' };
   }
 
   await db

@@ -168,6 +168,16 @@ vi.mock('../src/orbit/client.js', () => {
 vi.mock('../src/ws/sessionRegistry.js', () => ({
   sessionRegistry: {
     allAgents: () => state.agents,
+    sendToAgent: async (workstationId: string, payload: string) => {
+      const agent = state.agents.find((a) => a.workstationId === workstationId);
+      if (!agent) return false;
+      try {
+        agent.socket.send(payload);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   },
 }));
 
