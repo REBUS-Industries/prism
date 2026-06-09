@@ -103,3 +103,30 @@ jobs:
             docker compose up -d prism-server
             docker compose ps prism-server
           REMOTE
+
+  deploy-dev:
+    needs: build-and-push
+    runs-on: [self-hosted, prism-deploy]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update prism-server on VM 212 (dev split stack)
+        run: |
+          # Sync split compose + router config, then pull new server image.
+          # The full dev stack (prism-web + prism-router) is also restarted
+          # so they remain consistent with the updated server.
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/docker-compose.dev.yml \
+            prism-dev:/opt/prism/docker-compose.dev.yml
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/nginx.router.conf \
+            prism-dev:/opt/prism/nginx.router.conf
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev <<'REMOTE'
+            set -euo pipefail
+            cd /opt/prism
+            cp docker-compose.dev.yml docker-compose.yml
+            docker compose pull prism-server
+            docker compose up -d prism-server prism-web prism-router
+            docker compose ps prism-server prism-web prism-router
+          REMOTE

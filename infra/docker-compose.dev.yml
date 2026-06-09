@@ -1,0 +1,140 @@
+# PRISM dev split stack — VM 212 (prism-dev.rebus.industries).
+# Use this file instead of docker-compose.yml on VM 212.
+# DO NOT use this on VM 211 (prod).
+
+services:
+  prism-server:
+    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
+    container_name: prism-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # No host port — prism-router handles external traffic on :8765
+    environment:
+      NODE_ENV: production
+      PORT: 8765
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
+      REDIS_URL: "redis://redis:6379"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      UPLOAD_DIR: "/var/lib/prism/uploads"
+      ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
+      TURN_SECRET: "${TURN_SECRET:-}"
+      TURN_REALM: "${TURN_REALM:-visualiser.rebus.industries}"
+      JWT_SIGNALLING_SECRET: "${JWT_SIGNALLING_SECRET:-}"
+      JWT_SIGNALLING_TTL_SEC: "${JWT_SIGNALLING_TTL_SEC:-3600}"
+      VISUALISER_START_TIMEOUT_MS: "${VISUALISER_START_TIMEOUT_MS:-600000}"
+      VISUALISER_IDLE_TIMEOUT_MS: "${VISUALISER_IDLE_TIMEOUT_MS:-600000}"
+      PRISM_GITHUB_TOKEN: "${PRISM_GITHUB_TOKEN:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      # WEB_DIST_DIR intentionally omitted: webStatic.ts skips gracefully
+      # when the dir is absent, deferring all SPA serving to prism-web.
+    volumes:
+      - prism-uploads:/var/lib/prism/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  prism-web:
+    image: ghcr.io/rebus-industries/prism-web:${PRISM_WEB_TAG:-latest}
+    container_name: prism-web
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prism-router:
+    image: nginx:alpine
+    container_name: prism-router
+    restart: unless-stopped
+    depends_on:
+      - prism-server
+      - prism-web
+    ports:
+      - "8765:80"
+    volumes:
+      - ./nginx.router.conf:/etc/nginx/conf.d/default.conf:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: postgres:16.9-alpine
+    container_name: prism-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-prism}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:-prism}"
+    volumes:
+      - prism-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prism} -d ${POSTGRES_DB:-prism}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: valkey/valkey:8-alpine
+    container_name: prism-redis
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "60", "1000", "--appendonly", "yes"]
+    volumes:
+      - prism-redis-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prism-assimp:
+    image: ghcr.io/rebus-industries/prism-assimp:${PRISM_ASSIMP_TAG:-latest}
+    container_name: prism-assimp
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      ASSIMP_WORK_ROOT: /work
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - prism-assimp-work:/work
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  prism-postgres-data:
+  prism-redis-data:
+  prism-uploads:
+  prism-assimp-work:

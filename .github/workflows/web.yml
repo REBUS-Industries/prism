@@ -1,0 +1,78 @@
+name: web-image
+
+# Builds the PRISM admin/convert/viewer SPA as a standalone nginx container
+# (prism-web) and deploys it to VM 212 (prism-dev.rebus.industries) only.
+# VM 211 (prod) is NOT touched.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'infra/docker-compose.dev.yml'
+      - 'infra/nginx.router.conf'
+      - '.github/workflows/web.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/rebus-industries/prism-web
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: web
+          file: web/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          no-cache: ${{ github.event_name == 'workflow_dispatch' }}
+          cache-from: ${{ github.event_name == 'workflow_dispatch' && '' || 'type=gha' }}
+          cache-to: type=gha,mode=max
+
+  deploy-dev:
+    needs: build-and-push
+    runs-on: [self-hosted, prism-deploy]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync split compose + deploy prism-web to VM 212
+        run: |
+          # Sync the dev split compose file and router config.
+          # docker-compose.dev.yml becomes docker-compose.yml on VM 212.
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/docker-compose.dev.yml \
+            prism-dev:/opt/prism/docker-compose.dev.yml
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/nginx.router.conf \
+            prism-dev:/opt/prism/nginx.router.conf
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev <<'REMOTE'
+            set -euo pipefail
+            cd /opt/prism
+            cp docker-compose.dev.yml docker-compose.yml
+            docker compose pull prism-web
+            docker compose up -d prism-server prism-web prism-router
+            docker compose ps prism-server prism-web prism-router
+          REMOTE
