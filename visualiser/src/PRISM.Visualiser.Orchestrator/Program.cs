@@ -648,7 +648,7 @@ internal static class Program
         // FOrbitHeadlessAutoImport needs it to pull the model, and other paths
         // neither have nor need it (so no secret leaks where it isn't used).
         OrbitImportParams orbitImport = new(
-            Server: manifest.Server.Name,
+            Server: manifest.Server.BaseUrl,
             ProjectId: manifest.ProjectId,
             ModelId: manifest.ModelId,
             VersionId: manifest.VersionId,

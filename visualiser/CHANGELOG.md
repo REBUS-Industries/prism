@@ -4,6 +4,10 @@ The orchestrator versions independently of the PRISM Agent. The bump is
 `Directory.Build.props::VisualiserVersion`; the CI tag convention is
 `visualiser-v<VisualiserVersion>`.
 
+## v0.5.23 -- 2026-06-09 -- Fix orbit-cli pull: pass server URL instead of alias
+
+- Fix orbit-cli pull: pass server URL to -OrbitServer= instead of alias 'prod' so orbit-cli resolves the correct self-hosted ORBIT instance.
+
 ## v0.5.22 -- 2026-06-08 -- Bundle visualiser orchestrator into agent CI + installer
 
 - Bundle visualiser orchestrator into agent installer; agent CI now builds orchestrator in lockstep and stamps it with the agent version.
