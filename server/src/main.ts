@@ -143,6 +143,9 @@ async function buildApp() {
   // Phase J — portal users upload MVR/GDTF lighting files here and the
   // visualiser dispatcher forwards download URLs to the orchestrator.
   await app.register(import('./api/projectAttachments.js'), { prefix: '/api/projects' });
+  // Materials store — shared texture library + PBR materials.
+  await app.register(import('./api/textures.js'),      { prefix: '/api/textures' });
+  await app.register(import('./api/materials.js'),     { prefix: '/api/materials' });
   await app.register(import('./api/internal.js'),      { prefix: '/internal' });
   await app.register(import('./v1/routes.js'),         { prefix: '/v1' });
 

@@ -254,6 +254,63 @@ class ApiClient {
   postForm<T>(path: string, form: FormData) {
     return this.req<T>(path, { method: 'POST', body: form });
   }
+
+  /**
+   * Multipart POST with upload-progress reporting. `fetch()` cannot surface
+   * request-body upload progress, so this path uses XHR — but it still
+   * records an `apiLog` entry and rejects with the same {@link ApiError}
+   * shape as {@link req} so callers handle success / failure identically.
+   * Used by the materials ZIP import, whose bodies can run to hundreds of MB.
+   */
+  postFormWithProgress<T>(path: string, form: FormData, onProgress?: (fraction: number) => void): Promise<T> {
+    const startedAt = Date.now();
+    const method = 'POST';
+    const url = this.base + path;
+    const requestBody = previewBody(form);
+    return new Promise<T>((resolvePromise, rejectPromise) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, url, true);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader('accept', 'application/json');
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (ev) => {
+          if (ev.lengthComputable) onProgress(ev.total ? ev.loaded / ev.total : 0);
+        });
+      }
+      xhr.addEventListener('load', () => {
+        const status = xhr.status;
+        const ct = xhr.getResponseHeader('content-type') ?? '';
+        const isJson = ct.includes('application/json');
+        let parsed: unknown;
+        try { parsed = isJson ? JSON.parse(xhr.responseText) : xhr.responseText; }
+        catch { parsed = xhr.responseText; }
+        const responseBody = previewBody(isJson ? safeJson(parsed) : (parsed as string));
+        if (status >= 200 && status < 300) {
+          apiLog.push({
+            id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+            method, url, status, ok: true, requestBody, responseBody,
+          });
+          resolvePromise(parsed as T);
+        } else {
+          const err: ApiError = { status, message: extractMessage(parsed) ?? xhr.statusText, body: parsed };
+          apiLog.push({
+            id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+            method, url, status, ok: false, requestBody, responseBody, errorMessage: err.message,
+          });
+          rejectPromise(err);
+        }
+      });
+      xhr.addEventListener('error', () => {
+        const message = 'network error';
+        apiLog.push({
+          id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+          method, url, status: 0, ok: false, requestBody, errorMessage: message,
+        });
+        rejectPromise({ status: 0, message, body: undefined } satisfies ApiError);
+      });
+      xhr.send(form);
+    });
+  }
 }
 
 function safeJson(value: unknown): string {
@@ -820,4 +877,204 @@ export const projectAttachmentsApi = {
     api.delete<void>(
       `/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(attachmentId)}`,
     ),
+};
+
+// ---------------------------------------------------------------- Materials store
+//
+// PRISM Materials Store — a shared texture library plus PBR materials that
+// reference those textures by slot. Backed by `/api/textures` +
+// `/api/materials` (see server/src/api/{textures,materials}.ts). The admin
+// SPA hits these with its existing cookie auth; portal API keys would need
+// the `materials:read` / `materials:write` / `materials:delete` scopes.
+// Texture image bodies stream from `/api/textures/:id/download` — use that
+// URL directly as an <img> src or a three.js TextureLoader URL.
+
+/** The eight PBR slots a material can carry, in canonical (priority) order.
+ *  Mirrors server/src/materials/slots.ts ALLOWED_SLOTS. */
+export const MATERIAL_SLOTS = [
+  'albedo', 'normal', 'roughness', 'metallic', 'ao', 'emissive', 'opacity', 'displacement',
+] as const;
+
+export type MaterialSlot = typeof MATERIAL_SLOTS[number];
+
+/** Human-friendly labels for each slot — shared by the node graph + editor. */
+export const SLOT_LABELS: Record<MaterialSlot, string> = {
+  albedo:       'Albedo / Base Color',
+  normal:       'Normal Map',
+  roughness:    'Roughness',
+  metallic:     'Metallic',
+  ao:           'Ambient Occlusion',
+  emissive:     'Emissive',
+  opacity:      'Opacity',
+  displacement: 'Displacement',
+};
+
+export interface Texture {
+  id: string;
+  originalFilename: string;
+  displayName: string;
+  contentType: string;
+  sizeBytes: number;
+  tags: string[];
+  uploadedByAdminId: string | null;
+  uploadedByApiKeyId: string | null;
+  createdAt: string;
+  referenceCount: number;
+}
+
+export interface TextureListResponse {
+  textures: Texture[];
+  limit: number;
+  cursor: string;
+  nextCursor: string | null;
+}
+
+export interface TextureListParams {
+  q?: string;
+  tags?: string[];
+  limit?: number;
+  /** Numeric offset (as returned in `nextCursor`) for "load more". */
+  cursor?: string | number | null;
+}
+
+export const texturesApi = {
+  list: (params: TextureListParams = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.tags?.length) qs.set('tags', params.tags.join(','));
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params.cursor !== undefined && params.cursor !== null && params.cursor !== '') {
+      qs.set('cursor', String(params.cursor));
+    }
+    const tail = qs.toString();
+    return api.get<TextureListResponse>(`/api/textures${tail ? `?${tail}` : ''}`);
+  },
+  get: (id: string) => api.get<Texture>(`/api/textures/${id}`),
+  /**
+   * Multipart upload. IMPORTANT: the text fields (`displayName`, `tags`)
+   * are appended to the FormData BEFORE the file part — the server only
+   * captures multipart fields that precede the file when `req.file()`
+   * resolves (see server/src/api/textures.ts).
+   */
+  upload: (file: File, opts: { displayName?: string; tags?: string[] } = {}) => {
+    const fd = new FormData();
+    if (opts.displayName) fd.append('displayName', opts.displayName);
+    if (opts.tags?.length) fd.append('tags', opts.tags.join(','));
+    fd.append('file', file);
+    return api.postForm<Texture>('/api/textures', fd);
+  },
+  update: (id: string, body: { displayName?: string; tags?: string[] }) =>
+    api.put<Texture>(`/api/textures/${id}`, body),
+  /** Soft delete. On 409 the {@link ApiError} body carries
+   *  `{ error, referencingMaterials: [{ id, name }] }`. */
+  remove: (id: string) => api.delete<void>(`/api/textures/${id}`),
+  /** Absolute path usable directly as an <img> src or three.js texture URL. */
+  downloadUrl: (id: string): string => `/api/textures/${id}/download`,
+};
+
+/** Shape of the 409 body returned when deleting an in-use texture. */
+export interface TextureInUseError {
+  error: string;
+  referencingMaterials: Array<{ id: string; name: string }>;
+}
+
+export interface MaterialListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  thumbnailTextureId: string | null;
+  slotsFilled: number;
+  slotsTotal: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaterialListResponse {
+  materials: MaterialListItem[];
+  limit: number;
+  cursor: string;
+  nextCursor: string | null;
+}
+
+export interface MaterialSlotTexture {
+  id: string;
+  displayName: string;
+  originalFilename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface MaterialSlotAssignment {
+  slot: MaterialSlot;
+  textureId: string;
+  assignedAt: string;
+  texture: MaterialSlotTexture;
+}
+
+export interface MaterialDetail {
+  id: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  thumbnailTextureId: string | null;
+  createdByAdminId: string | null;
+  createdByApiKeyId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  slotsTotal: number;
+  slotsFilled: number;
+  slots: MaterialSlotAssignment[];
+}
+
+export interface MaterialImportResult extends MaterialDetail {
+  /** Filenames in the ZIP that were not imported (non-image, unmatched, or
+   *  a duplicate slot). */
+  skipped: string[];
+}
+
+export interface MaterialListParams {
+  q?: string;
+  tags?: string[];
+  limit?: number;
+  cursor?: string | number | null;
+}
+
+export const materialsApi = {
+  list: (params: MaterialListParams = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.tags?.length) qs.set('tags', params.tags.join(','));
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params.cursor !== undefined && params.cursor !== null && params.cursor !== '') {
+      qs.set('cursor', String(params.cursor));
+    }
+    const tail = qs.toString();
+    return api.get<MaterialListResponse>(`/api/materials${tail ? `?${tail}` : ''}`);
+  },
+  get: (id: string) => api.get<MaterialDetail>(`/api/materials/${id}`),
+  create: (body: { name: string; description?: string; tags?: string[] }) =>
+    api.post<MaterialDetail>('/api/materials', body),
+  update: (id: string, body: { name?: string; description?: string | null; tags?: string[] }) =>
+    api.put<MaterialDetail>(`/api/materials/${id}`, body),
+  remove: (id: string) => api.delete<void>(`/api/materials/${id}`),
+  /** Assign an existing texture to a slot; returns the refreshed detail. */
+  assignSlot: (id: string, slot: MaterialSlot, textureId: string) =>
+    api.put<MaterialDetail>(`/api/materials/${id}/slots/${slot}`, { textureId }),
+  /** Clear a slot (the texture file is NOT deleted); returns refreshed detail. */
+  unassignSlot: (id: string, slot: MaterialSlot) =>
+    api.delete<MaterialDetail>(`/api/materials/${id}/slots/${slot}`),
+  /** Absolute URL for the export ZIP — trigger via <a download> / window.open. */
+  downloadUrl: (id: string): string => `/api/materials/${id}/download`,
+  /**
+   * Import a Megascans-style ZIP into a new material. The optional `name`
+   * field is appended BEFORE the file part. Reports upload progress (0..1)
+   * via the optional callback. Returns the full detail plus `skipped[]`.
+   */
+  import: (file: File, name?: string, onProgress?: (fraction: number) => void) => {
+    const fd = new FormData();
+    if (name) fd.append('name', name);
+    fd.append('file', file);
+    return api.postFormWithProgress<MaterialImportResult>('/api/materials/import', fd, onProgress);
+  },
 };

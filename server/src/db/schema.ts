@@ -388,6 +388,70 @@ export const projectAttachments = pgTable('project_attachments', {
 }));
 
 // ---------------------------------------------------------------------------
+// Materials store — shared texture library + PBR materials
+// ---------------------------------------------------------------------------
+//
+// Textures are stored globally (one file, one UUID) under
+// `${DATA_DIR}/textures/<id>_<filename>` and referenced by materials via the
+// `material_textures` join table, so the same texture can be reused across
+// many materials. A material is a named bundle of PBR slot assignments
+// (albedo / normal / roughness / …) that can be built up incrementally,
+// exported as a ZIP, or created in bulk by importing a Megascans-style ZIP.
+//
+// `uploadedByAdminId` / `uploadedByApiKeyId` (and the material equivalents)
+// are strict FKs with ON DELETE SET NULL so rotating an API key or removing
+// an admin doesn't wipe the library rows. Both are nullable; an ORBIT bearer
+// caller leaves both null.
+
+export const textures = pgTable('textures', {
+  id:               uuid('id').primaryKey().defaultRandom(),
+  originalFilename: varchar('original_filename', { length: 256 }).notNull(),
+  // User-editable label; defaults to the original filename on upload.
+  displayName:      varchar('display_name', { length: 256 }),
+  contentType:      varchar('content_type', { length: 128 }).notNull(),
+  sizeBytes:        bigint('size_bytes', { mode: 'number' }).notNull(),
+  storagePath:      varchar('storage_path', { length: 512 }).notNull(),
+  tags:             text('tags').array().notNull().default(sql`'{}'::text[]`),
+  uploadedByAdminId:  uuid('uploaded_by_admin_id').references(() => adminUsers.id, { onDelete: 'set null' }),
+  uploadedByApiKeyId: uuid('uploaded_by_api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+  createdAt:        timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt:        timestamp('deleted_at', { withTimezone: true }),
+}, (t) => ({
+  byCreatedAt: index('textures_created_at_idx').on(t.createdAt),
+}));
+
+export const materials = pgTable('materials', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  name:        varchar('name', { length: 256 }).notNull(),
+  description: text('description'),
+  tags:        text('tags').array().notNull().default(sql`'{}'::text[]`),
+  // Auto-set to the albedo texture when that slot is assigned.
+  thumbnailTextureId: uuid('thumbnail_texture_id').references((): any => textures.id, { onDelete: 'set null' }),
+  createdByAdminId:   uuid('created_by_admin_id').references(() => adminUsers.id, { onDelete: 'set null' }),
+  createdByApiKeyId:  uuid('created_by_api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+  createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:   timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt:   timestamp('deleted_at', { withTimezone: true }),
+}, (t) => ({
+  byCreatedAt: index('materials_created_at_idx').on(t.createdAt),
+}));
+
+// Slot assignment join table. One row per (material, slot); `slot` is one of
+// albedo | normal | roughness | metallic | ao | emissive | opacity |
+// displacement (validated at the REST layer, not the DB). Cascades when the
+// owning material is hard-deleted; the texture FK is plain so a texture can
+// only be removed once it has no live references (enforced at the REST layer).
+export const materialTextures = pgTable('material_textures', {
+  materialId: uuid('material_id').notNull().references(() => materials.id, { onDelete: 'cascade' }),
+  slot:       varchar('slot', { length: 64 }).notNull(),
+  textureId:  uuid('texture_id').notNull().references(() => textures.id),
+  assignedAt: timestamp('assigned_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk:        primaryKey({ columns: [t.materialId, t.slot] }),
+  byTexture: index('material_textures_texture_idx').on(t.textureId),
+}));
+
+// ---------------------------------------------------------------------------
 // Webhook endpoints — admin-configured callback targets
 // ---------------------------------------------------------------------------
 
@@ -422,3 +486,9 @@ export type VisualiserShareLink    = typeof visualiserShareLinks.$inferSelect;
 export type NewVisualiserShareLink = typeof visualiserShareLinks.$inferInsert;
 export type ProjectAttachment    = typeof projectAttachments.$inferSelect;
 export type NewProjectAttachment = typeof projectAttachments.$inferInsert;
+export type Texture          = typeof textures.$inferSelect;
+export type NewTexture       = typeof textures.$inferInsert;
+export type Material         = typeof materials.$inferSelect;
+export type NewMaterial      = typeof materials.$inferInsert;
+export type MaterialTexture    = typeof materialTextures.$inferSelect;
+export type NewMaterialTexture = typeof materialTextures.$inferInsert;

@@ -46,6 +46,8 @@ async function logout() {
         <RouterLink :to="{ name: 'pipeline'     }">Pipeline</RouterLink>
         <RouterLink :to="{ name: 'visualiser'   }">Visualiser</RouterLink>
         <RouterLink :to="{ name: 'project-attachments' }" class="nav-sub">↳ Project attachments</RouterLink>
+        <RouterLink :to="{ name: 'materials'    }">Materials</RouterLink>
+        <RouterLink :to="{ name: 'textures'     }" class="nav-sub">↳ Textures</RouterLink>
         <RouterLink :to="{ name: 'keys'         }">API keys</RouterLink>
         <RouterLink :to="{ name: 'webhooks'     }">Webhooks</RouterLink>
         <RouterLink :to="{ name: 'settings'     }">Settings</RouterLink>

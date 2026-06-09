@@ -16,6 +16,9 @@ import Login from './pages/Login.vue';
 import Visualiser from './pages/Visualiser.vue';
 import VisualiserViewer from './pages/VisualiserViewer.vue';
 import ProjectAttachments from './pages/ProjectAttachments.vue';
+import Materials from './pages/Materials.vue';
+import MaterialEditor from './pages/MaterialEditor.vue';
+import Textures from './pages/Textures.vue';
 
 import '../shared/designSystem.css';
 
@@ -28,6 +31,9 @@ const router = createRouter({
     { path: '/visualiser',             component: Visualiser,       name: 'visualiser' },
     { path: '/visualiser/attachments', component: ProjectAttachments, name: 'project-attachments' },
     { path: '/visualiser/:runId',      component: VisualiserViewer, name: 'visualiser-viewer', props: true },
+    { path: '/materials',              component: Materials,        name: 'materials' },
+    { path: '/materials/:id',          component: MaterialEditor,   name: 'material-editor', props: true },
+    { path: '/textures',               component: Textures,         name: 'textures' },
     { path: '/settings',               component: Settings,         name: 'settings' },
     { path: '/keys',                   component: ApiKeys,          name: 'keys' },
     { path: '/webhooks',               component: Webhooks,         name: 'webhooks' },

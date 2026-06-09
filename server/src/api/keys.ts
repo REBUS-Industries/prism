@@ -34,6 +34,14 @@ const KNOWN_SCOPES = [
   // this scope; this scope is for keys that manage shares for runs they
   // did not start (e.g. an org-wide sharing service).
   'visualiser:join_stream',
+  // Materials store — the shared texture library + PBR materials surface
+  // (`/api/textures/*`, `/api/materials/*`). Split read / write / delete so
+  // a key can be granted browse-only access, asset-authoring access, or the
+  // ability to retire library rows independently. Admin sessions and ORBIT
+  // bearers bypass scope checks as usual.
+  'materials:read',
+  'materials:write',
+  'materials:delete',
 ] as const;
 const scopesSchema = z.array(z.enum(KNOWN_SCOPES)).default([]);
 
