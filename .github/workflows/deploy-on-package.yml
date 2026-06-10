@@ -1,7 +1,8 @@
 name: deploy-on-package
 
-# Auto-deploy VM 212 when a polyrepo service image is published to GHCR.
-# Avoids needing PRISM_DISPATCH_TOKEN on every service repo.
+# Auto-deploy VM 212 when a package linked to this repo is published to GHCR.
+# Polyrepo Docker images (fixtures, materials, …) use repository_dispatch instead —
+# registry_package does not fire on this repo for org-scoped container packages.
 
 on:
   registry_package:
