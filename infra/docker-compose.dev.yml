@@ -83,7 +83,7 @@ services:
         max-file: "3"
 
   prism-materials:
-    image: ghcr.io/rebus-industries/prism-materials-service:latest
+    image: ghcr.io/rebus-industries/prism-materials-service:${PRISM_MATERIALS_TAG:-latest}
     container_name: prism-materials
     restart: unless-stopped
     depends_on:
@@ -114,7 +114,7 @@ services:
         max-file: "3"
 
   prism-visualiser:
-    image: ghcr.io/rebus-industries/prism-visualiser-service:latest
+    image: ghcr.io/rebus-industries/prism-visualiser-service:${PRISM_VISUALISER_TAG:-latest}
     container_name: prism-visualiser
     restart: unless-stopped
     depends_on:
@@ -153,7 +153,7 @@ services:
         max-file: "3"
 
   prism-agent:
-    image: ghcr.io/rebus-industries/prism-agent-service:latest
+    image: ghcr.io/rebus-industries/prism-agent-service:${PRISM_AGENT_TAG:-latest}
     container_name: prism-agent
     restart: unless-stopped
     depends_on:
