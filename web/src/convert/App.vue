@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue';
-import { convertApi, jobsApi, type ApiError, type JobSummary, type LayerNode } from '../shared/api';
+import { convertApi, fixturesApi, jobsApi, type ApiError, type JobSummary, type LayerNode, type MvrImportResult } from '../shared/api';
 import OrbitPicker from '../shared/OrbitPicker.vue';
+import MvrFixtureMapModal from '../shared/MvrFixtureMapModal.vue';
 import ThemeToggle from '../shared/ThemeToggle.vue';
 import LayerPicker from './LayerPicker.vue';
 
 const file = ref<File | null>(null);
+const isMvrFile = computed(() => file.value?.name.toLowerCase().endsWith('.mvr') ?? false);
 const projectId = ref('');
 const modelId = ref('');
 const modelName = ref('');
@@ -20,18 +22,46 @@ const jobId = ref<string | null>(null);
 const job = ref<JobSummary | null>(null);
 const layers = ref<LayerNode[] | null>(null);
 const submittingLayers = ref(false);
+
+const mvrModalOpen = ref(false);
+const mvrResult = ref<MvrImportResult | null>(null);
+const mvrSuccess = ref<string | null>(null);
+
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let sseSource: EventSource | null = null;
 
 function onFile(e: Event) {
   const input = e.target as HTMLInputElement;
   file.value = input.files?.[0] ?? null;
+  mvrSuccess.value = null;
 }
 
-const canSubmit = computed(() => !!file.value && !!projectId.value && !!modelId.value && !submitting.value);
+const canSubmit = computed(() => {
+  if (!file.value || submitting.value) return false;
+  if (isMvrFile.value) return true;
+  return !!projectId.value && !!modelId.value;
+});
+
+async function submitMvr(): Promise<void> {
+  if (!file.value) return;
+  error.value = null;
+  submitting.value = true;
+  try {
+    mvrResult.value = await fixturesApi.importMvr(file.value);
+    mvrModalOpen.value = true;
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'MVR import failed';
+  } finally {
+    submitting.value = false;
+  }
+}
 
 async function submit() {
   if (!file.value) return;
+  if (isMvrFile.value) {
+    await submitMvr();
+    return;
+  }
   error.value = null;
   submitting.value = true;
   try {
@@ -147,6 +177,15 @@ function reset() {
   job.value = null;
   layers.value = null;
   error.value = null;
+  mvrModalOpen.value = false;
+  mvrResult.value = null;
+  mvrSuccess.value = null;
+}
+
+function onMvrUploaded(payload: { versionId: string; objectCount: number }): void {
+  mvrSuccess.value = `Uploaded ${payload.objectCount} fixture(s) to ORBIT (version ${payload.versionId})`;
+  file.value = null;
+  mvrResult.value = null;
 }
 
 onUnmounted(stopTracking);
@@ -175,13 +214,18 @@ const showLayerPicker = computed(() =>
     </header>
 
     <div v-if="!jobId" class="card">
-      <h2>Submit a conversion</h2>
+      <h2>{{ isMvrFile ? 'Import MVR fixtures' : 'Submit a conversion' }}</h2>
       <form @submit.prevent="submit" class="form">
         <label>File
-          <input type="file" @change="onFile" accept=".3dm,.dwg,.dxf,.fbx,.obj,.stl,.ply,.3mf,.skp,.dae,.gltf,.glb,.blend,.x,.usdz,.step,.stp,.iges,.igs,.zip" />
+          <input type="file" @change="onFile" accept=".3dm,.dwg,.dxf,.fbx,.obj,.stl,.ply,.3mf,.skp,.dae,.gltf,.glb,.blend,.x,.usdz,.step,.stp,.iges,.igs,.zip,.mvr" />
           <span v-if="file" class="muted" style="font-size: 11px;">{{ file.name }} — {{ fmtBytes(file.size) }}</span>
         </label>
 
+        <p v-if="isMvrFile" class="muted mvr-hint">
+          MVR files open a fixture-mapping step before upload to ORBIT. Pick project and model in the modal.
+        </p>
+
+        <template v-if="!isMvrFile">
         <div class="row">
           <label class="flex-1">ORBIT target
             <select v-model="orbitTarget">
@@ -208,9 +252,13 @@ const showLayerPicker = computed(() =>
           <input type="checkbox" v-model="selectLayers" />
           Choose layers to include before converting
         </label>
+        </template>
 
+        <div v-if="mvrSuccess" class="success-box">{{ mvrSuccess }}</div>
         <div v-if="error" class="error-box">{{ error }}</div>
-        <button class="primary" type="submit" :disabled="!canSubmit">{{ submitting ? 'Uploading…' : 'Convert' }}</button>
+        <button class="primary" type="submit" :disabled="!canSubmit">
+          {{ submitting ? (isMvrFile ? 'Parsing MVR…' : 'Uploading…') : (isMvrFile ? 'Import MVR' : 'Convert') }}
+        </button>
       </form>
     </div>
 
@@ -259,6 +307,14 @@ const showLayerPicker = computed(() =>
       Powered by PRISM.
       <a href="/docs/" target="_blank" rel="noopener">API reference ↗</a>
     </footer>
+
+    <MvrFixtureMapModal
+      :open="mvrModalOpen"
+      :result="mvrResult"
+      :orbit-target="orbitTarget"
+      @close="mvrModalOpen = false"
+      @uploaded="onMvrUploaded"
+    />
   </div>
 </template>
 
@@ -274,4 +330,5 @@ h2 { font-size: 18px; margin: 0 0 16px; }
 .row { display: flex; gap: 12px; }
 .page-footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--color-border); font-size: 12px; text-align: center; }
 .page-footer a { margin-left: 8px; }
+.mvr-hint { font-size: 12px; margin: 0; }
 </style>

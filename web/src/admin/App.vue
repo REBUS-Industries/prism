@@ -50,7 +50,6 @@ async function logout() {
         <RouterLink :to="{ name: 'textures'     }" class="nav-sub">↳ Textures</RouterLink>
         <RouterLink :to="{ name: 'fixtures'     }">Fixtures</RouterLink>
         <RouterLink :to="{ name: 'fixture-import' }" class="nav-sub">↳ Import GDTF</RouterLink>
-        <RouterLink :to="{ name: 'mvr-import'   }" class="nav-sub">↳ MVR import</RouterLink>
         <RouterLink :to="{ name: 'keys'         }">API keys</RouterLink>
         <RouterLink :to="{ name: 'webhooks'     }">Webhooks</RouterLink>
         <RouterLink :to="{ name: 'settings'     }">Settings</RouterLink>

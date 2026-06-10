@@ -22,7 +22,6 @@ import Textures from './pages/Textures.vue';
 import Fixtures from './pages/Fixtures.vue';
 import FixtureEditor from './pages/FixtureEditor.vue';
 import FixtureImport from './pages/FixtureImport.vue';
-import MvrImport from './pages/MvrImport.vue';
 
 import '../shared/designSystem.css';
 
@@ -41,7 +40,6 @@ const router = createRouter({
     { path: '/fixtures',               component: Fixtures,       name: 'fixtures' },
     { path: '/fixtures/import',        component: FixtureImport,  name: 'fixture-import' },
     { path: '/fixtures/:id',           component: FixtureEditor,    name: 'fixture-editor', props: true },
-    { path: '/mvr-import',             component: MvrImport,      name: 'mvr-import' },
     { path: '/settings',               component: Settings,         name: 'settings' },
     { path: '/keys',                   component: ApiKeys,          name: 'keys' },
     { path: '/webhooks',               component: Webhooks,         name: 'webhooks' },
