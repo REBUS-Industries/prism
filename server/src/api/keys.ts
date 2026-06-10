@@ -42,6 +42,11 @@ const KNOWN_SCOPES = [
   'materials:read',
   'materials:write',
   'materials:delete',
+  // Fixture library — GDTF/MVR import, CRUD, IES (routes on prism-fixtures-service).
+  'fixtures:read',
+  'fixtures:write',
+  'fixtures:delete',
+  'fixtures:import',
 ] as const;
 const scopesSchema = z.array(z.enum(KNOWN_SCOPES)).default([]);
 

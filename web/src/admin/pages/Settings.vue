@@ -24,6 +24,11 @@ const otherFields: FieldDef[] = [
   { key: 'maintenance_mode',    label: 'Maintenance mode', type: 'switch' },
 ];
 
+const gdtfShareFields: FieldDef[] = [
+  { key: 'gdtf_share_username', label: 'GDTF-Share username', placeholder: 'account@example.com' },
+  { key: 'gdtf_share_password', label: 'GDTF-Share password', secret: true, placeholder: 'write-only — not echoed after save' },
+];
+
 const workstationAgentFields: FieldDef[] = [
   {
     key: 'workstation_agent_ws_url',
@@ -40,7 +45,7 @@ const workstationAgentFields: FieldDef[] = [
 // Reactive state for each known key: current input + original DB value.
 // Pre-populate synchronously so the template can render before refresh()
 // returns — otherwise `values[f.key].value` blows up on first paint.
-const ALL_KEYS = [...orbitProdFields, ...orbitDevFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
+const ALL_KEYS = [...orbitProdFields, ...orbitDevFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
 const values = reactive<Record<string, { value: string; original: string }>>(
   Object.fromEntries(ALL_KEYS.map((k) => [k, { value: '', original: '' }])),
 );
@@ -59,7 +64,7 @@ const testDev  = reactive<TestState>({ kind: 'idle' });
 
 async function refresh() {
   const all = (await settingsApi.list()).settings;
-  for (const f of [...orbitProdFields, ...orbitDevFields, ...otherFields, ...workstationAgentFields]) {
+  for (const f of [...orbitProdFields, ...orbitDevFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields]) {
     const v = all[f.key] ?? '';
     values[f.key] = { value: v, original: v };
   }
@@ -224,6 +229,29 @@ onMounted(refresh);
         on {{ testDev.server.name }} {{ testDev.server.version }}
       </span>
       <span v-else-if="testDev.kind === 'fail'" class="muted">{{ testDev.reason }}</span>
+    </div>
+  </section>
+
+  <!-- ============================================== GDTF-Share -->
+  <section class="block">
+    <header class="block-head">
+      <h2>GDTF-Share</h2>
+      <button class="primary" @click="saveAll(gdtfShareFields)">Save all</button>
+    </header>
+    <p class="muted">Credentials for fixture library import from GDTF-Share.com. Password is write-only after save.</p>
+    <div class="card">
+      <div class="row" v-for="f in gdtfShareFields" :key="f.key">
+        <label>
+          {{ f.label }}
+          <code class="muted">{{ f.key }}</code>
+        </label>
+        <input
+          :type="f.secret ? 'password' : 'text'"
+          :placeholder="f.placeholder ?? ''"
+          v-model="values[f.key].value"
+        />
+        <button :disabled="!isDirty(f.key) || saving[f.key]" @click="save(f.key)">Save</button>
+      </div>
     </div>
   </section>
 

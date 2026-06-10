@@ -6,7 +6,11 @@ import { z } from 'zod';
 import { getAllSettings, getSetting, setSetting, type SettingKey } from '../db/settings.js';
 import { requireAdmin } from '../auth/middleware.js';
 
-const SECRET_KEYS = new Set<SettingKey>(['orbit_token', 'orbit_dev_token']);
+const SECRET_KEYS = new Set<SettingKey>([
+  'orbit_token',
+  'orbit_dev_token',
+  'gdtf_share_password',
+]);
 
 const plugin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireAdmin);

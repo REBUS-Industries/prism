@@ -1151,3 +1151,178 @@ export const materialsApi = {
     return api.postFormWithProgress<MaterialImportResult>('/api/materials/import', fd, onProgress);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Fixtures library (prism-fixtures-service)
+// ---------------------------------------------------------------------------
+
+export type FixturePartTag =
+  | 'ORIGIN' | 'CLAMP' | 'BASE' | 'YOKE' | 'HEAD' | 'LENS' | 'CELL' | 'BEAM';
+
+export interface Vec3 { x: number; y: number; z: number }
+
+export interface Transform4x4 {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  matrix4x4: number[];
+}
+
+export interface FixturePatch {
+  protocol: string;
+  universe: number;
+  address: number;
+  absoluteAddress: number;
+  break: number;
+  footprint: number;
+  channelRange: string;
+  status: string;
+}
+
+export interface DmxModeRef {
+  modeId: string;
+  name: string;
+  footprint: number;
+}
+
+export interface FixturePart {
+  partId: string;
+  name: string;
+  tag: FixturePartTag;
+  parentPartId?: string | null;
+  childPartIds: string[];
+  modelId?: string | null;
+  materialId?: string | null;
+  localTransform: Transform4x4;
+  pivot?: Vec3;
+  motionAxisId?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface FixtureBeam {
+  beamId: string;
+  parentPartId?: string;
+  beamType?: string;
+  iesAssetId?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface MotionAxis {
+  motionAxisId: string;
+  axisType: 'PAN' | 'TILT' | 'ROLL' | 'SPIN' | 'OTHER';
+  axisVector: Vec3;
+  pivot: Vec3;
+  minValue: number;
+  maxValue: number;
+  defaultValue: number;
+}
+
+export interface FixtureDefinition {
+  fixtureInformation: {
+    manufacturer: string;
+    fixtureName: string;
+    revision?: string;
+    description?: string;
+  };
+  parts: FixturePart[];
+  models: Array<{ modelId: string; partTag: FixturePartTag; metadata: Record<string, unknown> }>;
+  beams: FixtureBeam[];
+  motionRig: MotionAxis[];
+  wheels: unknown[];
+  dmxMapping: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+export interface FixtureListItem {
+  id: string;
+  name: string;
+  manufacturer: string;
+  fixtureName: string;
+  revision: string | null;
+  tags: string[];
+  sourceGdtfHash: string | null;
+  status: string;
+  hasPreview: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FixtureDetail extends FixtureListItem {
+  definition: FixtureDefinition;
+  previewModelId: string | null;
+  sourceGdtfId: string | null;
+}
+
+export interface GdtfShareResult {
+  rid: number;
+  manufacturer: string;
+  fixture: string;
+  revision?: string;
+}
+
+export interface MvrImportResult {
+  runId: string;
+  instances: Array<{
+    id: string;
+    instanceName: string;
+    fixtureTypeId: string | null;
+    warnings: string[];
+    patch?: FixturePatch;
+  }>;
+  patchConflicts: string[];
+}
+
+export interface MvrOrbitUploadResult {
+  rootObjectId: string;
+  versionId: string;
+  objectCount: number;
+}
+
+export const fixturesApi = {
+  list: (params: { q?: string; tags?: string[]; limit?: number; cursor?: string | null } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.tags?.length) qs.set('tags', params.tags.join(','));
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params.cursor) qs.set('cursor', params.cursor);
+    const tail = qs.toString();
+    return api.get<{ fixtures: FixtureListItem[]; nextCursor: string | null }>(
+      `/api/fixtures${tail ? `?${tail}` : ''}`,
+    );
+  },
+  get: (id: string) => api.get<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`),
+  create: (body: { name: string; manufacturer?: string; fixtureName?: string; tags?: string[] }) =>
+    api.post<{ fixture: FixtureListItem }>('/api/fixtures', body),
+  update: (id: string, body: { name?: string; tags?: string[]; status?: string; definition?: FixtureDefinition }) =>
+    api.put<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`, body),
+  remove: (id: string) => api.delete<{ ok: boolean }>(`/api/fixtures/${id}`),
+  previewUrl: (id: string) => `/api/fixtures/${id}/preview.glb`,
+  importGdtf: (file: File, name?: string) => {
+    const fd = new FormData();
+    if (name) fd.append('name', name);
+    fd.append('file', file);
+    return api.postForm<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf', fd);
+  },
+  importGdtfShare: (rid: number, name?: string) =>
+    api.post<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf-share', { rid, name }),
+  uploadIes: (id: string, beamId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('beamId', beamId);
+    fd.append('file', file);
+    return api.postForm<{ mediaId: string; beamId: string }>(`/api/fixtures/${id}/ies`, fd);
+  },
+  searchGdtfShare: (q: string, limit = 25) =>
+    api.get<{ results: GdtfShareResult[] }>(`/api/gdtf-share/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  importMvr: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.postForm<MvrImportResult>('/api/mvr-import', fd);
+  },
+  uploadMvrToOrbit: (body: {
+    runId: string;
+    projectId: string;
+    modelId: string;
+    orbitTarget?: 'prod' | 'dev';
+    instanceIds?: string[];
+  }) => api.post<MvrOrbitUploadResult>('/api/mvr-import/upload-orbit', body),
+};

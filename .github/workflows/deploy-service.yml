@@ -6,7 +6,7 @@
 # VM 212 (prism-dev.rebus.industries).
 #
 # Payload:  {"event_type":"deploy-dev-service","client_payload":{"service":"<name>"}}
-# Services: prism-materials | prism-agent | prism-visualiser | prism-server
+# Services: prism-materials | prism-fixtures | prism-agent | prism-visualiser | prism-server
 #
 # The self-hosted runner (LXC 261) has SSH access to prism-dev via the
 # runner-local prism_deploy_ed25519 key and the ~/.ssh/config alias.
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: 'Compose service name (prism-materials | prism-agent | prism-visualiser | prism-server)'
+        description: 'Compose service name (prism-materials | prism-fixtures | prism-agent | prism-visualiser | prism-server)'
         required: true
 
 jobs:
