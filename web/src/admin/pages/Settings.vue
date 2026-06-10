@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { orbitApi, settingsApi, type ApiError, type OrbitTestFail, type OrbitTestOk } from '../../shared/api';
+import Modal from '../../shared/Modal.vue';
+import Icon from '../../shared/Icon.vue';
+import FixtureTypesManager from '../components/FixtureTypesManager.vue';
+import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
 interface FieldDef {
   key: string;
@@ -53,6 +57,34 @@ const saving = reactive<Record<string, boolean>>({});
 const status = ref<string | null>(null);
 const error  = ref<string | null>(null);
 
+const fixtureTypesStore = useFixtureTypesStore();
+
+// ── Tile model ──────────────────────────────────────────────────────────
+// Each former section becomes a tile; clicking opens its controls in a modal.
+type TileKey = 'orbit-prod' | 'orbit-dev' | 'gdtf' | 'server' | 'workstation' | 'fixture-types';
+interface TileDef {
+  key: TileKey;
+  title: string;
+  /** Material Symbols ligature name (shared Icon.vue). */
+  icon: string;
+  description: string;
+  fields?: FieldDef[];
+  testTarget?: 'prod' | 'dev';
+  custom?: 'fixture-types';
+}
+
+const tiles: TileDef[] = [
+  { key: 'orbit-prod', title: 'ORBIT — Production', icon: 'cloud', description: 'Production server URL + API token used by the orchestrator.', fields: orbitProdFields, testTarget: 'prod' },
+  { key: 'orbit-dev',  title: 'ORBIT — Dev / Staging', icon: 'science', description: 'Dev/staging server URL + API token.', fields: orbitDevFields, testTarget: 'dev' },
+  { key: 'gdtf',       title: 'GDTF-Share', icon: 'lightbulb', description: 'Credentials for fixture library import from GDTF-Share.com.', fields: gdtfShareFields },
+  { key: 'fixture-types', title: 'Fixture Types', icon: 'palette', description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
+  { key: 'server',     title: 'Server', icon: 'dns', description: 'Job retention window and maintenance mode.', fields: otherFields },
+  { key: 'workstation', title: 'Workstation agent', icon: 'lan', description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
+];
+
+const activeKey = ref<TileKey | null>(null);
+const activeTile = computed(() => tiles.find((t) => t.key === activeKey.value) ?? null);
+
 type TestState =
   | { kind: 'idle' }
   | { kind: 'busy' }
@@ -73,6 +105,10 @@ async function refresh() {
 function isDirty(key: string): boolean {
   const v = values[key];
   return !!v && v.value !== v.original;
+}
+
+function tileDirty(tile: TileDef): boolean {
+  return (tile.fields ?? []).some((f) => isDirty(f.key));
 }
 
 /**
@@ -100,8 +136,7 @@ async function save(key: string) {
   try {
     const cleaned = sanitizeValue(key, values[key].value);
     // Reflect any normalisation back into the input so the operator
-    // can see what was actually persisted (e.g. ".ad.rebus.industries"
-    // becomes "ad.rebus.industries").
+    // can see what was actually persisted.
     values[key].value = cleaned;
     await settingsApi.set(key, cleaned);
     values[key].original = cleaned;
@@ -144,199 +179,271 @@ async function runTest(target: 'prod' | 'dev') {
   }
 }
 
-onMounted(refresh);
+const activeTest = computed<TestState | null>(() => {
+  const target = activeTile.value?.testTarget;
+  if (!target) return null;
+  return target === 'prod' ? testProd : testDev;
+});
+
+function openTile(key: TileKey) {
+  error.value = null;
+  activeKey.value = key;
+}
+
+function closeTile() {
+  activeKey.value = null;
+  // Drop any unsaved edits so re-opening shows the persisted values.
+  void refresh();
+}
+
+async function saveActive() {
+  if (activeTile.value?.fields) await saveAll(activeTile.value.fields);
+}
+
+/** Short status/summary line shown on each tile. */
+function tileSummary(tile: TileDef): string {
+  switch (tile.key) {
+    case 'orbit-prod':
+      return values.orbit_server_url.value || 'Not configured';
+    case 'orbit-dev':
+      return values.orbit_dev_server_url.value || 'Not configured';
+    case 'gdtf':
+      return values.gdtf_share_username.value
+        ? `User: ${values.gdtf_share_username.value}`
+        : 'Not configured';
+    case 'server':
+      return `Retention ${values.job_retention_hours.value || '720'}h · Maintenance ${values.maintenance_mode.value === '1' ? 'ON' : 'off'}`;
+    case 'workstation':
+      return values.workstation_dns_suffix.value
+        ? `DNS ${values.workstation_dns_suffix.value}`
+        : 'Auto (derive from host)';
+    case 'fixture-types':
+      return `${fixtureTypesStore.labels.length} type${fixtureTypesStore.labels.length === 1 ? '' : 's'}`;
+    default:
+      return '';
+  }
+}
+
+onMounted(() => {
+  void refresh();
+  void fixtureTypesStore.ensureLoaded();
+});
 </script>
 
 <template>
   <h1>Settings</h1>
-  <p class="muted">Live values used by the orchestrator + dispatcher. Secrets are masked after saving and never re-exposed to the browser through the API.</p>
+  <p class="muted">Live values used by the orchestrator + dispatcher. Click a card to edit. Secrets are masked after saving and never re-exposed to the browser through the API.</p>
 
   <div v-if="error"  class="error-box mt">{{ error }}</div>
   <div v-if="status" class="success-box mt">{{ status }}</div>
 
-  <!-- ============================================== ORBIT — Production -->
-  <section class="block">
-    <header class="block-head">
-      <h2>ORBIT — Production</h2>
-      <button class="primary" :disabled="testProd.kind === 'busy'" @click="runTest('prod')">
-        {{ testProd.kind === 'busy' ? 'Testing…' : 'Test connection' }}
-      </button>
-    </header>
-
-    <div class="card">
-      <div class="row" v-for="f in orbitProdFields" :key="f.key">
-        <label>
-          {{ f.label }}
-          <code class="muted">{{ f.key }}</code>
-        </label>
-        <input
-          :type="f.secret ? 'password' : 'text'"
-          :placeholder="f.placeholder ?? ''"
-          v-model="values[f.key].value"
-        />
-        <button :disabled="!isDirty(f.key) || saving[f.key]" @click="save(f.key)">Save</button>
-      </div>
-    </div>
-
-    <div class="status mt-sm" v-if="testProd.kind !== 'idle'">
-      <span v-if="testProd.kind === 'busy'" class="pill">checking…</span>
-      <span v-else-if="testProd.kind === 'ok'" class="pill ok">
-        connected
+  <!-- ─────────────────────────────── Tile grid ─────────────────────────── -->
+  <div class="tile-grid">
+    <button
+      v-for="tile in tiles"
+      :key="tile.key"
+      type="button"
+      class="tile"
+      @click="openTile(tile.key)"
+    >
+      <span class="tile-icon"><Icon :name="tile.icon" :size="24" /></span>
+      <span class="tile-body">
+        <span class="tile-title">{{ tile.title }}</span>
+        <span class="tile-desc">{{ tile.description }}</span>
+        <span class="tile-summary">{{ tileSummary(tile) }}</span>
       </span>
-      <span v-else class="pill fail">failed</span>
+      <Icon class="tile-chevron" name="chevron_right" :size="22" />
+    </button>
+  </div>
 
-      <span v-if="testProd.kind === 'ok'" class="muted">
-        as <strong>{{ testProd.user.name }}</strong>
-        <span v-if="testProd.user.email"> ({{ testProd.user.email }})</span>
-        on {{ testProd.server.name }} {{ testProd.server.version }}
-      </span>
-      <span v-else-if="testProd.kind === 'fail'" class="muted">{{ testProd.reason }}</span>
-    </div>
-  </section>
+  <!-- ─────────────────────────────── Modal ─────────────────────────────── -->
+  <Modal
+    v-if="activeTile"
+    :title="activeTile.title"
+    :subtitle="activeTile.description"
+    :max-width="activeTile.custom === 'fixture-types' ? 600 : 560"
+    @close="closeTile"
+  >
+    <!-- Fixture Types manager -->
+    <FixtureTypesManager v-if="activeTile.custom === 'fixture-types'" />
 
-  <!-- ============================================== ORBIT — Dev -->
-  <section class="block">
-    <header class="block-head">
-      <h2>ORBIT — Dev / Staging</h2>
-      <button class="primary" :disabled="testDev.kind === 'busy'" @click="runTest('dev')">
-        {{ testDev.kind === 'busy' ? 'Testing…' : 'Test connection' }}
-      </button>
-    </header>
-
-    <div class="card">
-      <div class="row" v-for="f in orbitDevFields" :key="f.key">
-        <label>
-          {{ f.label }}
-          <code class="muted">{{ f.key }}</code>
-        </label>
-        <input
-          :type="f.secret ? 'password' : 'text'"
-          :placeholder="f.placeholder ?? ''"
-          v-model="values[f.key].value"
-        />
-        <button :disabled="!isDirty(f.key) || saving[f.key]" @click="save(f.key)">Save</button>
+    <!-- Standard key/value field sections -->
+    <template v-else>
+      <div class="field-stack">
+        <div class="field" v-for="f in activeTile.fields" :key="f.key">
+          <label :for="`set-${f.key}`">
+            {{ f.label }}
+            <code class="muted">{{ f.key }}</code>
+          </label>
+          <select
+            v-if="f.type === 'switch'"
+            :id="`set-${f.key}`"
+            v-model="values[f.key].value"
+          >
+            <option value="0">Off</option>
+            <option value="1">On — block API + agents</option>
+          </select>
+          <input
+            v-else
+            :id="`set-${f.key}`"
+            :type="f.secret ? 'password' : (f.type ?? 'text')"
+            :placeholder="f.placeholder ?? ''"
+            v-model="values[f.key].value"
+          />
+        </div>
       </div>
-    </div>
 
-    <div class="status mt-sm" v-if="testDev.kind !== 'idle'">
-      <span v-if="testDev.kind === 'busy'" class="pill">checking…</span>
-      <span v-else-if="testDev.kind === 'ok'" class="pill ok">connected</span>
-      <span v-else class="pill fail">failed</span>
+      <!-- ORBIT connection test -->
+      <div v-if="activeTile.testTarget && activeTest" class="test-block">
+        <button
+          class="primary"
+          :disabled="activeTest.kind === 'busy'"
+          @click="runTest(activeTile.testTarget)"
+        >
+          {{ activeTest.kind === 'busy' ? 'Testing…' : 'Test connection' }}
+        </button>
+        <div class="status mt-sm" v-if="activeTest.kind !== 'idle'">
+          <span v-if="activeTest.kind === 'busy'" class="pill">checking…</span>
+          <span v-else-if="activeTest.kind === 'ok'" class="pill ok">connected</span>
+          <span v-else class="pill fail">failed</span>
 
-      <span v-if="testDev.kind === 'ok'" class="muted">
-        as <strong>{{ testDev.user.name }}</strong>
-        <span v-if="testDev.user.email"> ({{ testDev.user.email }})</span>
-        on {{ testDev.server.name }} {{ testDev.server.version }}
-      </span>
-      <span v-else-if="testDev.kind === 'fail'" class="muted">{{ testDev.reason }}</span>
-    </div>
-  </section>
-
-  <!-- ============================================== GDTF-Share -->
-  <section class="block">
-    <header class="block-head">
-      <h2>GDTF-Share</h2>
-      <button class="primary" @click="saveAll(gdtfShareFields)">Save all</button>
-    </header>
-    <p class="muted">Credentials for fixture library import from GDTF-Share.com. Password is write-only after save.</p>
-    <div class="card">
-      <div class="row" v-for="f in gdtfShareFields" :key="f.key">
-        <label>
-          {{ f.label }}
-          <code class="muted">{{ f.key }}</code>
-        </label>
-        <input
-          :type="f.secret ? 'password' : 'text'"
-          :placeholder="f.placeholder ?? ''"
-          v-model="values[f.key].value"
-        />
-        <button :disabled="!isDirty(f.key) || saving[f.key]" @click="save(f.key)">Save</button>
+          <span v-if="activeTest.kind === 'ok'" class="muted test-detail">
+            as <strong>{{ activeTest.user.name }}</strong>
+            <span v-if="activeTest.user.email"> ({{ activeTest.user.email }})</span>
+            on {{ activeTest.server.name }} {{ activeTest.server.version }}
+          </span>
+          <span v-else-if="activeTest.kind === 'fail'" class="muted test-detail">{{ activeTest.reason }}</span>
+        </div>
       </div>
-    </div>
-  </section>
 
-  <!-- ============================================== Other -->
-  <section class="block">
-    <header class="block-head">
-      <h2>Server</h2>
-    </header>
-    <div class="card">
-      <div class="row" v-for="f in otherFields" :key="f.key">
-        <label>
-          {{ f.label }}
-          <code class="muted">{{ f.key }}</code>
-        </label>
-        <input
-          v-if="f.type !== 'switch'"
-          :type="f.type ?? 'text'"
-          :placeholder="f.placeholder ?? ''"
-          v-model="values[f.key].value"
-        />
-        <select v-else v-model="values[f.key].value">
-          <option value="0">Off</option>
-          <option value="1">On — block API + agents</option>
-        </select>
-        <button :disabled="!isDirty(f.key) || saving[f.key]" @click="save(f.key)">Save</button>
+      <!-- Workstation agent explanatory copy -->
+      <div v-if="activeTile.key === 'workstation'" class="help-copy muted">
+        <p>
+          Surfaced on the
+          <RouterLink :to="{ name: 'workstations' }">Workstations</RouterLink>
+          page under <em>Node downloads</em>. The agent download URL and version
+          are auto-resolved from the latest GitHub Release — no admin action
+          needed. Leave the WS endpoint override blank to derive
+          <code>wss://&lt;host&gt;/ws/agent</code> from the request host.
+        </p>
+        <p>
+          The <em>DNS suffix</em> is appended to each workstation's
+          <code>nodeName</code> when building the <em>Open Web UI ↗</em> link.
+          Leave blank if your network resolves bare hostnames. The link
+          auto-strips a leading dot, scheme prefix, trailing path, and
+          <code>:port</code> on save.
+        </p>
       </div>
-    </div>
-  </section>
+    </template>
 
-  <!-- ============================================== Workstation agent -->
-  <section class="block">
-    <header class="block-head">
-      <h2>Workstation agent</h2>
-    </header>
-    <p class="muted" style="font-size: 12px; margin: 0 0 8px;">
-      Surfaced on the
-      <RouterLink :to="{ name: 'workstations' }">Workstations</RouterLink>
-      page under <em>Node downloads</em>. The agent download URL and version
-      are auto-resolved from the latest GitHub Release at
-      <code>REBUS-ORBIT/prism-agent</code> on every request — no admin action
-      needed. Leave the WS endpoint override blank to derive
-      <code>wss://&lt;host&gt;/ws/agent</code> from the request host; set it
-      only when the public proxy host differs from the request host.
-    </p>
-    <p class="muted" style="font-size: 12px; margin: 0 0 8px;">
-      The <em>DNS suffix</em> is appended to each workstation's
-      <code>nodeName</code> when the admin SPA builds the
-      <em>Open Web UI ↗</em> link on the Workstations and Pipeline pages
-      (<code>http://&lt;nodeName&gt;.&lt;suffix&gt;:7421/</code>). Leave
-      blank if your network resolves bare hostnames; set to e.g.
-      <code>ad.rebus.industries</code> when opening the admin UI from a
-      browser whose DNS search list does not include the workstation's
-      domain. Hard-reload the admin SPA after changing this. The link
-      auto-strips a leading dot, scheme prefix, trailing path, and
-      <code>:port</code> on save.
-    </p>
-    <div class="card">
-      <div class="row" v-for="f in workstationAgentFields" :key="f.key">
-        <label>
-          {{ f.label }}
-          <code class="muted">{{ f.key }}</code>
-        </label>
-        <input
-          type="text"
-          :placeholder="f.placeholder ?? ''"
-          v-model="values[f.key].value"
-        />
-        <button :disabled="!isDirty(f.key) || saving[f.key]" @click="save(f.key)">Save</button>
-      </div>
-    </div>
-  </section>
+    <template v-if="activeTile.custom === 'fixture-types'" #footer>
+      <button class="primary" @click="closeTile">Done</button>
+    </template>
+    <template v-else #footer>
+      <button @click="closeTile">Cancel</button>
+      <button class="primary" :disabled="!tileDirty(activeTile)" @click="saveActive">Save</button>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>
 h1 { font-size: 22px; margin: 0 0 4px; }
-h2 { font-size: 14px; margin: 0; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-muted); }
-.block { margin-top: 28px; }
-.block-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.row {
-  display: grid; grid-template-columns: 220px 1fr auto; gap: 12px; align-items: center;
-  padding: 10px 0; border-bottom: 1px solid var(--color-border);
+
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin-top: 20px;
 }
-.row:last-child { border-bottom: none; }
-label { display: flex; flex-direction: column; gap: 2px; font-weight: 500; }
-label code { font-size: 11px; font-weight: 400; }
-.status { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-/* `.pill.ok` and `.pill.fail` are styled globally in designSystem.css. */
+
+.tile {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  padding: 16px;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  min-height: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+@media (min-width: 640px) {
+  .tile { border-radius: var(--radius); box-shadow: var(--shadow-1); }
+}
+.tile:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--orbit-primary);
+}
+.tile:focus-visible {
+  outline: 2px solid var(--orbit-primary);
+  outline-offset: 2px;
+}
+
+.tile-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--orbit-primary-fade);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.tile-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.tile-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.tile-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+.tile-summary {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--orbit-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.tile-chevron {
+  flex-shrink: 0;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--color-text-muted);
+}
+
+/* ── Modal field stack ── */
+.field-stack { display: flex; flex-direction: column; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+}
+.field label code { font-size: 11px; font-weight: 400; }
+.field input, .field select { width: 100%; }
+
+.test-block { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.status { display: flex; align-items: center; gap: 10px; font-size: 12px; flex-wrap: wrap; }
+.test-detail { font-size: 12px; }
+
+.help-copy { margin-top: 14px; font-size: 12px; line-height: 1.5; }
+.help-copy p { margin: 0 0 8px; }
+.help-copy p:last-child { margin-bottom: 0; }
 </style>

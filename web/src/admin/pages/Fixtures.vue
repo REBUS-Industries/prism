@@ -6,12 +6,8 @@ import { RouterLink, useRouter } from 'vue-router';
 
 import FixtureLibraryDetail from '../components/FixtureLibraryDetail.vue';
 import FixtureDownloadModal from '../components/FixtureDownloadModal.vue';
-import {
-  FIXTURE_CATEGORY_COLORS,
-  fixtureCategoryFromTags,
-  tagsWithFixtureCategory,
-  type LibraryFixtureCategory,
-} from '../utils/fixtureTypes';
+import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
+import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
 import {
 
@@ -30,6 +26,7 @@ import {
 
 
 const router = useRouter();
+const fixtureTypesStore = useFixtureTypesStore();
 
 const PAGE = 80;
 
@@ -244,10 +241,10 @@ const fixturesWithMetadata = computed(() =>
   filteredEntries.value.filter((e) => matchLocal(e)?.hasPreview).length,
 );
 
-function entryFixtureCategory(entry: GdtfShareCatalogEntry): LibraryFixtureCategory {
+function entryFixtureCategory(entry: GdtfShareCatalogEntry): string {
   const local = matchLocal(entry);
   if (!local) return 'Unassigned';
-  return fixtureCategoryFromTags(local.tags);
+  return fixtureCategoryFromTags(local.tags, fixtureTypesStore.assignableLabels);
 }
 
 interface EntryRowMetrics {
@@ -553,7 +550,7 @@ async function confirmDownload(fixtureType: string): Promise<void> {
   try {
     const res = await fixturesApi.importGdtfShare(rid, `${entry.manufacturer} ${entry.fixture}`);
     await fixturesApi.update(res.fixture.id, {
-      tags: tagsWithFixtureCategory(res.fixture.tags, fixtureType as LibraryFixtureCategory),
+      tags: tagsWithFixtureCategory(res.fixture.tags, fixtureType, fixtureTypesStore.assignableLabels),
     });
     await loadLocal();
     showDownloadModal.value = false;
@@ -622,7 +619,10 @@ function formatVersionSub(entry: GdtfShareCatalogEntry): string {
 
 
 
-onMounted(() => void reloadAll());
+onMounted(() => {
+  void fixtureTypesStore.ensureLoaded();
+  void reloadAll();
+});
 
 onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
@@ -884,7 +884,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             <span
               v-if="entryFixtureCategory(entry) !== 'Unassigned'"
               class="type-bar"
-              :style="{ background: FIXTURE_CATEGORY_COLORS[entryFixtureCategory(entry)] }"
+              :style="{ background: fixtureTypesStore.colorFor(entryFixtureCategory(entry)) }"
               :title="entryFixtureCategory(entry)"
               aria-hidden="true"
             />

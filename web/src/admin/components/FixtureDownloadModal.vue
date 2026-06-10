@@ -4,8 +4,6 @@ import { ref } from 'vue';
 
 import FixtureTypeSelect from './FixtureTypeSelect.vue';
 
-import type { LibraryFixtureCategory } from '../utils/fixtureTypes';
-
 
 
 defineProps<{
@@ -24,13 +22,13 @@ const emit = defineEmits<{
 
   cancel: [];
 
-  confirm: [fixtureType: LibraryFixtureCategory];
+  confirm: [fixtureType: string];
 
 }>();
 
 
 
-const fixtureType = ref<LibraryFixtureCategory>('Spot');
+const fixtureType = ref<string>('Spot');
 
 </script>
 

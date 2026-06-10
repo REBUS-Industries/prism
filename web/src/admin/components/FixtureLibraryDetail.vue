@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import {
   fixturesApi,
@@ -13,11 +13,8 @@ import {
 import DmxModePanel from './DmxModePanel.vue';
 import FixtureQuadPreview from './FixtureQuadPreview.vue';
 import FixtureTypeSelect from './FixtureTypeSelect.vue';
-import {
-  fixtureCategoryFromTags,
-  tagsWithFixtureCategory,
-  type LibraryFixtureCategory,
-} from '../utils/fixtureTypes';
+import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
+import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import { parseWheels } from '../utils/gdtfDebugExport';
 import {
   cieColorToCss,
@@ -134,14 +131,17 @@ const dmxMapping = computed(() => {
   };
 });
 
-const fixtureCategory = computed<LibraryFixtureCategory>(() => {
+const store = useFixtureTypesStore();
+onMounted(() => void store.ensureLoaded());
+
+const fixtureCategory = computed<string>(() => {
   if (!props.localFixture) return 'Unassigned';
-  return fixtureCategoryFromTags(props.localFixture.tags);
+  return fixtureCategoryFromTags(props.localFixture.tags, store.assignableLabels);
 });
 
-async function onFixtureCategoryChange(category: LibraryFixtureCategory): Promise<void> {
+async function onFixtureCategoryChange(category: string): Promise<void> {
   if (!props.localFixture || savingCategory.value) return;
-  const tags = tagsWithFixtureCategory(props.localFixture.tags, category);
+  const tags = tagsWithFixtureCategory(props.localFixture.tags, category, store.assignableLabels);
   savingCategory.value = true;
   try {
     const res = await fixturesApi.update(props.localFixture.id, { tags });

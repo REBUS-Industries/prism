@@ -1510,3 +1510,48 @@ export const fixturesApi = {
     return api.post<MvrOrbitUploadResult>(`/api/mvr-import/upload-orbit${qs}`, payload);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Fixture categories ("Fixture Types") — admin Settings palette
+// ---------------------------------------------------------------------------
+//
+// The user-editable list of fixture categories + colours that drive the
+// library row stripes, the type dropdown, and the detail panel. Backed by
+// `/api/fixtures/categories` on prism-fixtures-service. A fixture's chosen
+// category is still stored as its first tag (`tags[0]`); this is just the
+// palette/label source. The 7 defaults (Unassigned, Spot, Wash, Beam,
+// Strobe, Followspot, Conventional) are seeded server-side.
+
+export interface FixtureCategoryConfig {
+  id: string;
+  /** Stable slug; `unassigned` is the protected default. */
+  key: string;
+  /** Display name AND the value stored in a fixture's `tags[0]`. */
+  label: string;
+  /** CSS hex colour, e.g. `#ef4444`. */
+  color: string;
+  order: number;
+  isDefault: boolean;
+}
+
+/** Shape of the 409 returned when deleting a category still in use. */
+export interface FixtureCategoryInUseError {
+  error: string;
+  inUseCount: number;
+}
+
+export const fixtureTypesApi = {
+  list: () => api.get<{ categories: FixtureCategoryConfig[] }>('/api/fixtures/categories'),
+  create: (body: { label: string; color: string }) =>
+    api.post<{ category: FixtureCategoryConfig }>('/api/fixtures/categories', body),
+  update: (id: string, body: { label?: string; color?: string; order?: number }) =>
+    api.put<{ category: FixtureCategoryConfig }>(`/api/fixtures/categories/${id}`, body),
+  reorder: (ids: string[]) =>
+    api.post<{ categories: FixtureCategoryConfig[] }>('/api/fixtures/categories/reorder', { ids }),
+  /** Delete a category. Pass `reassign: true` to strip the label from any
+   *  fixtures still using it (→ Unassigned) instead of failing with 409. */
+  remove: (id: string, reassign = false) =>
+    api.delete<{ ok: boolean; reassigned: number }>(
+      `/api/fixtures/categories/${id}${reassign ? '?reassign=unassigned' : ''}`,
+    ),
+};

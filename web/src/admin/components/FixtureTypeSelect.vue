@@ -1,13 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import {
-  FIXTURE_CATEGORY_COLORS,
-  LIBRARY_FIXTURE_CATEGORIES,
-  type LibraryFixtureCategory,
-} from '../utils/fixtureTypes';
+import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
 const props = withDefaults(defineProps<{
-  modelValue: LibraryFixtureCategory;
+  modelValue: string;
   disabled?: boolean;
   includeUnassigned?: boolean;
   label?: string;
@@ -20,23 +16,24 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{
-  'update:modelValue': [value: LibraryFixtureCategory];
+  'update:modelValue': [value: string];
 }>();
 
+const store = useFixtureTypesStore();
 const open = ref(false);
 const root = ref<HTMLElement | null>(null);
 
-const options = computed(() =>
+const options = computed<string[]>(() =>
   props.includeUnassigned
-    ? [...LIBRARY_FIXTURE_CATEGORIES]
-    : LIBRARY_FIXTURE_CATEGORIES.filter((c) => c !== 'Unassigned'),
+    ? store.labels
+    : store.labels.filter((c) => c.toLowerCase() !== 'unassigned'),
 );
 
-function dotColor(category: LibraryFixtureCategory): string {
-  return FIXTURE_CATEGORY_COLORS[category];
+function dotColor(category: string): string {
+  return store.colorFor(category);
 }
 
-function select(category: LibraryFixtureCategory): void {
+function select(category: string): void {
   emit('update:modelValue', category);
   open.value = false;
 }
@@ -45,7 +42,10 @@ function onDocClick(e: MouseEvent): void {
   if (!root.value?.contains(e.target as Node)) open.value = false;
 }
 
-onMounted(() => document.addEventListener('click', onDocClick));
+onMounted(() => {
+  document.addEventListener('click', onDocClick);
+  void store.ensureLoaded();
+});
 onBeforeUnmount(() => document.removeEventListener('click', onDocClick));
 </script>
 
