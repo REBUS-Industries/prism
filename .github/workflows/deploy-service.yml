@@ -1,8 +1,8 @@
 ﻿name: deploy-dev-service
 
 # Triggered by repository_dispatch from the polyrepo service workflows
-# (prism-materials-service, prism-agent-service, prism-visualiser-service,
-# prism-server-polyrepo).  Pulls and restarts a single named service on
+# (prism-materials-service, prism-fixtures-service, prism-agent-service,
+# prism-visualiser-service, prism-server-polyrepo).  Pulls and restarts a single named service on
 # VM 212 (prism-dev.rebus.industries).
 #
 # Payload:  {"event_type":"deploy-dev-service","client_payload":{"service":"<name>"}}
