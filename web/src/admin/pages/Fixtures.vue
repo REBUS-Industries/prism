@@ -118,6 +118,48 @@ const filteredEntries = computed(() => {
 
 
 
+const displayManufacturers = computed((): GdtfShareManufacturer[] => {
+
+  if (activeFilter.value === 'all') {
+
+    return shareManufacturers.value;
+
+  }
+
+  const counts = new Map<string, number>();
+
+  for (const entry of filteredEntries.value) {
+
+    const m = entry.manufacturer || 'Unknown';
+
+    counts.set(m, (counts.get(m) ?? 0) + 1);
+
+  }
+
+  return [...counts.entries()]
+
+    .map(([name, count]) => ({ name, count }))
+
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+});
+
+
+
+const filteredAllCount = computed(() => {
+
+  if (activeFilter.value === 'all') {
+
+    return selectedManufacturer.value === '__all__' ? shareTotal.value : filteredEntries.value.length;
+
+  }
+
+  return filteredEntries.value.length;
+
+});
+
+
+
 const groupedEntries = computed(() => {
 
   const groups = new Map<string, GdtfShareCatalogEntry[]>();
@@ -214,6 +256,20 @@ async function loadShare(): Promise<void> {
 
     shareTotal.value = res.total;
 
+    if (
+
+      selectedManufacturer.value !== '__all__'
+
+      && !res.manufacturers.some((m) => m.name === selectedManufacturer.value)
+
+    ) {
+
+      selectedManufacturer.value = res.manufacturers[0]?.name ?? '__all__';
+
+      return loadShare();
+
+    }
+
     if (!selectedShareUuid.value && res.entries[0]) {
 
       selectShareEntry(res.entries[0]);
@@ -285,6 +341,26 @@ function selectShareEntry(entry: GdtfShareCatalogEntry): void {
 function setFilter(chip: FilterChip): void {
 
   activeFilter.value = chip;
+
+  ensureVisibleManufacturer();
+
+}
+
+
+
+function ensureVisibleManufacturer(): void {
+
+  if (selectedManufacturer.value === '__all__') return;
+
+  const visible = displayManufacturers.value.some((m) => m.name === selectedManufacturer.value);
+
+  if (!visible) {
+
+    selectedManufacturer.value = displayManufacturers.value[0]?.name ?? '__all__';
+
+    void loadShare();
+
+  }
 
 }
 
@@ -604,7 +680,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
           <option value="__all__">All manufacturers</option>
 
-          <option v-for="m in shareManufacturers" :key="m.name" :value="m.name">{{ m.name }} ({{ m.count }})</option>
+          <option v-for="m in displayManufacturers" :key="m.name" :value="m.name">{{ m.name }} ({{ m.count }})</option>
 
         </select>
 
@@ -640,13 +716,13 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
           <span>All manufacturers</span>
 
-          <span class="mfg-count">{{ shareTotal }}</span>
+          <span class="mfg-count">{{ filteredAllCount }}</span>
 
         </button>
 
         <button
 
-          v-for="m in shareManufacturers"
+          v-for="m in displayManufacturers"
 
           :key="m.name"
 
