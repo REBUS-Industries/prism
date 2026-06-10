@@ -131,6 +131,7 @@ services:
       ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
       SESSION_SECRET: "${SESSION_SECRET}"
       DATA_DIR: "/data/prism"
+      REDIS_URL: "redis://redis:6379"
       ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
