@@ -319,16 +319,50 @@ const showLayerPicker = computed(() =>
 </template>
 
 <style scoped>
-.page { max-width: 640px; margin: 40px auto; padding: 0 24px; }
-.page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; }
-.brand-logo { width: 28px; height: 28px; object-fit: contain; }
-h2 { font-size: 18px; margin: 0 0 16px; }
-.form { display: flex; flex-direction: column; gap: 12px; }
-.form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--color-text-muted); }
-.form label.check { flex-direction: row; gap: 8px; align-items: center; }
+.page {
+  min-height: 100vh;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px;
+  background: hsl(var(--muted) / 0.3);
+}
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 68px;
+  margin-bottom: 8px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.brand-logo { width: 32px; height: 32px; object-fit: contain; }
+h2 { font-size: 1rem; font-weight: 600; margin: 0 0 16px; }
+.form { display: flex; flex-direction: column; gap: 14px; }
+.form label { display: flex; flex-direction: column; gap: 6px; }
+.form label.check {
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  text-transform: none;
+  font-weight: 400;
+  font-size: 0.875rem;
+  letter-spacing: normal;
+}
 .row { display: flex; gap: 12px; }
-.page-footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--color-border); font-size: 12px; text-align: center; }
+.page-footer {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid hsl(var(--border));
+  font-size: 0.75rem;
+  text-align: center;
+}
 .page-footer a { margin-left: 8px; }
-.mvr-hint { font-size: 12px; margin: 0; }
+.mvr-hint { font-size: 0.8125rem; margin: 0; }
 </style>

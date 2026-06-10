@@ -70,54 +70,99 @@ async function logout() {
       </div>
       <div v-if="serverVersion" class="server-version muted">PRISM server v{{ serverVersion }}</div>
     </aside>
-    <main>
+    <main class="app-shell-main">
       <RouterView />
     </main>
   </div>
 </template>
 
 <style scoped>
-.layout { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
-/* On unauthenticated routes (e.g. login) there is no sidebar — collapse the
-   grid to a single column and remove main's padding so the page can centre
-   itself across the full viewport. */
+.layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
 .layout--bare { grid-template-columns: 1fr; }
-.layout--bare main { padding: 0; overflow: visible; }
+.layout--bare main { padding: 0; overflow: visible; background: hsl(var(--background)); }
+
 aside {
-  background: var(--color-bg-elevated);
-  border-right: 1px solid var(--color-border);
-  padding: 16px;
+  background: hsl(var(--sidebar-background));
+  border-right: 1px solid hsl(var(--sidebar-border));
+  padding: 0 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
+  z-index: 40;
 }
+
 .brand {
-  display: flex; align-items: center; gap: 8px;
-  font-weight: 700; font-size: 16px; letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 68px;
+  min-height: 68px;
+  padding: 0 4px;
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: hsl(var(--sidebar-foreground));
 }
-.brand-logo { width: 28px; height: 28px; object-fit: contain; }
-nav { display: flex; flex-direction: column; gap: 2px; }
+.brand-logo { width: 32px; height: 32px; object-fit: contain; }
+
+nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 nav a {
-  padding: 8px 10px; border-radius: var(--radius); color: var(--color-text-muted);
-  text-decoration: none; font-weight: 500;
+  padding: 10px 12px;
+  border-radius: calc(var(--radius) - 2px);
+  color: hsl(var(--sidebar-foreground));
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  transition: background-color 120ms ease, color 120ms ease;
 }
-nav a:hover { background: var(--color-bg); color: var(--color-text); }
-nav a.router-link-active { background: var(--orbit-primary-fade); color: var(--orbit-primary); }
-nav a.nav-sub { padding-left: 22px; font-size: 12px; font-weight: 400; }
+nav a:hover {
+  background: hsl(var(--sidebar-accent));
+  color: hsl(var(--sidebar-accent-foreground));
+}
+nav a.router-link-active {
+  background: hsl(var(--sidebar-accent));
+  color: hsl(var(--sidebar-primary));
+  font-weight: 600;
+}
+nav a.nav-sub {
+  padding-left: 24px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
 nav a.external {
-  margin-top: 12px;
-  border-top: 1px solid var(--color-border);
-  padding-top: 16px;
-  font-size: 12px;
+  margin-top: 8px;
+  border-top: 1px solid hsl(var(--sidebar-border));
+  padding-top: 14px;
+  font-size: 0.75rem;
 }
-nav a.external:hover { background: transparent; color: var(--color-text); }
-.user-box { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
-.server-version { font-size: 11px; text-align: center; }
+nav a.external:hover { color: hsl(var(--sidebar-foreground)); }
+
+.user-box {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid hsl(var(--sidebar-border));
+}
+.server-version { font-size: 0.6875rem; text-align: center; }
 .user-actions { display: flex; align-items: center; gap: 6px; }
 .profile-link {
-  color: var(--color-text); text-decoration: none; font-weight: 600;
+  color: hsl(var(--sidebar-foreground));
+  text-decoration: none;
+  font-weight: 600;
   padding: 4px 0;
 }
-.profile-link:hover { color: var(--orbit-primary); }
-main { padding: 24px; overflow: auto; }
+.profile-link:hover { color: hsl(var(--sidebar-primary)); }
+
+main { padding: 16px 24px; overflow: auto; }
 </style>

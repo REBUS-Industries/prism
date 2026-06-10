@@ -1,187 +1,331 @@
-/* PRISM design system.
+/* PRISM design system — aligned with Rebus Studio portal (globals.css tokens).
  *
- * Mirrors the ORBIT brand tokens. The light palette stays close to the
- * existing PRISM look; the dark palette is sampled from the live ORBIT
- * site (`https://orbit.rebus.industries/_nuxt/entry.*.css` — `--foundation`,
- * `--foundation-page`, `--outline-2`, `--primary-muted`, etc.) so PRISM
- * dark mode visually belongs in the same family as ORBIT's web app.
- *
- * Theme is selected by `[data-theme="dark"]` on the <html> element. A
- * tiny inline script in each entry HTML applies the preference before
- * the SPA boots (see web/src/{admin,convert}/index.html) so there is no
- * white flash. The `prism.theme` localStorage key persists user choice
- * across `light` / `dark` / `system`. See `web/src/shared/theme.ts`.
+ * Portal uses HSL triplets as CSS variables; legacy PRISM components still read
+ * `--color-*` and `--orbit-*` aliases mapped below. Theme is applied via
+ * `[data-theme="dark"]` and `.dark` on <html> (see theme.ts + index.html bootstrap).
  */
 
 :root {
   color-scheme: light;
 
-  /* Brand */
-  --orbit-primary:        #e06238;
-  --orbit-primary-hover:  #c4542d;
-  --orbit-primary-fade:   #fde9df;
-  --orbit-accent:         #1c1e26;
+  /* ── Portal semantic tokens (light) ── */
+  --background: 0 0% 100%;
+  --foreground: 0 0% 20%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 20%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 20%;
+  --primary: 15 73% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96%;
+  --secondary-foreground: 0 0% 20%;
+  --muted: 0 0% 94%;
+  --muted-foreground: 0 0% 40%;
+  --accent: 0 0% 94%;
+  --accent-foreground: 0 0% 20%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 85%;
+  --input: 0 0% 85%;
+  --ring: 15 73% 60%;
+  --radius: 0.5rem;
 
-  /* Light theme (default) */
-  --color-bg:             #ffffff;
-  --color-bg-elevated:    #fafafa;
-  --color-bg-input:       #ffffff;
-  --color-bg-hover:       #f3f4f6;
-  --color-border:         #e5e7eb;
-  --color-border-strong:  #d1d5db;
-  --color-text:           #111827;
-  --color-text-muted:     #4b5563;
-  --color-text-subtle:    #9ca3af;
+  --chart-1: 15 73% 60%;
+  --chart-2: 15 60% 70%;
+  --chart-3: 0 0% 50%;
+  --chart-4: 15 50% 80%;
+  --chart-5: 0 0% 65%;
+
+  --sidebar-background: 0 0% 94%;
+  --sidebar-foreground: 0 0% 20%;
+  --sidebar-primary: 15 73% 55%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 88%;
+  --sidebar-accent-foreground: 0 0% 20%;
+  --sidebar-border: 0 0% 75%;
+  --sidebar-ring: 15 73% 60%;
+
+  /* ── Legacy aliases (keep components working) ── */
+  --orbit-primary:        hsl(var(--primary));
+  --orbit-primary-hover:  hsl(15 73% 48%);
+  --orbit-primary-fade:   hsl(var(--primary) / 0.1);
+  --orbit-accent:         hsl(var(--foreground));
+
+  --color-bg:             hsl(var(--background));
+  --color-bg-elevated:    hsl(var(--card));
+  --color-bg-input:       hsl(var(--background));
+  --color-bg-hover:       hsl(var(--accent));
+  --color-border:         hsl(var(--border));
+  --color-border-strong:  hsl(var(--input));
+  --color-text:           hsl(var(--foreground));
+  --color-text-muted:     hsl(var(--muted-foreground));
+  --color-text-subtle:    hsl(0 0% 55%);
   --color-success:        #15803d;
   --color-success-bg:     #dcfce7;
   --color-warn:           #b45309;
   --color-warn-bg:        #fef3c7;
-  --color-error:          #b91c1c;
-  --color-error-bg:       #fee2e2;
+  --color-error:          hsl(var(--destructive));
+  --color-error-bg:       hsl(var(--destructive) / 0.12);
   --color-info:           #1d4ed8;
   --color-info-bg:        #dbeafe;
-
-  /* Aliases for legacy/alternate naming used by some components.
-     Keep these in sync with the canonical tokens above. */
   --color-danger:         var(--color-error);
   --color-danger-bg:      var(--color-error-bg);
   --color-warning:        var(--color-warn);
   --color-warning-bg:     var(--color-warn-bg);
 
-  /* Radii / spacing */
-  --radius-sm: 4px;
-  --radius:    8px;
-  --radius-lg: 12px;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
 
-  --shadow-1: 0 1px 2px 0 rgba(0,0,0,.05);
-  --shadow-2: 0 4px 12px -2px rgba(0,0,0,.08), 0 2px 4px -1px rgba(0,0,0,.04);
+  --shadow-1: 0 1px 2px 0 hsl(0 0% 0% / 0.05);
+  --shadow-2: 0 4px 12px -2px hsl(0 0% 0% / 0.08), 0 2px 4px -1px hsl(0 0% 0% / 0.04);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Avenir Next", Avenir, Inter, ui-sans-serif, system-ui, -apple-system,
+    Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-/* Dark theme — sampled from ORBIT's live `entry.*.css`:
-     foundation-page #101012, foundation #15161c, foundation-2 #191a22,
-     outline-3 #332b28, outline-2 #3e312d, primary-muted #382d29,
-     foreground #fff, foreground-2 #b0b1b5, foreground-3 #7e7f82,
-     success #34d399 / lightest #072c1f, warning #fbbf24 / lightest #302303,
-     danger #f87171 / lightest #300303.
-   The orange accent (`--orbit-primary` #e06238) is preserved across both
-   themes so PRISM keeps its branded identity in dark mode. */
-html.dark, html[class*="dark"], [data-theme="dark"] {
+html.dark,
+html[class*="dark"],
+[data-theme="dark"] {
   color-scheme: dark;
 
-  --orbit-primary-hover:  #c94f26;
-  --orbit-primary-fade:   #382d29;
+  --background: 0 0% 12%;
+  --foreground: 0 0% 93%;
+  --card: 0 0% 15%;
+  --card-foreground: 0 0% 93%;
+  --popover: 0 0% 15%;
+  --popover-foreground: 0 0% 93%;
+  --primary: 15 73% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 18%;
+  --secondary-foreground: 0 0% 93%;
+  --muted: 0 0% 18%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 15 60% 45%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 22%;
+  --input: 0 0% 22%;
+  --ring: 15 73% 60%;
 
-  --color-bg:             #101012;
-  --color-bg-elevated:    #15161c;
-  --color-bg-input:       #191a22;
-  --color-bg-hover:       #1f2129;
-  --color-border:         #332b28;
-  --color-border-strong:  #3e312d;
-  --color-text:           #ffffff;
-  --color-text-muted:     #b0b1b5;
-  --color-text-subtle:    #7e7f82;
+  --chart-1: 15 73% 60%;
+  --chart-2: 15 60% 70%;
+  --chart-3: 0 0% 55%;
+  --chart-4: 15 50% 80%;
+  --chart-5: 0 0% 70%;
+
+  --sidebar-background: 0 0% 10%;
+  --sidebar-foreground: 0 0% 90%;
+  --sidebar-primary: 15 73% 55%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 18%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 0 0% 20%;
+  --sidebar-ring: 15 73% 60%;
+
+  --orbit-primary-hover:  hsl(15 73% 48%);
+  --orbit-primary-fade:   hsl(var(--primary) / 0.15);
+
+  --color-bg:             hsl(var(--background));
+  --color-bg-elevated:    hsl(var(--card));
+  --color-bg-input:       hsl(var(--secondary));
+  --color-bg-hover:       hsl(var(--accent));
+  --color-border:         hsl(var(--border));
+  --color-border-strong:  hsl(var(--input));
+  --color-text:           hsl(var(--foreground));
+  --color-text-muted:     hsl(var(--muted-foreground));
+  --color-text-subtle:    hsl(0 0% 45%);
   --color-success:        #34d399;
   --color-success-bg:     #072c1f;
   --color-warn:           #fbbf24;
   --color-warn-bg:        #302303;
-  --color-error:          #f87171;
-  --color-error-bg:       #300303;
+  --color-error:          hsl(var(--destructive));
+  --color-error-bg:       hsl(var(--destructive) / 0.15);
   --color-info:           #93c5fd;
   --color-info-bg:        #1e2a3d;
 
-  --shadow-1: 0 1px 2px 0 rgba(0,0,0,.4);
-  --shadow-2: 0 4px 12px -2px rgba(0,0,0,.55), 0 2px 4px -1px rgba(0,0,0,.4);
+  --shadow-1: 0 1px 2px 0 hsl(0 0% 0% / 0.4);
+  --shadow-2: 0 4px 12px -2px hsl(0 0% 0% / 0.55), 0 2px 4px -1px hsl(0 0% 0% / 0.4);
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; border-color: hsl(var(--border)); }
+
+html {
+  font-size: clamp(0.875rem, 0.75rem + 0.39vw, 1rem);
+  height: 100%;
+  overflow-x: hidden;
+}
 
 html, body, #app {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-weight: 400;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
+h1, h2, h3, h4, h5, h6 { text-transform: uppercase; }
+th { text-transform: uppercase; }
+h1 { letter-spacing: -0.02em; line-height: 0.95; }
+h2 { letter-spacing: -0.01em; line-height: 1.1; }
+h3 { letter-spacing: 0; line-height: 1.2; }
+
 a {
-  color: var(--orbit-primary);
+  color: hsl(var(--primary));
   text-decoration: none;
 }
 a:hover { text-decoration: underline; }
 
+/* Scrollbars — portal thin style */
+* { scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
 button, .btn {
   appearance: none;
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  border-radius: var(--radius);
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-}
-button:hover, .btn:hover { border-color: var(--orbit-primary); }
-button.primary, .btn.primary {
-  background: var(--orbit-primary);
-  border-color: var(--orbit-primary);
-  color: #fff;
-}
-button.primary:hover, .btn.primary:hover { background: var(--orbit-primary-hover); border-color: var(--orbit-primary-hover); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-/* Icon-only buttons (e.g. theme toggle) — square, transparent, restrained hover. */
-button.icon-btn, .btn.icon-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--color-text-muted);
-  padding: 6px;
-  width: 32px;
-  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0 16px;
+  min-height: 40px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+button:hover, .btn:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+button:focus-visible, .btn:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+button.primary, .btn.primary {
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+button.primary:hover, .btn.primary:hover {
+  background: hsl(var(--primary) / 0.9);
+  border-color: hsl(var(--primary) / 0.9);
+  color: hsl(var(--primary-foreground));
+}
+button.secondary, .btn.secondary {
+  background: hsl(var(--secondary));
+  border-color: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+}
+button.secondary:hover, .btn.secondary:hover {
+  background: hsl(var(--secondary) / 0.8);
+}
+button.outline, .btn.outline {
+  background: hsl(var(--background));
+  border-color: hsl(var(--input));
+}
+button.ghost, .btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+button.ghost:hover, .btn.ghost:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+button.destructive, .btn.destructive {
+  background: hsl(var(--destructive));
+  border-color: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+button.destructive:hover, .btn.destructive:hover {
+  background: hsl(var(--destructive) / 0.9);
+}
+button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+
+button.icon-btn, .btn.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: hsl(var(--muted-foreground));
+  padding: 6px;
+  width: 40px;
+  min-height: 40px;
 }
 button.icon-btn:hover, .btn.icon-btn:hover {
-  background: var(--color-bg-hover);
-  border-color: var(--color-border);
-  color: var(--color-text);
+  background: hsl(var(--accent));
+  border-color: transparent;
+  color: hsl(var(--foreground));
 }
-button.icon-btn svg { width: 18px; height: 18px; }
+button.icon-btn svg { width: 16px; height: 16px; }
 
 input, select, textarea {
-  background: var(--color-bg-input);
-  color: var(--color-text);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  font-size: 13px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--input));
+  border-radius: calc(var(--radius) - 2px);
+  padding: 8px 12px;
+  font-size: 0.875rem;
   font-family: inherit;
+  min-height: 40px;
 }
-input:focus, select:focus, textarea:focus { outline: none; border-color: var(--orbit-primary); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.25);
+}
+
+label, .field-label, .section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: hsl(var(--muted-foreground));
+}
 
 .card {
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-1);
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0;
+  box-shadow: none;
   padding: 16px;
+}
+@media (min-width: 640px) {
+  .card {
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-1);
+  }
 }
 
 .pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: 2px 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 0.75rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 .pill.queued     { background: var(--color-info-bg);    color: var(--color-info); }
@@ -198,23 +342,28 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--o
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.875rem;
 }
 th, td {
   text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border);
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border));
 }
-th { font-weight: 600; color: var(--color-text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-tbody tr:hover { background: var(--color-bg-hover); }
+th {
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+tbody tr:hover { background: hsl(var(--accent) / 0.5); }
 
-code, .mono { font-family: var(--font-mono); font-size: 12px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.75rem; }
 
 .h-row    { display: flex; align-items: center; gap: 12px; }
 .h-col    { display: flex; flex-direction: column; gap: 12px; }
 .flex-1   { flex: 1; }
 .gap-sm   { gap: 6px; }
-.muted    { color: var(--color-text-muted); }
+.muted    { color: hsl(var(--muted-foreground)); }
 .subtle   { color: var(--color-text-subtle); }
 .spacer   { flex: 1; }
 .mt-sm { margin-top: 6px; } .mt { margin-top: 12px; } .mt-lg { margin-top: 24px; }
@@ -224,34 +373,39 @@ code, .mono { font-family: var(--font-mono); font-size: 12px; }
   background: var(--color-error-bg);
   color: var(--color-error);
   padding: 8px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--color-error);
-  font-size: 13px;
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid hsl(var(--destructive) / 0.35);
+  font-size: 0.875rem;
 }
 .info-box {
   background: var(--color-info-bg);
   color: var(--color-info);
   padding: 8px 12px;
-  border-radius: var(--radius);
-  font-size: 13px;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 0.875rem;
 }
 .success-box {
   background: var(--color-success-bg);
   color: var(--color-success);
   padding: 8px 12px;
-  border-radius: var(--radius);
-  font-size: 13px;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 0.875rem;
 }
 
 .progress {
   width: 100%;
   height: 6px;
-  background: var(--color-border);
+  background: hsl(var(--border));
   border-radius: 999px;
   overflow: hidden;
 }
 .progress > .fill {
   height: 100%;
-  background: var(--orbit-primary);
+  background: hsl(var(--primary));
   transition: width 200ms ease-out;
+}
+
+/* App shell helpers */
+.app-shell-main {
+  background: hsl(var(--muted) / 0.3);
 }

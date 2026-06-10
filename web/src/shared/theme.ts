@@ -49,7 +49,9 @@ export function resolveTheme(pref: ThemePref): ResolvedTheme {
 
 function applyTheme(pref: ThemePref): void {
   if (typeof document === 'undefined') return;
-  document.documentElement.dataset.theme = resolveTheme(pref);
+  const resolved = resolveTheme(pref);
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.classList.toggle('dark', resolved === 'dark');
 }
 
 /** User's persisted preference. Bind to this from the toggle component. */

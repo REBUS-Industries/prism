@@ -55,19 +55,27 @@ async function submit() {
   padding: 24px;
   box-sizing: border-box;
   position: relative;
-  background: var(--color-bg);
+  background: hsl(var(--muted) / 0.3);
 }
 .theme-corner { position: absolute; top: 16px; right: 16px; }
 form {
   width: 100%;
-  max-width: 360px;
-  padding: 28px;
+  max-width: 400px;
+  padding: 32px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  box-shadow: var(--shadow-2);
+  gap: 16px;
 }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; margin-bottom: 6px; }
-.brand-logo { width: 32px; height: 32px; object-fit: contain; }
-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--color-text-muted); }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.brand-logo { width: 36px; height: 36px; object-fit: contain; }
+label { display: flex; flex-direction: column; gap: 6px; }
 </style>
