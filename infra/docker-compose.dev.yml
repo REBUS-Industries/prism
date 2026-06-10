@@ -83,8 +83,7 @@ services:
         max-file: "3"
 
   prism-materials:
-    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
-    command: ["node", "dist/server/src/materials-service.js"]
+    image: ghcr.io/rebus-industries/prism-materials-service:latest
     container_name: prism-materials
     restart: unless-stopped
     depends_on:
@@ -115,8 +114,7 @@ services:
         max-file: "3"
 
   prism-visualiser:
-    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
-    command: ["node", "dist/server/src/visualiser-service.js"]
+    image: ghcr.io/rebus-industries/prism-visualiser-service:latest
     container_name: prism-visualiser
     restart: unless-stopped
     depends_on:
@@ -155,8 +153,7 @@ services:
         max-file: "3"
 
   prism-agent:
-    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
-    command: ["node", "dist/server/src/agent-service.js"]
+    image: ghcr.io/rebus-industries/prism-agent-service:latest
     container_name: prism-agent
     restart: unless-stopped
     depends_on:
