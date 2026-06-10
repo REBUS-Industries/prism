@@ -1187,6 +1187,7 @@ export interface DmxModeRef {
 
 export interface FixturePart {
   partId: string;
+  sourceGdtfGeometryId?: string;
   name: string;
   tag: FixturePartTag;
   parentPartId?: string | null;
@@ -1203,18 +1204,53 @@ export interface FixtureBeam {
   beamId: string;
   parentPartId?: string;
   beamType?: string;
+  beamAngle?: number;
+  fieldAngle?: number;
+  luminousFlux?: number;
+  colourTemperature?: number;
   iesAssetId?: string | null;
   metadata: Record<string, unknown>;
 }
 
 export interface MotionAxis {
   motionAxisId: string;
+  sourceGdtfGeometryId?: string;
+  parentPartId?: string;
+  controlledPartId?: string;
   axisType: 'PAN' | 'TILT' | 'ROLL' | 'SPIN' | 'OTHER';
   axisVector: Vec3;
   pivot: Vec3;
   minValue: number;
   maxValue: number;
   defaultValue: number;
+  dmxLinks?: string[];
+}
+
+export interface WheelSlot {
+  slotId: string;
+  slotIndex: number;
+  slotName: string;
+  mediaType: string;
+  imageAssetId?: string | null;
+  dmxFrom?: number;
+  dmxTo?: number;
+}
+
+export interface FixtureWheel {
+  wheelId: string;
+  wheelName: string;
+  wheelType: string;
+  slots: WheelSlot[];
+  dmxLinks: string[];
+}
+
+export interface FixtureModel {
+  modelId: string;
+  sourceGdtfModel?: string;
+  sourceFile?: string;
+  partTag: FixturePartTag;
+  assignedPartIds: string[];
+  metadata: Record<string, unknown>;
 }
 
 export interface FixtureDefinition {
@@ -1222,13 +1258,15 @@ export interface FixtureDefinition {
     manufacturer: string;
     fixtureName: string;
     revision?: string;
+    fixtureTypeId?: string;
+    longName?: string;
     description?: string;
   };
   parts: FixturePart[];
-  models: Array<{ modelId: string; partTag: FixturePartTag; metadata: Record<string, unknown> }>;
+  models: FixtureModel[];
   beams: FixtureBeam[];
   motionRig: MotionAxis[];
-  wheels: unknown[];
+  wheels: FixtureWheel[];
   dmxMapping: Record<string, unknown>;
   metadata: Record<string, unknown>;
 }

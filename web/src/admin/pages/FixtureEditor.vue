@@ -292,6 +292,11 @@ onMounted(() => void reload());
 
           <div class="head-actions">
 
+            <RouterLink
+              :to="{ name: 'fixture-debug', params: { id: fixture.id } }"
+              class="btn-debug"
+            >Debug GDTF 3D</RouterLink>
+
             <button :disabled="saving" class="primary" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button>
 
             <button class="danger" @click="removeFixture">Delete</button>
@@ -564,7 +569,26 @@ onMounted(() => void reload());
 
 .head-meta { margin: 4px 0 0; font-size: 13px; }
 
-.head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.head-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+
+.btn-debug {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn-debug:hover {
+  border-color: var(--orbit-primary);
+  background: var(--orbit-primary-fade);
+  color: var(--orbit-primary);
+}
 
 
 

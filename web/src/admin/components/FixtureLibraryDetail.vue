@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { RouterLink } from 'vue-router';
 import {
   fixturesApi,
   type FixtureDetail,
@@ -9,6 +10,7 @@ import {
 } from '../../shared/api';
 import DmxModePanel from './DmxModePanel.vue';
 import FixtureQuadPreview from './FixtureQuadPreview.vue';
+import { parseWheels } from '../utils/gdtfDebugExport';
 
 const props = defineProps<{
   entry: GdtfShareCatalogEntry | null;
@@ -23,6 +25,8 @@ const emit = defineEmits<{
   delete: [fixture: FixtureListItem];
   'update:selectedRid': [rid: number];
 }>();
+
+const FIXTURE_TYPES = ['Spot', 'Wash', 'Beam', 'Profile', 'Moving Head', 'LED', 'Strobe', 'Other'];
 
 type DetailTab = '3d' | 'overview' | 'dmx' | 'wheels' | 'source' | 'images';
 const activeTab = ref<DetailTab>('3d');
@@ -41,29 +45,50 @@ const previewUrl = computed(() =>
   props.localFixture?.hasPreview ? fixturesApi.previewUrl(props.localFixture.id) : null,
 );
 
+const definition = computed(() => localDetail.value?.definition ?? null);
+
+const wheelRows = computed(() => {
+  if (!definition.value) return [];
+  return parseWheels(definition.value);
+});
+
+const meshRecordCount = computed(() => {
+  if (definition.value) {
+    return definition.value.parts.length + definition.value.models.length;
+  }
+  return props.localFixture?.hasPreview ? 1 : 0;
+});
+
+const hasMetadata = computed(() => {
+  if (definition.value?.metadata && Object.keys(definition.value.metadata).length > 0) return true;
+  return !!(props.entry?.creator || props.entry?.uploader || selectedVersion.value?.creator);
+});
+
 const badges = computed(() => {
   const hasLocal = !!props.localFixture;
   const has3d = props.localFixture?.hasPreview ?? false;
   const hasDmx = (props.entry?.modes?.length ?? 0) > 0
-    || (Array.isArray(localDetail.value?.definition.dmxMapping?.modes)
-      && (localDetail.value!.definition.dmxMapping.modes as unknown[]).length > 0);
-  const hasWheels = (localDetail.value?.definition.wheels.length ?? 0) > 0;
+    || (Array.isArray(definition.value?.dmxMapping?.modes)
+      && (definition.value!.dmxMapping.modes as unknown[]).length > 0);
+  const hasWheels = wheelRows.value.length > 0
+    || (props.entry?.modes?.length ?? 0) > 0;
   return [
     { label: 'Full data', ok: hasLocal },
     { label: '3D', ok: has3d },
     { label: 'DMX', ok: hasDmx },
-    { label: 'Wheels', ok: hasWheels },
+    { label: 'Wheels', ok: hasLocal && wheelRows.value.length > 0 },
+    { label: 'Metadata', ok: hasMetadata },
   ];
 });
 
 const dmxMapping = computed(() => {
-  if (localDetail.value?.definition.dmxMapping) {
-    return localDetail.value.definition.dmxMapping;
+  if (definition.value?.dmxMapping) {
+    return definition.value.dmxMapping;
   }
   const modes = props.entry?.modes ?? [];
   if (!modes.length) return { modes: [] };
   return {
-    modes: modes.map((m, i) => ({
+    modes: modes.map((m) => ({
       name: m.name,
       footprint: m.dmxfootprint,
       channels: [],
@@ -71,10 +96,23 @@ const dmxMapping = computed(() => {
   };
 });
 
-const typeTags = computed(() => {
+const fixtureType = computed(() => {
   const tags = props.localFixture?.tags ?? [];
-  if (tags.length) return tags;
-  return props.entry?.modes?.length ? ['DMX'] : [];
+  const match = tags.find((t) => FIXTURE_TYPES.some((ft) => ft.toLowerCase() === t.toLowerCase()));
+  if (match) return match;
+  if (tags.length) return tags[0];
+  return 'Spot';
+});
+
+const modeSummary = computed(() => {
+  const modes = Array.isArray(dmxMapping.value.modes) ? dmxMapping.value.modes : [];
+  if (!modes.length) return 'No DMX modes';
+  return modes.map((m: Record<string, unknown>) => {
+    const name = String(m.name ?? 'Mode');
+    const ch = m.channels;
+    const fp = m.footprint ?? (Array.isArray(ch) ? ch.length : '?');
+    return `${name} (${fp} ch)`;
+  }).join(' · ');
 });
 
 function formatVersionLabel(v: GdtfShareRevision): string {
@@ -88,6 +126,13 @@ function formatDate(ts?: string): string {
   const n = parseInt(ts, 10);
   if (!n) return ts;
   return new Date(n * 1000).toLocaleDateString();
+}
+
+function wheelKind(mediaType: string): string {
+  if (/color/i.test(mediaType)) return 'Color';
+  if (/gobo/i.test(mediaType)) return 'Gobo';
+  if (/animation/i.test(mediaType)) return 'Animation';
+  return mediaType;
 }
 
 async function loadLocalDetail(id: string): Promise<void> {
@@ -124,10 +169,7 @@ watch(
     <h2 class="section-label">Fixture information</h2>
 
     <p class="detail-name">{{ entry.fixture }}</p>
-    <p class="detail-uuid mono">{{ entry.uuid }}</p>
-    <p v-if="selectedVersion" class="detail-version muted">
-      {{ formatVersionLabel(selectedVersion) }}
-    </p>
+    <p class="detail-sub muted">{{ entry.manufacturer }}</p>
 
     <div class="icon-actions">
       <button type="button" class="icon-action" title="Preview" disabled>👁</button>
@@ -145,6 +187,17 @@ watch(
         title="Edit"
         @click="emit('edit', localFixture.id)"
       >✎</button>
+      <RouterLink
+        v-if="localFixture"
+        :to="{ name: 'fixture-debug', params: { id: localFixture.id } }"
+        class="icon-action debug-link"
+        title="Debug GDTF 3D"
+      >⚙</RouterLink>
+      <span
+        v-else
+        class="icon-action disabled-tip"
+        title="Import fixture first"
+      >⚙</span>
       <button
         v-if="localFixture"
         type="button"
@@ -171,14 +224,12 @@ watch(
       >{{ b.label }}</span>
     </div>
 
-    <dl class="meta-grid">
-      <dt>Brand</dt><dd>{{ entry.manufacturer }}</dd>
-      <dt>ID</dt><dd>{{ selectedVersion?.revision ?? entry.uuid.slice(0, 8) }}</dd>
-      <dt v-if="typeTags.length">Type</dt>
-      <dd v-if="typeTags.length" class="type-tags">
-        <span v-for="tag in typeTags" :key="tag" class="type-tag">{{ tag }}</span>
-      </dd>
-    </dl>
+    <div class="type-block">
+      <label class="type-label">Type</label>
+      <select class="type-select" :value="fixtureType" disabled>
+        <option v-for="t in FIXTURE_TYPES" :key="t" :value="t">{{ t }}</option>
+      </select>
+    </div>
 
     <div class="version-block">
       <label class="version-label">GDTF version / revision</label>
@@ -221,18 +272,30 @@ watch(
         v-if="activeTab === '3d'"
         :preview-url="previewUrl"
         :fixture-name="entry.fixture"
+        :record-count="meshRecordCount || undefined"
       />
 
       <div v-else-if="activeTab === 'overview'" class="overview-tab">
-        <FixtureQuadPreview :preview-url="previewUrl" :fixture-name="entry.fixture" />
         <dl class="overview-meta">
-          <dt>Manufacturer</dt><dd>{{ entry.manufacturer }}</dd>
-          <dt>Creator</dt><dd>{{ entry.creator ?? '—' }}</dd>
-          <dt>Uploader</dt><dd>{{ entry.uploader ?? '—' }}</dd>
-          <dt>Modes</dt><dd>{{ entry.modes?.length ?? 0 }}</dd>
+          <dt>Brand</dt>
+          <dd>{{ definition?.fixtureInformation.manufacturer ?? entry.manufacturer }}</dd>
+          <dt>Fixture type</dt>
+          <dd>{{ fixtureType }}</dd>
+          <dt>Revision</dt>
+          <dd>{{ definition?.fixtureInformation.revision ?? selectedVersion?.revision ?? '—' }}</dd>
+          <dt>Creator</dt>
+          <dd>{{ entry.creator ?? selectedVersion?.creator ?? '—' }}</dd>
+          <dt>Modes</dt>
+          <dd>{{ modeSummary }}</dd>
           <dt v-if="localFixture">Local status</dt>
           <dd v-if="localFixture">{{ localFixture.status }}</dd>
         </dl>
+        <div class="overview-badges">
+          <span v-for="b in badges.filter((x) => x.ok)" :key="b.label" class="meta-pill">{{ b.label }}</span>
+        </div>
+        <p v-if="definition?.fixtureInformation.description" class="desc muted">
+          {{ definition.fixtureInformation.description }}
+        </p>
       </div>
 
       <DmxModePanel
@@ -243,24 +306,86 @@ watch(
         compact
       />
 
-      <div v-else-if="activeTab === 'wheels'" class="stub-tab muted">
-        <template v-if="localDetail?.definition.wheels.length">
-          {{ localDetail.definition.wheels.length }} wheel(s) defined in local fixture.
+      <div v-else-if="activeTab === 'wheels'" class="wheels-tab">
+        <template v-if="localDetail && wheelRows.length">
+          <div v-for="wheel in wheelRows" :key="wheel.wheelId" class="wheel-card">
+            <header class="wheel-head">
+              <h4>{{ wheel.wheelName }}</h4>
+              <span class="wheel-type-pill">{{ wheel.wheelType }}</span>
+            </header>
+            <table class="wheel-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Slot</th>
+                  <th>Type</th>
+                  <th>DMX</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="slot in wheel.slots" :key="`${wheel.wheelId}-${slot.slotIndex}`">
+                  <td class="mono">{{ slot.slotIndex }}</td>
+                  <td>{{ slot.slotName }}</td>
+                  <td><span class="slot-pill" :class="wheelKind(slot.mediaType).toLowerCase()">{{ wheelKind(slot.mediaType) }}</span></td>
+                  <td class="mono muted">
+                    <template v-if="slot.dmxFrom != null">{{ slot.dmxFrom }}<template v-if="slot.dmxTo != null">–{{ slot.dmxTo }}</template></template>
+                    <template v-else>—</template>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </template>
-        <template v-else>Wheel data available after download.</template>
+        <template v-else-if="localDetail">
+          <p class="muted">No wheels defined in this fixture.</p>
+        </template>
+        <template v-else>
+          <p class="muted">
+            {{ entry.modes?.length ?? 0 }} DMX mode(s) in catalog.
+            Download fixture to view color and gobo wheels.
+          </p>
+        </template>
       </div>
 
-      <div v-else-if="activeTab === 'source'" class="stub-tab">
+      <div v-else-if="activeTab === 'source'" class="source-tab">
         <dl class="overview-meta">
-          <dt>UUID</dt><dd class="mono">{{ entry.uuid }}</dd>
-          <dt>Creator</dt><dd>{{ entry.creator ?? '—' }}</dd>
-          <dt v-if="localFixture">Source hash</dt>
-          <dd v-if="localFixture" class="mono">{{ localFixture.sourceGdtfHash?.slice(0, 24) ?? '—' }}</dd>
+          <dt>UUID</dt>
+          <dd class="mono">{{ entry.uuid }}</dd>
+          <dt>Hash</dt>
+          <dd class="mono">{{ localFixture?.sourceGdtfHash ?? '—' }}</dd>
+          <dt>File size</dt>
+          <dd>
+            <template v-if="selectedVersion?.filesize">
+              {{ (selectedVersion.filesize / 1024 / 1024).toFixed(2) }} MB
+            </template>
+            <template v-else>—</template>
+          </dd>
+          <dt>Creator</dt>
+          <dd>{{ entry.creator ?? selectedVersion?.creator ?? '—' }}</dd>
+          <dt>Uploader</dt>
+          <dd>{{ entry.uploader ?? selectedVersion?.uploader ?? '—' }}</dd>
         </dl>
+        <section v-if="entry.versions.length" class="revision-list">
+          <h4 class="sub-label">Revisions</h4>
+          <ul>
+            <li v-for="v in entry.versions" :key="v.rid" class="revision-item">
+              <span class="mono">rid {{ v.rid }}</span>
+              <span>{{ formatVersionLabel(v) }}</span>
+              <span v-if="v.filesize" class="muted">{{ (v.filesize / 1024 / 1024).toFixed(1) }} MB</span>
+            </li>
+          </ul>
+        </section>
       </div>
 
-      <div v-else class="stub-tab muted">
-        Photo enrichment coming soon.
+      <div v-else class="images-tab">
+        <div v-if="previewUrl" class="thumb-wrap">
+          <FixtureQuadPreview :preview-url="previewUrl" :fixture-name="entry.fixture" />
+          <p class="muted small">3D preview available — product photos not linked.</p>
+        </div>
+        <p class="enrich-msg muted">
+          Product photos not available for this entry.
+          Use <strong>Enrich missing photos</strong> in the library toolbar when catalog images are linked.
+        </p>
       </div>
     </div>
 
@@ -289,13 +414,7 @@ watch(
   font-weight: 700;
   line-height: 1.25;
 }
-.detail-uuid {
-  margin: 0;
-  font-size: 10px;
-  word-break: break-all;
-  color: var(--color-text-subtle);
-}
-.detail-version { margin: 0; font-size: 12px; }
+.detail-sub { margin: 0; font-size: 12px; }
 .mono { font-family: var(--font-mono); }
 
 .icon-actions {
@@ -314,10 +433,17 @@ watch(
   background: var(--color-bg);
   font-size: 14px;
   cursor: pointer;
+  text-decoration: none;
+  color: inherit;
 }
 .icon-action:hover:not(:disabled) { border-color: var(--orbit-primary); }
 .icon-action.danger:hover:not(:disabled) { border-color: var(--color-error); }
-.icon-action:disabled { opacity: 0.4; cursor: not-allowed; }
+.icon-action:disabled,
+.disabled-tip {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.debug-link:hover { background: var(--orbit-primary-fade); }
 
 .download-primary {
   width: 100%;
@@ -345,29 +471,10 @@ watch(
   letter-spacing: 0.03em;
 }
 .status-badge.ok { background: var(--color-success-bg); color: var(--color-success); }
-.status-badge.missing { background: var(--color-error-bg); color: var(--color-error); }
+.status-badge.missing { background: var(--color-warn-bg); color: var(--color-warn); }
 
-.meta-grid {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 4px 8px;
-  margin: 0;
-  font-size: 12px;
-}
-.meta-grid dt { color: var(--color-text-muted); margin: 0; }
-.meta-grid dd { margin: 0; }
-.type-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.type-tag {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--orbit-primary-fade);
-  color: var(--orbit-primary);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.version-block { margin-top: 4px; }
+.type-block { margin-top: 2px; }
+.type-label,
 .version-label {
   display: block;
   font-size: 10px;
@@ -377,6 +484,7 @@ watch(
   color: var(--color-text-muted);
   margin-bottom: 4px;
 }
+.type-select,
 .version-select {
   width: 100%;
   padding: 8px 10px;
@@ -386,6 +494,7 @@ watch(
   color: var(--color-text);
   font-size: 12px;
 }
+.version-block { margin-top: 4px; }
 .version-meta { margin: 4px 0 0; font-size: 11px; }
 
 .detail-tabs {
@@ -428,6 +537,122 @@ watch(
 }
 .overview-meta dt { color: var(--color-text-muted); margin: 0; }
 .overview-meta dd { margin: 0; }
-.stub-tab { padding: 16px 0; font-size: 13px; }
+.overview-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.meta-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--orbit-primary-fade);
+  color: var(--orbit-primary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.desc { margin: 0; font-size: 12px; line-height: 1.45; }
+
+.wheels-tab { display: flex; flex-direction: column; gap: 12px; }
+.wheel-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.wheel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+}
+.wheel-head h4 { margin: 0; font-size: 13px; }
+.wheel-type-pill {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+}
+.wheel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.wheel-table th,
+.wheel-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+.wheel-table th {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+}
+.slot-pill {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.slot-pill.color { background: #dbeafe; color: #1d4ed8; }
+.slot-pill.gobo { background: #f3e8ff; color: #7c3aed; }
+.slot-pill.animation { background: #fef3c7; color: #b45309; }
+[data-theme="dark"] .slot-pill.color { background: #1e3a5f; color: #93c5fd; }
+[data-theme="dark"] .slot-pill.gobo { background: #3b2667; color: #c4b5fd; }
+
+.source-tab { display: flex; flex-direction: column; gap: 12px; }
+.sub-label {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+.revision-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.revision-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.images-tab { display: flex; flex-direction: column; gap: 12px; }
+.thumb-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--color-bg-elevated);
+}
+.preview-thumb {
+  width: 100%;
+  max-height: 120px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+}
+.enrich-msg {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+}
+.small { font-size: 11px; }
 .loading-hint { font-size: 11px; }
 </style>
