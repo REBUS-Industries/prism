@@ -14,6 +14,7 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { jobsApi, type JobLogLine, type JobSummary } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const props = defineProps<{
   /** The job whose logs we should display.  Pass null to keep the modal closed. */
@@ -177,7 +178,7 @@ onUnmounted(() => {
           <code class="muted">{{ job.id.slice(0, 8) }}</code>
           <span v-if="job.nodeName" class="muted">on <strong>{{ job.nodeName }}</strong></span>
         </div>
-        <button class="icon-btn" type="button" @click="close" title="Close (Esc)">✕</button>
+        <button class="icon-btn" type="button" @click="close" title="Close (Esc)" aria-label="Close"><Icon name="close" :size="18" /></button>
       </header>
 
       <div class="toolbar">
@@ -198,6 +199,7 @@ onUnmounted(() => {
         </label>
         <div class="spacer"></div>
         <button class="link" type="button" @click="copyAll" :disabled="!visible.length">
+          <Icon :name="copied ? 'check' : 'content_copy'" :size="14" />
           {{ copied ? 'Copied!' : 'Copy' }}
         </button>
       </div>
@@ -305,6 +307,9 @@ onUnmounted(() => {
   color: var(--color-text-muted);
 }
 .toolbar .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: transparent;
   border: 1px solid var(--color-border);
   color: var(--color-text);

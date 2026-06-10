@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { keysApi, type ApiKey, type ApiError } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const keys = ref<ApiKey[]>([]);
 const knownScopes = ref<string[]>([]);
@@ -108,7 +109,7 @@ onMounted(async () => {
 <template>
   <div class="h-row">
     <h1 class="flex-1">API keys</h1>
-    <button class="primary" @click="showNew = true">+ New key</button>
+    <button class="primary" @click="showNew = true"><Icon name="add" :size="16" />New key</button>
   </div>
   <p class="muted">
     External <code>/v1/*</code> callers authenticate with these. Plaintext is shown ONCE at creation; we only store the SHA-256 hash.
@@ -161,9 +162,9 @@ onMounted(async () => {
           <td class="muted">{{ k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : 'never' }}</td>
           <td><span class="pill" :class="k.isActive ? 'online' : 'offline'">{{ k.isActive ? 'active' : 'disabled' }}</span></td>
           <td>
-            <button @click="startEdit(k)">Edit scopes</button>
-            <button @click="toggle(k)" style="margin-left: 4px;">{{ k.isActive ? 'Disable' : 'Enable' }}</button>
-            <button @click="remove(k)" style="margin-left: 4px;">Delete</button>
+            <button @click="startEdit(k)"><Icon name="tune" :size="14" />Edit scopes</button>
+            <button @click="toggle(k)" style="margin-left: 4px;"><Icon :name="k.isActive ? 'block' : 'check_circle'" :size="14" />{{ k.isActive ? 'Disable' : 'Enable' }}</button>
+            <button @click="remove(k)" style="margin-left: 4px;"><Icon name="delete" :size="14" />Delete</button>
           </td>
         </tr>
         <tr v-if="!keys.length"><td colspan="7" class="muted" style="text-align:center; padding: 24px;">no keys</td></tr>

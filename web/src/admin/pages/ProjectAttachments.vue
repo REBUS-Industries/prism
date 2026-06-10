@@ -20,6 +20,7 @@ import {
   type ApiError,
   type ProjectAttachment,
 } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const target = ref<'prod' | 'dev'>('prod');
 const projectId = ref('');
@@ -224,8 +225,8 @@ function downloadHref(att: ProjectAttachment): string {
               <span v-else class="muted">admin / session</span>
             </td>
             <td class="row-actions">
-              <a :href="downloadHref(a)" class="btn btn-sm" target="_blank" rel="noopener">Download</a>
-              <button class="btn btn-sm btn-danger" @click="removeAttachment(a)">Delete</button>
+              <a :href="downloadHref(a)" class="btn btn-sm" target="_blank" rel="noopener"><Icon name="download" :size="14" />Download</a>
+              <button class="btn btn-sm btn-danger" @click="removeAttachment(a)"><Icon name="delete" :size="14" />Delete</button>
             </td>
           </tr>
         </tbody>
@@ -293,7 +294,7 @@ function downloadHref(att: ProjectAttachment): string {
 .btn {
   padding: 4px 10px; border-radius: var(--radius); cursor: pointer;
   border: 1px solid var(--color-border); background: var(--color-bg-elevated); color: var(--color-text);
-  font-size: 13px; text-decoration: none; display: inline-block;
+  font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; gap: 5px;
 }
 .btn:hover:not(:disabled) { background: var(--color-bg); }
 .btn-sm { padding: 3px 8px; font-size: 12px; }

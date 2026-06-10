@@ -8,6 +8,7 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { texturesApi, type ApiError, type Texture } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ select: [texture: Texture]; close: [] }>();
@@ -108,7 +109,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
     <div class="picker card">
       <header class="picker-head">
         <h2>Pick a texture</h2>
-        <button class="icon-btn" type="button" aria-label="Close" @click="emit('close')">×</button>
+        <button class="icon-btn" type="button" aria-label="Close" @click="emit('close')"><Icon name="close" :size="18" /></button>
       </header>
 
       <div class="picker-toolbar">
@@ -120,6 +121,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
           @input="onSearchInput"
         />
         <button class="primary" type="button" :disabled="uploading" @click="fileInput?.click()">
+          <Icon name="upload" :size="16" />
           {{ uploading ? 'Uploading…' : 'Upload New' }}
         </button>
         <input

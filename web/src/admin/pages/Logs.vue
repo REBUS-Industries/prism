@@ -25,6 +25,7 @@ import {
   type ServerApiLogCategory,
   type ServerApiLogLevel,
 } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 type RowSource = 'browser' | 'server';
 type Level = ServerApiLogLevel;
@@ -249,10 +250,10 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 
       <div class="actions">
         <button type="button" :class="{ active: paused }" @click="pause">
-          {{ paused ? 'Resume' : 'Pause' }}
+          <Icon :name="paused ? 'play_arrow' : 'pause'" :size="14" />{{ paused ? 'Resume' : 'Pause' }}
         </button>
-        <button type="button" @click="downloadJson" :disabled="!visible.length">Download JSON</button>
-        <button type="button" class="danger" @click="clearAll">Clear</button>
+        <button type="button" @click="downloadJson" :disabled="!visible.length"><Icon name="download" :size="14" />Download JSON</button>
+        <button type="button" class="danger" @click="clearAll"><Icon name="delete_sweep" :size="14" />Clear</button>
       </div>
     </div>
 
@@ -371,6 +372,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 
 .actions { display: flex; gap: 6px; margin-left: auto; }
 .actions button {
+  display: inline-flex; align-items: center; gap: 5px;
   font: inherit; font-size: 12px; padding: 6px 12px;
   background: var(--color-bg-input);
   border: 1px solid var(--color-border); border-radius: var(--radius-sm);

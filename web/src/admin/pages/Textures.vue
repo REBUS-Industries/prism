@@ -16,6 +16,7 @@ import {
   type Texture,
   type TextureInUseError,
 } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const PAGE = 36;
 
@@ -161,7 +162,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   <div class="h-row">
     <h1 class="flex-1">Textures</h1>
     <button class="primary" :disabled="uploading" @click="fileInput?.click()">
-      {{ uploading ? 'Uploading…' : '+ Upload textures' }}
+      <Icon name="upload" :size="16" />
+      {{ uploading ? 'Uploading…' : 'Upload textures' }}
     </button>
     <input
       ref="fileInput"
@@ -225,7 +227,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
         <input v-model="editName" class="edit-input" placeholder="Display name" />
         <input v-model="editTags" class="edit-input" placeholder="tag1, tag2" />
         <div class="card-actions">
-          <button class="primary flex-1" @click="saveEdit(t)">Save</button>
+          <button class="primary flex-1" @click="saveEdit(t)"><Icon name="save" :size="14" />Save</button>
           <button class="flex-1" @click="cancelEdit">Cancel</button>
         </div>
       </template>
@@ -240,8 +242,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
           {{ t.referenceCount === 0 ? 'Unused' : `Used by ${t.referenceCount} material${t.referenceCount === 1 ? '' : 's'}` }}
         </div>
         <div class="card-actions">
-          <button class="flex-1" @click="startEdit(t)">Edit</button>
-          <button class="flex-1 danger" @click="removeTexture(t)">Delete</button>
+          <button class="flex-1" @click="startEdit(t)"><Icon name="edit" :size="14" />Edit</button>
+          <button class="flex-1 danger" @click="removeTexture(t)"><Icon name="delete" :size="14" />Delete</button>
         </div>
       </template>
     </div>

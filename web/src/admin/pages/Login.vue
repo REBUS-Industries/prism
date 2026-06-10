@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { adminApi, type ApiError } from '../../shared/api';
 import ThemeToggle from '../../shared/ThemeToggle.vue';
+import Icon from '../../shared/Icon.vue';
 
 const router = useRouter();
 const username = ref('');
@@ -39,7 +40,7 @@ async function submit() {
         <input v-model="password" type="password" autocomplete="current-password" required />
       </label>
       <div v-if="error" class="error-box">{{ error }}</div>
-      <button class="primary" :disabled="submitting" type="submit">{{ submitting ? 'Signing in…' : 'Sign in' }}</button>
+      <button class="primary" :disabled="submitting" type="submit"><Icon name="login" :size="16" />{{ submitting ? 'Signing in…' : 'Sign in' }}</button>
     </form>
   </div>
 </template>

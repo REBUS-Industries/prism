@@ -15,6 +15,7 @@ import {
   type ApiError,
   type MaterialListItem,
 } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const router = useRouter();
 const PAGE = 36;
@@ -161,8 +162,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 <template>
   <div class="h-row">
     <h1 class="flex-1">Materials</h1>
-    <button class="primary" @click="showCreate = true">+ Blank material</button>
-    <button :disabled="importing" @click="zipInput?.click()">Import Megascans ZIP</button>
+    <button class="primary" @click="showCreate = true"><Icon name="add" :size="16" />Blank material</button>
+    <button :disabled="importing" @click="zipInput?.click()"><Icon name="folder_zip" :size="16" />Import Megascans ZIP</button>
     <input
       ref="zipInput"
       type="file"
@@ -228,7 +229,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
         <span class="pill" :class="m.slotsFilled === m.slotsTotal ? 'online' : ''">
           {{ m.slotsFilled }}/{{ m.slotsTotal }} slots
         </span>
-        <button class="danger" @click.stop="removeMaterial(m)">Delete</button>
+        <button class="danger" @click.stop="removeMaterial(m)"><Icon name="delete" :size="14" />Delete</button>
       </div>
     </div>
   </div>

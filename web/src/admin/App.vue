@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { adminApi, healthApi } from '../shared/api';
 import ThemeToggle from '../shared/ThemeToggle.vue';
+import Icon from '../shared/Icon.vue';
 import { adminWs } from '../shared/ws';
 
 const router = useRouter();
@@ -41,22 +42,22 @@ async function logout() {
         PRISM
       </div>
       <nav>
-        <RouterLink :to="{ name: 'dashboard'    }">Dashboard</RouterLink>
-        <RouterLink :to="{ name: 'workstations' }">Workstations</RouterLink>
-        <RouterLink :to="{ name: 'pipeline'     }">Pipeline</RouterLink>
-        <RouterLink :to="{ name: 'visualiser'   }">Visualiser</RouterLink>
-        <RouterLink :to="{ name: 'project-attachments' }" class="nav-sub">↳ Project attachments</RouterLink>
-        <RouterLink :to="{ name: 'materials'    }">Materials</RouterLink>
-        <RouterLink :to="{ name: 'textures'     }" class="nav-sub">↳ Textures</RouterLink>
-        <RouterLink :to="{ name: 'fixtures'     }">Fixtures</RouterLink>
-        <RouterLink :to="{ name: 'fixture-import' }" class="nav-sub">↳ Import GDTF</RouterLink>
-        <RouterLink :to="{ name: 'keys'         }">API keys</RouterLink>
-        <RouterLink :to="{ name: 'webhooks'     }">Webhooks</RouterLink>
-        <RouterLink :to="{ name: 'settings'     }">Settings</RouterLink>
-        <RouterLink :to="{ name: 'users'        }">Users</RouterLink>
-        <RouterLink :to="{ name: 'analytics'    }">Analytics</RouterLink>
-        <RouterLink :to="{ name: 'logs'         }">Logs</RouterLink>
-        <a href="/docs/" target="_blank" rel="noopener" class="external">API docs ↗</a>
+        <RouterLink :to="{ name: 'dashboard'    }"><Icon name="dashboard" :size="18" />Dashboard</RouterLink>
+        <RouterLink :to="{ name: 'workstations' }"><Icon name="desktop_windows" :size="18" />Workstations</RouterLink>
+        <RouterLink :to="{ name: 'pipeline'     }"><Icon name="account_tree" :size="18" />Pipeline</RouterLink>
+        <RouterLink :to="{ name: 'visualiser'   }"><Icon name="view_in_ar" :size="18" />Visualiser</RouterLink>
+        <RouterLink :to="{ name: 'project-attachments' }" class="nav-sub"><Icon name="attachment" :size="16" />Project attachments</RouterLink>
+        <RouterLink :to="{ name: 'materials'    }"><Icon name="palette" :size="18" />Materials</RouterLink>
+        <RouterLink :to="{ name: 'textures'     }" class="nav-sub"><Icon name="texture" :size="16" />Textures</RouterLink>
+        <RouterLink :to="{ name: 'fixtures'     }"><Icon name="lightbulb" :size="18" />Fixtures</RouterLink>
+        <RouterLink :to="{ name: 'fixture-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import GDTF</RouterLink>
+        <RouterLink :to="{ name: 'keys'         }"><Icon name="key" :size="18" />API keys</RouterLink>
+        <RouterLink :to="{ name: 'webhooks'     }"><Icon name="webhook" :size="18" />Webhooks</RouterLink>
+        <RouterLink :to="{ name: 'settings'     }"><Icon name="settings" :size="18" />Settings</RouterLink>
+        <RouterLink :to="{ name: 'users'        }"><Icon name="group" :size="18" />Users</RouterLink>
+        <RouterLink :to="{ name: 'analytics'    }"><Icon name="analytics" :size="18" />Analytics</RouterLink>
+        <RouterLink :to="{ name: 'logs'         }"><Icon name="receipt_long" :size="18" />Logs</RouterLink>
+        <a href="/docs/" target="_blank" rel="noopener" class="external"><Icon name="menu_book" :size="16" />API docs<Icon name="open_in_new" :size="14" class="external-tail" /></a>
       </nav>
       <div class="user-box">
         <div class="muted" style="font-size: 11px;">Signed in as</div>
@@ -113,6 +114,9 @@ aside {
 
 nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px;
   border-radius: calc(var(--radius) - 2px);
   color: hsl(var(--sidebar-foreground));
@@ -123,6 +127,7 @@ nav a {
   letter-spacing: 0.03em;
   transition: background-color 120ms ease, color 120ms ease;
 }
+nav a .external-tail { margin-left: auto; opacity: 0.7; }
 nav a:hover {
   background: hsl(var(--sidebar-accent));
   color: hsl(var(--sidebar-accent-foreground));

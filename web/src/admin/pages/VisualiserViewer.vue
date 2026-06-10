@@ -15,6 +15,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, RouterLink } from 'vue-router';
 import { visualiserApi, type ApiError, type VisualiserRun, type VisualiserRunLogLine, type VisualiserShareTier } from '../../shared/api';
 import VisualiserStage from '../../shared/VisualiserStage.vue';
+import Icon from '../../shared/Icon.vue';
 
 const route = useRoute();
 const runId = computed(() => String(route.params.runId ?? ''));
@@ -120,7 +121,7 @@ async function stopRun() {
   <section class="viewer">
     <header class="viewer-head">
       <div>
-        <RouterLink :to="{ name: 'visualiser' }" class="back">← Back to streams</RouterLink>
+        <RouterLink :to="{ name: 'visualiser' }" class="back"><Icon name="arrow_back" :size="14" />Back to streams</RouterLink>
         <h1>Visualiser <code class="mono">{{ runId.slice(0, 8) }}</code></h1>
         <p class="muted small">
           <template v-if="run">

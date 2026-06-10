@@ -34,6 +34,7 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import { settingsApi, type JobSummary, type PipelineTopology, type Workstation } from '../../shared/api';
 import { workstationWebUiHost, workstationWebUiUrl } from '../../shared/workstationUrl';
+import Icon from '../../shared/Icon.vue';
 
 interface NodePos { x: number; y: number; }
 
@@ -382,7 +383,7 @@ function onNodeDragStop(_evt: NodeDragEvent) {
               ? `Opens ${nodeProps.data.webUiUrl} in a new tab — requires LAN DNS for ${nodeProps.data.host}.`
               : 'Agent offline'"
             @click.stop
-          >Web UI ↗</a>
+          >Web UI<Icon name="open_in_new" :size="11" /></a>
         </div>
         <Handle type="source" :position="Position.Right" :connectable="false" />
       </template>
@@ -503,7 +504,9 @@ function onNodeDragStop(_evt: NodeDragEvent) {
 .ws-node-label { font-weight: 600; }
 .ws-node-sub   { font-size: 10px; opacity: 0.85; margin-top: 2px; }
 .ws-node-link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   margin-top: 4px;
   font-size: 10px;
   font-weight: 600;

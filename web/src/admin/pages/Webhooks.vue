@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { webhooksApi, type Webhook, type ApiError } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const hooks = ref<Webhook[]>([]);
 const showNew = ref(false);
@@ -49,7 +50,7 @@ onMounted(refresh);
 <template>
   <div class="h-row">
     <h1 class="flex-1">Webhooks</h1>
-    <button class="primary" @click="showNew = true">+ New webhook</button>
+    <button class="primary" @click="showNew = true"><Icon name="add" :size="16" />New webhook</button>
   </div>
   <p class="muted">PRISM POSTs <code>{ event, ts, job }</code> on <code>job.complete</code> and <code>job.failed</code>. Signed with HMAC-SHA256 in <code>x-prism-signature</code> when a secret is set.</p>
 
@@ -79,9 +80,9 @@ onMounted(refresh);
           <td><code>{{ h.events.join(' ') }}</code></td>
           <td><span class="pill" :class="h.isActive ? 'online' : 'offline'">{{ h.isActive ? 'active' : 'paused' }}</span></td>
           <td>
-            <button @click="toggle(h)">{{ h.isActive ? 'Pause' : 'Resume' }}</button>
-            <button @click="regenerate(h)" style="margin-left: 4px;">Regen secret</button>
-            <button @click="remove(h)" style="margin-left: 4px;">Delete</button>
+            <button @click="toggle(h)"><Icon :name="h.isActive ? 'pause' : 'play_arrow'" :size="14" />{{ h.isActive ? 'Pause' : 'Resume' }}</button>
+            <button @click="regenerate(h)" style="margin-left: 4px;"><Icon name="key" :size="14" />Regen secret</button>
+            <button @click="remove(h)" style="margin-left: 4px;"><Icon name="delete" :size="14" />Delete</button>
           </td>
         </tr>
         <tr v-if="!hooks.length"><td colspan="5" class="muted" style="text-align:center; padding: 24px;">no webhooks</td></tr>

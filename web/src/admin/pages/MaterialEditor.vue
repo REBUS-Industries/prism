@@ -12,6 +12,7 @@ import { RouterLink, useRouter } from 'vue-router';
 import PbrNodeGraph from '../components/PbrNodeGraph.vue';
 import GlbViewer from '../components/GlbViewer.vue';
 import ParamSlider from '../components/ParamSlider.vue';
+import Icon from '../../shared/Icon.vue';
 import {
   materialsApi,
   texturesApi,
@@ -215,18 +216,18 @@ onBeforeUnmount(() => {
 
     <div v-else-if="error" class="error-box">
       {{ error }}
-      <div class="mt-sm"><RouterLink :to="{ name: 'materials' }">← Back to materials</RouterLink></div>
+      <div class="mt-sm"><RouterLink :to="{ name: 'materials' }" class="back-link"><Icon name="arrow_back" :size="14" />Back to materials</RouterLink></div>
     </div>
 
     <template v-else-if="material">
       <header class="topbar">
-        <RouterLink :to="{ name: 'materials' }" class="back" title="Back to materials">←</RouterLink>
+        <RouterLink :to="{ name: 'materials' }" class="back" title="Back to materials" aria-label="Back to materials"><Icon name="arrow_back" :size="18" /></RouterLink>
         <input v-model="name" class="title-input flex-1" placeholder="Material name" @keyup.enter="save" />
         <button class="primary" :disabled="saving || !name.trim()" @click="save">
-          {{ saving ? 'Saving…' : 'Save' }}
+          <Icon name="save" :size="16" />{{ saving ? 'Saving…' : 'Save' }}
         </button>
-        <button @click="exportZip">Export ZIP</button>
-        <button class="danger" @click="remove">Delete</button>
+        <button @click="exportZip"><Icon name="download" :size="16" />Export ZIP</button>
+        <button class="danger" @click="remove"><Icon name="delete" :size="16" />Delete</button>
       </header>
 
       <div v-if="saveError" class="error-box">{{ saveError }}</div>
@@ -265,7 +266,7 @@ onBeforeUnmount(() => {
             <div class="meta-foot">
               <span class="muted small">{{ material.slotsFilled }}/{{ material.slotsTotal }} slots filled</span>
               <button class="primary" :disabled="saving || !name.trim()" @click="save">
-                {{ saving ? 'Saving…' : 'Save' }}
+                <Icon name="save" :size="16" />{{ saving ? 'Saving…' : 'Save' }}
               </button>
             </div>
           </div>

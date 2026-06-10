@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import type { JobSummary } from '../../shared/api';
 import { adminApi } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const props = defineProps<{ jobs: JobSummary[] }>();
 const emit = defineEmits<{
@@ -86,7 +87,7 @@ async function handleCancel(id: string) {
             :disabled="cancellingId === j.id"
             :title="cancellingId === j.id ? 'Cancelling…' : 'Cancel job'"
             @click.stop="handleCancel(j.id)"
-          >{{ cancellingId === j.id ? '…' : '✕' }}</button>
+          ><span v-if="cancellingId === j.id">…</span><Icon v-else name="close" :size="14" /></button>
         </td>
       </tr>
       <tr v-if="!sorted.length">

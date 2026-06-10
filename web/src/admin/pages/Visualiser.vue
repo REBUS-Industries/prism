@@ -12,6 +12,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import OrbitPicker from '../../shared/OrbitPicker.vue';
+import Icon from '../../shared/Icon.vue';
 import {
   orbitApi,
   visualiserApi,
@@ -264,7 +265,7 @@ onUnmounted(() => {
           <code>canVisualise = true</code> workstations.
         </p>
       </div>
-      <button class="btn btn-primary" @click="openStartModal">+ Start new stream</button>
+      <button class="btn btn-primary" @click="openStartModal"><Icon name="add" :size="16" />Start new stream</button>
     </header>
 
     <div v-if="errorMsg" class="alert err">{{ errorMsg }}</div>
@@ -357,7 +358,7 @@ onUnmounted(() => {
       <div class="modal">
         <header>
           <h2>Start visualiser stream</h2>
-          <button class="btn-close" :disabled="starting" @click="closeStartModal">×</button>
+          <button class="btn-close" :disabled="starting" @click="closeStartModal" aria-label="Close"><Icon name="close" :size="20" /></button>
         </header>
 
         <div class="form">
@@ -413,7 +414,7 @@ onUnmounted(() => {
         <footer>
           <button class="btn" :disabled="starting" @click="closeStartModal">Cancel</button>
           <button class="btn btn-primary" :disabled="!canStart" @click="submitStart">
-            {{ starting ? 'Starting…' : 'Start stream' }}
+            <Icon name="play_arrow" :size="16" />{{ starting ? 'Starting…' : 'Start stream' }}
           </button>
         </footer>
       </div>

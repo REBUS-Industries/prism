@@ -11,6 +11,7 @@ import {
 } from '../../shared/api';
 import { adminWs } from '../../shared/ws';
 import { workstationWebUiHost, workstationWebUiUrl } from '../../shared/workstationUrl';
+import Icon from '../../shared/Icon.vue';
 
 const rows = ref<Workstation[]>([]);
 const loading = ref(true);
@@ -319,14 +320,14 @@ onUnmounted(() => {
       <div v-if="agentInfo?.available">
         <div class="h-row gap-sm" style="flex-wrap: wrap; align-items: center;">
           <a :href="workstationsApi.agentDownloadUrl()" class="btn primary" download>
-            ⇩ Download {{ agentInfo.version ?? 'installer' }}
+            <Icon name="download" :size="16" />Download {{ agentInfo.version ?? 'installer' }}
           </a>
           <a
             :href="workstationsApi.releasesPageUrl"
             class="btn"
             target="_blank"
             rel="noopener noreferrer"
-          >View on GitHub ↗</a>
+          >View on GitHub<Icon name="open_in_new" :size="13" /></a>
         </div>
         <p class="muted small install-note">
           Run the downloaded <code>.exe</code> on each workstation as
@@ -457,19 +458,19 @@ onUnmounted(() => {
                   rel="noopener noreferrer"
                   class="btn btn-small"
                   :title="`Opens ${webUiUrl(w)} in a new tab — requires LAN DNS for ${webUiHost(w)}.`"
-                >Open Web UI ↗</a>
+                >Open Web UI<Icon name="open_in_new" :size="13" /></a>
                 <button
                   class="btn-small"
                   :disabled="!w.online || isLifecycleBusy(w, 'restart')"
                   :title="w.online ? `Restart agent on ${w.nodeName}` : 'Agent offline'"
                   @click="restartAgent(w)"
-                >Restart</button>
+                ><Icon name="restart_alt" :size="14" />Restart</button>
                 <button
                   class="primary btn-small"
                   :disabled="!w.online || isLifecycleBusy(w, 'update')"
                   :title="w.online ? `Update agent on ${w.nodeName} to the latest release` : 'Agent offline'"
                   @click="updateAgentBuild(w)"
-                >Update</button>
+                ><Icon name="upgrade" :size="14" />Update</button>
                 <select
                   v-if="w.canVisualise"
                   class="template-version"
@@ -492,11 +493,11 @@ onUnmounted(() => {
                   :disabled="!w.online || isLifecycleBusy(w, 'pullTemplate')"
                   :title="w.online ? `Pull the selected UE template version onto ${w.nodeName} (connector merged in)` : 'Agent offline'"
                   @click="pullTemplate(w)"
-                >Pull template</button>
+                ><Icon name="cloud_download" :size="14" />Pull template</button>
                 <button class="btn-small" @click="toggleEnabled(w)">
-                  {{ w.isEnabled ? 'Disable' : 'Enable' }}
+                  <Icon :name="w.isEnabled ? 'block' : 'check_circle'" :size="14" />{{ w.isEnabled ? 'Disable' : 'Enable' }}
                 </button>
-                <button class="btn-small" @click="remove(w)">Delete</button>
+                <button class="btn-small" @click="remove(w)"><Icon name="delete" :size="14" />Delete</button>
               </div>
               <span
                 v-if="lifecycleStatus.get(w.id)"
@@ -536,7 +537,7 @@ h2 { font-size: 14px; margin: 0; letter-spacing: 0.04em; text-transform: upperca
   line-height: 1.5;
 }
 
-a.btn { display: inline-block; text-decoration: none; }
+a.btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
 
 /* ------------------------------------------------------------ role pills */
 .role-pills {
@@ -636,6 +637,7 @@ button.role-pill.role-busy {
 .btn-small {
   padding: 3px 8px;
   font-size: 12px;
+  gap: 5px;
 }
 a.btn-small { text-decoration: none; }
 

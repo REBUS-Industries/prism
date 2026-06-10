@@ -4,6 +4,7 @@ import { convertApi, fixturesApi, jobsApi, type ApiError, type JobSummary, type 
 import OrbitPicker from '../shared/OrbitPicker.vue';
 import MvrFixtureMapModal from '../shared/MvrFixtureMapModal.vue';
 import ThemeToggle from '../shared/ThemeToggle.vue';
+import Icon from '../shared/Icon.vue';
 import LayerPicker from './LayerPicker.vue';
 
 const file = ref<File | null>(null);
@@ -305,7 +306,7 @@ const showLayerPicker = computed(() =>
 
     <footer class="page-footer muted">
       Powered by PRISM.
-      <a href="/docs/" target="_blank" rel="noopener">API reference ↗</a>
+      <a href="/docs/" target="_blank" rel="noopener" class="ext-link">API reference<Icon name="open_in_new" :size="13" /></a>
     </footer>
 
     <MvrFixtureMapModal
@@ -364,5 +365,6 @@ h2 { font-size: 1rem; font-weight: 600; margin: 0 0 16px; }
   text-align: center;
 }
 .page-footer a { margin-left: 8px; }
+.ext-link { display: inline-flex; align-items: center; gap: 4px; }
 .mvr-hint { font-size: 0.8125rem; margin: 0; }
 </style>

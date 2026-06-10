@@ -18,6 +18,7 @@ import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue';
 import { jobsApi, pipelinesApi, settingsApi, workstationsApi, type JobSummary, type PipelineTopology, type Workstation } from '../../shared/api';
 import { adminWs } from '../../shared/ws';
 import FlowEditor from '../components/FlowEditor.vue';
+import Icon from '../../shared/Icon.vue';
 
 const LAYOUT_SETTING_KEY = 'pipeline_layout_v1';
 const SAVE_DEBOUNCE_MS = 400;
@@ -174,12 +175,12 @@ onUnmounted(() => {
       :class="{ primary: editable }"
       :title="editable ? 'Lock node positions' : 'Drag nodes to rearrange'"
       @click="editable = !editable"
-    >{{ editable ? 'Done editing' : 'Edit layout' }}</button>
+    ><Icon :name="editable ? 'check' : 'edit'" :size="16" />{{ editable ? 'Done editing' : 'Edit layout' }}</button>
     <button
       :disabled="!hasSavedLayout"
       :title="hasSavedLayout ? 'Restore the auto-layout for this pipeline' : 'No custom layout to reset'"
       @click="resetLayout"
-    >Reset layout</button>
+    ><Icon name="undo" :size="16" />Reset layout</button>
     <select v-model="selected">
       <option v-for="(_, id) in topologies" :key="id" :value="id">{{ String(id) }}</option>
     </select>

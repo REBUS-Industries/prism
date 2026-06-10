@@ -1,3 +1,10 @@
+/* Material Symbols (self-hosted variable font). Pulls in the @font-face +
+ * `.material-symbols-outlined` base class from the `material-symbols` npm
+ * package; Vite bundles the woff2 into dist/assets so the tool needs no
+ * external CDN. Axis tuning + theming overrides live near the end of this file.
+ * @import must precede every other rule. */
+@import 'material-symbols/outlined.css';
+
 /* PRISM design system — aligned with Rebus Studio portal (globals.css tokens).
  *
  * Portal uses HSL triplets as CSS variables; legacy PRISM components still read
@@ -409,3 +416,23 @@ code, .mono { font-family: var(--font-mono); font-size: 0.75rem; }
 .app-shell-main {
   background: hsl(var(--muted) / 0.3);
 }
+
+/* ── Material Symbols icon system ──
+ * The base `.material-symbols-outlined` class comes from the imported package
+ * CSS at the top of this file. These overrides tune the variable-font axes to
+ * the PRISM UI weight and make icons theme-aware + flex-friendly. Per-icon
+ * size/fill/weight are set inline by the shared `Icon.vue` component. */
+.material-symbols-outlined {
+  /* Default axes: outlined (FILL 0), regular weight, optical size 20.
+     Icon.vue overrides FILL/wght/opsz per instance via font-variation-settings. */
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  font-size: 20px;          /* fallback; Icon.vue always sets an explicit px size */
+  color: currentColor;      /* inherit theme text / --primary so icons follow the theme */
+  vertical-align: middle;   /* align with adjacent text and labels */
+  user-select: none;
+  flex-shrink: 0;           /* never squish inside flex rows (buttons, nav, pills) */
+}
+
+/* Icon buttons hold either a Material Symbol span or (legacy) an inline svg. */
+button.icon-btn .material-symbols-outlined,
+.btn.icon-btn .material-symbols-outlined { font-size: 20px; }
