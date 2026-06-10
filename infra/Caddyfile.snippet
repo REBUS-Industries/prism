@@ -54,7 +54,7 @@ prism-dev.rebus.industries {
     reverse_proxy @ws http://10.0.200.212:8765
 
     # Everything else — routed internally by prism-router:
-    #   /api/* /ws/* /health -> prism-server
+    #   /api/* /ws/* /health /docs* -> prism-server
     #   /* -> prism-web (nginx static SPA)
     reverse_proxy http://10.0.200.212:8765 {
         header_up Host {host}
