@@ -14,6 +14,8 @@ import IesUploader from '../components/IesUploader.vue';
 
 import DatumEditor from '../components/DatumEditor.vue';
 
+import Icon from '../../shared/Icon.vue';
+
 import {
 
   fixturesApi,
@@ -361,7 +363,7 @@ onMounted(() => {
 
       <header class="editor-head">
 
-        <RouterLink :to="{ name: 'fixtures' }" class="back muted">← Fixture library</RouterLink>
+        <RouterLink :to="{ name: 'fixtures' }" class="back muted"><Icon name="arrow_back" :size="14" /> Fixture library</RouterLink>
 
         <div class="head-main">
 
@@ -421,9 +423,9 @@ onMounted(() => {
               class="btn-debug"
             >Debug GDTF 3D</RouterLink>
 
-            <button :disabled="saving" class="primary" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button>
+            <button :disabled="saving" class="primary" @click="save"><Icon name="save" :size="16" />{{ saving ? 'Saving…' : 'Save' }}</button>
 
-            <button class="danger" @click="removeFixture">Delete</button>
+            <button class="danger" @click="removeFixture"><Icon name="delete" :size="16" />Delete</button>
 
           </div>
 

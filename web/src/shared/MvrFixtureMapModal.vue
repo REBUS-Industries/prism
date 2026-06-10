@@ -5,6 +5,7 @@
  */
 import { computed, ref, watch } from 'vue';
 import OrbitPicker from './OrbitPicker.vue';
+import Icon from './Icon.vue';
 import {
   fixturesApi,
   type ApiError,
@@ -228,7 +229,7 @@ function fixturesForRef(u: MvrUnresolvedFixture): FixtureListItem[] {
     <div class="modal card">
       <header class="modal-head">
         <h2>Map MVR fixtures</h2>
-        <button type="button" class="icon-btn" aria-label="Close" @click="emit('close')">×</button>
+        <button type="button" class="icon-btn" aria-label="Close" @click="emit('close')"><Icon name="close" :size="18" /></button>
       </header>
 
       <p class="muted">
@@ -291,8 +292,8 @@ function fixturesForRef(u: MvrUnresolvedFixture): FixtureListItem[] {
         <ul class="update-list">
           <li v-for="fid in fixturesWithUpdates" :key="fid">
             <span class="mono">{{ fixtures.find((f) => f.id === fid)?.fixtureName || fid }}</span>
-            <span v-if="fixtureUpdates[fid]?.latestRevision" class="muted">
-              → {{ fixtureUpdates[fid]?.latestRevision }}
+            <span v-if="fixtureUpdates[fid]?.latestRevision" class="muted upd-arrow">
+              <Icon name="arrow_right_alt" :size="14" /> {{ fixtureUpdates[fid]?.latestRevision }}
             </span>
             <button
               type="button"

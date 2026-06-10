@@ -6,6 +6,7 @@ import { RouterLink, useRouter } from 'vue-router';
 
 import FixtureLibraryDetail from '../components/FixtureLibraryDetail.vue';
 import FixtureDownloadModal from '../components/FixtureDownloadModal.vue';
+import Icon from '../../shared/Icon.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
@@ -654,25 +655,25 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
         <button class="btn-outline" :disabled="loading" @click="reloadAll">
 
-          <span class="btn-icon">↻</span> Refresh
+          <Icon name="refresh" :size="16" /> Refresh
 
         </button>
 
         <button class="btn-outline" disabled title="Coming soon">
 
-          <span class="btn-icon">🖼</span> Enrich missing photos
+          <Icon name="add_photo_alternate" :size="16" /> Enrich missing photos
 
         </button>
 
         <button class="btn-primary" :disabled="loading" @click="loadShare">
 
-          <span class="btn-icon">☁</span> Import share catalog
+          <Icon name="cloud_download" :size="16" /> Import share catalog
 
         </button>
 
         <button class="btn-danger" @click="resetFilters">
 
-          <span class="btn-icon">✕</span> Clear
+          <Icon name="close" :size="16" /> Clear
 
         </button>
 
@@ -688,7 +689,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
       <div class="search-wrap">
 
-        <span class="search-icon" aria-hidden="true">🔍</span>
+        <Icon name="search" :size="16" class="search-icon" />
 
         <input
 
@@ -894,12 +895,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
               :class="entryRowMetrics(entry).downloaded ? 'downloaded' : 'missing'"
               :title="entryRowMetrics(entry).downloaded ? 'Downloaded to library' : 'Not downloaded'"
             >
-              <svg v-if="entryRowMetrics(entry).downloaded" class="dl-icon" viewBox="0 0 16 16" aria-hidden="true">
-                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 8l3 3 5-6" />
-              </svg>
-              <svg v-else class="dl-icon" viewBox="0 0 16 16" aria-hidden="true">
-                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 4l8 8M12 4L4 12" />
-              </svg>
+              <Icon v-if="entryRowMetrics(entry).downloaded" name="check" :size="14" />
+              <Icon v-else name="close" :size="14" />
             </span>
 
             <div class="row-main">
@@ -910,7 +907,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
                   v-if="matchLocal(entry)?.updateAvailable"
                   class="update-badge"
                   title="Newer GDTF revision available"
-                >↑</span>
+                ><Icon name="arrow_upward" :size="11" /></span>
               </span>
 
               <span class="row-sub muted">{{ formatVersionSub(entry) }}</span>
@@ -919,27 +916,18 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
             <div class="data-icons" :class="{ active: entryRowMetrics(entry).downloaded }">
               <span class="data-icon dmx" title="DMX modes">
-                <svg viewBox="0 0 20 20" aria-hidden="true">
-                  <path d="M3 14V6M7 14V4M11 14v-5M15 14V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                </svg>
+                <Icon name="equalizer" :size="18" />
                 <span
                   v-if="entryRowMetrics(entry).downloaded && entryRowMetrics(entry).dmxCount > 0"
                   class="data-badge"
                 >{{ entryRowMetrics(entry).dmxCount }}</span>
               </span>
               <span class="data-icon d3" title="3D preview">
-                <svg viewBox="0 0 20 20" aria-hidden="true">
-                  <path d="M10 3L3 7v6l7 4 7-4V7l-7-4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-                  <path d="M3 7l7 4 7-4M10 11v7" fill="none" stroke="currentColor" stroke-width="1.5" />
-                </svg>
+                <Icon name="view_in_ar" :size="18" />
                 <span v-if="entryRowMetrics(entry).d3Badge" class="data-badge">{{ entryRowMetrics(entry).d3Badge }}</span>
               </span>
               <span class="data-icon wheels" title="Wheels">
-                <svg viewBox="0 0 20 20" aria-hidden="true">
-                  <circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5" />
-                  <circle cx="10" cy="10" r="2" fill="currentColor" />
-                  <path d="M10 3.5v3M10 13.5v3M3.5 10h3M13.5 10h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                </svg>
+                <Icon name="album" :size="18" />
                 <span v-if="entryRowMetrics(entry).wheelsBadge" class="data-badge">{{ entryRowMetrics(entry).wheelsBadge }}</span>
               </span>
             </div>
@@ -984,11 +972,11 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
     <div class="lib-footer">
 
-      <button class="btn-outline small" :disabled="importing" @click="fileInput?.click()">Upload .gdtf</button>
+      <button class="btn-outline small" :disabled="importing" @click="fileInput?.click()"><Icon name="upload_file" :size="14" /> Upload .gdtf</button>
 
-      <button class="btn-outline small" @click="showCreate = true">+ Blank fixture</button>
+      <button class="btn-outline small" @click="showCreate = true"><Icon name="add" :size="14" /> Blank fixture</button>
 
-      <a href="/convert/" class="btn-outline small link-btn">MVR import</a>
+      <a href="/convert/" class="btn-outline small link-btn"><Icon name="input" :size="14" /> MVR import</a>
 
     </div>
 
@@ -1015,7 +1003,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
           <button @click="showCreate = false">Cancel</button>
 
-          <button class="primary" :disabled="creating" @click="createBlank">Create</button>
+          <button class="primary" :disabled="creating" @click="createBlank"><Icon name="add" :size="16" /> Create</button>
 
         </div>
 

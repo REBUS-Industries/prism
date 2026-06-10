@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import DmxModePanel from '../components/DmxModePanel.vue';
 import { fixturesApi, type ApiError, type FixtureDetail } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const route = useRoute();
 const fixtureId = computed(() => route.params.id as string | undefined);
@@ -37,7 +38,7 @@ onMounted(() => void load());
 <template>
   <div class="dmx-page">
     <header class="page-head">
-      <RouterLink :to="{ name: 'fixtures' }" class="back muted">← Fixture library</RouterLink>
+      <RouterLink :to="{ name: 'fixtures' }" class="back muted"><Icon name="arrow_back" :size="14" /> Fixture library</RouterLink>
       <h1 v-if="fixture">
         DMX charts
         <span class="fixture-ref muted">· {{ fixture.manufacturer }} {{ fixture.fixtureName }}</span>

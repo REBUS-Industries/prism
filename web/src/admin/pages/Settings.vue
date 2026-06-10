@@ -328,7 +328,7 @@ onMounted(() => {
         </p>
         <p>
           The <em>DNS suffix</em> is appended to each workstation's
-          <code>nodeName</code> when building the <em>Open Web UI ↗</em> link.
+          <code>nodeName</code> when building the <em>Open Web UI <Icon name="open_in_new" :size="12" /></em> link.
           Leave blank if your network resolves bare hostnames. The link
           auto-strips a leading dot, scheme prefix, trailing path, and
           <code>:port</code> on save.

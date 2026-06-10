@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
+import Icon from '../../shared/Icon.vue';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -61,7 +62,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick));
     >
       <span class="type-dot" :style="{ background: dotColor(modelValue) }" aria-hidden="true" />
       <span class="type-value">{{ modelValue }}</span>
-      <span class="type-chevron" aria-hidden="true">▾</span>
+      <Icon name="arrow_drop_down" :size="18" class="type-chevron" />
     </button>
     <ul v-if="open && !disabled" class="type-menu" role="listbox">
       <li
@@ -72,7 +73,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick));
         class="type-option"
         @click.stop="select(opt)"
       >
-        <span v-if="opt === modelValue" class="type-check" aria-hidden="true">✓</span>
+        <Icon v-if="opt === modelValue" name="check" :size="14" class="type-check" />
         <span v-else class="type-check-spacer" aria-hidden="true" />
         <span class="type-dot" :style="{ background: dotColor(opt) }" aria-hidden="true" />
         <span class="type-option-label">{{ opt }}</span>

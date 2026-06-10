@@ -184,7 +184,7 @@ async function removeCategory(cat: FixtureCategoryConfig): Promise<void> {
         @keyup.enter="addCategory"
       />
       <button class="primary add-btn" :disabled="!newLabel.trim() || adding" @click="addCategory">
-        {{ adding ? 'Adding…' : 'Add type' }}
+        <Icon name="add" :size="16" />{{ adding ? 'Adding…' : 'Add type' }}
       </button>
     </div>
   </div>

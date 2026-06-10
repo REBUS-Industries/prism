@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { LayerNode } from '../shared/api';
+import Icon from '../shared/Icon.vue';
 
 const props = defineProps<{
   node: LayerNode;
@@ -28,7 +29,7 @@ const state = computed(() => props.tristate(props.node));
         class="expander"
         type="button"
         :aria-expanded="isOpen"
-        @click="$emit('toggle-expanded', node)">{{ isOpen ? '▾' : '▸' }}</button>
+        @click="$emit('toggle-expanded', node)"><Icon :name="isOpen ? 'expand_more' : 'chevron_right'" :size="16" /></button>
       <span v-else class="expander placeholder">·</span>
 
       <label class="layer-label" :class="{ dim: node.visible === false }">

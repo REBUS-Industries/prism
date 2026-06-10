@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import GdtfShareSearch from '../components/GdtfShareSearch.vue';
 import { fixturesApi, type ApiError } from '../../shared/api';
+import Icon from '../../shared/Icon.vue';
 
 const router = useRouter();
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -33,7 +34,7 @@ function onImported(id: string): void {
 
 <template>
   <div class="h-row">
-    <RouterLink :to="{ name: 'fixtures' }" class="muted">← Library</RouterLink>
+    <RouterLink :to="{ name: 'fixtures' }" class="muted back-link"><Icon name="arrow_back" :size="14" /> Library</RouterLink>
     <h1 class="flex-1">Import GDTF</h1>
   </div>
 
@@ -42,7 +43,7 @@ function onImported(id: string): void {
     <label class="muted small">Optional display name</label>
     <input v-model="name" placeholder="Override name" />
     <button class="mt-sm" :disabled="importing" @click="fileInput?.click()">
-      {{ importing ? 'Importing…' : 'Choose .gdtf file' }}
+      <Icon name="upload_file" :size="16" />{{ importing ? 'Importing…' : 'Choose .gdtf file' }}
     </button>
     <input ref="fileInput" type="file" accept=".gdtf" style="display:none" @change="onFile" />
   </section>

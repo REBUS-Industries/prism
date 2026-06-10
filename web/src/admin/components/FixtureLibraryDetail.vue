@@ -13,6 +13,7 @@ import {
 import DmxModePanel from './DmxModePanel.vue';
 import FixtureQuadPreview from './FixtureQuadPreview.vue';
 import FixtureTypeSelect from './FixtureTypeSelect.vue';
+import Icon from '../../shared/Icon.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import { parseWheels } from '../utils/gdtfDebugExport';
@@ -310,39 +311,39 @@ watch(
     <p class="detail-sub muted">{{ entry.manufacturer }} - {{ entry.fixture }}</p>
 
     <div class="icon-actions">
-      <button type="button" class="icon-action" title="Preview" disabled>👁</button>
+      <button type="button" class="icon-action" title="Preview" disabled><Icon name="visibility" :size="16" /></button>
       <button
         type="button"
         class="icon-action"
         title="Download & import"
         :disabled="importing || !selectedVersion"
         @click="emit('import')"
-      >⬇</button>
+      ><Icon name="download" :size="16" /></button>
       <button
         v-if="localFixture"
         type="button"
         class="icon-action"
         title="Edit"
         @click="emit('edit', localFixture.id)"
-      >✎</button>
+      ><Icon name="edit" :size="16" /></button>
       <RouterLink
         v-if="localFixture"
         :to="{ name: 'fixture-debug', params: { id: localFixture.id } }"
         class="icon-action debug-link"
         title="Debug GDTF 3D"
-      >⚙</RouterLink>
+      ><Icon name="view_in_ar" :size="16" /></RouterLink>
       <span
         v-else
         class="icon-action disabled-tip"
         title="Import fixture first"
-      >⚙</span>
+      ><Icon name="view_in_ar" :size="16" /></span>
       <button
         v-if="localFixture"
         type="button"
         class="icon-action danger"
         title="Delete"
         @click="emit('delete', localFixture)"
-      >🗑</button>
+      ><Icon name="delete" :size="16" /></button>
     </div>
 
     <div class="status-row">
@@ -354,7 +355,7 @@ watch(
           class="status-icon"
           :class="icon.ok ? 'ok' : 'missing'"
           :title="icon.label"
-        >{{ icon.ok ? '✓' : '✕' }}</span>
+        ><Icon :name="icon.ok ? 'check' : 'close'" :size="15" /></span>
       </div>
       <FixtureTypeSelect
         v-if="localFixture"
@@ -380,7 +381,7 @@ watch(
       <p v-if="selectedVersion" class="version-meta muted">
         Modified {{ formatDate(selectedVersion.lastModified) }}
         <span v-if="selectedVersion.filesize"> · {{ (selectedVersion.filesize / 1024 / 1024).toFixed(1) }} MB</span>
-        <span v-if="selectedVersion.rating"> · ★ {{ selectedVersion.rating }}</span>
+        <span v-if="selectedVersion.rating"> · <Icon name="star" :size="12" fill /> {{ selectedVersion.rating }}</span>
       </p>
     </div>
 

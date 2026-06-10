@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import FixtureViewer from '../components/FixtureViewer.vue';
+import Icon from '../../shared/Icon.vue';
 import {
   fixturesApi,
   type ApiError,
@@ -139,7 +140,7 @@ onMounted(() => void load());
   <div v-else-if="fixture" class="debug-page">
     <header class="debug-head">
       <RouterLink :to="{ name: 'fixture-editor', params: { id: fixture.id } }" class="back muted">
-        ← Back to editor
+        <Icon name="arrow_back" :size="14" /> Back to editor
       </RouterLink>
       <div class="head-row">
         <h1>Debug GDTF 3D — {{ fixture.name }}</h1>
