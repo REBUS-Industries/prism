@@ -1,0 +1,42 @@
+name: deploy-on-package
+
+# Auto-deploy VM 212 when a polyrepo service image is published to GHCR.
+# Avoids needing PRISM_DISPATCH_TOKEN on every service repo.
+
+on:
+  registry_package:
+    type: [published]
+
+jobs:
+  deploy-dev:
+    runs-on: [self-hosted, prism-deploy]
+    concurrency:
+      group: prism-deploy-vm212
+      cancel-in-progress: true
+    timeout-minutes: 10
+    steps:
+      - name: Map package to compose service
+        id: map
+        run: |
+          PKG="${{ github.event.registry_package.name }}"
+          case "$PKG" in
+            *prism-fixtures-service*) echo "service=prism-fixtures" >> "$GITHUB_OUTPUT" ;;
+            *prism-materials-service*) echo "service=prism-materials" >> "$GITHUB_OUTPUT" ;;
+            *prism-agent-service*) echo "service=prism-agent" >> "$GITHUB_OUTPUT" ;;
+            *prism-visualiser-service*) echo "service=prism-visualiser" >> "$GITHUB_OUTPUT" ;;
+            *prism-server*) echo "service=prism-server" >> "$GITHUB_OUTPUT" ;;
+            *) echo "service=" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Pull and restart on VM 212
+        if: steps.map.outputs.service != ''
+        run: |
+          SERVICE="${{ steps.map.outputs.service }}"
+          echo "Deploying ${SERVICE} after package publish..."
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev "
+            set -euo pipefail
+            cd /opt/prism
+            docker compose -f docker-compose.dev.yml pull ${SERVICE}
+            docker compose -f docker-compose.dev.yml up -d ${SERVICE}
+            docker compose -f docker-compose.dev.yml ps ${SERVICE}
+          "
