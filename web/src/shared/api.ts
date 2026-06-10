@@ -1294,16 +1294,45 @@ export interface GdtfShareManufacturer {
   count: number;
 }
 
+export interface MvrUnresolvedFixture {
+  key: string;
+  manufacturer: string;
+  fixtureName: string;
+  gdtfFilename: string;
+  gdtfRef: string;
+  embeddedName?: string;
+  instanceCount: number;
+}
+
+export interface MvrImportInstance {
+  id: string;
+  tempId: string;
+  instanceName: string;
+  gdtfRef: string;
+  gdtfMode: string;
+  fixtureTypeId: string | null;
+  status: 'ok' | 'missing' | 'warning';
+  warnings: string[];
+  patch?: FixturePatch;
+}
+
 export interface MvrImportResult {
   runId: string;
-  instances: Array<{
-    id: string;
-    instanceName: string;
-    fixtureTypeId: string | null;
-    warnings: string[];
-    patch?: FixturePatch;
-  }>;
+  instanceCount?: number;
+  instances: MvrImportInstance[];
+  unresolvedFixtures: MvrUnresolvedFixture[];
   patchConflicts: string[];
+  embeddedGdtfCount?: number;
+  autoResolved?: boolean;
+}
+
+export interface MvrResolveResult {
+  runId: string;
+  instances: MvrImportInstance[];
+  unresolvedFixtures: MvrUnresolvedFixture[];
+  imported: Array<{ key: string; fixtureTypeId: string; source: string }>;
+  errors: Array<{ key: string; message: string }>;
+  persisted: Array<{ tempId: string; dbId: string; fixtureTypeId: string }>;
 }
 
 export interface MvrOrbitUploadResult {
@@ -1341,7 +1370,8 @@ export const fixturesApi = {
     api.post<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf-share', { rid, name }),
   catalogGdtfShare: (params: { q?: string; manufacturer?: string; limit?: number; offset?: number } = {}) => {
     const qs = new URLSearchParams();
-    if (params.q) qs.set('q', params.q);
+    const q = params.q?.trim();
+    if (q) qs.set('q', q);
     if (params.manufacturer) qs.set('manufacturer', params.manufacturer);
     if (params.limit !== undefined) qs.set('limit', String(params.limit));
     if (params.offset !== undefined) qs.set('offset', String(params.offset));
@@ -1362,11 +1392,17 @@ export const fixturesApi = {
   },
   searchGdtfShare: (q: string, limit = 25) =>
     api.get<{ results: GdtfShareResult[] }>(`/api/gdtf-share/search?q=${encodeURIComponent(q)}&limit=${limit}`),
-  importMvr: (file: File) => {
+  importMvr: (file: File, autoResolve = false) => {
     const fd = new FormData();
     fd.append('file', file);
-    return api.postForm<MvrImportResult>('/api/mvr-import', fd);
+    const qs = autoResolve ? '?autoResolve=true' : '';
+    return api.postForm<MvrImportResult>(`/api/mvr-import${qs}`, fd);
   },
+  resolveMvr: (body: {
+    runId: string;
+    mappings?: Array<{ gdtfRefKey: string; fixtureTypeId: string }>;
+    autoImportMissing?: boolean;
+  }) => api.post<MvrResolveResult>('/api/mvr-import/resolve', body),
   uploadMvrToOrbit: (body: {
     runId: string;
     projectId: string;
