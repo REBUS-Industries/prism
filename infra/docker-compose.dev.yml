@@ -98,6 +98,7 @@ services:
       ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
       SESSION_SECRET: "${SESSION_SECRET}"
       DATA_DIR: "/data/prism"
+      REDIS_URL: "redis://redis:6379"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - prism-data:/data/prism
