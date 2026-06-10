@@ -111,6 +111,10 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agentâ†”server protocol is unchanged (backward-compatible).
 
+## v0.3.42 -- 2026-06-10 -- Live server URL reconnect
+
+- Live server URL reconnect -- changing PrismServerUrl in settings or tray now reconnects immediately without requiring a reinstall
+
 ## v0.3.41 -- 2026-06-09 -- Pass explicit submodel IDs through dispatch chain
 
 - Pass explicit submodel IDs through dispatch chain; UE connector now receives -OrbitSubmodelIds= arg and can bypass orbit-cli models lookup to pull correct submodels directly

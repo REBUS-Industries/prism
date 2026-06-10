@@ -93,6 +93,24 @@ public sealed class WsClient : IAsyncDisposable
         _ws.Reconnect();
     }
 
+    /// <summary>
+    /// Swap the server URL and reconnect immediately (live-applied — no agent restart needed).
+    /// Cleanly closes the current connection, updates the URL, then reconnects.
+    /// The existing <see cref="OnReconnected"/> / <see cref="OnDisconnected"/> events fire
+    /// normally so <see cref="AgentService"/> sees a natural reconnect cycle and re-sends
+    /// <c>hello</c> to the new server automatically.
+    /// </summary>
+    public async Task ChangeUrlAndReconnectAsync(Uri newUrl)
+    {
+        _log.LogInformation("ws url changing -> {Url}", newUrl);
+        _ws.IsReconnectionEnabled = false;
+        await _ws.Stop(WebSocketCloseStatus.NormalClosure, "url changed");
+        _ws.Url = newUrl;
+        Volatile.Write(ref _connectedFlag, 0);
+        _ws.IsReconnectionEnabled = true;
+        _ = _ws.Reconnect();
+    }
+
     async Task PumpOutboxAsync(CancellationToken ct)
     {
         await foreach (var frame in _outbox.Reader.ReadAllAsync(ct))

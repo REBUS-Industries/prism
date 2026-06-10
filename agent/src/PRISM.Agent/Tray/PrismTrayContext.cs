@@ -339,25 +339,20 @@ public sealed class PrismTrayContext : ApplicationContext
         _settingsForm = new SettingsForm(_cfg);
 
         var prevUrl  = _cfg.PrismUrl;
-        var prevNode = _cfg.NodeName;
 
         if (_settingsForm.ShowDialog() != DialogResult.OK) return;
 
         // SettingsForm.ApplyAndSave() has already run (called from OnFormClosing).
         _nodeItem.Text = $"Node: {_cfg.NodeName}";
 
-        bool urlChanged = _cfg.PrismUrl != prevUrl || _cfg.NodeName != prevNode;
-        if (urlChanged)
+        if (_cfg.PrismUrl != prevUrl)
         {
-            MessageBox.Show(
-                "Server URL or Node Name changed.\n\nRestart PRISM Agent to apply the new connection settings.",
-                "Settings Saved",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            // URL changed: reconnect immediately — no restart needed.
+            _ = Task.Run(() => _ws.ChangeUrlAndReconnectAsync(new Uri(_cfg.PrismUrl)));
         }
         else
         {
-            // Just re-announce the (possibly updated) config to the server.
+            // Re-announce the (possibly updated) config to the server.
             _ = _plane.SendHelloAsync();
         }
     }

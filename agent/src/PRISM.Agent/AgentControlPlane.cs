@@ -185,17 +185,23 @@ public sealed class AgentControlPlane
     /// <summary>
     /// Apply an arbitrary subset of settings in one shot.  Returns
     /// <c>RestartRequired = true</c> when a field changed that the running
-    /// agent cannot pick up live (PrismUrl, RhinoVersion, WebUiPort,
-    /// WebUiBindAll).
+    /// agent cannot pick up live (RhinoVersion, WebUiPort, WebUiBindAll).
+    /// <c>PrismUrl</c> changes are applied immediately via a live WS reconnect —
+    /// no restart is required.
     /// </summary>
     public async Task<ConfigUpdateResult> ApplyAsync(ConfigUpdate update)
     {
         bool restart = false;
+        bool urlChanged = false;
 
-        if (update.PrismUrl is { } u && u != _cfg.PrismUrl)
+        if (update.PrismUrl is { } u)
         {
-            _cfg.PrismUrl = u;
-            restart = true;
+            var trimUrl = u.Trim();
+            if (trimUrl.Length > 0 && trimUrl != _cfg.PrismUrl)
+            {
+                _cfg.PrismUrl = trimUrl;
+                urlChanged = true;
+            }
         }
         if (update.RhinoVersion is { } rv && rv != _cfg.RhinoVersion)
         {
@@ -283,10 +289,20 @@ public sealed class AgentControlPlane
             _cfg.GitHubToken = update.GitHubToken.Trim();
 
         _cfg.Save();
-        _log.LogInformation("config saved (restartRequired={Restart})", restart);
+        _log.LogInformation("config saved (restartRequired={Restart} urlChanged={UrlChanged})", restart, urlChanged);
 
-        if (!restart)
+        if (urlChanged)
+        {
+            _log.LogInformation("prismUrl changed -> {Url}; reconnecting", _cfg.PrismUrl);
+            if (Uri.TryCreate(_cfg.PrismUrl, UriKind.Absolute, out var newUri))
+                _ = _ws.ChangeUrlAndReconnectAsync(newUri);
+            else
+                _log.LogWarning("new prismUrl '{Url}' is not a valid absolute URI; skipping reconnect", _cfg.PrismUrl);
+        }
+        else if (!restart)
+        {
             await SendHelloAsync();
+        }
 
         Notify();
         return new ConfigUpdateResult(restart, _cfg);

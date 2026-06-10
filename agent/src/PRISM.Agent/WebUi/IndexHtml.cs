@@ -373,7 +373,7 @@ internal static class IndexHtml
           <input type="text" id="nodeName" />
         </label>
       </div>
-      <p class="hint">Restart the agent after changing the server URL.</p>
+      <p class="hint">The agent reconnects immediately when the server URL is saved — no restart needed.</p>
     </div>
   </section>
 
@@ -696,8 +696,8 @@ internal static class IndexHtml
         <button id="btnReload">Discard changes</button>
       </div>
       <p class="hint">
-        Live-applied: node name, slots, roles, log dir.
-        Restart-required: server URL, Rhino version, web UI port, LAN binding.
+        Live-applied: node name, slots, roles, log dir, server URL (reconnects immediately).
+        Restart-required: Rhino version, web UI port, LAN binding.
       </p>
     </div>
   </section>
@@ -1112,7 +1112,7 @@ internal static class IndexHtml
       $('gitHubToken').value = '';
       applyState(r.state);
       toast(r.restartRequired
-        ? 'Saved. Restart the agent to apply server URL / Rhino / web UI changes.'
+        ? 'Saved. Restart the agent to apply Rhino version / web UI port changes.'
         : 'Saved.',
         r.restartRequired ? 'warn' : 'success');
     } catch (err) { toast('Save failed: ' + err.message, 'error'); }
