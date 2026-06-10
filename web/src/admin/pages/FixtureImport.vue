@@ -48,7 +48,8 @@ function onImported(id: string): void {
   </section>
 
   <section class="card mt">
-    <h2>GDTF-Share</h2>
+    <h2>GDTF-Share quick search</h2>
+    <p class="muted small">For the full manufacturer browser and version picker, open <RouterLink :to="{ name: 'fixtures' }">Fixture library</RouterLink> and switch to the GDTF-Share catalog tab.</p>
     <GdtfShareSearch @imported="onImported" />
   </section>
 

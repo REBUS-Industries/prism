@@ -1253,11 +1253,45 @@ export interface FixtureDetail extends FixtureListItem {
   sourceGdtfId: string | null;
 }
 
-export interface GdtfShareResult {
+export interface GdtfShareMode {
+  name: string;
+  dmxfootprint: number;
+}
+
+export interface GdtfShareRevision {
   rid: number;
+  revision?: string;
+  version?: string;
+  creationDate?: string;
+  lastModified?: string;
+  uploader?: string;
+  rating?: number;
+  creator?: string;
+  filesize?: number;
+}
+
+export interface GdtfShareResult extends GdtfShareRevision {
   manufacturer: string;
   fixture: string;
-  revision?: string;
+  uuid?: string;
+  modes?: GdtfShareMode[];
+}
+
+export interface GdtfShareCatalogEntry {
+  uuid: string;
+  manufacturer: string;
+  fixture: string;
+  versions: GdtfShareRevision[];
+  modes?: GdtfShareMode[];
+  creator?: string;
+  uploader?: string;
+  rating?: number;
+  lastModified?: string;
+}
+
+export interface GdtfShareManufacturer {
+  name: string;
+  count: number;
 }
 
 export interface MvrImportResult {
@@ -1305,6 +1339,21 @@ export const fixturesApi = {
   },
   importGdtfShare: (rid: number, name?: string) =>
     api.post<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf-share', { rid, name }),
+  catalogGdtfShare: (params: { q?: string; manufacturer?: string; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.manufacturer) qs.set('manufacturer', params.manufacturer);
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params.offset !== undefined) qs.set('offset', String(params.offset));
+    const tail = qs.toString();
+    return api.get<{
+      manufacturers: GdtfShareManufacturer[];
+      entries: GdtfShareCatalogEntry[];
+      total: number;
+    }>(`/api/gdtf-share/catalog${tail ? `?${tail}` : ''}`);
+  },
+  versionsGdtfShare: (uuid: string) =>
+    api.get<{ entry: GdtfShareCatalogEntry }>(`/api/gdtf-share/versions?uuid=${encodeURIComponent(uuid)}`),
   uploadIes: (id: string, beamId: string, file: File) => {
     const fd = new FormData();
     fd.append('beamId', beamId);
