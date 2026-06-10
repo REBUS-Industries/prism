@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 
 const props = defineProps<{
   dmxMapping: Record<string, unknown>;
@@ -7,6 +8,8 @@ const props = defineProps<{
   manufacturer?: string;
   /** Hide the page-level title block when embedded in the detail panel. */
   compact?: boolean;
+  /** When set, show link to full DMX charts page. */
+  fixtureId?: string | null;
 }>();
 
 interface DmxChannel {
@@ -67,6 +70,21 @@ function channelRows(mode: DmxMode): Array<{ offset: string; name: string; funct
     </header>
 
     <div v-if="!modes.length" class="muted">No DMX modes parsed.</div>
+
+    <template v-else-if="compact">
+      <div class="mode-cards">
+        <div v-for="(mode, idx) in modes" :key="mode.modeId ?? idx" class="mode-card">
+          <span class="mode-card-name">{{ modeLabel(mode, idx) }}</span>
+          <span class="mode-card-ch">{{ mode.footprint ?? mode.channels?.length ?? 0 }}ch</span>
+        </div>
+      </div>
+      <RouterLink
+        v-if="fixtureId"
+        :to="{ name: 'fixture-dmx-charts', params: { id: fixtureId } }"
+        class="open-charts-btn"
+      >Open full DMX charts</RouterLink>
+      <p v-else class="muted small">Download fixture to view full channel mapping.</p>
+    </template>
 
     <template v-else>
       <div class="mode-tabs-wrap">
@@ -225,4 +243,42 @@ function channelRows(mode: DmxMode): Array<{ offset: string; name: string; funct
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .functions { font-size: 12px; color: var(--color-text-muted); line-height: 1.45; }
 .empty-row { text-align: center; padding: 24px !important; }
+
+.mode-cards { display: flex; flex-direction: column; gap: 8px; }
+.mode-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-elevated);
+}
+.mode-card-name { font-size: 13px; font-weight: 600; }
+.mode-card-ch {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--orbit-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.open-charts-btn {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--orbit-primary);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--orbit-primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: center;
+  text-decoration: none;
+}
+.open-charts-btn:hover { background: var(--orbit-primary-fade); }
+.small { font-size: 11px; }
 </style>

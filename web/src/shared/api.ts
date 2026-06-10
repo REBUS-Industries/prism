@@ -1234,6 +1234,7 @@ export interface WheelSlot {
   imageAssetId?: string | null;
   dmxFrom?: number;
   dmxTo?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface FixtureWheel {
@@ -1261,6 +1262,7 @@ export interface FixtureDefinition {
     fixtureTypeId?: string;
     longName?: string;
     description?: string;
+    thumbnail?: string;
   };
   parts: FixturePart[];
   models: FixtureModel[];
@@ -1435,6 +1437,7 @@ export const fixturesApi = {
     api.put<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`, body),
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/fixtures/${id}`),
   previewUrl: (id: string) => `/api/fixtures/${id}/preview.glb`,
+  mediaUrl: (fixtureId: string, mediaId: string) => `/api/fixtures/${fixtureId}/media/${mediaId}`,
   importGdtf: (file: File, name?: string) => {
     const fd = new FormData();
     if (name) fd.append('name', name);

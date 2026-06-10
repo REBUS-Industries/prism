@@ -22,6 +22,7 @@ import Textures from './pages/Textures.vue';
 import Fixtures from './pages/Fixtures.vue';
 import FixtureEditor from './pages/FixtureEditor.vue';
 import FixtureGdtfDebug from './pages/FixtureGdtfDebug.vue';
+import FixtureDmxCharts from './pages/FixtureDmxCharts.vue';
 import FixtureImport from './pages/FixtureImport.vue';
 
 import '../shared/designSystem.css';
@@ -41,6 +42,7 @@ const router = createRouter({
     { path: '/fixtures',               component: Fixtures,       name: 'fixtures' },
     { path: '/fixtures/import',        component: FixtureImport,  name: 'fixture-import' },
     { path: '/fixtures/:id/debug',     component: FixtureGdtfDebug, name: 'fixture-debug', props: true },
+    { path: '/fixtures/:id/dmx',       component: FixtureDmxCharts, name: 'fixture-dmx-charts', props: true },
     { path: '/fixtures/:id',           component: FixtureEditor,    name: 'fixture-editor', props: true },
     { path: '/settings',               component: Settings,         name: 'settings' },
     { path: '/keys',                   component: ApiKeys,          name: 'keys' },

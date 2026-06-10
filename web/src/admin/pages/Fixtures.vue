@@ -5,6 +5,13 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 
 import FixtureLibraryDetail from '../components/FixtureLibraryDetail.vue';
+import FixtureDownloadModal from '../components/FixtureDownloadModal.vue';
+import {
+  FIXTURE_CATEGORY_COLORS,
+  fixtureCategoryFromTags,
+  tagsWithFixtureCategory,
+  type LibraryFixtureCategory,
+} from '../utils/fixtureTypes';
 
 import {
 
@@ -26,9 +33,8 @@ const router = useRouter();
 
 const PAGE = 80;
 
-type FilterChip = 'all' | 'downloaded' | 'missing' | '3d';
-
-
+type DownloadFilter = 'all' | 'downloaded' | 'missing';
+type MetadataFilter = 'all' | 'fix' | 'control' | 'anchor' | 'manufacturer' | 'authors';
 
 const fixtures = ref<FixtureListItem[]>([]);
 
@@ -52,11 +58,14 @@ const selectedShareUuid = ref<string | null>(null);
 
 const selectedShareRid = ref<number | null>(null);
 
-const activeFilter = ref<FilterChip>('all');
+const downloadFilter = ref<DownloadFilter>('all');
+const metadataFilter = ref<MetadataFilter>('all');
 
 
 
 const importing = ref(false);
+const showDownloadModal = ref(false);
+const pendingFixtureType = ref('Spot');
 
 const showCreate = ref(false);
 
@@ -82,8 +91,7 @@ function entrySearchHaystack(entry: GdtfShareCatalogEntry): string {
 
 function catalogQueryParams(): { q?: string; manufacturer?: string; limit: number } {
   const q = search.value.trim();
-  const manufacturer =
-    q || selectedManufacturer.value === '__all__' ? undefined : selectedManufacturer.value;
+  const manufacturer = selectedManufacturer.value === '__all__' ? undefined : selectedManufacturer.value;
   return { q: q || undefined, manufacturer, limit: 120 };
 }
 
@@ -113,13 +121,24 @@ const filteredEntries = computed(() => {
 
   return shareEntries.value.filter((entry) => {
 
+    if (selectedManufacturer.value !== '__all__' && entry.manufacturer !== selectedManufacturer.value) {
+      return false;
+    }
+
     const local = matchLocal(entry);
 
-    if (activeFilter.value === 'downloaded' && !local) return false;
+    if (downloadFilter.value === 'downloaded' && !local) return false;
 
-    if (activeFilter.value === 'missing' && local) return false;
+    if (downloadFilter.value === 'missing' && local) return false;
 
-    if (activeFilter.value === '3d' && !local?.hasPreview) return false;
+    if (metadataFilter.value === 'fix' && local && local.hasPreview) return false;
+    if (metadataFilter.value === 'fix' && !local) return false;
+
+    if (metadataFilter.value === 'control' && !(entry.modes?.length)) return false;
+
+    if (metadataFilter.value === 'anchor' && local && !local.hasPreview) return false;
+
+    if (metadataFilter.value === 'authors' && !entry.creator && !entry.uploader) return false;
 
     if (!q) return true;
 
@@ -137,7 +156,7 @@ const displayManufacturers = computed((): GdtfShareManufacturer[] => {
 
   const q = search.value.trim();
 
-  if (!q && activeFilter.value === 'all') {
+  if (!q && downloadFilter.value === 'all' && metadataFilter.value === 'all') {
 
     return shareManufacturers.value;
 
@@ -164,12 +183,6 @@ const displayManufacturers = computed((): GdtfShareManufacturer[] => {
 
 
 const filteredAllCount = computed(() => {
-
-  if (activeFilter.value === 'all') {
-
-    return selectedManufacturer.value === '__all__' ? shareTotal.value : filteredEntries.value.length;
-
-  }
 
   return filteredEntries.value.length;
 
@@ -224,10 +237,38 @@ const selectedLocal = computed(() => {
 
 
 const listCountLabel = computed(() =>
-
-  `${filteredEntries.value.length} / ${shareTotal.value} fixtures`,
-
+  `${filteredEntries.value.length} / ${shareTotal.value} Fixtures`,
 );
+
+const fixturesWithMetadata = computed(() =>
+  filteredEntries.value.filter((e) => matchLocal(e)?.hasPreview).length,
+);
+
+function entryFixtureCategory(entry: GdtfShareCatalogEntry): LibraryFixtureCategory {
+  const local = matchLocal(entry);
+  if (!local) return 'Unassigned';
+  return fixtureCategoryFromTags(local.tags);
+}
+
+interface EntryRowMetrics {
+  downloaded: boolean;
+  dmxCount: number;
+  d3Badge: string | null;
+  wheelsBadge: string | null;
+}
+
+function entryRowMetrics(entry: GdtfShareCatalogEntry): EntryRowMetrics {
+  const local = matchLocal(entry);
+  const downloaded = !!local;
+  const dmxCount = entry.modes?.length ?? 0;
+  let d3Badge: string | null = null;
+  let wheelsBadge: string | null = null;
+  if (downloaded) {
+    d3Badge = local?.hasPreview ? '✓' : '?';
+    wheelsBadge = '?';
+  }
+  return { downloaded, dmxCount, d3Badge, wheelsBadge };
+}
 
 
 
@@ -395,12 +436,14 @@ function selectShareEntry(entry: GdtfShareCatalogEntry): void {
 
 
 
-function setFilter(chip: FilterChip): void {
-
-  activeFilter.value = chip;
-
+function setDownloadFilter(chip: DownloadFilter): void {
+  downloadFilter.value = chip;
   ensureVisibleManufacturer();
+}
 
+function setMetadataFilter(chip: MetadataFilter): void {
+  metadataFilter.value = chip;
+  ensureVisibleManufacturer();
 }
 
 
@@ -423,16 +466,12 @@ function ensureVisibleManufacturer(): void {
 
 
 
-function clearFilters(): void {
-
+function resetFilters(): void {
   search.value = '';
-
   selectedManufacturer.value = '__all__';
-
-  activeFilter.value = 'all';
-
+  downloadFilter.value = 'all';
+  metadataFilter.value = 'all';
   void loadShare();
-
 }
 
 
@@ -497,72 +536,46 @@ async function removeFixture(f: FixtureListItem): Promise<void> {
 
 
 
-async function importShareSelected(): Promise<void> {
+function requestImport(): void {
+  if (!selectedShare.value || selectedLocal.value) return;
+  showDownloadModal.value = true;
+}
 
+async function confirmDownload(fixtureType: string): Promise<void> {
   const entry = selectedShare.value;
-
   if (!entry) return;
-
   const rid = selectedShareRid.value ?? entry.versions[0]?.rid;
-
   if (rid == null) return;
 
   importing.value = true;
-
   error.value = null;
-
+  pendingFixtureType.value = fixtureType;
   try {
-
     const res = await fixturesApi.importGdtfShare(rid, `${entry.manufacturer} ${entry.fixture}`);
-
+    await fixturesApi.update(res.fixture.id, {
+      tags: tagsWithFixtureCategory(res.fixture.tags, fixtureType as LibraryFixtureCategory),
+    });
     await loadLocal();
-
+    showDownloadModal.value = false;
     openEditor(res.fixture.id);
-
   } catch (err) {
-
     error.value = (err as ApiError).message ?? 'import failed';
-
   } finally {
-
     importing.value = false;
-
   }
+}
 
+async function importShareSelected(): Promise<void> {
+  if (selectedLocal.value) return;
+  requestImport();
 }
 
 
 
 async function importShareEntry(entry: GdtfShareCatalogEntry): Promise<void> {
-
   selectShareEntry(entry);
-
-  const rid = entry.versions[0]?.rid;
-
-  if (rid == null) return;
-
-  importing.value = true;
-
-  error.value = null;
-
-  try {
-
-    const res = await fixturesApi.importGdtfShare(rid, `${entry.manufacturer} ${entry.fixture}`);
-
-    await loadLocal();
-
-    openEditor(res.fixture.id);
-
-  } catch (err) {
-
-    error.value = (err as ApiError).message ?? 'import failed';
-
-  } finally {
-
-    importing.value = false;
-
-  }
-
+  if (matchLocal(entry)) return;
+  requestImport();
 }
 
 
@@ -602,21 +615,9 @@ async function onFile(ev: Event): Promise<void> {
 
 
 function formatVersionSub(entry: GdtfShareCatalogEntry): string {
-
   const v = entry.versions[0];
-
-  const parts = [
-
-    entry.manufacturer,
-
-    v?.revision ? `v${v.revision}` : null,
-
-    entry.creator ? `by ${entry.creator}` : null,
-
-  ].filter(Boolean);
-
-  return parts.join(' · ');
-
+  const rev = v?.revision ? `v${v.revision}` : 'v?';
+  return `by Manuf: ${entry.manufacturer} - ${rev}`;
 }
 
 
@@ -643,7 +644,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
           <h1>GDTF Fixture Library</h1>
 
-          <p class="header-sub">Browse and download GDTF-Share catalog entries. Downloaded fixtures appear in your local library.</p>
+          <p class="header-sub">Browse the GDTF Share catalog, then download 3D geometry per fixture to populate full DMX, wheels and meshes.</p>
 
         </div>
 
@@ -669,7 +670,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
         </button>
 
-        <button class="btn-danger" @click="clearFilters">
+        <button class="btn-danger" @click="resetFilters">
 
           <span class="btn-icon">✕</span> Clear
 
@@ -707,17 +708,37 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 
 
-      <div class="chip-row">
+      <div class="filter-pills">
 
-        <span class="chip-label">Filters</span>
+        <div class="chip-row">
 
-        <button type="button" class="chip" :class="{ active: activeFilter === 'all' }" @click="setFilter('all')">All</button>
+          <span class="chip-label">3D</span>
 
-        <button type="button" class="chip" :class="{ active: activeFilter === 'downloaded' }" @click="setFilter('downloaded')">Downloaded</button>
+          <button type="button" class="chip" :class="{ active: downloadFilter === 'all' }" @click="setDownloadFilter('all')">All</button>
 
-        <button type="button" class="chip" :class="{ active: activeFilter === 'missing' }" @click="setFilter('missing')">Missing</button>
+          <button type="button" class="chip" :class="{ active: downloadFilter === 'downloaded' }" @click="setDownloadFilter('downloaded')">Downloaded</button>
 
-        <button type="button" class="chip" :class="{ active: activeFilter === '3d' }" @click="setFilter('3d')">3D</button>
+          <button type="button" class="chip" :class="{ active: downloadFilter === 'missing' }" @click="setDownloadFilter('missing')">Missing</button>
+
+        </div>
+
+        <div class="chip-row">
+
+          <span class="chip-label">Metadata</span>
+
+          <button type="button" class="chip" :class="{ active: metadataFilter === 'all' }" @click="setMetadataFilter('all')">All</button>
+
+          <button type="button" class="chip" :class="{ active: metadataFilter === 'fix' }" @click="setMetadataFilter('fix')">Fix</button>
+
+          <button type="button" class="chip" :class="{ active: metadataFilter === 'control' }" @click="setMetadataFilter('control')">Control only</button>
+
+          <button type="button" class="chip" :class="{ active: metadataFilter === 'anchor' }" @click="setMetadataFilter('anchor')">Anchor</button>
+
+          <button type="button" class="chip" :class="{ active: metadataFilter === 'manufacturer' }" @click="setMetadataFilter('manufacturer')">Manufacturer</button>
+
+          <button type="button" class="chip" :class="{ active: metadataFilter === 'authors' }" @click="setMetadataFilter('authors')">All authors</button>
+
+        </div>
 
       </div>
 
@@ -741,12 +762,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
         </select>
 
-        <button
-          type="button"
-          class="btn-outline small"
-          :disabled="checkingUpdates || !fixtures.some((f) => f.gdtfShareUuid)"
-          @click="bulkCheckUpdates"
-        >{{ checkingUpdates ? 'Checking…' : 'Check for updates' }}</button>
+        <button type="button" class="btn-reset" @click="resetFilters">Reset</button>
 
         <span class="count-label">{{ listCountLabel }}</span>
 
@@ -814,9 +830,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
         <div class="list-header">
 
-          <h2>Fixtures</h2>
+          <h2>Fixtures <span class="list-count">{{ filteredEntries.length }}</span></h2>
 
-          <span class="list-sub muted">{{ fixturesWith3d }} with 3D / materials</span>
+          <span class="list-sub muted">{{ fixturesWithMetadata }} with 3D / metadata</span>
 
         </div>
 
@@ -842,6 +858,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
               <span class="mfg-group-name">{{ mfg }}</span>
 
+              <span class="mfg-group-web muted">www.{{ mfg.toLowerCase().replace(/\s+/g, '') }}.com</span>
+
             </div>
 
           </div>
@@ -863,8 +881,26 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             @click="selectShareEntry(entry)"
 
           >
+            <span
+              v-if="entryFixtureCategory(entry) !== 'Unassigned'"
+              class="type-bar"
+              :style="{ background: FIXTURE_CATEGORY_COLORS[entryFixtureCategory(entry)] }"
+              :title="entryFixtureCategory(entry)"
+              aria-hidden="true"
+            />
 
-            <span class="fixture-icon" aria-hidden="true">💡</span>
+            <span
+              class="dl-status"
+              :class="entryRowMetrics(entry).downloaded ? 'downloaded' : 'missing'"
+              :title="entryRowMetrics(entry).downloaded ? 'Downloaded to library' : 'Not downloaded'"
+            >
+              <svg v-if="entryRowMetrics(entry).downloaded" class="dl-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 8l3 3 5-6" />
+              </svg>
+              <svg v-else class="dl-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 4l8 8M12 4L4 12" />
+              </svg>
+            </span>
 
             <div class="row-main">
 
@@ -881,54 +917,31 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
             </div>
 
-            <div class="row-actions" @click.stop>
-
-              <button type="button" class="row-action" title="View" @click="selectShareEntry(entry)">👁</button>
-
-              <button
-
-                v-if="!matchLocal(entry)"
-
-                type="button"
-
-                class="row-action"
-
-                title="Download"
-
-                :disabled="importing"
-
-                @click="importShareEntry(entry)"
-
-              >⬇</button>
-
-              <button
-
-                v-if="matchLocal(entry)"
-
-                type="button"
-
-                class="row-action"
-
-                title="Edit"
-
-                @click="openEditor(matchLocal(entry)!.id)"
-
-              >✎</button>
-
-              <button
-
-                v-if="matchLocal(entry)"
-
-                type="button"
-
-                class="row-action danger"
-
-                title="Delete"
-
-                @click="removeFixture(matchLocal(entry)!)"
-
-              >🗑</button>
-
+            <div class="data-icons" :class="{ active: entryRowMetrics(entry).downloaded }">
+              <span class="data-icon dmx" title="DMX modes">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M3 14V6M7 14V4M11 14v-5M15 14V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                </svg>
+                <span
+                  v-if="entryRowMetrics(entry).downloaded && entryRowMetrics(entry).dmxCount > 0"
+                  class="data-badge"
+                >{{ entryRowMetrics(entry).dmxCount }}</span>
+              </span>
+              <span class="data-icon d3" title="3D preview">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M10 3L3 7v6l7 4 7-4V7l-7-4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                  <path d="M3 7l7 4 7-4M10 11v7" fill="none" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+                <span v-if="entryRowMetrics(entry).d3Badge" class="data-badge">{{ entryRowMetrics(entry).d3Badge }}</span>
+              </span>
+              <span class="data-icon wheels" title="Wheels">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5" />
+                  <circle cx="10" cy="10" r="2" fill="currentColor" />
+                  <path d="M10 3.5v3M10 13.5v3M3.5 10h3M13.5 10h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+                <span v-if="entryRowMetrics(entry).wheelsBadge" class="data-badge">{{ entryRowMetrics(entry).wheelsBadge }}</span>
+              </span>
             </div>
 
           </button>
@@ -951,7 +964,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
           :importing="importing"
 
-          @import="importShareSelected"
+          @import="requestImport"
 
           @edit="openEditor"
 
@@ -980,6 +993,15 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
     </div>
 
 
+
+    <FixtureDownloadModal
+      v-if="showDownloadModal && selectedShare"
+      :fixture-name="selectedShare.fixture"
+      :manufacturer="selectedShare.manufacturer"
+      :saving="importing"
+      @cancel="showDownloadModal = false"
+      @confirm="confirmDownload"
+    />
 
     <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
 
@@ -1207,6 +1229,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 }
 
+.filter-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
+
 .chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 
 .chip-label {
@@ -1269,6 +1293,20 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 }
 
+.btn-reset {
+  padding: 7px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.btn-reset:hover { border-color: var(--orbit-primary); color: var(--orbit-primary); }
+
 .count-label { font-size: 12px; color: var(--color-text-muted); white-space: nowrap; }
 
 .lib-body {
@@ -1292,6 +1330,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   border-right: 1px solid var(--color-border);
 
   background: var(--color-bg-elevated);
+
+  min-height: 0;
 
   overflow-y: auto;
 
@@ -1377,7 +1417,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 .mfg-item.active .mfg-count { background: rgba(255, 255, 255, 0.25); }
 
-.fixture-list { overflow-y: auto; border-right: 1px solid var(--color-border); }
+.fixture-list { min-height: 0; overflow-y: auto; border-right: 1px solid var(--color-border); }
 
 .list-header {
 
@@ -1416,6 +1456,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   color: var(--color-text-muted);
 
 }
+
+.list-count { color: var(--color-text); font-weight: 700; }
 
 .list-sub { font-size: 12px; }
 
@@ -1459,6 +1501,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 }
 
+.mfg-group-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
 .mfg-group-name {
 
   font-size: 13px;
@@ -1471,7 +1515,11 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 }
 
+.mfg-group-web { font-size: 10px; }
+
 .fixture-row {
+
+  position: relative;
 
   display: flex;
 
@@ -1481,7 +1529,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
   width: 100%;
 
-  padding: 10px 16px;
+  padding: 10px 16px 10px 12px;
 
   border: none;
 
@@ -1497,28 +1545,90 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 .fixture-row:hover { background: var(--color-bg-hover); }
 
-.fixture-row.active { background: var(--orbit-primary-fade); box-shadow: inset 3px 0 0 var(--orbit-primary); }
+.fixture-row.active {
+  background: rgba(255, 107, 0, 0.12);
+  border-color: rgba(255, 107, 0, 0.35);
+}
 
-.fixture-icon {
+.type-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 0;
+}
 
+.dl-status {
   flex-shrink: 0;
-
-  width: 32px;
-
-  height: 32px;
-
+  width: 22px;
+  height: 22px;
   display: flex;
-
   align-items: center;
-
   justify-content: center;
-
   border-radius: 50%;
+  border: none;
+}
 
-  background: var(--orbit-primary-fade);
+.dl-status.downloaded {
+  background: #22c55e;
+  color: #fff;
+}
 
-  font-size: 14px;
+.dl-status.missing {
+  background: #ef4444;
+  color: #fff;
+}
 
+.dl-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.data-icons {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  opacity: 0.35;
+}
+
+.data-icons.active {
+  opacity: 1;
+}
+
+.data-icon {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+}
+
+.data-icons.active .data-icon {
+  color: var(--orbit-primary);
+}
+
+.data-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.data-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--orbit-primary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
 }
 
 .row-main { min-width: 0; flex: 1; }
@@ -1583,7 +1693,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 .row-action:disabled { opacity: 0.3; cursor: not-allowed; }
 
-.detail-panel { overflow-y: auto; padding: 16px; }
+.detail-panel { min-height: 0; overflow-y: auto; padding: 16px; }
 
 .lib-footer {
 

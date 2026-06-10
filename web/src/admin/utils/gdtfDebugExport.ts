@@ -17,8 +17,11 @@ export function parseWheels(definition: FixtureDefinition): Array<{
     slotIndex: number;
     slotName: string;
     mediaType: string;
+    imageAssetId?: string | null;
     dmxFrom?: number;
     dmxTo?: number;
+    color?: string;
+    mediaFileName?: string;
   }>;
 }> {
   return (definition.wheels ?? []).map((w: FixtureWheel) => ({
@@ -29,8 +32,11 @@ export function parseWheels(definition: FixtureDefinition): Array<{
       slotIndex: typeof s.slotIndex === 'number' ? s.slotIndex : i,
       slotName: s.slotName ?? `Slot ${i + 1}`,
       mediaType: s.mediaType ?? 'UNKNOWN',
+      imageAssetId: s.imageAssetId ?? null,
       dmxFrom: s.dmxFrom,
       dmxTo: s.dmxTo,
+      color: typeof s.metadata?.color === 'string' ? s.metadata.color : undefined,
+      mediaFileName: typeof s.metadata?.mediaFileName === 'string' ? s.metadata.mediaFileName : undefined,
     })),
   }));
 }

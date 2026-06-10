@@ -17,7 +17,7 @@ defineProps<{
           ['top', 'Top'],
           ['front', 'Front'],
           ['side', 'Side'],
-          ['iso', '3D'],
+          ['iso', 'ISO'],
         ] as const)"
         :key="view[0]"
         class="quad-cell"
@@ -38,7 +38,7 @@ defineProps<{
       </div>
     </div>
     <p v-if="recordCount != null" class="quad-footer muted">
-      {{ recordCount }} mesh / GDTF records. Top / Front / Side / 3D quad view.
+      {{ recordCount }} mesh JSON records — Top / Front / Side / Iso quad view
     </p>
   </div>
 </template>

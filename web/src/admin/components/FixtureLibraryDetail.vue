@@ -12,7 +12,19 @@ import {
 } from '../../shared/api';
 import DmxModePanel from './DmxModePanel.vue';
 import FixtureQuadPreview from './FixtureQuadPreview.vue';
+import FixtureTypeSelect from './FixtureTypeSelect.vue';
+import {
+  fixtureCategoryFromTags,
+  tagsWithFixtureCategory,
+  type LibraryFixtureCategory,
+} from '../utils/fixtureTypes';
 import { parseWheels } from '../utils/gdtfDebugExport';
+import {
+  cieColorToCss,
+  dmxModeCount,
+  imageAssetsFromDefinition,
+  wheelSlotCount,
+} from '../utils/fixtureDetailUtils';
 
 const props = defineProps<{
   entry: GdtfShareCatalogEntry | null;
@@ -35,9 +47,9 @@ const applyingUpdate = ref(false);
 const switchingVersion = ref(false);
 const carryReport = ref<string[]>([]);
 
-const FIXTURE_TYPES = ['Spot', 'Wash', 'Beam', 'Profile', 'Moving Head', 'LED', 'Strobe', 'Other'];
+const savingCategory = ref(false);
 
-type DetailTab = '3d' | 'overview' | 'dmx' | 'wheels' | 'source' | 'images';
+type DetailTab = '3d' | 'overview' | 'dmx' | 'wheels' | 'source' | 'images' | 'ies';
 const activeTab = ref<DetailTab>('3d');
 const localDetail = ref<FixtureDetail | null>(null);
 const loadingDetail = ref(false);
@@ -68,27 +80,44 @@ const meshRecordCount = computed(() => {
   return props.localFixture?.hasPreview ? 1 : 0;
 });
 
-const hasMetadata = computed(() => {
-  if (definition.value?.metadata && Object.keys(definition.value.metadata).length > 0) return true;
-  return !!(props.entry?.creator || props.entry?.uploader || selectedVersion.value?.creator);
-});
+const hasFullGdtf = computed(() => !!props.localFixture);
 
-const badges = computed(() => {
-  const hasLocal = !!props.localFixture;
+const tabCounts = computed(() => ({
+  dmx: dmxModeCount(definition.value, props.entry?.modes?.length ?? 0),
+  wheels: definition.value ? wheelSlotCount(definition.value) : 0,
+  images: imageAssetsFromDefinition(definition.value, props.localFixture?.id ?? null).length,
+}));
+
+const imageAssets = computed(() =>
+  imageAssetsFromDefinition(definition.value, props.localFixture?.id ?? null),
+);
+
+const detailTabs = computed(() => [
+  { id: '3d' as const, label: '3D', count: null },
+  { id: 'overview' as const, label: 'Overview', count: null },
+  { id: 'dmx' as const, label: 'DMX', count: tabCounts.value.dmx || null },
+  { id: 'wheels' as const, label: 'Wheels', count: tabCounts.value.wheels || null },
+  { id: 'source' as const, label: 'Source', count: null },
+  { id: 'images' as const, label: 'Images', count: tabCounts.value.images || null },
+  { id: 'ies' as const, label: 'IES', count: null },
+]);
+
+const statusIcons = computed(() => {
   const has3d = props.localFixture?.hasPreview ?? false;
   const hasDmx = (props.entry?.modes?.length ?? 0) > 0
     || (Array.isArray(definition.value?.dmxMapping?.modes)
       && (definition.value!.dmxMapping.modes as unknown[]).length > 0);
-  const hasWheels = wheelRows.value.length > 0
-    || (props.entry?.modes?.length ?? 0) > 0;
+  const hasWheels = wheelRows.value.length > 0;
   return [
-    { label: 'Full data', ok: hasLocal },
-    { label: '3D', ok: has3d },
-    { label: 'DMX', ok: hasDmx },
-    { label: 'Wheels', ok: hasLocal && wheelRows.value.length > 0 },
-    { label: 'Metadata', ok: hasMetadata },
+    { key: '3d', label: '3D', ok: has3d },
+    { key: 'dmx', label: 'DMX', ok: hasDmx },
+    { key: 'wheels', label: 'Wheels', ok: hasWheels },
   ];
 });
+
+const iesBeams = computed(() =>
+  (definition.value?.beams ?? []).filter((b) => b.iesAssetId),
+);
 
 const dmxMapping = computed(() => {
   if (definition.value?.dmxMapping) {
@@ -105,13 +134,22 @@ const dmxMapping = computed(() => {
   };
 });
 
-const fixtureType = computed(() => {
-  const tags = props.localFixture?.tags ?? [];
-  const match = tags.find((t) => FIXTURE_TYPES.some((ft) => ft.toLowerCase() === t.toLowerCase()));
-  if (match) return match;
-  if (tags.length) return tags[0];
-  return 'Spot';
+const fixtureCategory = computed<LibraryFixtureCategory>(() => {
+  if (!props.localFixture) return 'Unassigned';
+  return fixtureCategoryFromTags(props.localFixture.tags);
 });
+
+async function onFixtureCategoryChange(category: LibraryFixtureCategory): Promise<void> {
+  if (!props.localFixture || savingCategory.value) return;
+  const tags = tagsWithFixtureCategory(props.localFixture.tags, category);
+  savingCategory.value = true;
+  try {
+    const res = await fixturesApi.update(props.localFixture.id, { tags });
+    emit('refreshed', res.fixture);
+  } finally {
+    savingCategory.value = false;
+  }
+}
 
 const modeSummary = computed(() => {
   const modes = Array.isArray(dmxMapping.value.modes) ? dmxMapping.value.modes : [];
@@ -218,6 +256,18 @@ function wheelKind(mediaType: string): string {
   return mediaType;
 }
 
+function slotSwatchStyle(slot: { color?: string; mediaType: string }): Record<string, string> {
+  const css = cieColorToCss(slot.color);
+  if (css) return { background: css };
+  if (/color/i.test(slot.mediaType)) return { background: 'linear-gradient(135deg, #3b82f6, #ef4444)' };
+  return { background: 'var(--color-bg-hover)' };
+}
+
+function mediaUrl(mediaId: string): string | null {
+  if (!props.localFixture) return null;
+  return fixturesApi.mediaUrl(props.localFixture.id, mediaId);
+}
+
 async function loadLocalDetail(id: string): Promise<void> {
   loadingDetail.value = true;
   try {
@@ -257,7 +307,7 @@ watch(
     <h2 class="section-label">Fixture information</h2>
 
     <p class="detail-name">{{ entry.fixture }}</p>
-    <p class="detail-sub muted">{{ entry.manufacturer }}</p>
+    <p class="detail-sub muted">{{ entry.manufacturer }} - {{ entry.fixture }}</p>
 
     <div class="icon-actions">
       <button type="button" class="icon-action" title="Preview" disabled>👁</button>
@@ -295,28 +345,25 @@ watch(
       >🗑</button>
     </div>
 
-    <button
-      class="download-primary"
-      :disabled="importing || !selectedVersion || !!localFixture"
-      @click="emit('import')"
-    >
-      {{ importing ? 'Downloading…' : localFixture ? 'Downloaded' : 'Download' }}
-    </button>
-
-    <div class="badge-row">
-      <span
-        v-for="b in badges"
-        :key="b.label"
-        class="status-badge"
-        :class="b.ok ? 'ok' : 'missing'"
-      >{{ b.label }}</span>
-    </div>
-
-    <div class="type-block">
-      <label class="type-label">Type</label>
-      <select class="type-select" :value="fixtureType" disabled>
-        <option v-for="t in FIXTURE_TYPES" :key="t" :value="t">{{ t }}</option>
-      </select>
+    <div class="status-row">
+      <span v-if="hasFullGdtf" class="full-gdtf-pill">Full GDTF</span>
+      <div class="status-icons">
+        <span
+          v-for="icon in statusIcons"
+          :key="icon.key"
+          class="status-icon"
+          :class="icon.ok ? 'ok' : 'missing'"
+          :title="icon.label"
+        >{{ icon.ok ? '✓' : '✕' }}</span>
+      </div>
+      <FixtureTypeSelect
+        v-if="localFixture"
+        class="inline-type-select"
+        :model-value="fixtureCategory"
+        :disabled="savingCategory"
+        compact
+        @update:model-value="onFixtureCategoryChange"
+      />
     </div>
 
     <div v-if="!localFixture" class="version-block">
@@ -377,20 +424,16 @@ watch(
 
     <nav class="detail-tabs">
       <button
-        v-for="tab in ([
-          ['3d', '3D'],
-          ['overview', 'Overview'],
-          ['dmx', 'DMX'],
-          ['wheels', 'Wheels'],
-          ['source', 'Source'],
-          ['images', 'Images'],
-        ] as const)"
-        :key="tab[0]"
+        v-for="tab in detailTabs"
+        :key="tab.id"
         type="button"
         class="detail-tab"
-        :class="{ active: activeTab === tab[0] }"
-        @click="activeTab = tab[0]"
-      >{{ tab[1] }}</button>
+        :class="{ active: activeTab === tab.id }"
+        @click="activeTab = tab.id"
+      >
+        {{ tab.label }}
+        <span v-if="tab.count" class="tab-count">{{ tab.count }}</span>
+      </button>
     </nav>
 
     <div class="tab-content">
@@ -406,7 +449,7 @@ watch(
           <dt>Brand</dt>
           <dd>{{ definition?.fixtureInformation.manufacturer ?? entry.manufacturer }}</dd>
           <dt>Fixture type</dt>
-          <dd>{{ fixtureType }}</dd>
+          <dd>{{ localFixture ? fixtureCategory : '—' }}</dd>
           <dt>Revision</dt>
           <dd>{{ definition?.fixtureInformation.revision ?? selectedVersion?.revision ?? '—' }}</dd>
           <dt>Creator</dt>
@@ -417,7 +460,7 @@ watch(
           <dd v-if="localFixture">{{ localFixture.status }}</dd>
         </dl>
         <div class="overview-badges">
-          <span v-for="b in badges.filter((x) => x.ok)" :key="b.label" class="meta-pill">{{ b.label }}</span>
+          <span v-for="icon in statusIcons.filter((x) => x.ok)" :key="icon.key" class="meta-pill">{{ icon.label }}</span>
         </div>
         <p v-if="definition?.fixtureInformation.description" class="desc muted">
           {{ definition.fixtureInformation.description }}
@@ -429,6 +472,7 @@ watch(
         :dmx-mapping="dmxMapping"
         :fixture-name="entry.fixture"
         :manufacturer="entry.manufacturer"
+        :fixture-id="localFixture?.id ?? null"
         compact
       />
 
@@ -438,28 +482,26 @@ watch(
             <header class="wheel-head">
               <h4>{{ wheel.wheelName }}</h4>
               <span class="wheel-type-pill">{{ wheel.wheelType }}</span>
+              <span class="wheel-slot-count muted">{{ wheel.slots.length }} slots</span>
             </header>
-            <table class="wheel-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Slot</th>
-                  <th>Type</th>
-                  <th>DMX</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="slot in wheel.slots" :key="`${wheel.wheelId}-${slot.slotIndex}`">
-                  <td class="mono">{{ slot.slotIndex }}</td>
-                  <td>{{ slot.slotName }}</td>
-                  <td><span class="slot-pill" :class="wheelKind(slot.mediaType).toLowerCase()">{{ wheelKind(slot.mediaType) }}</span></td>
-                  <td class="mono muted">
-                    <template v-if="slot.dmxFrom != null">{{ slot.dmxFrom }}<template v-if="slot.dmxTo != null">–{{ slot.dmxTo }}</template></template>
-                    <template v-else>—</template>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="slot-grid">
+              <div
+                v-for="slot in wheel.slots"
+                :key="`${wheel.wheelId}-${slot.slotIndex}`"
+                class="slot-cell"
+              >
+                <div class="slot-thumb">
+                  <img
+                    v-if="slot.imageAssetId && mediaUrl(slot.imageAssetId)"
+                    :src="mediaUrl(slot.imageAssetId)!"
+                    :alt="slot.slotName"
+                  />
+                  <span v-else class="slot-swatch" :style="slotSwatchStyle(slot)" />
+                </div>
+                <span class="slot-idx mono">{{ slot.slotIndex }}</span>
+                <span class="slot-name">{{ slot.slotName }}</span>
+              </div>
+            </div>
           </div>
         </template>
         <template v-else-if="localDetail">
@@ -474,44 +516,83 @@ watch(
       </div>
 
       <div v-else-if="activeTab === 'source'" class="source-tab">
-        <dl class="overview-meta">
-          <dt>UUID</dt>
-          <dd class="mono">{{ entry.uuid }}</dd>
-          <dt>Hash</dt>
-          <dd class="mono">{{ localFixture?.sourceGdtfHash ?? '—' }}</dd>
-          <dt>File size</dt>
-          <dd>
-            <template v-if="selectedVersion?.filesize">
-              {{ (selectedVersion.filesize / 1024 / 1024).toFixed(2) }} MB
-            </template>
-            <template v-else>—</template>
-          </dd>
-          <dt>Creator</dt>
-          <dd>{{ entry.creator ?? selectedVersion?.creator ?? '—' }}</dd>
-          <dt>Uploader</dt>
-          <dd>{{ entry.uploader ?? selectedVersion?.uploader ?? '—' }}</dd>
-        </dl>
-        <section v-if="entry.versions.length" class="revision-list">
-          <h4 class="sub-label">Revisions</h4>
-          <ul>
-            <li v-for="v in entry.versions" :key="v.rid" class="revision-item">
-              <span class="mono">rid {{ v.rid }}</span>
-              <span>{{ formatVersionLabel(v) }}</span>
-              <span v-if="v.filesize" class="muted">{{ (v.filesize / 1024 / 1024).toFixed(1) }} MB</span>
-            </li>
-          </ul>
-        </section>
+        <div class="source-card">
+          <h4 class="source-card-title">GDTF file</h4>
+          <dl class="source-meta">
+            <dt>Hash</dt>
+            <dd class="mono">{{ localFixture?.sourceGdtfHash ?? '—' }}</dd>
+            <dt>Revision</dt>
+            <dd>{{ definition?.fixtureInformation.revision ?? selectedVersion?.revision ?? '—' }}</dd>
+          </dl>
+        </div>
+        <div class="source-card">
+          <h4 class="source-card-title">GDTF Share</h4>
+          <dl class="source-meta">
+            <dt>Revision ID</dt>
+            <dd class="mono">{{ selectedVersion?.rid ?? '—' }}</dd>
+            <dt>Version</dt>
+            <dd>{{ selectedVersion?.version ? `GDTF ${selectedVersion.version}` : '—' }}</dd>
+            <dt>Size</dt>
+            <dd>{{ selectedVersion?.filesize ? `${(selectedVersion.filesize / 1024 / 1024).toFixed(2)} MB` : '—' }}</dd>
+            <dt>Last modified</dt>
+            <dd>{{ formatDate(selectedVersion?.lastModified) }}</dd>
+            <dt>UUID</dt>
+            <dd class="mono small-uuid">{{ entry.uuid }}</dd>
+          </dl>
+        </div>
+        <div v-if="localFixture" class="source-card">
+          <h4 class="source-card-title">Internal revision</h4>
+          <dl class="source-meta">
+            <dt>Status</dt>
+            <dd>{{ localFixture.status }}</dd>
+            <dt>Imported</dt>
+            <dd>{{ provenanceLine ?? '—' }}</dd>
+          </dl>
+        </div>
+        <RouterLink
+          v-if="localFixture"
+          :to="{ name: 'fixture-debug', params: { id: localFixture.id } }"
+          class="debug-link-btn"
+        >Developer: open mesh debug</RouterLink>
       </div>
 
-      <div v-else class="images-tab">
-        <div v-if="previewUrl" class="thumb-wrap">
-          <FixtureQuadPreview :preview-url="previewUrl" :fixture-name="entry.fixture" />
-          <p class="muted small">3D preview available — product photos not linked.</p>
+      <div v-else-if="activeTab === 'images'" class="images-tab">
+        <div v-if="imageAssets.length" class="image-grid">
+          <div v-for="img in imageAssets" :key="img.mediaId" class="image-cell">
+            <div class="image-thumb">
+              <img v-if="mediaUrl(img.mediaId)" :src="mediaUrl(img.mediaId)!" :alt="img.label" />
+            </div>
+            <span class="image-label">{{ img.label }}</span>
+          </div>
         </div>
-        <p class="enrich-msg muted">
-          Product photos not available for this entry.
-          Use <strong>Enrich missing photos</strong> in the library toolbar when catalog images are linked.
+        <p v-else class="enrich-msg muted">
+          No thumbnail images imported.
+          Download the GDTF package to extract <strong>thumbnail.png</strong> / <strong>thumbnail.svg</strong>.
         </p>
+      </div>
+
+      <div v-else class="ies-tab">
+        <template v-if="localDetail && iesBeams.length">
+          <div v-for="beam in iesBeams" :key="beam.beamId" class="ies-card">
+            <h4>{{ beam.beamType ?? 'Beam' }}</h4>
+            <dl class="overview-meta">
+              <dt>Beam ID</dt>
+              <dd class="mono">{{ beam.beamId.slice(0, 8) }}…</dd>
+              <dt>IES asset</dt>
+              <dd class="mono">{{ beam.iesAssetId?.slice(0, 8) }}…</dd>
+              <dt v-if="beam.luminousFlux">Flux</dt>
+              <dd v-if="beam.luminousFlux">{{ beam.luminousFlux }} lm</dd>
+              <dt v-if="beam.beamAngle">Beam angle</dt>
+              <dd v-if="beam.beamAngle">{{ beam.beamAngle }}°</dd>
+            </dl>
+          </div>
+        </template>
+        <template v-else-if="localDetail">
+          <p class="muted">No IES photometric data imported for this fixture.</p>
+        </template>
+        <template v-else>
+          <p class="muted">Download fixture to view IES photometric data.</p>
+        </template>
       </div>
     </div>
 
@@ -571,35 +652,38 @@ watch(
 }
 .debug-link:hover { background: var(--orbit-primary-fade); }
 
-.download-primary {
-  width: 100%;
-  padding: 10px 16px;
-  border: none;
-  border-radius: var(--radius);
-  background: var(--orbit-primary);
-  color: #fff;
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.full-gdtf-pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.status-icons { display: flex; gap: 4px; }
+.status-icon {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
 }
-.download-primary:hover:not(:disabled) { background: var(--orbit-primary-hover); }
-.download-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+.status-icon.ok { background: var(--color-success-bg); color: var(--color-success); border-color: var(--color-success); }
+.status-icon.missing { background: var(--color-bg-hover); color: var(--color-text-muted); }
 
-.badge-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.status-badge {
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.status-badge.ok { background: var(--color-success-bg); color: var(--color-success); }
-.status-badge.missing { background: var(--color-warn-bg); color: var(--color-warn); }
-
-.type-block { margin-top: 2px; }
+.inline-type-select { margin-left: auto; min-width: 120px; }
 .type-label,
 .version-label {
   display: block;
@@ -669,6 +753,19 @@ watch(
   color: var(--orbit-primary);
   border-bottom-color: var(--orbit-primary);
 }
+.tab-count {
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--orbit-primary-fade);
+  color: var(--orbit-primary);
+  font-size: 10px;
+  font-weight: 700;
+}
+.detail-tab.active .tab-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
 
 .tab-content {
   flex: 1;
@@ -699,6 +796,35 @@ watch(
 .desc { margin: 0; font-size: 12px; line-height: 1.45; }
 
 .wheels-tab { display: flex; flex-direction: column; gap: 12px; }
+.wheel-slot-count { font-size: 10px; margin-left: auto; }
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+.slot-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.slot-thumb {
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+}
+.slot-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.slot-swatch { width: 100%; height: 100%; display: block; }
+.slot-idx { font-size: 9px; color: var(--color-text-muted); }
+.slot-name { font-size: 10px; line-height: 1.2; word-break: break-word; }
 .wheel-card {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -754,7 +880,38 @@ watch(
 [data-theme="dark"] .slot-pill.color { background: #1e3a5f; color: #93c5fd; }
 [data-theme="dark"] .slot-pill.gobo { background: #3b2667; color: #c4b5fd; }
 
-.source-tab { display: flex; flex-direction: column; gap: 12px; }
+.source-tab { display: flex; flex-direction: column; gap: 10px; }
+.source-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--color-bg-elevated);
+}
+.source-card-title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.source-meta {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 11px;
+}
+.source-meta dt { color: var(--color-text-muted); margin: 0; }
+.source-meta dd { margin: 0; word-break: break-all; }
+.small-uuid { font-size: 10px; }
+.debug-link-btn {
+  font-size: 11px;
+  color: var(--orbit-primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+.debug-link-btn:hover { text-decoration: underline; }
 .sub-label {
   margin: 0 0 6px;
   font-size: 10px;
@@ -782,6 +939,33 @@ watch(
 }
 
 .images-tab { display: flex; flex-direction: column; gap: 12px; }
+.image-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.image-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.image-thumb {
+  aspect-ratio: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.image-label {
+  font-size: 10px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
 .thumb-wrap {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -804,4 +988,12 @@ watch(
 }
 .small { font-size: 11px; }
 .loading-hint { font-size: 11px; }
+
+.ies-tab { display: flex; flex-direction: column; gap: 10px; }
+.ies-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+.ies-card h4 { margin: 0 0 8px; font-size: 13px; }
 </style>
