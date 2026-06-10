@@ -55,6 +55,10 @@ jobs:
     needs: build-and-push
     runs-on: [self-hosted, prism-deploy]
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: prism-deploy-vm212
+      cancel-in-progress: true
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

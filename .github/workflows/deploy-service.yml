@@ -23,6 +23,10 @@ on:
 jobs:
   deploy-dev:
     runs-on: [self-hosted, prism-deploy]
+    concurrency:
+      group: prism-deploy-vm212
+      cancel-in-progress: true
+    timeout-minutes: 10
     steps:
       - name: Pull and restart service on VM 212
         run: |
