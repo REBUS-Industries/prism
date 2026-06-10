@@ -5,6 +5,8 @@ import {
   fixturesApi,
   type FixtureDetail,
   type FixtureListItem,
+  type FixtureUpdateCheck,
+  type FixtureVersionSummary,
   type GdtfShareCatalogEntry,
   type GdtfShareRevision,
 } from '../../shared/api';
@@ -24,7 +26,14 @@ const emit = defineEmits<{
   edit: [id: string];
   delete: [fixture: FixtureListItem];
   'update:selectedRid': [rid: number];
+  refreshed: [fixture: FixtureListItem];
 }>();
+
+const updateCheck = ref<FixtureUpdateCheck | null>(null);
+const checkingUpdates = ref(false);
+const applyingUpdate = ref(false);
+const switchingVersion = ref(false);
+const carryReport = ref<string[]>([]);
 
 const FIXTURE_TYPES = ['Spot', 'Wash', 'Beam', 'Profile', 'Moving Head', 'LED', 'Strobe', 'Other'];
 
@@ -124,8 +133,82 @@ function formatVersionLabel(v: GdtfShareRevision): string {
 function formatDate(ts?: string): string {
   if (!ts) return '—';
   const n = parseInt(ts, 10);
-  if (!n) return ts;
-  return new Date(n * 1000).toLocaleDateString();
+  if (n > 1_000_000_000_000) return new Date(n).toLocaleString();
+  if (n > 1_000_000_000) return new Date(n * 1000).toLocaleString();
+  return ts;
+}
+
+function formatStoredVersionLabel(v: FixtureVersionSummary): string {
+  const parts = [
+    v.revision,
+    v.gdtfVersion ? `GDTF ${v.gdtfVersion}` : null,
+    v.isActive ? '(active)' : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : `Hash ${v.gdtfHash.slice(0, 8)}`;
+}
+
+const storedVersions = computed(() => localDetail.value?.versions ?? []);
+
+const activeStoredVersion = computed(() =>
+  storedVersions.value.find((v) => v.isActive) ?? localDetail.value?.activeVersion ?? null,
+);
+
+const provenanceLine = computed(() => {
+  const v = activeStoredVersion.value;
+  if (!v) return null;
+  return `Downloaded ${formatDate(v.downloadedAt)}${v.revision ? ` · ${v.revision}` : ''}`;
+});
+
+async function checkForUpdates(): Promise<void> {
+  if (!props.localFixture) return;
+  checkingUpdates.value = true;
+  carryReport.value = [];
+  try {
+    const res = await fixturesApi.checkUpdates(props.localFixture.id);
+    updateCheck.value = res.check;
+  } finally {
+    checkingUpdates.value = false;
+  }
+}
+
+async function applyLatestUpdate(): Promise<void> {
+  if (!props.localFixture || !updateCheck.value?.latestRid) return;
+  applyingUpdate.value = true;
+  carryReport.value = [];
+  try {
+    const res = await fixturesApi.downloadVersion(
+      props.localFixture.id,
+      updateCheck.value.latestRid,
+      true,
+    );
+    carryReport.value = [
+      ...res.report.applied.map((a) => `Applied: ${a}`),
+      ...res.report.unmapped.map((u) => `Unmapped: ${u}`),
+    ];
+    await loadLocalDetail(props.localFixture.id);
+    emit('refreshed', res.fixture);
+    updateCheck.value = null;
+    void checkForUpdates();
+  } finally {
+    applyingUpdate.value = false;
+  }
+}
+
+async function onSwitchStoredVersion(versionId: string): Promise<void> {
+  if (!props.localFixture) return;
+  switchingVersion.value = true;
+  carryReport.value = [];
+  try {
+    const res = await fixturesApi.switchActiveVersion(props.localFixture.id, versionId);
+    localDetail.value = res.fixture;
+    carryReport.value = [
+      ...res.report.applied.map((a) => `Applied: ${a}`),
+      ...res.report.unmapped.map((u) => `Unmapped: ${u}`),
+    ];
+    emit('refreshed', res.fixture);
+  } finally {
+    switchingVersion.value = false;
+  }
 }
 
 function wheelKind(mediaType: string): string {
@@ -151,7 +234,12 @@ watch(
   () => props.localFixture?.id,
   (id) => {
     localDetail.value = null;
-    if (id) void loadLocalDetail(id);
+    updateCheck.value = null;
+    carryReport.value = [];
+    if (id) {
+      void loadLocalDetail(id);
+      void checkForUpdates();
+    }
   },
   { immediate: true },
 );
@@ -231,8 +319,8 @@ watch(
       </select>
     </div>
 
-    <div class="version-block">
-      <label class="version-label">GDTF version / revision</label>
+    <div v-if="!localFixture" class="version-block">
+      <label class="version-label">GDTF-Share version (download)</label>
       <select
         :value="selectedRid ?? entry.versions[0]?.rid"
         class="version-select"
@@ -247,6 +335,44 @@ watch(
         <span v-if="selectedVersion.filesize"> · {{ (selectedVersion.filesize / 1024 / 1024).toFixed(1) }} MB</span>
         <span v-if="selectedVersion.rating"> · ★ {{ selectedVersion.rating }}</span>
       </p>
+    </div>
+
+    <div v-else class="version-block stored-versions">
+      <label class="version-label">Library version history</label>
+      <p v-if="provenanceLine" class="provenance muted small">{{ provenanceLine }}</p>
+      <select
+        v-if="storedVersions.length"
+        class="version-select"
+        :disabled="switchingVersion"
+        :value="activeStoredVersion?.id"
+        @change="onSwitchStoredVersion(($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="v in storedVersions" :key="v.id" :value="v.id">
+          {{ formatStoredVersionLabel(v) }} — {{ formatDate(v.downloadedAt) }}
+        </option>
+      </select>
+      <div class="update-row">
+        <button
+          type="button"
+          class="btn-outline-sm"
+          :disabled="checkingUpdates"
+          @click="checkForUpdates"
+        >{{ checkingUpdates ? 'Checking…' : 'Check for updates' }}</button>
+        <button
+          v-if="updateCheck?.updateAvailable && updateCheck.latestRid"
+          type="button"
+          class="btn-update-sm"
+          :disabled="applyingUpdate"
+          @click="applyLatestUpdate"
+        >
+          {{ applyingUpdate ? 'Updating…' : `Update to ${updateCheck.latestRevision ?? 'latest'}` }}
+        </button>
+        <span v-else-if="updateCheck && !updateCheck.updateAvailable" class="muted small">Up to date</span>
+        <span v-else-if="localFixture.updateAvailable" class="pill warn-pill">Update available</span>
+      </div>
+      <ul v-if="carryReport.length" class="carry-report muted small">
+        <li v-for="(line, i) in carryReport" :key="i">{{ line }}</li>
+      </ul>
     </div>
 
     <nav class="detail-tabs">
@@ -496,6 +622,29 @@ watch(
 }
 .version-block { margin-top: 4px; }
 .version-meta { margin: 4px 0 0; font-size: 11px; }
+.stored-versions .provenance { margin: 0 0 6px; }
+.update-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.btn-outline-sm,
+.btn-update-sm {
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-outline-sm {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+}
+.btn-update-sm {
+  border: none;
+  background: var(--orbit-primary);
+  color: #fff;
+}
+.warn-pill { background: var(--color-warn-bg); color: var(--color-warn); }
+.carry-report { margin: 8px 0 0; padding-left: 16px; }
+.small { font-size: 11px; }
 
 .detail-tabs {
   display: flex;

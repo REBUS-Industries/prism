@@ -9,6 +9,7 @@ import {
   fixturesApi,
   type ApiError,
   type FixtureListItem,
+  type FixtureUpdateCheck,
   type MvrImportResult,
   type MvrUnresolvedFixture,
 } from './api';
@@ -37,6 +38,9 @@ const error = ref<string | null>(null);
 const resolveNotes = ref<string[]>([]);
 const localInstances = ref<MvrImportResult['instances']>([]);
 const localUnresolved = ref<MvrImportResult['unresolvedFixtures']>([]);
+const fixtureUpdates = ref<Record<string, FixtureUpdateCheck>>({});
+const autoUpdateBeforeUpload = ref(false);
+const updatingFixtureId = ref<string | null>(null);
 
 /** gdtfRefKey → selected Prism fixture type id */
 const typeMappings = ref<Record<string, string>>({});
@@ -85,10 +89,30 @@ function initMappings(): void {
   typeMappings.value = next;
 }
 
+const fixturesWithUpdates = computed(() => {
+  const ids = new Set<string>();
+  for (const inst of localInstances.value) {
+    if (inst.fixtureTypeId && fixtureUpdates.value[inst.fixtureTypeId]?.updateAvailable) {
+      ids.add(inst.fixtureTypeId);
+    }
+  }
+  for (const mapping of Object.values(typeMappings.value)) {
+    if (mapping && fixtureUpdates.value[mapping]?.updateAvailable) ids.add(mapping);
+  }
+  return [...ids];
+});
+
+function mergeFixtureUpdates(updates?: Record<string, FixtureUpdateCheck>): void {
+  if (!updates) return;
+  fixtureUpdates.value = { ...fixtureUpdates.value, ...updates };
+}
+
 watch(() => props.open, (o) => {
   if (!o) return;
   error.value = null;
   resolveNotes.value = [];
+  fixtureUpdates.value = {};
+  autoUpdateBeforeUpload.value = false;
   target.value = props.orbitTarget;
   initMappings();
   void loadFixtures();
@@ -120,10 +144,28 @@ async function importMissing(): Promise<void> {
     }
     localInstances.value = res.instances;
     localUnresolved.value = res.unresolvedFixtures;
+    mergeFixtureUpdates(res.fixtureUpdates);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'resolve failed';
   } finally {
     resolving.value = false;
+  }
+}
+
+async function updateFixtureBeforeUpload(fixtureTypeId: string): Promise<void> {
+  const check = fixtureUpdates.value[fixtureTypeId];
+  if (!check?.latestRid) return;
+  updatingFixtureId.value = fixtureTypeId;
+  error.value = null;
+  try {
+    await fixturesApi.downloadVersion(fixtureTypeId, check.latestRid, true);
+    const res = await fixturesApi.checkUpdates(fixtureTypeId);
+    fixtureUpdates.value = { ...fixtureUpdates.value, [fixtureTypeId]: res.check };
+    resolveNotes.value.push(`Updated fixture ${fixtureTypeId} to ${check.latestRevision ?? 'latest'}`);
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'fixture update failed';
+  } finally {
+    updatingFixtureId.value = null;
   }
 }
 
@@ -147,6 +189,8 @@ async function uploadToOrbit(): Promise<void> {
       return;
     }
 
+    mergeFixtureUpdates(resolveRes.fixtureUpdates);
+
     const dbIds = resolveRes.persisted.map((p) => p.dbId);
     if (!dbIds.length) {
       error.value = 'No instances were persisted — check fixture mappings.';
@@ -159,6 +203,7 @@ async function uploadToOrbit(): Promise<void> {
       modelId: modelId.value.trim(),
       orbitTarget: target.value,
       instanceIds: dbIds,
+      autoUpdate: autoUpdateBeforeUpload.value,
     });
     emit('uploaded', { versionId: uploadRes.versionId, objectCount: uploadRes.objectCount });
     emit('close');
@@ -239,6 +284,32 @@ function fixturesForRef(u: MvrUnresolvedFixture): FixtureListItem[] {
         </button>
       </div>
 
+      <div v-if="fixturesWithUpdates.length" class="warn-box">
+        <p class="update-head">
+          {{ fixturesWithUpdates.length }} mapped fixture(s) have a newer GDTF revision on GDTF-Share.
+        </p>
+        <ul class="update-list">
+          <li v-for="fid in fixturesWithUpdates" :key="fid">
+            <span class="mono">{{ fixtures.find((f) => f.id === fid)?.fixtureName || fid }}</span>
+            <span v-if="fixtureUpdates[fid]?.latestRevision" class="muted">
+              → {{ fixtureUpdates[fid]?.latestRevision }}
+            </span>
+            <button
+              type="button"
+              class="link-btn"
+              :disabled="updatingFixtureId === fid"
+              @click="updateFixtureBeforeUpload(fid)"
+            >
+              {{ updatingFixtureId === fid ? 'Updating…' : 'Update before upload' }}
+            </button>
+          </li>
+        </ul>
+        <label class="auto-update-label">
+          <input v-model="autoUpdateBeforeUpload" type="checkbox" />
+          Auto-update all mapped fixtures on upload
+        </label>
+      </div>
+
       <ul v-if="resolveNotes.length" class="notes muted">
         <li v-for="(n, i) in resolveNotes" :key="i">{{ n }}</li>
       </ul>
@@ -302,5 +373,14 @@ function fixturesForRef(u: MvrUnresolvedFixture): FixtureListItem[] {
   font-size: 13px;
 }
 .notes { font-size: 12px; margin: 0; padding-left: 18px; }
+.update-head { margin: 0 0 8px; }
+.update-list { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
+.update-list li { margin-bottom: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mono { font-family: var(--font-mono, monospace); font-size: 11px; }
+.link-btn {
+  border: none; background: none; color: var(--orbit-primary);
+  font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0;
+}
+.auto-update-label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 </style>

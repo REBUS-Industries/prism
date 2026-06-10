@@ -26,6 +26,10 @@ import {
 
   type FixturePart,
 
+  type FixtureUpdateCheck,
+
+  type FixtureVersionSummary,
+
   type Vec3,
 
 } from '../../shared/api';
@@ -58,6 +62,16 @@ const tags = ref('');
 
 const status = ref('draft');
 
+const updateCheck = ref<FixtureUpdateCheck | null>(null);
+
+const checkingUpdates = ref(false);
+
+const applyingUpdate = ref(false);
+
+const switchingVersion = ref(false);
+
+const carryReport = ref<string[]>([]);
+
 
 
 const previewUrl = computed(() =>
@@ -69,6 +83,78 @@ const previewUrl = computed(() =>
 
 
 const info = computed(() => fixture.value?.definition.fixtureInformation);
+
+const storedVersions = computed(() => fixture.value?.versions ?? []);
+
+const activeStoredVersion = computed(() =>
+  storedVersions.value.find((v) => v.isActive) ?? fixture.value?.activeVersion ?? null,
+);
+
+const provenanceLine = computed(() => {
+  const v = activeStoredVersion.value;
+  if (!v) return null;
+  return `Downloaded ${formatEditorDate(v.downloadedAt)}${v.revision ? ` · ${v.revision}` : ''}`;
+});
+
+function formatEditorDate(ts?: string): string {
+  if (!ts) return '—';
+  const n = parseInt(ts, 10);
+  if (n > 1_000_000_000_000) return new Date(n).toLocaleString();
+  if (n > 1_000_000_000) return new Date(n * 1000).toLocaleString();
+  return ts;
+}
+
+function formatStoredVersionLabel(v: FixtureVersionSummary): string {
+  const parts = [
+    v.revision,
+    v.gdtfVersion ? `GDTF ${v.gdtfVersion}` : null,
+    v.isActive ? '(active)' : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : `Hash ${v.gdtfHash.slice(0, 8)}`;
+}
+
+async function checkForUpdates(): Promise<void> {
+  checkingUpdates.value = true;
+  carryReport.value = [];
+  try {
+    const res = await fixturesApi.checkUpdates(props.id);
+    updateCheck.value = res.check;
+  } finally {
+    checkingUpdates.value = false;
+  }
+}
+
+async function applyLatestUpdate(): Promise<void> {
+  if (!updateCheck.value?.latestRid) return;
+  applyingUpdate.value = true;
+  carryReport.value = [];
+  try {
+    const res = await fixturesApi.downloadVersion(props.id, updateCheck.value.latestRid, true);
+    carryReport.value = [
+      ...res.report.applied.map((a) => `Applied: ${a}`),
+      ...res.report.unmapped.map((u) => `Unmapped: ${u}`),
+    ];
+    await reload();
+    void checkForUpdates();
+  } finally {
+    applyingUpdate.value = false;
+  }
+}
+
+async function onSwitchStoredVersion(versionId: string): Promise<void> {
+  switchingVersion.value = true;
+  carryReport.value = [];
+  try {
+    const res = await fixturesApi.switchActiveVersion(props.id, versionId);
+    fixture.value = res.fixture;
+    carryReport.value = [
+      ...res.report.applied.map((a) => `Applied: ${a}`),
+      ...res.report.unmapped.map((u) => `Unmapped: ${u}`),
+    ];
+  } finally {
+    switchingVersion.value = false;
+  }
+}
 
 
 
@@ -254,7 +340,10 @@ async function removeFixture(): Promise<void> {
 
 
 
-onMounted(() => void reload());
+onMounted(() => {
+  void reload();
+  void checkForUpdates();
+});
 
 </script>
 
@@ -287,6 +376,41 @@ onMounted(() => void reload());
               <span v-if="info?.revision"> · v{{ info.revision }}</span>
 
             </p>
+
+            <div v-if="storedVersions.length" class="version-bar">
+              <p v-if="provenanceLine" class="provenance muted">{{ provenanceLine }}</p>
+              <div class="version-controls">
+                <select
+                  class="version-select"
+                  :disabled="switchingVersion"
+                  :value="activeStoredVersion?.id"
+                  @change="onSwitchStoredVersion(($event.target as HTMLSelectElement).value)"
+                >
+                  <option v-for="v in storedVersions" :key="v.id" :value="v.id">
+                    {{ formatStoredVersionLabel(v) }} — {{ formatEditorDate(v.downloadedAt) }}
+                  </option>
+                </select>
+                <button
+                  type="button"
+                  class="btn-outline"
+                  :disabled="checkingUpdates"
+                  @click="checkForUpdates"
+                >{{ checkingUpdates ? 'Checking…' : 'Check updates' }}</button>
+                <button
+                  v-if="updateCheck?.updateAvailable && updateCheck.latestRid"
+                  type="button"
+                  class="btn-update"
+                  :disabled="applyingUpdate"
+                  @click="applyLatestUpdate"
+                >
+                  {{ applyingUpdate ? 'Updating…' : `Update to ${updateCheck.latestRevision ?? 'latest'}` }}
+                </button>
+                <span v-else-if="fixture.updateAvailable" class="pill warn">Update available</span>
+              </div>
+              <ul v-if="carryReport.length" class="carry-report muted">
+                <li v-for="(line, i) in carryReport" :key="i">{{ line }}</li>
+              </ul>
+            </div>
 
           </div>
 
@@ -568,6 +692,37 @@ onMounted(() => void reload());
 }
 
 .head-meta { margin: 4px 0 0; font-size: 13px; }
+
+.version-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.version-bar .provenance { margin: 0; font-size: 12px; }
+.version-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.version-select {
+  min-width: 220px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-input);
+  font-size: 12px;
+}
+.btn-outline {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-update {
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--orbit-primary);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pill.warn { background: var(--color-warn-bg); color: var(--color-warn); font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+.carry-report { margin: 0; padding-left: 18px; font-size: 11px; }
 
 .head-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
 

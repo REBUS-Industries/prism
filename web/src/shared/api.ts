@@ -1271,6 +1271,36 @@ export interface FixtureDefinition {
   metadata: Record<string, unknown>;
 }
 
+export type FixtureImportSource = 'upload' | 'gdtf-share' | 'mvr-embedded';
+
+export interface FixtureVersionSummary {
+  id: string;
+  fixtureTypeId: string;
+  gdtfShareRid: number | null;
+  gdtfShareUuid: string | null;
+  gdtfVersion: string | null;
+  revision: string | null;
+  gdtfHash: string;
+  originalMediaId: string | null;
+  previewModelId: string | null;
+  downloadedAt: string;
+  isActive: boolean;
+}
+
+export interface FixtureUpdateCheck {
+  updateAvailable: boolean;
+  activeRid: number | null;
+  latestRid: number | null;
+  latestRevision: string | null;
+  latestVersion: string | null;
+  latestLastModified: string | null;
+}
+
+export interface FixtureEditCarryReport {
+  applied: string[];
+  unmapped: string[];
+}
+
 export interface FixtureListItem {
   id: string;
   name: string;
@@ -1279,8 +1309,12 @@ export interface FixtureListItem {
   revision: string | null;
   tags: string[];
   sourceGdtfHash: string | null;
+  gdtfShareUuid: string | null;
+  importSource: FixtureImportSource;
+  activeVersionId: string | null;
   status: string;
   hasPreview: boolean;
+  updateAvailable?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1289,6 +1323,8 @@ export interface FixtureDetail extends FixtureListItem {
   definition: FixtureDefinition;
   previewModelId: string | null;
   sourceGdtfId: string | null;
+  activeVersion?: FixtureVersionSummary | null;
+  versions?: FixtureVersionSummary[];
 }
 
 export interface GdtfShareMode {
@@ -1371,6 +1407,7 @@ export interface MvrResolveResult {
   imported: Array<{ key: string; fixtureTypeId: string; source: string }>;
   errors: Array<{ key: string; message: string }>;
   persisted: Array<{ tempId: string; dbId: string; fixtureTypeId: string }>;
+  fixtureUpdates?: Record<string, FixtureUpdateCheck>;
 }
 
 export interface MvrOrbitUploadResult {
@@ -1406,6 +1443,22 @@ export const fixturesApi = {
   },
   importGdtfShare: (rid: number, name?: string) =>
     api.post<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf-share', { rid, name }),
+  listVersions: (id: string) =>
+    api.get<{ versions: FixtureVersionSummary[] }>(`/api/fixtures/${id}/versions`),
+  checkUpdates: (id: string) =>
+    api.get<{ check: FixtureUpdateCheck }>(`/api/fixtures/${id}/check-updates`),
+  bulkCheckUpdates: (ids: string[]) =>
+    api.post<{ updates: Record<string, boolean> }>('/api/fixtures/check-updates', { ids }),
+  downloadVersion: (id: string, rid: number, carryEdits = true) =>
+    api.post<{ fixture: FixtureListItem; version: FixtureVersionSummary; report: FixtureEditCarryReport }>(
+      `/api/fixtures/${id}/versions`,
+      { rid, carryEdits },
+    ),
+  switchActiveVersion: (id: string, versionId: string) =>
+    api.post<{ fixture: FixtureDetail; report: FixtureEditCarryReport }>(
+      `/api/fixtures/${id}/active-version`,
+      { versionId },
+    ),
   catalogGdtfShare: (params: { q?: string; manufacturer?: string; limit?: number; offset?: number } = {}) => {
     const qs = new URLSearchParams();
     const q = params.q?.trim();
@@ -1447,5 +1500,10 @@ export const fixturesApi = {
     modelId: string;
     orbitTarget?: 'prod' | 'dev';
     instanceIds?: string[];
-  }) => api.post<MvrOrbitUploadResult>('/api/mvr-import/upload-orbit', body),
+    autoUpdate?: boolean;
+  }) => {
+    const qs = body.autoUpdate ? '?autoUpdate=true' : '';
+    const { autoUpdate: _auto, ...payload } = body;
+    return api.post<MvrOrbitUploadResult>(`/api/mvr-import/upload-orbit${qs}`, payload);
+  },
 };

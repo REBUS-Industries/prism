@@ -66,6 +66,8 @@ const creating = ref(false);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 
+const checkingUpdates = ref(false);
+
 
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -318,6 +320,46 @@ async function loadShare(): Promise<void> {
 async function reloadAll(): Promise<void> {
 
   await Promise.all([loadLocal(), loadShare()]);
+
+}
+
+
+
+async function bulkCheckUpdates(): Promise<void> {
+
+  const ids = fixtures.value.filter((f) => f.gdtfShareUuid).map((f) => f.id);
+
+  if (!ids.length) return;
+
+  checkingUpdates.value = true;
+
+  try {
+
+    const res = await fixturesApi.bulkCheckUpdates(ids);
+
+    fixtures.value = fixtures.value.map((f) => ({
+
+      ...f,
+
+      updateAvailable: f.gdtfShareUuid ? (res.updates[f.id] ?? false) : f.updateAvailable,
+
+    }));
+
+  } finally {
+
+    checkingUpdates.value = false;
+
+  }
+
+}
+
+
+
+function onFixtureRefreshed(item: FixtureListItem): void {
+
+  const idx = fixtures.value.findIndex((f) => f.id === item.id);
+
+  if (idx >= 0) fixtures.value[idx] = { ...fixtures.value[idx], ...item };
 
 }
 
@@ -699,6 +741,13 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
         </select>
 
+        <button
+          type="button"
+          class="btn-outline small"
+          :disabled="checkingUpdates || !fixtures.some((f) => f.gdtfShareUuid)"
+          @click="bulkCheckUpdates"
+        >{{ checkingUpdates ? 'Checking…' : 'Check for updates' }}</button>
+
         <span class="count-label">{{ listCountLabel }}</span>
 
       </div>
@@ -819,7 +868,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
             <div class="row-main">
 
-              <span class="row-title">{{ entry.fixture }}</span>
+              <span class="row-title">
+                {{ entry.fixture }}
+                <span
+                  v-if="matchLocal(entry)?.updateAvailable"
+                  class="update-badge"
+                  title="Newer GDTF revision available"
+                >↑</span>
+              </span>
 
               <span class="row-sub muted">{{ formatVersionSub(entry) }}</span>
 
@@ -902,6 +958,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
           @delete="removeFixture"
 
           @update:selected-rid="selectedShareRid = $event"
+
+          @refreshed="onFixtureRefreshed"
 
         />
 
@@ -1464,6 +1522,18 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 
 .row-main { min-width: 0; flex: 1; }
+
+.update-badge {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-warn-bg);
+  color: var(--color-warn);
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+}
 
 .row-title {
 
