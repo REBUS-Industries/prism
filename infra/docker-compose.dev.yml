@@ -103,7 +103,7 @@ services:
     volumes:
       - prism-data:/data/prism
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8766/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8766/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -142,7 +142,7 @@ services:
       VISUALISER_IDLE_TIMEOUT_MS: "${VISUALISER_IDLE_TIMEOUT_MS:-600000}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8768/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8768/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -180,7 +180,7 @@ services:
     volumes:
       - prism-uploads:/var/lib/prism/uploads
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8767/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8767/health"]
       interval: 30s
       timeout: 5s
       retries: 3
