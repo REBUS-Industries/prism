@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 import { orbitApi, settingsApi, type ApiError, type OrbitTestFail, type OrbitTestOk } from '../../shared/api';
 import Modal from '../../shared/Modal.vue';
 import Icon from '../../shared/Icon.vue';
@@ -60,8 +60,10 @@ const error  = ref<string | null>(null);
 const fixtureTypesStore = useFixtureTypesStore();
 
 // ── Tile model ──────────────────────────────────────────────────────────
-// Each former section becomes a tile; clicking opens its controls in a modal.
-type TileKey = 'orbit-prod' | 'orbit-dev' | 'gdtf' | 'server' | 'workstation' | 'fixture-types';
+// Each section is a tile; clicking either opens a modal (fields/custom) or
+// navigates to a named route (routeName).
+type TileKey = 'orbit-prod' | 'orbit-dev' | 'gdtf' | 'server' | 'workstation' | 'fixture-types'
+             | 'users' | 'webhooks' | 'api-keys';
 interface TileDef {
   key: TileKey;
   title: string;
@@ -71,15 +73,22 @@ interface TileDef {
   fields?: FieldDef[];
   testTarget?: 'prod' | 'dev';
   custom?: 'fixture-types';
+  /** Navigate to this named route instead of opening a modal. */
+  routeName?: string;
 }
 
+const router = useRouter();
+
 const tiles: TileDef[] = [
-  { key: 'orbit-prod', title: 'ORBIT — Production', icon: 'cloud', description: 'Production server URL + API token used by the orchestrator.', fields: orbitProdFields, testTarget: 'prod' },
-  { key: 'orbit-dev',  title: 'ORBIT — Dev / Staging', icon: 'science', description: 'Dev/staging server URL + API token.', fields: orbitDevFields, testTarget: 'dev' },
-  { key: 'gdtf',       title: 'GDTF-Share', icon: 'lightbulb', description: 'Credentials for fixture library import from GDTF-Share.com.', fields: gdtfShareFields },
-  { key: 'fixture-types', title: 'Fixture Types', icon: 'palette', description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
-  { key: 'server',     title: 'Server', icon: 'dns', description: 'Job retention window and maintenance mode.', fields: otherFields },
-  { key: 'workstation', title: 'Workstation agent', icon: 'lan', description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
+  { key: 'orbit-prod',     title: 'ORBIT — Production',   icon: 'cloud',     description: 'Production server URL + API token used by the orchestrator.', fields: orbitProdFields, testTarget: 'prod' },
+  { key: 'orbit-dev',      title: 'ORBIT — Dev / Staging', icon: 'science',   description: 'Dev/staging server URL + API token.', fields: orbitDevFields, testTarget: 'dev' },
+  { key: 'gdtf',           title: 'GDTF-Share',            icon: 'lightbulb', description: 'Credentials for fixture library import from GDTF-Share.com.', fields: gdtfShareFields },
+  { key: 'fixture-types',  title: 'Fixture Types',         icon: 'palette',   description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
+  { key: 'server',         title: 'Server',                icon: 'dns',       description: 'Job retention window and maintenance mode.', fields: otherFields },
+  { key: 'workstation',    title: 'Workstation agent',     icon: 'lan',       description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
+  { key: 'users',          title: 'Users',                 icon: 'group',     description: 'Manage admin accounts and access.', routeName: 'users' },
+  { key: 'webhooks',       title: 'Webhooks',              icon: 'webhook',   description: 'Configure outbound webhook endpoints for job events.', routeName: 'webhooks' },
+  { key: 'api-keys',       title: 'API Keys',              icon: 'key',       description: 'Issue and revoke API keys for programmatic access.', routeName: 'keys' },
 ];
 
 const activeKey = ref<TileKey | null>(null);
@@ -186,6 +195,11 @@ const activeTest = computed<TestState | null>(() => {
 });
 
 function openTile(key: TileKey) {
+  const tile = tiles.find((t) => t.key === key);
+  if (tile?.routeName) {
+    void router.push({ name: tile.routeName });
+    return;
+  }
   error.value = null;
   activeKey.value = key;
 }
@@ -219,6 +233,10 @@ function tileSummary(tile: TileDef): string {
         : 'Auto (derive from host)';
     case 'fixture-types':
       return `${fixtureTypesStore.labels.length} type${fixtureTypesStore.labels.length === 1 ? '' : 's'}`;
+    case 'users':
+    case 'webhooks':
+    case 'api-keys':
+      return '';
     default:
       return '';
   }
