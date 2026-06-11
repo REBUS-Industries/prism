@@ -10,7 +10,9 @@ import FixturePartTree from '../components/FixturePartTree.vue';
 
 import FixturePartProperties from '../components/FixturePartProperties.vue';
 
-import FixtureViewer from '../components/FixtureViewer.vue';
+import FixtureViewer, { type PartTransformEdit } from '../components/FixtureViewer.vue';
+
+import { buildTransform4x4 } from '../utils/fixtureTransform';
 
 import DmxModePanel from '../components/DmxModePanel.vue';
 
@@ -59,6 +61,10 @@ const saving = ref(false);
 const selectedPartId = ref<string | null>(null);
 
 const assemblyRevision = ref(0);
+
+const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
+
+const gizmoSpace = ref<'world' | 'local'>('local');
 
 const activeTab = ref<'overview' | 'dmx' | 'parts' | 'ies' | 'settings'>('overview');
 
@@ -331,6 +337,24 @@ function onGeometryChange(): void {
 
 
 
+function onTransformPart(edit: PartTransformEdit): void {
+
+  if (!fixture.value) return;
+
+  const part = fixture.value.definition.parts.find((p) => p.partId === edit.partId);
+
+  if (!part) return;
+
+  // The gizmo already moved the live scene node; only sync the data model so the
+
+  // numeric panel updates. Bumping assemblyRevision would rebuild + reset the gizmo.
+
+  part.localTransform = buildTransform4x4(edit.position, edit.rotation, edit.scale);
+
+}
+
+
+
 async function assignDefaultMaterials(): Promise<void> {
 
   if (!fixture.value) return;
@@ -596,6 +620,20 @@ onMounted(() => {
 
           <div class="parts-viewport">
 
+            <div v-if="assembly" class="gizmo-toolbar">
+
+              <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'translate' }" title="Move (translate)" @click="gizmoMode = 'translate'"><Icon name="open_with" :size="16" /></button>
+
+              <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'rotate' }" title="Rotate" @click="gizmoMode = 'rotate'"><Icon name="3d_rotation" :size="16" /></button>
+
+              <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'scale' }" title="Scale" @click="gizmoMode = 'scale'"><Icon name="zoom_out_map" :size="16" /></button>
+
+              <span class="gizmo-sep" aria-hidden="true" />
+
+              <button type="button" class="gizmo-btn space" :title="`Gizmo space: ${gizmoSpace}`" @click="gizmoSpace = gizmoSpace === 'local' ? 'world' : 'local'">{{ gizmoSpace === 'local' ? 'LOCAL' : 'WORLD' }}</button>
+
+            </div>
+
             <FixtureViewer
 
               v-if="previewUrl || assembly"
@@ -608,17 +646,31 @@ onMounted(() => {
 
               :datums="datumMarkers"
 
+              :editable="!!assembly"
+
+              :selected-part-id="selectedPartId"
+
+              :gizmo-mode="gizmoMode"
+
+              :gizmo-space="gizmoSpace"
+
               fill
 
               light-background
 
               @select-datum="selectedPartId = $event"
 
+              @select-part="selectedPartId = $event"
+
+              @transform-part="onTransformPart"
+
             />
 
             <p v-else class="muted no-preview">No 3D preview available.</p>
 
           </div>
+
+          <p v-if="assembly" class="muted small gizmo-hint">Click a part to select · drag the gizmo to move / rotate it · edits save with the fixture.</p>
 
         </section>
 
@@ -1016,6 +1068,8 @@ onMounted(() => {
 
 .parts-viewport {
 
+  position: relative;
+
   flex: 1;
 
   min-height: 360px;
@@ -1029,6 +1083,76 @@ onMounted(() => {
   contain: strict;
 
 }
+
+.gizmo-toolbar {
+
+  position: absolute;
+
+  top: 8px;
+
+  left: 8px;
+
+  z-index: 2;
+
+  display: flex;
+
+  align-items: center;
+
+  gap: 2px;
+
+  padding: 3px;
+
+  border-radius: var(--radius-sm);
+
+  background: var(--color-bg);
+
+  border: 1px solid var(--color-border);
+
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+
+}
+
+.gizmo-btn {
+
+  display: inline-flex;
+
+  align-items: center;
+
+  justify-content: center;
+
+  min-width: 28px;
+
+  height: 28px;
+
+  padding: 0 6px;
+
+  border: none;
+
+  border-radius: var(--radius-sm);
+
+  background: transparent;
+
+  color: var(--color-text-muted);
+
+  cursor: pointer;
+
+  font-size: 10px;
+
+  font-weight: 700;
+
+  letter-spacing: 0.04em;
+
+}
+
+.gizmo-btn:hover { background: var(--color-bg-hover); color: var(--color-text); }
+
+.gizmo-btn.active { background: var(--orbit-primary); color: #fff; }
+
+.gizmo-btn.space { font-family: var(--font-mono, monospace); min-width: 52px; }
+
+.gizmo-sep { width: 1px; height: 18px; background: var(--color-border); margin: 0 2px; }
+
+.gizmo-hint { margin: 8px 0 0; }
 
 .no-preview {
 

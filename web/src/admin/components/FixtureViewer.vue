@@ -9,11 +9,20 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 import { buildFixtureAssembly, disposeAssembly, type MotionNode } from '../utils/fixtureAssembly';
-import { fixturesApi, type FixturePart, type FixtureModel, type MotionAxis } from '../../shared/api';
+import { fixturesApi, type FixturePart, type FixtureModel, type MotionAxis, type Vec3 } from '../../shared/api';
+
+/** Gizmo edit emitted to the parent (GDTF local space: position metres, rotation degrees). */
+export interface PartTransformEdit {
+  partId: string;
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+}
 
 interface AssemblyProp {
   fixtureId: string;
@@ -45,6 +54,14 @@ const props = withDefaults(defineProps<{
   fill?: boolean;
   /** Bump to force assembly reload after in-place geometry edits. */
   assemblyRevision?: number;
+  /** Enable click-to-select picking + a transform gizmo on the selected part. */
+  editable?: boolean;
+  /** Part the gizmo attaches to (assembly mode only). */
+  selectedPartId?: string | null;
+  /** Active gizmo transform mode. */
+  gizmoMode?: 'translate' | 'rotate' | 'scale';
+  /** Gizmo coordinate space. 'local' aligns with GDTF axes (matches panel). */
+  gizmoSpace?: 'world' | 'local';
 }>(), {
   url: null,
   assembly: null,
@@ -57,10 +74,16 @@ const props = withDefaults(defineProps<{
   lightBackground: false,
   fill: false,
   assemblyRevision: 0,
+  editable: false,
+  selectedPartId: null,
+  gizmoMode: 'translate',
+  gizmoSpace: 'local',
 });
 
 const emit = defineEmits<{
   selectDatum: [id: string];
+  selectPart: [partId: string];
+  transformPart: [edit: PartTransformEdit];
   resetView: [];
 }>();
 
@@ -69,6 +92,10 @@ let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let controls: OrbitControls | null = null;
+let transformControls: TransformControls | null = null;
+let transformHelper: THREE.Object3D | null = null;
+/** partId → group carrying the GDTF local transform (for gizmo + picking). */
+let partGroups = new Map<string, THREE.Group>();
 let envRT: THREE.WebGLRenderTarget | null = null;
 let resizeObs: ResizeObserver | null = null;
 let rafId: number | null = null;
@@ -93,6 +120,9 @@ let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
 
 function clearLoaded(): void {
+  // Detach the gizmo before disposing the groups it may be attached to.
+  transformControls?.detach();
+  partGroups = new Map();
   // Detach beam before disposing assembly nodes it may be parented to.
   beamMesh?.removeFromParent();
   // removeFromParent() works whether the root was added to scene or tiltGroup.
@@ -115,6 +145,14 @@ function dispose(): void {
   if (rafId != null) cancelAnimationFrame(rafId);
   resizeObs?.disconnect();
   controls?.dispose();
+  if (transformControls) {
+    transformControls.removeEventListener('objectChange', onGizmoObjectChange);
+    transformControls.detach();
+    transformHelper?.removeFromParent();
+    transformControls.dispose();
+    transformControls = null;
+    transformHelper = null;
+  }
   clearLoaded();
   if (beamMesh) {
     beamMesh.removeFromParent();
@@ -179,6 +217,39 @@ function syncMotion(): void {
 
 function syncDimmer(): void {
   if (dirLight) dirLight.intensity = 0.2 + props.dimmer * 1.2;
+}
+
+/** Attach / detach the transform gizmo based on editable + selectedPartId. */
+function syncGizmo(): void {
+  if (!transformControls) return;
+  const grp = props.editable && props.selectedPartId
+    ? partGroups.get(props.selectedPartId)
+    : undefined;
+  if (grp) {
+    transformControls.setMode(props.gizmoMode);
+    transformControls.setSpace(props.gizmoSpace);
+    transformControls.attach(grp);
+  } else {
+    transformControls.detach();
+  }
+}
+
+/** Read the gizmo'd group's local TRS (GDTF space) and emit it to the parent. */
+function onGizmoObjectChange(): void {
+  const obj = transformControls?.object as THREE.Object3D | undefined;
+  const id = props.selectedPartId;
+  if (!obj || !id) return;
+  const e = new THREE.Euler().setFromQuaternion(obj.quaternion, 'XYZ');
+  emit('transformPart', {
+    partId: id,
+    position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
+    rotation: {
+      x: THREE.MathUtils.radToDeg(e.x),
+      y: THREE.MathUtils.radToDeg(e.y),
+      z: THREE.MathUtils.radToDeg(e.z),
+    },
+    scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
+  });
 }
 
 function syncBeam(): void {
@@ -280,7 +351,7 @@ async function loadGlb(url: string): Promise<boolean> {
 
 async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   if (!scene || !a.parts?.length) return false;
-  const { root, meshCount, box, panNode: pn, tiltNode: tn, beamPart } = await buildFixtureAssembly({
+  const { root, meshCount, box, panNode: pn, tiltNode: tn, beamPart, partGroups: pg } = await buildFixtureAssembly({
     parts: a.parts,
     models: a.models ?? [],
     motionAxes: a.motionAxes ?? [],
@@ -295,6 +366,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   panNode = pn ?? null;
   tiltNode = tn ?? null;
   beamPartGroup = beamPart ?? null;
+  partGroups = pg;
   // Add directly to scene so Base stays static and only Yoke / Head rotate.
   // The legacy panGroup/tiltGroup remain for single-GLB mode.
   scene.add(root);
@@ -308,11 +380,15 @@ async function loadContent(): Promise<void> {
     if (props.assembly && props.assembly.parts?.length) {
       const ok = await loadAssembly(props.assembly);
       if (token !== loadToken) return;
-      if (ok) return;
+      if (ok) {
+        syncGizmo();
+        return;
+      }
     }
     if (props.url) {
       await loadGlb(props.url);
     }
+    syncGizmo();
   } catch {
     /* keep whatever is currently shown */
   }
@@ -329,16 +405,41 @@ function tick(): void {
   renderer?.render(scene!, camera!);
 }
 
+/** Walk up the scene graph to the nearest ancestor tagged with a partId. */
+function resolvePartId(obj: THREE.Object3D | null): string | null {
+  let o: THREE.Object3D | null = obj;
+  while (o) {
+    const id = (o.userData as { partId?: unknown }).partId;
+    if (typeof id === 'string' && id) return id;
+    o = o.parent;
+  }
+  return null;
+}
+
 function onPointerDown(ev: PointerEvent): void {
   if (!props.interactive || !camera || !wrapRef.value) return;
+  // Don't hijack clicks meant for the transform gizmo handles.
+  if (transformControls && (transformControls.axis || transformControls.dragging)) return;
   const rect = wrapRef.value.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return;
   const x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
   const y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
   const ray = new THREE.Raycaster();
   ray.setFromCamera(new THREE.Vector2(x, y), camera);
-  const hits = ray.intersectObjects([...datumMeshes.values()]);
-  if (hits[0]?.object.userData.datumId) emit('selectDatum', hits[0].object.userData.datumId as string);
+
+  const datumHits = ray.intersectObjects([...datumMeshes.values()]);
+  if (datumHits[0]?.object.userData.datumId) {
+    emit('selectDatum', datumHits[0].object.userData.datumId as string);
+    return;
+  }
+
+  if (props.editable && loadedRoot) {
+    const hits = ray.intersectObject(loadedRoot, true);
+    for (const h of hits) {
+      const id = resolvePartId(h.object);
+      if (id) { emit('selectPart', id); return; }
+    }
+  }
 }
 
 function resize(): void {
@@ -382,6 +483,18 @@ onMounted(() => {
   controls.enableDamping = true;
   controls.enabled = props.interactive;
 
+  transformControls = new TransformControls(camera, renderer.domElement);
+  transformControls.setSpace(props.gizmoSpace);
+  transformControls.setMode(props.gizmoMode);
+  // Pause orbit while dragging a handle so the camera doesn't fight the gizmo.
+  transformControls.addEventListener('dragging-changed', (e) => {
+    if (controls) controls.enabled = props.interactive && !(e as unknown as { value: boolean }).value;
+  });
+  transformControls.addEventListener('objectChange', onGizmoObjectChange);
+  transformHelper = transformControls.getHelper();
+  scene.add(transformHelper);
+  transformControls.detach();
+
   const pmrem = new THREE.PMREMGenerator(renderer);
   envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
   scene.environment = envRT.texture;
@@ -411,6 +524,7 @@ watch(() => [props.panDeg, props.tiltDeg], syncMotion);
 watch(() => props.dimmer, syncDimmer);
 watch(() => props.showBeam, syncBeam);
 watch(() => props.interactive, (v) => { if (controls) controls.enabled = v; });
+watch(() => [props.editable, props.selectedPartId, props.gizmoMode, props.gizmoSpace], syncGizmo);
 watch(() => props.lightBackground, (v) => {
   if (scene) scene.background = new THREE.Color(v ? 0xe8eaed : 0x1a1a1f);
 });

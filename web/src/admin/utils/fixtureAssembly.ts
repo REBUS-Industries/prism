@@ -69,6 +69,14 @@ export interface FixtureAssemblyResult {
   tiltNode?: MotionNode;
   /** BEAM geometry node when present — preferred attach point for beam viz. */
   beamPart?: THREE.Object3D;
+  /**
+   * Map of partId → the Three.js group that carries that part's GDTF local
+   * transform. Used by the editor to attach a transform gizmo to a selected
+   * part and to resolve raycast hits back to a partId. The group's local
+   * position/quaternion/scale ARE the part's GDTF transform (Z-up, metres),
+   * so reading them back after a gizmo edit yields the new GDTF transform.
+   */
+  partGroups: Map<string, THREE.Group>;
 }
 
 interface ModelDims {
@@ -231,6 +239,9 @@ export async function buildFixtureAssembly(
     if (part.sourceGdtfGeometryId) byGeometryId.set(part.sourceGdtfGeometryId, part);
     const g = new THREE.Group();
     g.name = part.name ?? part.partId;
+    // Tag so raycast hits can be resolved to a partId (picking) and so the
+    // editor can attach a gizmo to the selected part's group.
+    g.userData.partId = part.partId;
     applyPartTransform(g, part);
     partGroups.set(part.partId, g);
   }
@@ -282,6 +293,9 @@ export async function buildFixtureAssembly(
     clone.position.set(0, 0, 0);
     clone.quaternion.identity();
     clone.scale.set(1, 1, 1);
+    // Strip copied partId tags so picking inside a referenced instance resolves
+    // to the reference part group (walk-up), not the cloned source part.
+    clone.traverse((o) => { delete o.userData.partId; });
     partGroups.get(part.partId)!.add(clone);
     clone.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshCount += 1; });
   }
@@ -341,5 +355,6 @@ export async function buildFixtureAssembly(
     panNode: findMotionNode('PAN'),
     tiltNode: findMotionNode('TILT'),
     beamPart,
+    partGroups,
   };
 }
