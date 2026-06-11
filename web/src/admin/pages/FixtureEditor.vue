@@ -186,8 +186,18 @@ async function applyModelQuality(): Promise<void> {
   reimportingMeshes.value = true;
   error.value = null;
   try {
-    const res = await fixturesApi.reimportMeshes(props.id, modelQuality.value);
-    fixture.value = res.fixture;
+    const shareRid = activeStoredVersion.value?.gdtfShareRid;
+    if (shareRid) {
+      // GDTF-Share fixtures: re-download the active revision with the chosen mesh LOD.
+      await fixturesApi.downloadVersion(props.id, shareRid, {
+        carryEdits: true,
+        modelQuality: modelQuality.value,
+      });
+    } else {
+      // Uploaded/manual fixtures: swap meshes from the stored local GDTF package.
+      const res = await fixturesApi.reimportMeshes(props.id, modelQuality.value);
+      fixture.value = res.fixture;
+    }
     assemblyRevision.value += 1;
     await reload();
   } catch (err) {
@@ -809,7 +819,7 @@ onMounted(() => {
             {{ reimportingMeshes ? 'Re-importing meshes…' : 'Apply model quality' }}
           </button>
           <p class="muted small">
-            Re-selects glTF meshes from the stored GDTF package. Part transforms and edits are kept.
+            GDTF-Share fixtures re-download the active revision with the chosen mesh LOD. Uploaded fixtures re-parse the stored local package. Part transforms and edits are kept.
           </p>
         </section>
 
