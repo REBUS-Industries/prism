@@ -906,30 +906,30 @@ export const SLOT_LABELS: Record<MaterialSlot, string> = {
   ao:           'Ambient Occlusion',
   emissive:     'Emissive',
   opacity:      'Opacity',
-  displacement: 'Displacement',
+  displacement: 'Displacement / Bump',
 };
 
 /** Short suffix examples for slot filter UI. Mirrors server/src/materials/slots.ts. */
 export const SLOT_SUFFIX_HINTS: Record<MaterialSlot, string> = {
   albedo:       '_albedo, _color, _basecolor…',
   normal:       '_normal, _nrm, _nor',
-  roughness:    '_roughness, _rough, _rgh',
-  metallic:     '_metallic, _metalness, _metal',
-  ao:           '_ao, _ambientocclusion…',
+  roughness:    '_roughness, _rough, _gloss…',
+  metallic:     '_metallic, _metalness, _specular…',
+  ao:           '_ao, _cavity, _ambientocclusion…',
   emissive:     '_emissive, _emission, _emi',
   opacity:      '_opacity, _alpha, _mask',
-  displacement: '_displacement, _height, _disp',
+  displacement: '_displacement, _height, _bump…',
 };
 
 const SLOT_FILENAME_TOKENS: Record<MaterialSlot, readonly string[]> = {
   albedo:       ['_albedo', '_color', '_basecolor', '_diffuse', '_diff', '_col'],
   normal:       ['_normal', '_nrm', '_nor'],
-  roughness:    ['_roughness', '_rough', '_rgh'],
-  metallic:     ['_metallic', '_metalness', '_metal'],
-  ao:           ['_ao', '_ambientocclusion', '_occlusion'],
+  roughness:    ['_roughness', '_rough', '_rgh', '_gloss', '_glossiness'],
+  metallic:     ['_metallic', '_metalness', '_metal', '_specular', '_spec'],
+  ao:           ['_ao', '_ambientocclusion', '_occlusion', '_cavity'],
   emissive:     ['_emissive', '_emission', '_emi'],
   opacity:      ['_opacity', '_alpha', '_mask'],
-  displacement: ['_displacement', '_height', '_disp'],
+  displacement: ['_displacement', '_height', '_disp', '_bump'],
 };
 
 /** Detect PBR slot from a texture filename (Megascans-style). Mirrors server detectSlot. */
@@ -1113,6 +1113,10 @@ export interface MaterialParameters {
   doubleSided: boolean;
   /** negate material.normalScale.y. */
   flipNormalY: boolean;
+  /** Megascans gloss map in the roughness slot — invert in the preview viewer. */
+  roughnessInvertFromGloss: boolean;
+  /** Megascans specular map stored in the metallic slot — drives specularIntensityMap. */
+  specularMapInMetallicSlot: boolean;
 
   // ---- Alpha ------------------------------------------------------------
   alphaMode: 'opaque' | 'blend' | 'mask';
@@ -1184,6 +1188,8 @@ export const DEFAULT_MATERIAL_PARAMETERS: MaterialParameters = {
   offsetY: 0.0,
   doubleSided: false,
   flipNormalY: false,
+  roughnessInvertFromGloss: false,
+  specularMapInMetallicSlot: false,
 
   alphaMode: 'opaque',
   alphaCutoff: 0.5,

@@ -43,7 +43,14 @@ import { db } from '../db/client.js';
 import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
-import { ALLOWED_SLOTS, detectSlot, imageContentType, isImageFilename, isMaterialSlot } from '../materials/slots.js';
+import {
+  ALLOWED_SLOTS,
+  detectSlot,
+  imageContentType,
+  isImageFilename,
+  isMaterialSlot,
+  megascansImportParameters,
+} from '../materials/slots.js';
 import { normalizeTextureBody } from '../materials/textureNormalize.js';
 import { parseGltfMaterialZip } from '../materials/gltfImport.js';
 import {
@@ -540,6 +547,16 @@ const plugin: FastifyPluginAsync = async (app) => {
           continue;
         }
         detected.set(slot, { base, contentType, data: entry.getData() });
+      }
+
+      const assignedFilenames: Partial<Record<typeof ALLOWED_SLOTS[number], string>> = {};
+      for (const slot of ALLOWED_SLOTS) {
+        const det = detected.get(slot);
+        if (det) assignedFilenames[slot] = det.base;
+      }
+      const megascansParams = megascansImportParameters(assignedFilenames);
+      if (Object.keys(megascansParams).length) {
+        parametersPatch = { ...parametersPatch, ...megascansParams };
       }
     }
 

@@ -28,13 +28,24 @@ export function isMaterialSlot(value: string): value is MaterialSlot {
 const SLOT_TOKENS: Record<MaterialSlot, readonly string[]> = {
   albedo:       ['_albedo', '_color', '_basecolor', '_diffuse', '_diff', '_col'],
   normal:       ['_normal', '_nrm', '_nor'],
-  roughness:    ['_roughness', '_rough', '_rgh', '_gloss'],
-  metallic:     ['_metallic', '_metalness', '_metal'],
+  roughness:    ['_roughness', '_rough', '_rgh', '_gloss', '_glossiness'],
+  metallic:     ['_metallic', '_metalness', '_metal', '_specular', '_spec'],
   ao:           ['_ao', '_ambientocclusion', '_occlusion', '_cavity'],
   emissive:     ['_emissive', '_emission', '_emi'],
   opacity:      ['_opacity', '_alpha', '_mask'],
   displacement: ['_displacement', '_height', '_disp', '_bump'],
 };
+
+/** Megascans gloss maps are the inverse of roughness — assigned to the roughness slot. */
+const GLOSS_FILENAME_TOKENS = ['_gloss', '_glossiness'] as const;
+
+/** Megascans specular-workflow reflectance — assigned to the metallic slot with a flag. */
+const SPECULAR_FILENAME_TOKENS = ['_specular', '_spec'] as const;
+
+function filenameHasToken(filename: string, tokens: readonly string[]): boolean {
+  const lower = filename.toLowerCase();
+  return tokens.some((token) => lower.includes(token));
+}
 
 /** Filename tokens for a slot — used by texture-library filtering. */
 export function slotFilenameTokens(slot: MaterialSlot): readonly string[] {
@@ -82,4 +93,32 @@ export function imageContentType(filename: string): string | null {
 
 export function isImageFilename(filename: string): boolean {
   return imageContentType(filename) !== null;
+}
+
+/**
+ * Derive import-time PBR parameter overrides from Megascans-style filenames.
+ * Gloss maps land in the roughness slot but need viewer inversion; specular
+ * maps land in the metallic slot and drive specularIntensity in the preview.
+ */
+export function megascansImportParameters(
+  assignedFilenames: Partial<Record<MaterialSlot, string>>,
+): { roughnessInvertFromGloss?: true; specularMapInMetallicSlot?: true; metallic?: number } {
+  const patch: {
+    roughnessInvertFromGloss?: true;
+    specularMapInMetallicSlot?: true;
+    metallic?: number;
+  } = {};
+
+  const roughnessFile = assignedFilenames.roughness;
+  if (roughnessFile && filenameHasToken(roughnessFile, GLOSS_FILENAME_TOKENS)) {
+    patch.roughnessInvertFromGloss = true;
+  }
+
+  const metallicFile = assignedFilenames.metallic;
+  if (metallicFile && filenameHasToken(metallicFile, SPECULAR_FILENAME_TOKENS)) {
+    patch.specularMapInMetallicSlot = true;
+    patch.metallic = 0;
+  }
+
+  return patch;
 }

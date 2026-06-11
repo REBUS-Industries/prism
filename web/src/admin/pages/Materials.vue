@@ -261,8 +261,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
     <div class="card modal">
       <h2>Imported “{{ skippedDialog.name }}”</h2>
       <p class="muted">
-        {{ skippedDialog.skipped.length }} file{{ skippedDialog.skipped.length === 1 ? '' : 's' }} couldn't be matched to a
-        slot and {{ skippedDialog.skipped.length === 1 ? 'was' : 'were' }} skipped:
+        {{ skippedDialog.skipped.length }} file{{ skippedDialog.skipped.length === 1 ? '' : 's' }}
+        {{ skippedDialog.skipped.length === 1 ? 'was' : 'were' }} skipped
+        (unmatched channels, duplicate slots, or metadata such as <code>.json</code> manifests):
       </p>
       <ul class="skip-list">
         <li v-for="(f, i) in skippedDialog.skipped" :key="i"><code>{{ f }}</code></li>
