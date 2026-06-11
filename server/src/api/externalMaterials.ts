@@ -23,6 +23,7 @@ import {
   listExternalMaterialProviders,
   providerLabels,
 } from '../external-materials/registry.js';
+import { applyExternalMaterialsSettings } from '../settings/externalMaterials.js';
 
 const sourceParam = z.object({ source: z.string(), id: z.string().min(1) });
 
@@ -34,6 +35,10 @@ function provenance(principal: Principal | undefined) {
 }
 
 const plugin: FastifyPluginAsync = async (app) => {
+  app.addHook('preHandler', async () => {
+    await applyExternalMaterialsSettings();
+  });
+
   app.get<{ Querystring: { q?: string; sources?: string; cursor?: string; limit?: string } }>('/search', {
     preHandler: [requireAuth, requireScope('materials:read')],
   }, async (req, reply) => {

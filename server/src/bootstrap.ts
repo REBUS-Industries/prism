@@ -12,6 +12,7 @@ import { db } from './db/client.js';
 import { adminUsers } from './db/schema.js';
 import { hashPassword } from './auth/adminSession.js';
 import { getSetting, setSetting } from './db/settings.js';
+import { applyExternalMaterialsSettings } from './settings/externalMaterials.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 export async function runBootstrap(log: FastifyBaseLogger): Promise<void> {
@@ -40,4 +41,7 @@ export async function runBootstrap(log: FastifyBaseLogger): Promise<void> {
   if (!(await getSetting('orbit_dev_server_url')) && process.env.ORBIT_DEV_SERVER_URL) {
     await setSetting('orbit_dev_server_url', process.env.ORBIT_DEV_SERVER_URL);
   }
+
+  await applyExternalMaterialsSettings();
+  log.info('bootstrap: applied external materials settings');
 }

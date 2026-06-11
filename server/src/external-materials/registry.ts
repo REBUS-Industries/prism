@@ -8,6 +8,13 @@ import { polyhavenProvider } from './polyhaven.js';
 
 const providers: ExternalMaterialProvider[] = [fabProvider, polyhavenProvider, ambientcgProvider];
 
+/** Sync runtime `enabled` flags from admin settings (DB + env fallbacks). */
+export function applyProviderEnabledFromSettings(enabled: Record<ExternalMaterialSource, boolean>): void {
+  fabProvider.enabled = enabled.fab;
+  polyhavenProvider.enabled = enabled.polyhaven;
+  ambientcgProvider.enabled = enabled.ambientcg;
+}
+
 export function listExternalMaterialProviders(): ExternalMaterialProvider[] {
   return providers;
 }

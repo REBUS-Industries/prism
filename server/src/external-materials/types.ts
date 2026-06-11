@@ -51,7 +51,7 @@ export interface ExternalImportPayload {
 export interface ExternalMaterialProvider {
   readonly id: ExternalMaterialSource;
   readonly label: string;
-  readonly enabled: boolean;
+  enabled: boolean;
   search(params: ExternalSearchParams): Promise<ExternalSearchPage>;
   getDetail(sourceId: string): Promise<ExternalMaterialDetail | null>;
   downloadForImport(sourceId: string): Promise<ExternalImportPayload>;
