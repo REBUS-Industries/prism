@@ -16,6 +16,7 @@ import {
   type MaterialListItem,
 } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
+import FabImportModal from '../components/FabImportModal.vue';
 
 const router = useRouter();
 const PAGE = 36;
@@ -30,6 +31,7 @@ const activeTags = ref<string[]>([]);
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showCreate = ref(false);
+const showFabImport = ref(false);
 const newName = ref('');
 const creating = ref(false);
 
@@ -155,6 +157,15 @@ async function removeMaterial(m: MaterialListItem): Promise<void> {
   }
 }
 
+function onFabImported(id: string, skipped: string[]): void {
+  if (skipped.length) {
+    skippedDialog.value = { id, name: 'Fab import', skipped };
+  } else {
+    openEditor(id);
+  }
+  void load(true);
+}
+
 onMounted(() => void load(true));
 onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 </script>
@@ -163,6 +174,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   <div class="h-row">
     <h1 class="flex-1">Materials</h1>
     <button class="primary" @click="showCreate = true"><Icon name="add" :size="16" />Blank material</button>
+    <button @click="showFabImport = true"><Icon name="storefront" :size="16" />Import from Fab</button>
     <button :disabled="importing" @click="zipInput?.click()"><Icon name="folder_zip" :size="16" />Import ZIP</button>
     <input
       ref="zipInput"
@@ -255,6 +267,13 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
       </div>
     </div>
   </div>
+
+  <!-- Fab import -->
+  <FabImportModal
+    :open="showFabImport"
+    @close="showFabImport = false"
+    @imported="onFabImported"
+  />
 
   <!-- Import skipped files -->
   <div v-if="skippedDialog" class="modal-backdrop" @click.self="openEditor(skippedDialog.id)">

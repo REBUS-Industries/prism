@@ -1,0 +1,31 @@
+{
+  "results": [
+    {
+      "uid": "fab-concrete-001",
+      "title": "Concrete Wall Surface",
+      "listingType": "surface",
+      "isFree": true,
+      "tags": [{ "name": "concrete" }, { "name": "wall" }],
+      "thumbnails": [{
+        "mediaUrl": "https://cdn.example.com/fab-concrete.jpg",
+        "images": [{ "url": "https://cdn.example.com/fab-concrete-256.jpg", "width": 256 }]
+      }],
+      "category": { "name": "Surfaces" },
+      "user": { "sellerName": "Quixel" },
+      "assetFormats": [{ "assetFormatType": { "code": "zip" } }]
+    },
+    {
+      "uid": "fab-wood-002",
+      "title": "Oak Planks",
+      "listingType": "surface",
+      "isFree": false,
+      "tags": [{ "name": "wood" }],
+      "thumbnails": [{
+        "images": [{ "url": "https://cdn.example.com/fab-wood.jpg", "width": 512 }]
+      }],
+      "category": { "name": "Surfaces" },
+      "assetFormats": [{ "assetFormatType": { "code": "zip" } }]
+    }
+  ],
+  "cursors": { "next": "cursor-page-2" }
+}

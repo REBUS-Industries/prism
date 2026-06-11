@@ -1,0 +1,42 @@
+{
+  "totalResults": 1,
+  "assets": [
+    {
+      "id": "Concrete048",
+      "title": "Concrete 048",
+      "tags": ["concrete", "floor", "grey", "smooth"],
+      "shortDescription": "Smooth indoor concrete.",
+      "longDescription": "High-quality concrete surface.",
+      "downloads": [
+        {
+          "attributes": "1K-JPG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete048_1K-JPG.zip",
+          "size": 7536748
+        },
+        {
+          "attributes": "2K-JPG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete048_2K-JPG.zip",
+          "size": 28990525
+        },
+        {
+          "attributes": "4K-JPG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete048_4K-JPG.zip",
+          "size": 117441433
+        },
+        {
+          "attributes": "2K-PNG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete048_2K-PNG.zip",
+          "size": 66152061
+        }
+      ],
+      "thumbnails": {
+        "256-PNG": "https://cdn.example.com/Concrete048-256.png"
+      },
+      "downloadStatistics": { "total": 24833 }
+    }
+  ]
+}

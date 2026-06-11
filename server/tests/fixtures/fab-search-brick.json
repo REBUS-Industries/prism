@@ -1,0 +1,60 @@
+{
+  "aggregations": null,
+  "cursors": { "next": "bz0y", "previous": null },
+  "results": [
+    {
+      "uid": "7d5b8684-bd22-44a6-892d-b2c2d872a248",
+      "title": "Red Brick Wall",
+      "listingType": "material",
+      "isFree": false,
+      "isDiscounted": false,
+      "publishedAt": "2024-10-14T00:40:43.753197Z",
+      "category": {
+        "uid": "e239a429-0e1a-4b4a-9a95-50971f074192",
+        "name": "Brick",
+        "path": "building-human-made/brick",
+        "slug": "building-human-made--brick"
+      },
+      "startingPrice": { "price": 0.99, "offerId": "d7e01c87b9d64de58db2bf0d7e8ebebf" },
+      "tags": [
+        { "name": "Worn", "slug": "worn", "uid": "98cd7d65-d9bb-4efc-9f13-2d3d6f29629d" },
+        { "name": "Brick", "slug": "brick", "uid": "b02f6883-1a6c-4d28-9621-d9632153a704" }
+      ],
+      "assetFormats": [
+        { "assetFormatType": { "code": "texture-set", "name": "Texture Set" } },
+        { "assetFormatType": { "code": "gltf", "name": "GLTF" } }
+      ],
+      "thumbnails": [
+        {
+          "mediaUrl": "https://media.fab.com/image_previews/gallery_images/25382382-0fa2-416f-852b-0c8cd4348173/06eb54d9-0880-49ab-9599-ae85dd6c0d4d.jpeg",
+          "type": "thumbnail",
+          "images": [
+            {
+              "url": "https://media.fab.com/image_previews/gallery_images/25382382-0fa2-416f-852b-0c8cd4348173/f83b75da-8736-447b-b2a2-0e3e81c57527.jpg",
+              "width": 320,
+              "height": 180
+            },
+            {
+              "url": "https://media.fab.com/image_previews/gallery_images/25382382-0fa2-416f-852b-0c8cd4348173/a3925eca-953d-47d7-ac53-689e89c902b9.jpg",
+              "width": 1920,
+              "height": 1080
+            }
+          ]
+        }
+      ],
+      "user": {
+        "sellerName": "Quixel Megascans",
+        "sellerId": "o-cbf5bbfdb340d6a839b5520cb31328",
+        "uid": "45ea3429-f62c-4f17-aa15-5bb9dfcd0079"
+      }
+    },
+    {
+      "uid": "d146cec9-ad9b-46ca-b4b7-8aa047e1b0b4",
+      "title": "Brick Wall",
+      "listingType": "material",
+      "isFree": false,
+      "tags": [],
+      "thumbnails": []
+    }
+  ]
+}
