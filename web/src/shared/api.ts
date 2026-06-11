@@ -943,6 +943,12 @@ export function detectTextureSlot(filename: string): MaterialSlot | null {
   return null;
 }
 
+/** True when `filename` contains any suffix token for `slot`. Mirrors server slot filter. */
+export function textureMatchesSlot(filename: string, slot: MaterialSlot): boolean {
+  const lower = filename.toLowerCase();
+  return SLOT_FILENAME_TOKENS[slot].some((token) => lower.includes(token));
+}
+
 export interface Texture {
   id: string;
   originalFilename: string;
@@ -961,6 +967,16 @@ export function textureSlotFor(texture: Pick<Texture, 'displayName' | 'originalF
   return detectTextureSlot(texture.displayName)
     ?? detectTextureSlot(texture.originalFilename)
     ?? 'other';
+}
+
+/** Whether a library row matches a slot filter pill (incl. Other). */
+export function textureMatchesSlotFilter(
+  texture: Pick<Texture, 'displayName' | 'originalFilename'>,
+  filter: MaterialSlot | 'other',
+): boolean {
+  if (filter === 'other') return textureSlotFor(texture) === 'other';
+  return textureMatchesSlot(texture.displayName, filter)
+    || textureMatchesSlot(texture.originalFilename, filter);
 }
 
 export interface TextureListResponse {

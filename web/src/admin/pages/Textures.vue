@@ -14,6 +14,7 @@ import {
   SLOT_LABELS,
   SLOT_SUFFIX_HINTS,
   textureSlotFor,
+  textureMatchesSlotFilter,
   type ApiError,
   type MaterialSlot,
   type Texture,
@@ -105,10 +106,13 @@ const displaySections = computed<TextureSection[]>(() => {
   const filter = activeSlotFilter.value;
   const label = filter === 'other' ? 'Other / Unclassified' : SLOT_LABELS[filter];
   const hint = filter === 'other' ? 'No recognised PBR suffix' : SLOT_SUFFIX_HINTS[filter];
-  return [{ id: filter, label, hint, textures: textures.value }];
+  const filtered = textures.value.filter((t) => textureMatchesSlotFilter(t, filter));
+  return [{ id: filter, label, hint, textures: filtered }];
 });
 
-const hasTextures = computed(() => textures.value.length > 0);
+const hasTextures = computed(() =>
+  displaySections.value.some((section) => section.textures.length > 0),
+);
 
 const isFiltered = computed(() =>
   !!search.value.trim() || activeTags.value.length > 0 || activeSlotFilter.value !== 'all',
@@ -482,7 +486,11 @@ h1 { font-size: 22px; margin: 0; }
   width: 100%;
   min-width: 0;
   font-weight: 600;
+  line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.subtle.small {
+  line-height: 1.35;
 }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag {
