@@ -66,6 +66,13 @@ const previewUrl = computed(() =>
 
 const definition = computed(() => localDetail.value?.definition ?? null);
 
+const assembly = computed(() => {
+  const def = definition.value;
+  const id = props.localFixture?.id;
+  if (!def || !id || !def.parts?.length) return null;
+  return { fixtureId: id, parts: def.parts, models: def.models ?? [] };
+});
+
 const wheelRows = computed(() => {
   if (!definition.value) return [];
   return parseWheels(definition.value);
@@ -441,6 +448,7 @@ watch(
       <FixtureQuadPreview
         v-if="activeTab === '3d'"
         :preview-url="previewUrl"
+        :assembly="assembly"
         :fixture-name="entry.fixture"
         :record-count="meshRecordCount || undefined"
       />

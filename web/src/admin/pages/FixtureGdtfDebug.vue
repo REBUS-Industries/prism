@@ -35,6 +35,13 @@ const previewUrl = computed(() =>
   fixture.value?.hasPreview ? fixturesApi.previewUrl(fixture.value.id) : null,
 );
 
+const assembly = computed(() => {
+  const def = fixture.value?.definition;
+  const id = fixture.value?.id;
+  if (!def || !id || !def.parts?.length) return null;
+  return { fixtureId: id, parts: def.parts, models: def.models ?? [] };
+});
+
 const info = computed(() => fixture.value?.definition.fixtureInformation);
 
 const panAxis = computed(() =>
@@ -299,8 +306,9 @@ onMounted(() => void load());
           </div>
           <div class="preview-viewport">
             <FixtureViewer
-              v-if="previewUrl"
+              v-if="previewUrl || assembly"
               :url="previewUrl"
+              :assembly="assembly"
               :pan-deg="panDeg"
               :tilt-deg="tiltDeg"
               :dimmer="dimmer"
@@ -323,8 +331,9 @@ onMounted(() => void load());
         </div>
         <div class="assembly-viewport">
           <FixtureViewer
-            v-if="previewUrl"
+            v-if="previewUrl || assembly"
             :url="previewUrl"
+            :assembly="assembly"
             :pan-deg="panDeg"
             :tilt-deg="tiltDeg"
             :dimmer="dimmer"

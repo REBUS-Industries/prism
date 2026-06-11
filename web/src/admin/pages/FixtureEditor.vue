@@ -82,6 +82,13 @@ const previewUrl = computed(() =>
 
 );
 
+const assembly = computed(() => {
+  const def = fixture.value?.definition;
+  const id = fixture.value?.id;
+  if (!def || !id || !def.parts?.length) return null;
+  return { fixtureId: id, parts: def.parts, models: def.models ?? [] };
+});
+
 
 
 const info = computed(() => fixture.value?.definition.fixtureInformation);
@@ -491,7 +498,7 @@ onMounted(() => {
 
         <section class="preview-card">
 
-          <FixtureQuadPreview :preview-url="previewUrl" :fixture-name="info?.fixtureName" />
+          <FixtureQuadPreview :preview-url="previewUrl" :assembly="assembly" :fixture-name="info?.fixtureName" />
 
           <p class="muted small preview-caption">
 

@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import FixtureViewer from './FixtureViewer.vue';
+import type { FixturePart, FixtureModel } from '../../shared/api';
 
 defineProps<{
   previewUrl?: string | null;
+  /** Full geometry tree + models for assembled rendering (preferred). */
+  assembly?: { fixtureId: string; parts: FixturePart[]; models: FixtureModel[] } | null;
   fixtureName?: string;
   /** Mesh / GDTF record count for footer caption. */
   recordCount?: number;
@@ -25,8 +28,9 @@ defineProps<{
         <span class="quad-label">{{ view[1] }}</span>
         <div class="quad-viewport">
           <FixtureViewer
-            v-if="previewUrl"
+            v-if="previewUrl || assembly"
             :url="previewUrl"
+            :assembly="assembly"
             :view-preset="view[0]"
             :interactive="view[0] === 'iso'"
             fill
