@@ -9,6 +9,7 @@ import {
   imageContentType,
   isImageFilename,
   isMaterialSlot,
+  textureMatchesSlot,
 } from '../src/materials/slots.js';
 
 describe('detectSlot', () => {
@@ -46,6 +47,21 @@ describe('detectSlot', () => {
 
   it('honours slot priority order when a name matches multiple tokens', () => {
     // albedo precedes normal in ALLOWED_SLOTS, so albedo wins.
+    expect(detectSlot('foo_color_normal.png')).toBe('albedo');
+  });
+});
+
+describe('textureMatchesSlot', () => {
+  it('matches any suffix token for the requested slot', () => {
+    expect(textureMatchesSlot('surface_Normal.png', 'normal')).toBe(true);
+    expect(textureMatchesSlot('terrain_height.png', 'displacement')).toBe(true);
+    expect(textureMatchesSlot('rockface_2k_Albedo.jpg', 'albedo')).toBe(true);
+    expect(textureMatchesSlot('surface_Normal.png', 'roughness')).toBe(false);
+    expect(textureMatchesSlot('random.png', 'normal')).toBe(false);
+  });
+
+  it('can match a slot token even when detectSlot would pick another slot', () => {
+    expect(textureMatchesSlot('foo_color_normal.png', 'normal')).toBe(true);
     expect(detectSlot('foo_color_normal.png')).toBe('albedo');
   });
 });

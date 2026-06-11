@@ -932,6 +932,8 @@ export interface TextureListResponse {
 export interface TextureListParams {
   q?: string;
   tags?: string[];
+  /** When set, only textures whose filename matches this slot's suffix tokens. */
+  slot?: MaterialSlot;
   limit?: number;
   /** Numeric offset (as returned in `nextCursor`) for "load more". */
   cursor?: string | number | null;
@@ -942,6 +944,7 @@ export const texturesApi = {
     const qs = new URLSearchParams();
     if (params.q) qs.set('q', params.q);
     if (params.tags?.length) qs.set('tags', params.tags.join(','));
+    if (params.slot) qs.set('slot', params.slot);
     if (params.limit !== undefined) qs.set('limit', String(params.limit));
     if (params.cursor !== undefined && params.cursor !== null && params.cursor !== '') {
       qs.set('cursor', String(params.cursor));
