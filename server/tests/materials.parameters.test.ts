@@ -19,6 +19,8 @@ describe('DEFAULT_MATERIAL_PARAMETERS', () => {
     expect(DEFAULT_MATERIAL_PARAMETERS.metallic).toBe(0.0);
     expect(DEFAULT_MATERIAL_PARAMETERS.doubleSided).toBe(false);
     expect(DEFAULT_MATERIAL_PARAMETERS.flipNormalY).toBe(false);
+    expect(DEFAULT_MATERIAL_PARAMETERS.roughnessInvertFromGloss).toBe(false);
+    expect(DEFAULT_MATERIAL_PARAMETERS.specularMapInMetallicSlot).toBe(false);
     // New base params
     expect(DEFAULT_MATERIAL_PARAMETERS.alphaMode).toBe('opaque');
     expect(DEFAULT_MATERIAL_PARAMETERS.clearCoatFactor).toBe(0);

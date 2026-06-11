@@ -87,6 +87,35 @@ function buildGeometry(shape: Shape): THREE.BufferGeometry {
   return geo;
 }
 
+/** Invert a loaded grayscale map (gloss → roughness) for preview. */
+function invertGrayscaleTexture(source: THREE.Texture): THREE.Texture {
+  const img = source.image as HTMLImageElement | HTMLCanvasElement | ImageBitmap;
+  const w = img.width as number;
+  const h = img.height as number;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return source;
+  ctx.drawImage(img as CanvasImageSource, 0, 0);
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = 255 - d[i]!;
+    d[i + 1] = 255 - d[i + 1]!;
+    d[i + 2] = 255 - d[i + 2]!;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  const inverted = new THREE.CanvasTexture(canvas);
+  inverted.wrapS = source.wrapS;
+  inverted.wrapT = source.wrapT;
+  inverted.repeat.copy(source.repeat);
+  inverted.offset.copy(source.offset);
+  inverted.anisotropy = source.anisotropy;
+  inverted.needsUpdate = true;
+  return inverted;
+}
+
 function configureTexture(slot: MaterialSlot, tex: THREE.Texture): void {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
@@ -112,6 +141,7 @@ function disposeSlot(slot: MaterialSlot): void {
 
 function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
   if (!material) return;
+  const p = params.value;
   // Map references only — every scalar/colour comes from applyParameters so the
   // stored PBR parameters stay the single source of truth (e.g. a roughnessMap
   // is scaled by the `roughness` multiplier, not reset to 1).
@@ -128,7 +158,15 @@ function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
     case 'albedo':       m.map = tex; break;
     case 'normal':       m.normalMap = tex; break;
     case 'roughness':    m.roughnessMap = tex; break;
-    case 'metallic':     m.metalnessMap = tex; break;
+    case 'metallic':
+      if (p.specularMapInMetallicSlot) {
+        m.specularIntensityMap = tex;
+        m.metalnessMap = null;
+      } else {
+        m.metalnessMap = tex;
+        m.specularIntensityMap = null;
+      }
+      break;
     case 'ao':           m.aoMap = tex; break;
     case 'emissive':     m.emissiveMap = tex; break;
     case 'opacity':      m.alphaMap = tex; break;
@@ -177,7 +215,17 @@ function applySources(next: SlotSources | undefined): void {
     disposeSlot(slot);
     let tex: THREE.Texture | null = null;
     if (url) {
-      tex = loader.load(url);
+      tex = loader.load(url, (loaded) => {
+        let finalTex: THREE.Texture = loaded;
+        if (slot === 'roughness' && params.value.roughnessInvertFromGloss) {
+          finalTex = invertGrayscaleTexture(loaded);
+          loaded.dispose();
+        }
+        configureTexture(slot, finalTex);
+        loadedTextures[slot] = finalTex;
+        assignMap(slot, finalTex);
+        if (material) material.needsUpdate = true;
+      });
       configureTexture(slot, tex);
       loadedTextures[slot] = tex;
     }
@@ -294,6 +342,10 @@ function applyParameters(): void {
   m.iridescenceThicknessRange = [p.iridescenceThicknessMin, p.iridescenceThicknessMax];
 
   m.dispersion = p.dispersionFactor;
+
+  // Re-route metallic slot when specular-workflow flag is set.
+  const metallicTex = loadedTextures.metallic;
+  if (metallicTex) assignMap('metallic', metallicTex);
 
   applyAlphaAndSide(m, p);
 }

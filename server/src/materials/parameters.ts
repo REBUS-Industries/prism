@@ -47,6 +47,10 @@ export interface MaterialParameters {
   doubleSided: boolean;
   /** negate material.normalScale.y. */
   flipNormalY: boolean;
+  /** Megascans gloss map in the roughness slot — invert in the preview viewer. */
+  roughnessInvertFromGloss: boolean;
+  /** Megascans specular map stored in the metallic slot — drives specularIntensityMap. */
+  specularMapInMetallicSlot: boolean;
 
   // ---- Alpha ------------------------------------------------------------
   /** Alpha blending mode: 'opaque' | 'blend' | 'mask'. */
@@ -122,6 +126,8 @@ export const DEFAULT_MATERIAL_PARAMETERS: MaterialParameters = {
   offsetY: 0.0,                // every map's offset.y
   doubleSided: false,          // material.side (FrontSide vs DoubleSide)
   flipNormalY: false,          // negate normalScale.y
+  roughnessInvertFromGloss: false,
+  specularMapInMetallicSlot: false,
 
   alphaMode: 'opaque',
   alphaCutoff: 0.5,
@@ -188,6 +194,8 @@ export const materialParametersSchema = z
     offsetY: z.number(),
     doubleSided: z.boolean(),
     flipNormalY: z.boolean(),
+    roughnessInvertFromGloss: z.boolean(),
+    specularMapInMetallicSlot: z.boolean(),
     // Alpha
     alphaMode: z.enum(['opaque', 'blend', 'mask']),
     alphaCutoff: z.number().min(0).max(1),
