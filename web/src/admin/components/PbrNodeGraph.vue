@@ -19,13 +19,14 @@
  * gap) so the default layout is always non-overlapping regardless of state.
  * Users can drag to any arrangement they prefer; positions persist.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   VueFlow,
   Panel,
   MarkerType,
   Position,
   SelectionMode,
+  useVueFlow,
   type Edge,
   type Node,
   type NodeDragEvent,
@@ -88,8 +89,8 @@ const MATERIAL_W      = 280;
 const COL_GAP         = 100;  // gap between a column edge and the material node
 const OUTPUT_X        = NODE_W + COL_GAP;             // = 400
 const RIGHT_COL_X     = OUTPUT_X + MATERIAL_W + COL_GAP;  // = 780
-const UV_NODE_X       = RIGHT_COL_X + NODE_W + 80;    // = 1160
-const UV_NODE_Y       = 0;
+/** Full horizontal span of the default two-column block (left col → right col). */
+const GRAPH_CONTENT_W = RIGHT_COL_X + NODE_W;         // = 1080
 const NODE_GAP        = 60;
 const HEADER_H        = 46;    // 9px pad × 2 + 13px font + tracking
 const TEX_AREA_FILLED = 310;   // 4:3 thumb ≈ 207px + name + actions + gaps
@@ -151,16 +152,70 @@ function savePositions(id: string, map: PositionMap): void {
 
 const customPositions = ref<PositionMap>(loadPositions(props.materialId) ?? {});
 
+/** True once the user has dragged any node — skip auto-fit so their layout is preserved. */
+const hasCustomLayout = computed(() => Object.keys(customPositions.value).length > 0);
+
 /** Bumped on reset so Vue Flow remounts and drops any stale internal node state. */
 const layoutEpoch = ref(0);
+
+const { fitView } = useVueFlow();
+const graphWrapRef = ref<HTMLElement | null>(null);
+let resizeObserver: ResizeObserver | null = null;
+let resizeFitTimer: ReturnType<typeof setTimeout> | null = null;
+
+const FIT_PADDING = 0.15;
+
+async function centerGraphView(): Promise<void> {
+  if (hasCustomLayout.value) return;
+  await nextTick();
+  try {
+    await fitView({ padding: FIT_PADDING, duration: 0 });
+  } catch {
+    // Vue Flow not ready yet — non-fatal
+  }
+}
+
+function scheduleCenterGraphView(): void {
+  if (hasCustomLayout.value) return;
+  if (resizeFitTimer) clearTimeout(resizeFitTimer);
+  resizeFitTimer = setTimeout(() => {
+    resizeFitTimer = null;
+    void centerGraphView();
+  }, 80);
+}
+
+function onFlowInit(): void {
+  void centerGraphView();
+}
+
+onMounted(() => {
+  const el = graphWrapRef.value;
+  if (!el) return;
+  resizeObserver = new ResizeObserver(() => scheduleCenterGraphView());
+  resizeObserver.observe(el);
+});
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  if (resizeFitTimer) {
+    clearTimeout(resizeFitTimer);
+    resizeFitTimer = null;
+  }
+});
 
 // Re-load when material changes (navigating between materials in same session)
 watch(
   () => props.materialId,
   (id) => {
     customPositions.value = loadPositions(id) ?? {};
+    void centerGraphView();
   },
 );
+
+watch(layoutEpoch, () => {
+  void centerGraphView();
+});
 
 function onNodeDragStop(ev: NodeDragEvent): void {
   const { node } = ev;
@@ -177,6 +232,7 @@ function resetLayout(): void {
   } catch {
     // non-fatal
   }
+  void centerGraphView();
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +268,11 @@ const layout = computed(() => {
   return { left, right, totalHeight };
 });
 
+/** Shift default positions so the column block is centred at the origin (fitView handles viewport). */
+function defaultX(localX: number): number {
+  return localX - GRAPH_CONTENT_W / 2;
+}
+
 // ---------------------------------------------------------------------------
 // Nodes — two-column layout
 // ---------------------------------------------------------------------------
@@ -221,7 +282,7 @@ const nodes = computed<Node[]>(() => {
   // Left column — source handle on RIGHT, wires to LEFT of material node
   LEFT_MATERIAL_SLOTS.forEach((slot, i) => {
     const nodeId = `slot-${slot}`;
-    const defaultPos = { x: 0, y: layout.value.left.ys[i]! };
+    const defaultPos = { x: defaultX(0), y: layout.value.left.ys[i]! };
     texNodes.push({
       id: nodeId,
       type: 'texture',
@@ -235,7 +296,7 @@ const nodes = computed<Node[]>(() => {
   // Right column — source handle on LEFT, wires to RIGHT of material node
   RIGHT_MATERIAL_SLOTS.forEach((slot, i) => {
     const nodeId = `slot-${slot}`;
-    const defaultPos = { x: RIGHT_COL_X, y: layout.value.right.ys[i]! };
+    const defaultPos = { x: defaultX(RIGHT_COL_X), y: layout.value.right.ys[i]! };
     texNodes.push({
       id: nodeId,
       type: 'texture',
@@ -249,7 +310,7 @@ const nodes = computed<Node[]>(() => {
   // Material output — centred vertically across both columns
   const outputNodeId = 'material';
   const defaultOutputPos = {
-    x: OUTPUT_X,
+    x: defaultX(OUTPUT_X),
     y: Math.max(0, (layout.value.totalHeight - OUTPUT_H) / 2),
   };
   const outputNode: Node = {
@@ -266,7 +327,7 @@ const nodes = computed<Node[]>(() => {
     id: uvNodeId,
     type: 'param',
     position: customPositions.value[uvNodeId] ?? {
-      x: OUTPUT_X + MATERIAL_W / 2 - 80, // centred under material
+      x: defaultX(OUTPUT_X + MATERIAL_W / 2 - 80), // centred under material
       y: layout.value.totalHeight + NODE_GAP,
     },
     data: {
@@ -344,12 +405,16 @@ function resetAllParameters(): void {
 </script>
 
 <template>
-  <div class="graph-wrap" :class="{ 'select-mode': interactionMode === 'select' }">
+  <div
+    ref="graphWrapRef"
+    class="graph-wrap"
+    :class="{ 'select-mode': interactionMode === 'select' }"
+  >
     <VueFlow
       :key="layoutEpoch"
       :nodes="nodes"
       :edges="edges"
-      :fit-view-on-init="true"
+      :fit-view-on-init="false"
       :nodes-draggable="true"
       drag-handle=".node-drag-handle"
       :nodes-connectable="false"
@@ -362,6 +427,7 @@ function resetAllParameters(): void {
       :min-zoom="0.2"
       :max-zoom="1.5"
       @node-drag-stop="onNodeDragStop"
+      @init="onFlowInit"
     >
       <template #node-texture="nodeProps">
         <TextureNode
