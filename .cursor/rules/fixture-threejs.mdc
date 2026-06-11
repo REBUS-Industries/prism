@@ -1,0 +1,14 @@
+---
+description: GDTF fixture assembly and Three.js transform conventions
+globs: web/src/admin/**/Fixture*.vue,web/src/admin/**/DatumEditor.vue,web/src/admin/utils/fixture*.ts
+alwaysApply: false
+---
+
+# Fixture 3D architecture
+
+- GDTF is Z-up; presentation root applies `-90° X` for Three.js Y-up viewer
+- `localTransform` stored in GDTF Z-up metres; UI uses `fixtureTransform.ts` for mm↔m
+- Assembly rebuilds on `assemblyRevision` bump — not mid gizmo drag
+- `fixtureAssembly.ts` tags groups with `userData.partId` for raycast selection
+- Save: `PUT /api/fixtures/:id` with full `definition` JSON after transform edits
+- Pan/tilt: Yoke on pan (GDTF Z), Head on tilt (GDTF X, tracks pan via hierarchy)
