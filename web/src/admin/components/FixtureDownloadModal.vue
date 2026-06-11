@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import FixtureTypeSelect from './FixtureTypeSelect.vue';
 import FixtureModelQualitySelect from './FixtureModelQualitySelect.vue';
-import { DEFAULT_GDTF_MODEL_QUALITY, type GdtfModelQuality } from '../utils/fixtureModelQuality';
+import { fixturesApi, type ApiError } from '../../shared/api';
+import {
+  DEFAULT_GDTF_MODEL_QUALITY,
+  coerceModelQuality,
+  defaultModelQualityForAvailable,
+  type GdtfModelQuality,
+} from '../utils/fixtureModelQuality';
 
-defineProps<{
+const props = defineProps<{
   fixtureName: string;
   manufacturer: string;
+  rid: number;
   saving?: boolean;
 }>();
 
@@ -17,6 +24,31 @@ const emit = defineEmits<{
 
 const fixtureType = ref<string>('Spot');
 const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
+const availableModelQualities = ref<GdtfModelQuality[] | null>(null);
+const loadingQualities = ref(false);
+const qualityError = ref<string | null>(null);
+
+async function loadQualities(rid: number): Promise<void> {
+  loadingQualities.value = true;
+  qualityError.value = null;
+  availableModelQualities.value = null;
+  try {
+    const res = await fixturesApi.gdtfShareModelQualities(rid);
+    availableModelQualities.value = res.availableModelQualities;
+    modelQuality.value = defaultModelQualityForAvailable(res.availableModelQualities);
+  } catch (err) {
+    qualityError.value = (err as ApiError).message ?? 'failed to read GDTF mesh options';
+    modelQuality.value = DEFAULT_GDTF_MODEL_QUALITY;
+  } finally {
+    loadingQualities.value = false;
+  }
+}
+
+watch(
+  () => props.rid,
+  (rid) => { void loadQualities(rid); },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -31,14 +63,20 @@ const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
         label="Fixture type"
         :include-unassigned="false"
       />
-      <FixtureModelQualitySelect v-model="modelQuality" />
+      <FixtureModelQualitySelect
+        v-model="modelQuality"
+        :available="availableModelQualities"
+        :loading="loadingQualities"
+        :disabled="saving"
+      />
+      <p v-if="qualityError" class="error-inline small">{{ qualityError }}</p>
       <div class="modal-actions">
         <button type="button" class="btn-cancel" @click="emit('cancel')">Cancel</button>
         <button
           type="button"
           class="btn-save"
-          :disabled="saving"
-          @click="emit('confirm', fixtureType, modelQuality)"
+          :disabled="saving || loadingQualities || !(availableModelQualities?.length)"
+          @click="emit('confirm', fixtureType, coerceModelQuality(modelQuality, availableModelQualities))"
         >{{ saving ? 'Downloading…' : 'Save & download' }}</button>
       </div>
     </div>
@@ -109,4 +147,9 @@ const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
 .btn-save:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .small { font-size: 12px; }
+
+.error-inline {
+  margin: 0;
+  color: var(--color-danger, #e55);
+}
 </style>

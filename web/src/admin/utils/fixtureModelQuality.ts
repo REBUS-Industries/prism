@@ -17,3 +17,31 @@ export function modelQualityFromDefinition(
   const raw = metadata?.modelQuality;
   return raw === 'low' || raw === 'default' || raw === 'high' ? raw : null;
 }
+
+/** Qualities detected from the GDTF package at import; null when not yet scanned. */
+export function availableModelQualitiesFromDefinition(
+  metadata: Record<string, unknown> | undefined,
+): GdtfModelQuality[] | null {
+  const raw = metadata?.availableModelQualities;
+  if (!Array.isArray(raw)) return null;
+  const filtered = GDTF_MODEL_QUALITIES.filter((q) => raw.includes(q));
+  return filtered.length ? filtered : null;
+}
+
+export function defaultModelQualityForAvailable(
+  available: readonly GdtfModelQuality[],
+): GdtfModelQuality {
+  for (const q of GDTF_MODEL_QUALITIES) {
+    if (available.includes(q)) return q;
+  }
+  return 'default';
+}
+
+export function coerceModelQuality(
+  value: GdtfModelQuality,
+  available: readonly GdtfModelQuality[] | null | undefined,
+): GdtfModelQuality {
+  if (!available?.length) return value;
+  if (available.includes(value)) return value;
+  return defaultModelQualityForAvailable(available);
+}
