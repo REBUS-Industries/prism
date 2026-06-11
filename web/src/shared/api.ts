@@ -1275,6 +1275,24 @@ export interface FixtureDefinition {
 
 export type FixtureImportSource = 'upload' | 'gdtf-share' | 'mvr-embedded';
 
+/**
+ * Library-level provenance class (mirror of prism-shared FixtureOrigin).
+ * Distinguishes the two fixture libraries: a `gdtf-share` record was
+ * downloaded from the upstream GDTF-Share catalog (and keeps a link to it for
+ * update checks); `upload`/`mvr`/`manual` came from a .gdtf upload, an MVR
+ * scene, or were authored in PRISM. Every fixture in the PRISM Library is one
+ * of these; the GDTF-Share catalog itself is browsed live and never stored.
+ */
+export const FIXTURE_ORIGINS = ['gdtf-share', 'upload', 'mvr', 'manual'] as const;
+export type FixtureOrigin = (typeof FIXTURE_ORIGINS)[number];
+
+export const FIXTURE_ORIGIN_LABELS: Record<FixtureOrigin, string> = {
+  'gdtf-share': 'GDTF Share',
+  upload: 'Uploaded',
+  mvr: 'MVR',
+  manual: 'Manual',
+};
+
 export interface FixtureVersionSummary {
   id: string;
   fixtureTypeId: string;
@@ -1313,6 +1331,7 @@ export interface FixtureListItem {
   sourceGdtfHash: string | null;
   gdtfShareUuid: string | null;
   importSource: FixtureImportSource;
+  origin: FixtureOrigin;
   activeVersionId: string | null;
   status: string;
   hasPreview: boolean;
@@ -1370,6 +1389,60 @@ export interface GdtfShareManufacturer {
   count: number;
 }
 
+// --- Connector / ORBIT export (mirror of prism-shared) -------------------
+// The PRISM Library is the authoritative editable set the ORBIT connector +
+// ORBIT consume. These describe `GET /api/fixtures/export[/:id]`.
+
+export interface FixtureExportAsset {
+  mediaId: string;
+  url: string;
+  mediaType: string;
+  label: string;
+  contentType?: string;
+}
+
+export interface FixtureExportSummary {
+  id: string;
+  name: string;
+  manufacturer: string;
+  fixtureName: string;
+  revision: string | null;
+  category: string;
+  origin: FixtureOrigin;
+  status: string;
+  hasPreview: boolean;
+  gdtfShareUuid: string | null;
+  activeVersionId: string | null;
+  updatedAt: string;
+}
+
+export interface FixtureConnectorExport {
+  exportFormatVersion: number;
+  exportedAt: string;
+  id: string;
+  name: string;
+  manufacturer: string;
+  fixtureName: string;
+  revision: string | null;
+  category: string;
+  origin: FixtureOrigin;
+  status: string;
+  provenance: {
+    gdtfShareUuid: string | null;
+    gdtfShareRid: number | null;
+    gdtfVersion: string | null;
+    revision: string | null;
+    sourceGdtfHash: string | null;
+  };
+  definition: FixtureDefinition;
+  activeVersion: FixtureVersionSummary | null;
+  assets: {
+    previewModel: FixtureExportAsset | null;
+    ies: FixtureExportAsset[];
+    images: FixtureExportAsset[];
+  };
+}
+
 export interface MvrUnresolvedFixture {
   key: string;
   manufacturer: string;
@@ -1419,10 +1492,11 @@ export interface MvrOrbitUploadResult {
 }
 
 export const fixturesApi = {
-  list: (params: { q?: string; tags?: string[]; limit?: number; cursor?: string | null } = {}) => {
+  list: (params: { q?: string; tags?: string[]; origin?: FixtureOrigin | FixtureOrigin[]; limit?: number; cursor?: string | null } = {}) => {
     const qs = new URLSearchParams();
     if (params.q) qs.set('q', params.q);
     if (params.tags?.length) qs.set('tags', params.tags.join(','));
+    if (params.origin) qs.set('origin', Array.isArray(params.origin) ? params.origin.join(',') : params.origin);
     if (params.limit !== undefined) qs.set('limit', String(params.limit));
     if (params.cursor) qs.set('cursor', params.cursor);
     const tail = qs.toString();
@@ -1478,6 +1552,18 @@ export const fixturesApi = {
   },
   versionsGdtfShare: (uuid: string) =>
     api.get<{ entry: GdtfShareCatalogEntry }>(`/api/gdtf-share/versions?uuid=${encodeURIComponent(uuid)}`),
+  // Connector / ORBIT export — the PRISM Library is the authoritative source.
+  exportList: (params: { q?: string; origin?: FixtureOrigin | FixtureOrigin[]; status?: 'draft' | 'published'; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.origin) qs.set('origin', Array.isArray(params.origin) ? params.origin.join(',') : params.origin);
+    if (params.status) qs.set('status', params.status);
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    const tail = qs.toString();
+    return api.get<{ fixtures: FixtureExportSummary[] }>(`/api/fixtures/export${tail ? `?${tail}` : ''}`);
+  },
+  export: (id: string) =>
+    api.get<{ fixture: FixtureConnectorExport }>(`/api/fixtures/export/${id}`),
   uploadIes: (id: string, beamId: string, file: File) => {
     const fd = new FormData();
     fd.append('beamId', beamId);

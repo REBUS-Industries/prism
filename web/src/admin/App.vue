@@ -49,7 +49,8 @@ async function logout() {
         <RouterLink :to="{ name: 'project-attachments' }" class="nav-sub"><Icon name="attachment" :size="16" />Project attachments</RouterLink>
         <RouterLink :to="{ name: 'materials'    }"><Icon name="palette" :size="18" />Materials</RouterLink>
         <RouterLink :to="{ name: 'textures'     }" class="nav-sub"><Icon name="texture" :size="16" />Textures</RouterLink>
-        <RouterLink :to="{ name: 'fixtures'     }"><Icon name="lightbulb" :size="18" />Fixtures</RouterLink>
+        <RouterLink :to="{ name: 'fixtures'     }"><Icon name="travel_explore" :size="18" />GDTF Share Library</RouterLink>
+        <RouterLink :to="{ name: 'prism-library' }"><Icon name="lightbulb" :size="18" />PRISM Library</RouterLink>
         <RouterLink :to="{ name: 'fixture-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import GDTF</RouterLink>
         <RouterLink :to="{ name: 'keys'         }"><Icon name="key" :size="18" />API keys</RouterLink>
         <RouterLink :to="{ name: 'webhooks'     }"><Icon name="webhook" :size="18" />Webhooks</RouterLink>

@@ -20,6 +20,7 @@ import Materials from './pages/Materials.vue';
 import MaterialEditor from './pages/MaterialEditor.vue';
 import Textures from './pages/Textures.vue';
 import Fixtures from './pages/Fixtures.vue';
+import PrismLibrary from './pages/PrismLibrary.vue';
 import FixtureEditor from './pages/FixtureEditor.vue';
 import FixtureGdtfDebug from './pages/FixtureGdtfDebug.vue';
 import FixtureDmxCharts from './pages/FixtureDmxCharts.vue';
@@ -39,7 +40,11 @@ const router = createRouter({
     { path: '/materials',              component: Materials,        name: 'materials' },
     { path: '/materials/:id',          component: MaterialEditor,   name: 'material-editor', props: true },
     { path: '/textures',               component: Textures,         name: 'textures' },
+    // Two fixture libraries: `fixtures` is the GDTF Share catalog browser
+    // (download source); `prism-library` is the editable PRISM-owned set the
+    // ORBIT connector + ORBIT consume.
     { path: '/fixtures',               component: Fixtures,       name: 'fixtures' },
+    { path: '/fixtures/library',       component: PrismLibrary,   name: 'prism-library' },
     { path: '/fixtures/import',        component: FixtureImport,  name: 'fixture-import' },
     { path: '/fixtures/:id/debug',     component: FixtureGdtfDebug, name: 'fixture-debug', props: true },
     { path: '/fixtures/:id/dmx',       component: FixtureDmxCharts, name: 'fixture-dmx-charts', props: true },
