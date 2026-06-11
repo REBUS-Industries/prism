@@ -1,0 +1,26 @@
+{
+  "Diffuse": {
+    "2k": {
+      "jpg": {
+        "url": "https://dl.example.com/concrete_floor_worn_001_diff_2k.jpg",
+        "size": 482906
+      }
+    }
+  },
+  "nor_gl": {
+    "2k": {
+      "jpg": {
+        "url": "https://dl.example.com/concrete_floor_worn_001_nor_gl_2k.jpg",
+        "size": 512000
+      }
+    }
+  },
+  "Rough": {
+    "2k": {
+      "jpg": {
+        "url": "https://dl.example.com/concrete_floor_worn_001_rough_2k.jpg",
+        "size": 256000
+      }
+    }
+  }
+}

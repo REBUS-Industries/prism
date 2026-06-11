@@ -1307,6 +1307,120 @@ export const materialsApi = {
 };
 
 // ---------------------------------------------------------------------------
+// Fab marketplace import (server-side proxy — credentials never reach browser)
+// ---------------------------------------------------------------------------
+
+export interface FabAssetSummary {
+  id: string;
+  title: string;
+  listingType: string | null;
+  thumbnailUrl: string | null;
+  previewUrl: string | null;
+  tags: string[];
+  category: string | null;
+  seller: string | null;
+  isFree: boolean;
+  price: number | null;
+  formats: string[];
+}
+
+export interface FabAssetDetail extends FabAssetSummary {
+  description: string | null;
+  publishedAt: string | null;
+  ratingAverage: number | null;
+  ratingCount: number | null;
+  importConfigured?: boolean;
+}
+
+export interface FabSearchPage {
+  items: FabAssetSummary[];
+  limit: number;
+  cursor: string | null;
+  nextCursor: string | null;
+}
+
+export interface FabImportResult extends MaterialDetail {
+  skipped: string[];
+  fabListingId: string;
+}
+
+export const fabApi = {
+  search: (params: { q?: string; cursor?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.limit) qs.set('limit', String(params.limit));
+    const tail = qs.toString();
+    return api.get<FabSearchPage>(`/api/fab/search${tail ? `?${tail}` : ''}`);
+  },
+  getAsset: (id: string) => api.get<FabAssetDetail>(`/api/fab/assets/${id}`),
+  importAsset: (id: string, body?: { name?: string }) =>
+    api.post<FabImportResult>(`/api/fab/assets/${id}/import`, body ?? {}),
+};
+
+// ---------------------------------------------------------------------------
+// Unified external materials (Fab, Poly Haven)
+// ---------------------------------------------------------------------------
+
+export type ExternalMaterialSource = 'fab' | 'polyhaven' | 'ambientcg';
+
+export interface ExternalMaterialSummary {
+  source: ExternalMaterialSource;
+  sourceId: string;
+  title: string;
+  thumbnailUrl: string | null;
+  previewUrl: string | null;
+  tags: string[];
+  category: string | null;
+  downloadSize: number | null;
+  relevanceScore: number;
+}
+
+export interface ExternalMaterialDetail extends ExternalMaterialSummary {
+  description: string | null;
+  formats: string[];
+  metadata: Record<string, unknown>;
+}
+
+export interface ExternalMaterialsSearchPage {
+  items: ExternalMaterialSummary[];
+  limit: number;
+  cursor: string | null;
+  nextCursor: string | null;
+  sources: ExternalMaterialSource[];
+  providerLabels: Record<string, string>;
+  configuredSources: ExternalMaterialSource[];
+}
+
+export interface ExternalMaterialImportResult extends MaterialDetail {
+  skipped: string[];
+}
+
+export const externalMaterialsApi = {
+  search: (params: {
+    q?: string;
+    sources?: ExternalMaterialSource | 'all';
+    cursor?: string | null;
+    limit?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.sources && params.sources !== 'all') qs.set('sources', params.sources);
+    if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    const tail = qs.toString();
+    return api.get<ExternalMaterialsSearchPage>(`/api/external-materials/search${tail ? `?${tail}` : ''}`);
+  },
+  get: (source: ExternalMaterialSource, id: string) =>
+    api.get<ExternalMaterialDetail>(`/api/external-materials/${source}/${encodeURIComponent(id)}`),
+  import: (source: ExternalMaterialSource, id: string, body?: { name?: string }) =>
+    api.post<ExternalMaterialImportResult>(
+      `/api/external-materials/${source}/${encodeURIComponent(id)}/import`,
+      body ?? {},
+    ),
+};
+
+// ---------------------------------------------------------------------------
 // Fixtures library (prism-fixtures-service)
 // ---------------------------------------------------------------------------
 

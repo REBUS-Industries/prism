@@ -42,9 +42,10 @@ cd web; npm install; npm run dev
 | `web/src/admin/components/TexturePickerModal.vue` | Library picker modal |
 | `web/src/admin/components/ParamSlider.vue` | Shared drag-slider control |
 | `web/src/admin/components/ParamColor.vue` | Shared colour picker control |
-| `web/src/admin/pages/Materials.vue` | Material library list page |
+| `web/src/admin/components/ExternalMaterialsModal.vue` | Unified Fab + Poly Haven browse/import modal |
 | `server/src/materials/` | Server-side parameter schema + slot logic |
-| `server/src/api/materials.ts` | REST endpoints |
+| `server/src/external-materials/` | Provider abstraction + Poly Haven / Fab adapters |
+| `server/src/api/externalMaterials.ts` | Unified `/api/external-materials/*` routes |
 | `server/src/db/migrations/0010_materials_store.sql` + `0011_material_parameters.sql` | DB schema |
 
 Do NOT edit fixture viewer / assembly files; those belong to the fixture-builder workstream.
@@ -66,7 +67,11 @@ Do NOT edit fixture viewer / assembly files; those belong to the fixture-builder
 - **GlbViewer** (`2821144`): upgraded to `MeshPhysicalMaterial`; all 14 extension blocks now affect the 3D preview live
 - **Persistence**: `PUT /api/materials/:id/parameters` with partial patch, debounced 350 ms; full round-trip tested
 
-### Known gaps / next steps (suggestions)
+### Fab marketplace import (2026-06)
+- Admin **Materials** page: **Import from Fab** opens search → preview → import modal.
+- Server routes: `GET /api/fab/search`, `GET /api/fab/assets/:id`, `POST /api/fab/assets/:id/import`.
+- Search/preview use Fab public API (no credentials). Import needs `FAB_EPIC_REFRESH_TOKEN` in server env (Epic OAuth refresh token for an account that owns the material).
+- See `infra/.env.example` and `server/src/fab/`.
 - Material presets / template library (save/load a parameter set)
 - Batch-apply material to multiple fixtures at once
 - Texture tiling preview toggle (show grid lines in GlbViewer at current tiling)

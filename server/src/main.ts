@@ -146,6 +146,8 @@ async function buildApp() {
   // Materials store — shared texture library + PBR materials.
   await app.register(import('./api/textures.js'),      { prefix: '/api/textures' });
   await app.register(import('./api/materials.js'),     { prefix: '/api/materials' });
+  await app.register(import('./api/externalMaterials.js'), { prefix: '/api/external-materials' });
+  await app.register(import('./api/fab.js'),           { prefix: '/api/fab' });
   await app.register(import('./api/internal.js'),      { prefix: '/internal' });
   await app.register(import('./v1/routes.js'),         { prefix: '/v1' });
 

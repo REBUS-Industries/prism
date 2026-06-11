@@ -1,0 +1,54 @@
+{
+  "totalResults": 2,
+  "assets": [
+    {
+      "id": "Concrete048",
+      "title": "Concrete 048",
+      "tags": ["concrete", "floor", "grey", "smooth"],
+      "shortDescription": "",
+      "downloads": [
+        {
+          "attributes": "1K-JPG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete048_1K-JPG.zip",
+          "size": 7536748
+        },
+        {
+          "attributes": "2K-JPG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete048_2K-JPG.zip",
+          "size": 28990525
+        },
+        {
+          "attributes": "4K-JPG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete048_4K-JPG.zip",
+          "size": 117441433
+        }
+      ],
+      "thumbnails": {
+        "256-PNG": "https://cdn.example.com/Concrete048-256.png",
+        "512-PNG": "https://cdn.example.com/Concrete048-512.png"
+      },
+      "downloadStatistics": { "total": 24833 }
+    },
+    {
+      "id": "Concrete034",
+      "title": "Concrete 034",
+      "tags": ["concrete", "rough", "outdoor"],
+      "shortDescription": "",
+      "downloads": [
+        {
+          "attributes": "2K-JPG",
+          "extension": "zip",
+          "url": "https://ambientcg.com/get?file=Concrete034_2K-JPG.zip",
+          "size": 10598720
+        }
+      ],
+      "thumbnails": {
+        "256-PNG": "https://cdn.example.com/Concrete034-256.png"
+      },
+      "downloadStatistics": { "total": 12000 }
+    }
+  ]
+}

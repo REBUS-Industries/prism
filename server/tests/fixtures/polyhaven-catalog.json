@@ -1,0 +1,26 @@
+{
+  "concrete_floor_worn_001": {
+    "name": "Concrete Floor Worn 001",
+    "type": 1,
+    "tags": ["concrete", "worn", "floor"],
+    "categories": ["concrete", "floor", "man made"],
+    "download_count": 12000,
+    "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/concrete_floor_worn_001.png?width=256&height=256"
+  },
+  "brick_wall_001": {
+    "name": "Brick Wall 001",
+    "type": 1,
+    "tags": ["brick", "wall"],
+    "categories": ["brick", "wall"],
+    "download_count": 8000,
+    "thumbnail_url": "https://cdn.example.com/brick.png"
+  },
+  "aerial_beach_01": {
+    "name": "Aerial Beach 01",
+    "type": 1,
+    "tags": ["beach", "sand"],
+    "categories": ["terrain", "sand"],
+    "download_count": 33000,
+    "thumbnail_url": "https://cdn.example.com/beach.png"
+  }
+}
