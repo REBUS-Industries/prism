@@ -101,6 +101,15 @@ services:
       DATA_DIR: "/data/prism"
       REDIS_URL: "redis://redis:6379"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+      FAB_EPIC_REFRESH_TOKEN: "${FAB_EPIC_REFRESH_TOKEN:-}"
+      FAB_EPIC_CLIENT_ID: "${FAB_EPIC_CLIENT_ID:-}"
+      FAB_EPIC_CLIENT_SECRET: "${FAB_EPIC_CLIENT_SECRET:-}"
+      FAB_ENABLED: "${FAB_ENABLED:-true}"
+      POLYHAVEN_ENABLED: "${POLYHAVEN_ENABLED:-true}"
+      POLYHAVEN_USER_AGENT: "${POLYHAVEN_USER_AGENT:-PRISM/0.3.0 (REBUS Industries; materials-import)}"
+      POLYHAVEN_TEXTURE_RESOLUTION: "${POLYHAVEN_TEXTURE_RESOLUTION:-2k}"
+      AMBIENTCG_ENABLED: "${AMBIENTCG_ENABLED:-true}"
+      AMBIENTCG_DOWNLOAD_ATTRIBUTES: "${AMBIENTCG_DOWNLOAD_ATTRIBUTES:-2K-JPG}"
     volumes:
       - prism-data:/data/prism
     healthcheck:

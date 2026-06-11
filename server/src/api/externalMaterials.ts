@@ -36,26 +36,32 @@ function provenance(principal: Principal | undefined) {
 const plugin: FastifyPluginAsync = async (app) => {
   app.get<{ Querystring: { q?: string; sources?: string; cursor?: string; limit?: string } }>('/search', {
     preHandler: [requireAuth, requireScope('materials:read')],
-  }, async (req) => {
+  }, async (req, reply) => {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 24), 1), 50);
     const q = (req.query.q ?? '').trim();
     const sources = parseSourcesParam(req.query.sources);
     const cursorRaw = req.query.cursor?.trim() || null;
     const cursor = decodeUnifiedCursor(cursorRaw);
 
-    const result = await unifiedSearch(listExternalMaterialProviders(), {
-      q,
-      sources,
-      cursor,
-      limit,
-    });
+    try {
+      const result = await unifiedSearch(listExternalMaterialProviders(), {
+        q,
+        sources,
+        cursor,
+        limit,
+      });
 
-    return {
-      ...result,
-      cursor: cursorRaw,
-      providerLabels: providerLabels(),
-      configuredSources: enabledExternalMaterialSources(),
-    };
+      return {
+        ...result,
+        cursor: cursorRaw,
+        providerLabels: providerLabels(),
+        configuredSources: enabledExternalMaterialSources(),
+      };
+    } catch (err) {
+      req.log.warn({ err, q, sources }, 'external materials search failed');
+      const message = err instanceof Error ? err.message : 'search failed';
+      return reply.code(502).send({ error: message });
+    }
   });
 
   app.get<{ Params: { source: string; id: string } }>('/:source/:id', {
@@ -103,8 +109,12 @@ const plugin: FastifyPluginAsync = async (app) => {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'import failed';
       req.log.warn({ err, source: parsed.data.source, id: parsed.data.id }, 'external material import failed');
-      if (message.includes('FAB_EPIC_ACCESS_TOKEN') || message.includes('Fab import requires')) {
-        return reply.code(503).send({ error: message, hint: 'Set FAB_EPIC_ACCESS_TOKEN on the server for Fab downloads.' });
+      if (message.includes('FAB_EPIC') || message.includes('Fab import requires')) {
+        return reply.code(503).send({
+          error: message,
+          code: 'fab_not_configured',
+          hint: 'Set FAB_EPIC_REFRESH_TOKEN on the server for Fab downloads (see infra/.env.example).',
+        });
       }
       return reply.code(502).send({ error: message });
     }

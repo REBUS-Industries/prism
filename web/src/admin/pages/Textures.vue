@@ -495,7 +495,7 @@ h1 { font-size: 22px; margin: 0; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag {
   text-transform: none; letter-spacing: normal; font-weight: 500;
-  background: var(--color-bg-hover); color: var(--color-text-muted);
+  background: var(--color-bg-hover); color: #fff;
 }
 .ref { margin-top: auto; }
 .card-actions { display: flex; gap: 6px; }

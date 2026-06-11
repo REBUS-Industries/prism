@@ -38,8 +38,11 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import TextureNode from './TextureNode.vue';
 import MaterialOutputNode from './MaterialOutputNode.vue';
+import ParamNode from './ParamNode.vue';
 import {
   MATERIAL_SLOTS,
+  LEFT_MATERIAL_SLOTS,
+  RIGHT_MATERIAL_SLOTS,
   type MaterialParameters,
   type MaterialSlot,
   type MaterialSlotAssignment,
@@ -61,28 +64,37 @@ const emit = defineEmits<{
 const interactionMode = ref<'pan' | 'select'>('pan');
 
 // ---------------------------------------------------------------------------
-// Layout constants — generously over-estimated so nodes never overlap on
-// first render. Heights are in canvas-pixels (1:1 with screen pixels at
-// zoom 1). The thumbnail is `aspect-ratio: 16/9` on a 212 px inner-width
-// cell (232 px node − 10px × 2 padding) → ~119 px, plus name + actions.
-// Adding ~25 % headroom keeps everything clear across fonts + zoom levels.
+// Layout constants — two-column symmetric layout.
+//
+// Left column (LEFT_MATERIAL_SLOTS) sits at x=0, connects to the LEFT side
+// of the material node. Right column (RIGHT_MATERIAL_SLOTS) sits at
+// RIGHT_COL_X, connects to the RIGHT side of the material node.
+//
+// Node width 300 px; 4:3 thumbnail on 276 px inner-width ≈ 207 px tall.
+// Heights are in canvas-pixels (1:1 with screen at zoom 1).
 // ---------------------------------------------------------------------------
-const OUTPUT_X = 480;
-const NODE_GAP = 60;        // raised from 44 → ensures no overlap after estimates
-const HEADER_H = 38;
-const TEX_AREA_FILLED = 240; // raised from 200 → thumbnail 119 + name + actions + gaps
-const TEX_AREA_EMPTY = 110;  // raised from 90
-const OUTPUT_H = 264;        // 8 rows × ~33 px/row
+const NODE_W          = 300;
+const MATERIAL_W      = 280;
+const COL_GAP         = 100;  // gap between a column edge and the material node
+const OUTPUT_X        = NODE_W + COL_GAP;             // = 400
+const RIGHT_COL_X     = OUTPUT_X + MATERIAL_W + COL_GAP;  // = 780
+const UV_NODE_X       = RIGHT_COL_X + NODE_W + 80;    // = 1160
+const UV_NODE_Y       = 0;
+const NODE_GAP        = 60;
+const HEADER_H        = 46;    // 9px pad × 2 + 13px font + tracking
+const TEX_AREA_FILLED = 310;   // 4:3 thumb ≈ 207px + name + actions + gaps
+const TEX_AREA_EMPTY  = 130;
+const OUTPUT_H        = 200;   // 4 rows × ~38px + header + padding
 
 const PARAM_H: Record<MaterialSlot, number> = {
-  albedo:       72,
-  roughness:    72,
-  metallic:     72,
-  ao:           72,
-  opacity:      72,
-  normal:       110,  // slider + checkbox
-  emissive:     140,  // color + slider
-  displacement: 140,  // two sliders
+  albedo:       82,
+  roughness:    82,
+  metallic:     82,
+  ao:           82,
+  opacity:      82,
+  normal:       125,  // slider + checkbox
+  emissive:     158,  // color + slider
+  displacement: 158,  // two sliders
 };
 
 function nodeHeight(slot: MaterialSlot, isFilled: boolean): number {
@@ -172,50 +184,91 @@ const filled = computed<Partial<Record<MaterialSlot, boolean>>>(() => {
   return m;
 });
 
-const layout = computed<{ ys: number[]; total: number }>(() => {
+/** Compute stacked Y positions for a column of slots. */
+function columnYs(slots: readonly MaterialSlot[]): { ys: number[]; total: number } {
   const ys: number[] = [];
   let y = 0;
-  for (const slot of MATERIAL_SLOTS) {
+  for (const slot of slots) {
     ys.push(y);
     y += nodeHeight(slot, !!lookup.value[slot]) + NODE_GAP;
   }
   return { ys, total: Math.max(0, y - NODE_GAP) };
+}
+
+const layout = computed(() => {
+  const left  = columnYs(LEFT_MATERIAL_SLOTS);
+  const right = columnYs(RIGHT_MATERIAL_SLOTS);
+  const totalHeight = Math.max(left.total, right.total);
+  return { left, right, totalHeight };
 });
 
 // ---------------------------------------------------------------------------
-// Nodes
+// Nodes — two-column layout
 // ---------------------------------------------------------------------------
 const nodes = computed<Node[]>(() => {
-  const texNodes: Node[] = MATERIAL_SLOTS.map((slot, i) => {
+  const texNodes: Node[] = [];
+
+  // Left column — source handle on RIGHT, wires to LEFT of material node
+  LEFT_MATERIAL_SLOTS.forEach((slot, i) => {
     const nodeId = `slot-${slot}`;
-    const defaultPos = { x: 0, y: layout.value.ys[i]! };
-    return {
+    const defaultPos = { x: 0, y: layout.value.left.ys[i]! };
+    texNodes.push({
       id: nodeId,
       type: 'texture',
-      // Use saved position if present, otherwise fall back to algorithm
       position: customPositions.value[nodeId] ?? defaultPos,
-      data: { slot, texture: lookup.value[slot] ?? null },
+      data: { slot, texture: lookup.value[slot] ?? null, handleSide: 'right' },
       draggable: true,
       sourcePosition: Position.Right,
-    } satisfies Node;
+    } satisfies Node);
   });
 
+  // Right column — source handle on LEFT, wires to RIGHT of material node
+  RIGHT_MATERIAL_SLOTS.forEach((slot, i) => {
+    const nodeId = `slot-${slot}`;
+    const defaultPos = { x: RIGHT_COL_X, y: layout.value.right.ys[i]! };
+    texNodes.push({
+      id: nodeId,
+      type: 'texture',
+      position: customPositions.value[nodeId] ?? defaultPos,
+      data: { slot, texture: lookup.value[slot] ?? null, handleSide: 'left' },
+      draggable: true,
+      sourcePosition: Position.Left,
+    } satisfies Node);
+  });
+
+  // Material output — centred vertically across both columns
   const outputNodeId = 'material';
-  const defaultOutputPos = { x: OUTPUT_X, y: Math.max(0, (layout.value.total - OUTPUT_H) / 2) };
+  const defaultOutputPos = {
+    x: OUTPUT_X,
+    y: Math.max(0, (layout.value.totalHeight - OUTPUT_H) / 2),
+  };
   const outputNode: Node = {
     id: outputNodeId,
     type: 'materialOutput',
     position: customPositions.value[outputNodeId] ?? defaultOutputPos,
     data: { filled: filled.value },
     draggable: true,
-    targetPosition: Position.Left,
   };
 
-  return [...texNodes, outputNode];
+  // UV / param node — below and right of the right column
+  const uvNodeId = 'param-textureUv';
+  const uvNode: Node = {
+    id: uvNodeId,
+    type: 'param',
+    position: customPositions.value[uvNodeId] ?? {
+      x: OUTPUT_X + MATERIAL_W / 2 - 80, // centred under material
+      y: layout.value.totalHeight + NODE_GAP,
+    },
+    data: { paramType: 'textureUv', parameters: props.parameters, onParamChange },
+    draggable: true,
+    sourcePosition: Position.Top,
+  };
+
+  return [...texNodes, outputNode, uvNode];
 });
 
-const edges = computed<Edge[]>(() =>
-  MATERIAL_SLOTS.map((slot) => {
+const edges = computed<Edge[]>(() => {
+  const texEdges: Edge[] = MATERIAL_SLOTS.map((slot) => {
     const on = !!lookup.value[slot];
     return {
       id: `e-${slot}`,
@@ -233,8 +286,22 @@ const edges = computed<Edge[]>(() =>
         color: on ? 'var(--orbit-primary)' : 'var(--color-border-strong)',
       },
     } satisfies Edge;
-  }),
-);
+  });
+
+  const uvEdge: Edge = {
+    id: 'e-param-textureUv',
+    source: 'param-textureUv',
+    target: 'material',
+    targetHandle: 'param',
+    type: 'smoothstep',
+    animated: true,
+    style: { stroke: 'var(--orbit-primary)', strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--orbit-primary)' },
+  };
+
+  return [...texEdges, uvEdge];
+});
+
 
 function onAssign(slot: MaterialSlot, texture: Texture): void {
   emit('assign', slot, texture);
@@ -272,6 +339,7 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
           :slot="nodeProps.data.slot"
           :texture="nodeProps.data.texture"
           :params="parameters"
+          :handle-side="nodeProps.data.handleSide ?? 'right'"
           @assign="onAssign"
           @remove="onUnassign"
           @param-change="onParamChange"
@@ -280,6 +348,10 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
 
       <template #node-materialOutput="nodeProps">
         <MaterialOutputNode :filled="nodeProps.data.filled" />
+      </template>
+
+      <template #node-param="nodeProps">
+        <ParamNode :data="nodeProps.data" />
       </template>
 
       <Background pattern-color="var(--color-border)" :gap="22" />
@@ -398,7 +470,8 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
 /* Unscoped: applies inside Vue Flow's node tree. Custom node types carry no
    default theme chrome, so we only neutralise the wrapper + brand the handles. */
 .vue-flow__node-texture,
-.vue-flow__node-materialOutput {
+.vue-flow__node-materialOutput,
+.vue-flow__node-param {
   padding: 0;
   border: none;
   background: transparent;

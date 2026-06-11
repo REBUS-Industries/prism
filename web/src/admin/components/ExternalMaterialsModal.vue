@@ -16,7 +16,7 @@ import Icon from '../../shared/Icon.vue';
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: []; imported: [materialId: string] }>();
 
-const PAGE = 24;
+const PAGE = 36;
 type SourceFilter = 'all' | ExternalMaterialSource;
 
 const SOURCE_FILTERS: Array<{ id: SourceFilter; label: string }> = [
@@ -44,6 +44,20 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const sourcesParam = computed(() =>
   sourceFilter.value === 'all' ? undefined : sourceFilter.value,
+);
+
+const fabImportConfigured = computed(() => {
+  if (!detail.value || detail.value.source !== 'fab') return true;
+  return detail.value.metadata?.importConfigured !== false;
+});
+
+const fabImportBlockedReason = computed(() => {
+  if (fabImportConfigured.value) return '';
+  return 'Fab import needs FAB_EPIC_REFRESH_TOKEN on the server (see infra/.env.example). Search and preview still work.';
+});
+
+const importDisabled = computed(() =>
+  importing.value || detailLoading.value || !selected.value || !fabImportConfigured.value,
 );
 
 function sourceLabel(source: ExternalMaterialSource): string {
@@ -91,7 +105,7 @@ async function selectItem(item: ExternalMaterialSummary): Promise<void> {
 }
 
 async function importSelected(): Promise<void> {
-  if (!selected.value) return;
+  if (!selected.value || !fabImportConfigured.value) return;
   importing.value = true;
   importError.value = null;
   try {
@@ -132,105 +146,107 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 </script>
 
 <template>
-  <div v-if="open" class="modal-backdrop" @click.self="emit('close')">
-    <div class="panel card">
-      <header class="panel-head">
-        <div>
-          <h2>Browse external materials</h2>
-          <p class="muted small">Search Fab, Poly Haven, and ambientCG; import into your library.</p>
-        </div>
-        <button class="icon-btn" type="button" aria-label="Close" @click="emit('close')">
-          <Icon name="close" :size="18" />
-        </button>
-      </header>
-
-      <div class="toolbar">
-        <input
-          v-model="search"
-          class="flex-1"
-          type="search"
-          placeholder="Search e.g. concrete, brick, wood…"
-          @input="onSearchInput"
-        />
-      </div>
-
-      <div class="source-row">
-        <button
-          v-for="opt in SOURCE_FILTERS"
-          :key="opt.id"
-          class="source-pill"
-          :class="{ active: sourceFilter === opt.id }"
-          type="button"
-          @click="setSourceFilter(opt.id)"
-        >{{ opt.label }}</button>
-      </div>
-
-      <div v-if="error" class="error-box">{{ error }}</div>
-
-      <div class="body">
-        <section class="results">
-          <div v-if="loading && !items.length" class="muted pad">Searching…</div>
-          <div v-else-if="!items.length" class="muted pad">No results. Try another term or source.</div>
-          <div v-else class="grid">
-            <button
-              v-for="item in items"
-              :key="`${item.source}:${item.sourceId}`"
-              class="result-card"
-              :class="{ selected: selected?.source === item.source && selected?.sourceId === item.sourceId }"
-              type="button"
-              @click="selectItem(item)"
-            >
-              <span class="thumb">
-                <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" :alt="item.title" loading="lazy" />
-                <span v-else class="thumb-empty subtle">No preview</span>
-              </span>
-              <span class="result-title">{{ item.title }}</span>
-              <span class="source-badge">{{ sourceLabel(item.source) }}</span>
-            </button>
+  <Teleport to="body">
+    <div v-if="open" class="modal-backdrop" @click.self="emit('close')">
+      <div class="panel card">
+        <header class="panel-head">
+          <div>
+            <h2>Browse external materials</h2>
+            <p class="muted small">Search Fab, Poly Haven, and ambientCG; import into your library.</p>
           </div>
-          <div v-if="nextCursor" class="load-more">
-            <button type="button" :disabled="loading" @click="load(false)">
-              {{ loading ? 'Loading…' : 'Load more' }}
-            </button>
-          </div>
-        </section>
-
-        <aside v-if="selected" class="detail">
-          <h3>{{ selected.title }}</h3>
-          <span class="source-badge lg">{{ sourceLabel(selected.source) }}</span>
-          <div v-if="detailLoading" class="muted small">Loading preview…</div>
-          <template v-else-if="detail">
-            <div v-if="detail.previewUrl" class="preview">
-              <img :src="detail.previewUrl" :alt="detail.title" />
-            </div>
-            <p v-if="detail.description" class="desc">{{ detail.description }}</p>
-            <p v-if="detail.downloadSize" class="muted small">Download ~{{ formatBytes(detail.downloadSize) }}</p>
-            <div v-if="detail.tags.length" class="tags">
-              <span v-for="tag in detail.tags.slice(0, 8)" :key="tag" class="pill tag">{{ tag }}</span>
-            </div>
-            <p
-              v-if="detail.source === 'fab' && detail.metadata?.importConfigured === false"
-              class="warn small"
-            >
-              Fab import needs <code>FAB_EPIC_REFRESH_TOKEN</code> on the server.
-            </p>
-          </template>
-          <div v-if="importError" class="error-box mt-sm">{{ importError }}</div>
-          <button
-            class="primary import-btn"
-            type="button"
-            :disabled="importing || detailLoading"
-            @click="importSelected"
-          >
-            {{ importing ? 'Importing…' : 'Import to library' }}
+          <button class="icon-btn" type="button" aria-label="Close" @click="emit('close')">
+            <Icon name="close" :size="18" />
           </button>
-        </aside>
-        <aside v-else class="detail detail-empty muted">
-          Select a material to preview and import.
-        </aside>
+        </header>
+
+        <div class="toolbar">
+          <input
+            v-model="search"
+            class="flex-1"
+            type="search"
+            placeholder="Search e.g. concrete, brick, wood…"
+            @input="onSearchInput"
+          />
+        </div>
+
+        <div class="source-row">
+          <button
+            v-for="opt in SOURCE_FILTERS"
+            :key="opt.id"
+            class="source-pill"
+            :class="{ active: sourceFilter === opt.id }"
+            type="button"
+            @click="setSourceFilter(opt.id)"
+          >{{ opt.label }}</button>
+        </div>
+
+        <div v-if="error" class="error-box">{{ error }}</div>
+
+        <div class="body">
+          <section class="results">
+            <div v-if="loading && !items.length" class="muted pad">Searching…</div>
+            <div v-else-if="!items.length" class="muted pad">No results. Try another term or source.</div>
+            <div v-else class="grid">
+              <button
+                v-for="item in items"
+                :key="`${item.source}:${item.sourceId}`"
+                class="result-card"
+                :class="{ selected: selected?.source === item.source && selected?.sourceId === item.sourceId }"
+                type="button"
+                @click="selectItem(item)"
+              >
+                <span class="thumb">
+                  <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" :alt="item.title" loading="lazy" />
+                  <span v-else class="thumb-empty subtle">No preview</span>
+                </span>
+                <span class="result-title">{{ item.title }}</span>
+                <span class="source-badge">{{ sourceLabel(item.source) }}</span>
+              </button>
+            </div>
+            <div v-if="nextCursor" class="load-more">
+              <button type="button" :disabled="loading" @click="load(false)">
+                {{ loading ? 'Loading…' : 'Load more' }}
+              </button>
+            </div>
+          </section>
+
+          <aside v-if="selected" class="detail">
+            <h3>{{ selected.title }}</h3>
+            <span class="source-badge lg">{{ sourceLabel(selected.source) }}</span>
+            <div v-if="detailLoading" class="muted small">Loading preview…</div>
+            <template v-else-if="detail">
+              <div v-if="detail.previewUrl" class="preview">
+                <img :src="detail.previewUrl" :alt="detail.title" />
+              </div>
+              <p v-if="detail.description" class="desc">{{ detail.description }}</p>
+              <p v-if="detail.downloadSize" class="muted small">Download ~{{ formatBytes(detail.downloadSize) }}</p>
+              <div v-if="detail.tags.length" class="tags">
+                <span v-for="tag in detail.tags.slice(0, 12)" :key="tag" class="pill tag">{{ tag }}</span>
+              </div>
+              <p v-if="!fabImportConfigured" class="warn small">
+                Fab import is not configured on this server.
+                Set <code>FAB_EPIC_REFRESH_TOKEN</code> in the server environment
+                (see <code>infra/.env.example</code>). Search and preview still work.
+              </p>
+            </template>
+            <div v-if="importError" class="error-box mt-sm">{{ importError }}</div>
+            <button
+              class="primary import-btn"
+              type="button"
+              :disabled="importDisabled"
+              :title="fabImportBlockedReason || undefined"
+              @click="importSelected"
+            >
+              {{ importing ? 'Importing…' : 'Import to library' }}
+            </button>
+          </aside>
+          <aside v-else class="detail detail-empty muted">
+            Select a material to preview and import.
+          </aside>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -238,18 +254,19 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   position: fixed; inset: 0; z-index: 210;
   background: rgba(0, 0, 0, 0.55);
   display: flex; align-items: center; justify-content: center;
-  padding: 20px;
+  padding: 2vh 2vw;
 }
 .panel {
-  width: 960px; max-width: 100%; max-height: 90vh;
+  width: 90vw; height: 90vh; max-width: none; max-height: none;
   display: flex; flex-direction: column; gap: 12px;
   background: var(--color-bg-elevated);
+  overflow: hidden;
 }
-.panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex: none; }
 .panel-head h2 { margin: 0; font-size: 18px; }
 .small { font-size: 12px; }
-.toolbar { display: flex; gap: 8px; }
-.source-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.toolbar { display: flex; gap: 8px; flex: none; }
+.source-row { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
 .source-pill {
   padding: 4px 12px; font-size: 12px; border-radius: 999px;
   border: 1px solid var(--color-border-strong);
@@ -259,14 +276,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   background: var(--orbit-primary); border-color: var(--orbit-primary); color: #fff;
 }
 .body {
-  display: grid; grid-template-columns: 1fr 280px; gap: 12px;
-  min-height: 360px; overflow: hidden;
+  display: grid; grid-template-columns: 1fr minmax(320px, 34vw); gap: 16px;
+  flex: 1; min-height: 0; overflow: hidden;
 }
 .results { overflow: auto; min-height: 0; }
 .pad { padding: 32px; text-align: center; }
 .grid {
-  display: grid; gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
 .result-card {
   display: flex; flex-direction: column; gap: 4px; padding: 8px;
@@ -293,20 +310,22 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .source-badge.lg { font-size: 11px; margin-top: 4px; }
 .detail {
   border-left: 1px solid var(--color-border);
-  padding-left: 12px; display: flex; flex-direction: column; gap: 8px;
-  overflow: auto;
+  padding-left: 16px; display: flex; flex-direction: column; gap: 10px;
+  overflow: auto; min-height: 0;
 }
 .detail-empty { justify-content: center; text-align: center; font-size: 13px; }
-.detail h3 { margin: 0; font-size: 15px; }
+.detail h3 { margin: 0; font-size: 16px; }
 .preview { border-radius: var(--radius-sm); overflow: hidden; background: var(--color-bg-hover); }
-.preview img { width: 100%; display: block; }
-.desc { font-size: 12px; margin: 0; color: var(--color-text-muted); }
+.preview img { width: 100%; display: block; max-height: 42vh; object-fit: contain; }
+.desc { font-size: 12px; margin: 0; color: var(--color-text-muted); line-height: 1.45; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag { font-size: 10px; text-transform: none; letter-spacing: normal; }
-.warn { color: var(--color-warning, #c90); margin: 0; }
-.import-btn { margin-top: auto; }
+.warn { color: var(--color-warning, #c90); margin: 0; line-height: 1.45; }
+.import-btn { margin-top: auto; flex: none; }
+.import-btn:disabled { cursor: not-allowed; opacity: 0.55; }
 .load-more { display: flex; justify-content: center; padding: 8px 0; }
-@media (max-width: 760px) {
+@media (max-width: 900px) {
+  .panel { width: 96vw; height: 96vh; }
   .body { grid-template-columns: 1fr; }
   .detail { border-left: none; border-top: 1px solid var(--color-border); padding-left: 0; padding-top: 12px; }
 }

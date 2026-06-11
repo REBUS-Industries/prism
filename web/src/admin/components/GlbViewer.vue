@@ -1,18 +1,14 @@
 <script setup lang="ts">
 /**
- * three.js PBR material preview.
+ * three.js PBR material preview — enhanced with HDRI environments, environment
+ * rotation, exposure control, tone mapping switcher, and background control.
  *
- * Renders a MeshPhysicalMaterial (or MeshBasicMaterial when `unlit`) on a
- * swappable Sphere / Cube / Plane and wires the eight PBR slots onto the
- * corresponding material maps. The parent passes a slot -> URL map (`sources`);
- * each URL is either a blob URL (pre-save) or `/api/textures/:id/download`
- * (post-save), loaded same-origin so the admin session cookie rides along.
+ * HDRI presets (CC0, Poly Haven) are bundled under /public/hdri/ so no external
+ * requests are made at runtime. Falls back to a procedural RoomEnvironment when
+ * a preset fails to load (e.g. dev without the public/ directory).
  *
- * Environment lighting comes from a PMREM-prefiltered RoomEnvironment so PBR
- * reflections look correct without shipping an HDRI; a directional + ambient
- * light act as a backup. Lifecycle discipline mirrors PixelStreamingPlayer:
- * the RAF loop, ResizeObserver, renderer, geometries, material, textures and
- * controls are all torn down in onBeforeUnmount.
+ * Aspect-ratio UV correction (PBR.One technique): non-square source textures have
+ * their `repeat.x` scaled by the inverse aspect so tiles appear undistorted.
  *
  * three r151+ renamed the aoMap UV channel from `uv2` to `uv1`; we duplicate
  * `uv` into BOTH so ambient occlusion shows regardless of the runtime version.
@@ -20,6 +16,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   MATERIAL_SLOTS,
@@ -31,6 +28,23 @@ import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 
 type SlotSources = Partial<Record<MaterialSlot, string | null>>;
 type Shape = 'sphere' | 'cube' | 'plane';
+type EnvPreset = 'studio' | 'outdoor' | 'workshop' | 'night';
+type ToneMap = 'aces' | 'agx' | 'neutral' | 'none';
+type BgMode = 'none' | 'env' | 'grey';
+
+const HDRI_PRESETS: Record<EnvPreset, { label: string; file: string }> = {
+  studio:   { label: 'Studio',   file: '/hdri/studio_small_01_1k.hdr' },
+  outdoor:  { label: 'Outdoor',  file: '/hdri/the_sky_is_on_fire_1k.hdr' },
+  workshop: { label: 'Workshop', file: '/hdri/artist_workshop_1k.hdr' },
+  night:    { label: 'Night',    file: '/hdri/moonlit_golf_1k.hdr' },
+};
+
+const TONE_MAPPING_OPTIONS: { id: ToneMap; label: string; value: THREE.ToneMapping }[] = [
+  { id: 'aces',    label: 'ACES',    value: THREE.ACESFilmicToneMapping },
+  { id: 'agx',     label: 'AgX',     value: (THREE as unknown as Record<string, THREE.ToneMapping>)['AgXToneMapping'] ?? THREE.ACESFilmicToneMapping },
+  { id: 'neutral', label: 'Neutral', value: (THREE as unknown as Record<string, THREE.ToneMapping>)['NeutralToneMapping'] ?? THREE.ACESFilmicToneMapping },
+  { id: 'none',    label: 'Off',     value: THREE.NoToneMapping },
+];
 
 const props = defineProps<{
   /** slot -> texture URL (blob URL pre-save, or /api/textures/:id/download). */
@@ -44,32 +58,41 @@ const params = computed<MaterialParameters>(() => ({
   ...(props.parameters ?? {}),
 }));
 
-const wrapRef = ref<HTMLDivElement | null>(null);
-const activeShape = ref<Shape>('sphere');
+// --- viewer-local controls (not persisted to material parameters) ------------
+const activeShape   = ref<Shape>('sphere');
+const activeEnv     = ref<EnvPreset>('studio');
+const envRotation   = ref(0);       // degrees 0–360
+const exposure      = ref(1.0);     // 0.1–3.0
+const toneMapping   = ref<ToneMap>('aces');
+const bgMode        = ref<BgMode>('none');
+const envLoading    = ref(false);
 
-// --- non-reactive three.js handles (plain refs, never proxied by Vue) -------
+// --- non-reactive three.js handles (plain refs, never proxied by Vue) --------
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let controls: OrbitControls | null = null;
 let material: THREE.MeshPhysicalMaterial | THREE.MeshBasicMaterial | null = null;
-/** Tracks whether the live material is the unlit (basic) variant. */
 let isUnlitMaterial = false;
 let mesh: THREE.Mesh | null = null;
 let envRT: THREE.WebGLRenderTarget | null = null;
 let resizeObs: ResizeObserver | null = null;
 let rafId: number | null = null;
 
-const loader = new THREE.TextureLoader();
+const texLoader = new THREE.TextureLoader();
+const rgbeLoader = new RGBELoader();
 const loadedTextures: Partial<Record<MaterialSlot, THREE.Texture>> = {};
 const currentUrls: Partial<Record<MaterialSlot, string | null>> = {};
+/** Aspect ratios of loaded textures (width / height) for UV correction. */
+const textureAspects: Partial<Record<MaterialSlot, number>> = {};
 
-// Track the last structural state we pushed so we only flag a (costly) shader
-// recompile when `side` / `transparent` actually flip — plain scalar/colour
-// tweaks are uniform updates and need no needsUpdate.
 let lastTransparent = false;
 let lastSide: THREE.Side = THREE.FrontSide;
 let lastAlphaTest = 0;
+
+// ---------------------------------------------------------------------------
+// Geometry
+// ---------------------------------------------------------------------------
 
 function buildGeometry(shape: Shape): THREE.BufferGeometry {
   let geo: THREE.BufferGeometry;
@@ -77,8 +100,6 @@ function buildGeometry(shape: Shape): THREE.BufferGeometry {
   else if (shape === 'cube') geo = new THREE.BoxGeometry(1.4, 1.4, 1.4, 80, 80, 80);
   else geo = new THREE.PlaneGeometry(2.2, 2.2, 256, 256);
 
-  // aoMap needs a second UV set. three r151+ reads `uv1`; older builds read
-  // `uv2` — set both so ambient occlusion shows on either.
   const uv = geo.getAttribute('uv');
   if (uv) {
     geo.setAttribute('uv1', uv.clone());
@@ -86,6 +107,10 @@ function buildGeometry(shape: Shape): THREE.BufferGeometry {
   }
   return geo;
 }
+
+// ---------------------------------------------------------------------------
+// Texture helpers
+// ---------------------------------------------------------------------------
 
 /** Invert a loaded grayscale map (gloss → roughness) for preview. */
 function invertGrayscaleTexture(source: THREE.Texture): THREE.Texture {
@@ -116,16 +141,24 @@ function invertGrayscaleTexture(source: THREE.Texture): THREE.Texture {
   return inverted;
 }
 
+/**
+ * Apply tiling/offset to a texture, accounting for non-square aspect ratio.
+ * Non-square textures (e.g. 2:1 panoramic trim sheets) would otherwise appear
+ * stretched; scaling repeat.x by 1/aspect preserves the texture's proportions.
+ */
+function applyTextureTiling(slot: MaterialSlot, tex: THREE.Texture): void {
+  const p = params.value;
+  const aspect = textureAspects[slot] ?? 1;
+  // Correct for non-square: divide X tiling by aspect so a 2:1 texture
+  // tiles at half the density in X, appearing the same density as Y.
+  tex.repeat.set(aspect !== 1 ? p.tilingX / aspect : p.tilingX, p.tilingY);
+  tex.offset.set(p.offsetX, p.offsetY);
+}
+
 function configureTexture(slot: MaterialSlot, tex: THREE.Texture): void {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  // Seed tiling/offset so a freshly loaded map is correct on its first frame;
-  // applyParameters keeps them live thereafter via the texture matrix (no
-  // per-tick needsUpdate, which would re-upload the image).
-  tex.repeat.set(params.value.tilingX, params.value.tilingY);
-  tex.offset.set(params.value.offsetX, params.value.offsetY);
-  // Colour maps live in sRGB; data maps (normal/roughness/metalness/ao/
-  // displacement/alpha) stay linear (the loader's NoColorSpace default).
+  applyTextureTiling(slot, tex);
   if (slot === 'albedo' || slot === 'emissive') tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer?.capabilities.getMaxAnisotropy() ?? 1;
   tex.needsUpdate = true;
@@ -136,15 +169,17 @@ function disposeSlot(slot: MaterialSlot): void {
   if (t) {
     t.dispose();
     delete loadedTextures[slot];
+    delete textureAspects[slot];
   }
 }
+
+// ---------------------------------------------------------------------------
+// Material slot wiring
+// ---------------------------------------------------------------------------
 
 function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
   if (!material) return;
   const p = params.value;
-  // Map references only — every scalar/colour comes from applyParameters so the
-  // stored PBR parameters stay the single source of truth (e.g. a roughnessMap
-  // is scaled by the `roughness` multiplier, not reset to 1).
   if (isUnlitMaterial) {
     const m = material as THREE.MeshBasicMaterial;
     switch (slot) {
@@ -174,23 +209,14 @@ function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
   }
 }
 
-/** Swap between lit (physical) and unlit (basic) materials when the flag flips. */
 function ensureMaterialKind(unlit: boolean): void {
   if (!mesh || (unlit === isUnlitMaterial && material)) return;
 
   const prev = material;
   if (unlit) {
-    material = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: THREE.FrontSide,
-    });
+    material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.FrontSide });
   } else {
-    material = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
-      roughness: 1,
-      metalness: 0,
-      side: THREE.FrontSide,
-    });
+    material = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, metalness: 0, side: THREE.FrontSide });
   }
   mesh.material = material;
   isUnlitMaterial = unlit;
@@ -215,12 +241,17 @@ function applySources(next: SlotSources | undefined): void {
     disposeSlot(slot);
     let tex: THREE.Texture | null = null;
     if (url) {
-      tex = loader.load(url, (loaded) => {
+      tex = texLoader.load(url, (loaded) => {
         let finalTex: THREE.Texture = loaded;
         if (slot === 'roughness' && params.value.roughnessInvertFromGloss) {
           finalTex = invertGrayscaleTexture(loaded);
           loaded.dispose();
         }
+        // Record aspect ratio after image is available.
+        const img = finalTex.image as HTMLImageElement | HTMLCanvasElement;
+        const iw = (img as HTMLImageElement).naturalWidth || img.width;
+        const ih = (img as HTMLImageElement).naturalHeight || img.height;
+        if (iw && ih && iw !== ih) textureAspects[slot] = iw / ih;
         configureTexture(slot, finalTex);
         loadedTextures[slot] = finalTex;
         assignMap(slot, finalTex);
@@ -231,18 +262,14 @@ function applySources(next: SlotSources | undefined): void {
     }
     assignMap(slot, tex);
   }
-  // Maps added/removed → recompile, then re-apply parameters (transparent
-  // depends on alphaMap presence; new maps need current tiling/offset).
   material.needsUpdate = true;
   applyParameters();
 }
 
-/**
- * Mutate every PBR property in place from the current `parameters`. Colours and
- * scalars are uniform updates (cheap); only a side/transparent flip flags a
- * shader recompile. Texture tiling/offset ride the texture matrix so no
- * per-tick image re-upload is needed.
- */
+// ---------------------------------------------------------------------------
+// PBR parameters
+// ---------------------------------------------------------------------------
+
 function applyAlphaAndSide(
   m: THREE.MeshPhysicalMaterial | THREE.MeshBasicMaterial,
   p: MaterialParameters,
@@ -290,8 +317,7 @@ function applyParameters(): void {
   for (const slot of MATERIAL_SLOTS) {
     const tex = loadedTextures[slot];
     if (!tex) continue;
-    tex.repeat.set(p.tilingX, p.tilingY);
-    tex.offset.set(p.offsetX, p.offsetY);
+    applyTextureTiling(slot, tex);
   }
 
   if (isUnlitMaterial) {
@@ -309,14 +335,12 @@ function applyParameters(): void {
   m.metalness = p.metallic;
   m.emissive.set(p.emissiveColor);
   m.emissiveIntensity = p.emissiveIntensity * p.emissiveStrength;
-  // Transmission and opacity interact — keep opacity at 1 when transmissive.
   m.opacity = p.transmissionFactor > 0 ? 1 : p.opacity;
   m.aoMapIntensity = p.aoIntensity;
   m.displacementScale = p.displacementScale;
   m.displacementBias = p.displacementBias;
   m.normalScale.set(p.normalScale, p.flipNormalY ? -p.normalScale : p.normalScale);
 
-  // glTF extension scalars/colours → MeshPhysicalMaterial
   m.clearcoat = p.clearCoatFactor;
   m.clearcoatRoughness = p.clearCoatRoughness;
   m.transmission = p.transmissionFactor;
@@ -343,12 +367,84 @@ function applyParameters(): void {
 
   m.dispersion = p.dispersionFactor;
 
-  // Re-route metallic slot when specular-workflow flag is set.
   const metallicTex = loadedTextures.metallic;
   if (metallicTex) assignMap('metallic', metallicTex);
 
   applyAlphaAndSide(m, p);
 }
+
+// ---------------------------------------------------------------------------
+// Viewer controls
+// ---------------------------------------------------------------------------
+
+/** Update scene.background based on current bgMode. */
+function applyBackground(): void {
+  if (!scene) return;
+  if (bgMode.value === 'env') {
+    scene.background = envRT?.texture ?? null;
+  } else if (bgMode.value === 'grey') {
+    scene.background = new THREE.Color(0x777777);
+  } else {
+    scene.background = null;
+  }
+}
+
+/** Apply environment azimuth rotation. */
+function applyEnvRotation(): void {
+  if (!scene) return;
+  (scene as unknown as { environmentRotation: THREE.Euler }).environmentRotation.y =
+    (envRotation.value * Math.PI) / 180;
+}
+
+/** Apply tone mapping + exposure. Changing toneMapping requires shader recompile. */
+function applyToneMapping(): void {
+  if (!renderer) return;
+  const opt = TONE_MAPPING_OPTIONS.find((o) => o.id === toneMapping.value);
+  if (opt) renderer.toneMapping = opt.value;
+  renderer.toneMappingExposure = exposure.value;
+  if (material) material.needsUpdate = true;
+}
+
+/**
+ * Load an HDRI preset via RGBELoader + PMREMGenerator.
+ * Falls back to a synthetic RoomEnvironment on failure so the viewer never breaks.
+ */
+async function loadEnvironment(): Promise<void> {
+  if (!renderer || !scene) return;
+  envLoading.value = true;
+  try {
+    const preset = HDRI_PRESETS[activeEnv.value];
+    const tex = await rgbeLoader.loadAsync(preset.file);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const newRT = pmrem.fromEquirectangular(tex);
+    pmrem.dispose();
+    tex.dispose();
+
+    const old = envRT;
+    envRT = newRT;
+    scene.environment = envRT.texture;
+    old?.dispose();
+  } catch (e) {
+    console.warn('[GlbViewer] HDRI load failed, using procedural environment', e);
+    if (!envRT) {
+      // First load failed — fall back to procedural RoomEnvironment
+      const pmrem = new THREE.PMREMGenerator(renderer!);
+      const room = new RoomEnvironment();
+      envRT = pmrem.fromScene(room, 0.04);
+      room.dispose();
+      pmrem.dispose();
+      scene.environment = envRT.texture;
+    }
+  } finally {
+    envLoading.value = false;
+    applyBackground();
+    applyEnvRotation();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Geometry switching
+// ---------------------------------------------------------------------------
 
 function setShape(shape: Shape): void {
   if (shape === activeShape.value && mesh) return;
@@ -358,6 +454,10 @@ function setShape(shape: Shape): void {
   mesh.geometry.dispose();
   mesh.geometry = next;
 }
+
+// ---------------------------------------------------------------------------
+// Resize + RAF loop
+// ---------------------------------------------------------------------------
 
 function resize(): void {
   const wrap = wrapRef.value;
@@ -377,6 +477,12 @@ function animate(): void {
   if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+const wrapRef = ref<HTMLDivElement | null>(null);
+
 onMounted(() => {
   const wrap = wrapRef.value;
   if (!wrap) return;
@@ -393,17 +499,9 @@ onMounted(() => {
 
   scene = new THREE.Scene();
 
-  // Neutral prefiltered environment for correct PBR reflections.
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const room = new RoomEnvironment();
-  envRT = pmrem.fromScene(room, 0.04);
-  scene.environment = envRT.texture;
-  room.dispose();
-  pmrem.dispose();
-
-  // Backup direct lighting.
-  const ambient = new THREE.AmbientLight(0xffffff, 0.35);
-  const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+  // Backup direct lighting (supplemental to IBL).
+  const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
   dir.position.set(3, 5, 2);
   scene.add(ambient, dir);
 
@@ -416,12 +514,7 @@ onMounted(() => {
   controls.minDistance = 1.4;
   controls.maxDistance = 12;
 
-  material = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff,
-    roughness: 1,
-    metalness: 0,
-    side: THREE.FrontSide,
-  });
+  material = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, metalness: 0, side: THREE.FrontSide });
   isUnlitMaterial = false;
   mesh = new THREE.Mesh(buildGeometry(activeShape.value), material);
   scene.add(mesh);
@@ -433,10 +526,19 @@ onMounted(() => {
   resizeObs.observe(wrap);
 
   animate();
+
+  // Load HDRI asynchronously after the RAF loop starts so the canvas is visible.
+  void loadEnvironment();
 });
 
 watch(() => props.sources, (next) => applySources(next), { deep: true });
 watch(() => props.parameters, () => applyParameters(), { deep: true });
+
+watch(activeEnv, () => void loadEnvironment());
+watch(envRotation, () => applyEnvRotation());
+watch(exposure, () => { if (renderer) { renderer.toneMappingExposure = exposure.value; } });
+watch(toneMapping, () => applyToneMapping());
+watch(bgMode, () => applyBackground());
 
 onBeforeUnmount(() => {
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
@@ -467,17 +569,88 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="glb-viewer">
-    <div class="shape-tabs">
-      <button
-        v-for="s in (['sphere', 'cube', 'plane'] as const)"
-        :key="s"
-        class="shape-tab"
-        :class="{ active: activeShape === s }"
-        type="button"
-        @click="setShape(s)"
-      >{{ s[0].toUpperCase() + s.slice(1) }}</button>
+    <!-- Top: shape tabs + environment preset -->
+    <div class="viewer-top-bar">
+      <div class="shape-tabs">
+        <button
+          v-for="s in (['sphere', 'cube', 'plane'] as const)"
+          :key="s"
+          class="shape-tab"
+          :class="{ active: activeShape === s }"
+          type="button"
+          @click="setShape(s)"
+        >{{ s[0].toUpperCase() + s.slice(1) }}</button>
+      </div>
+      <select
+        v-model="activeEnv"
+        class="env-select"
+        :disabled="envLoading"
+        title="Environment lighting"
+      >
+        <option v-for="(preset, key) in HDRI_PRESETS" :key="key" :value="key">
+          {{ envLoading && activeEnv === key ? '⟳ ' : '' }}{{ preset.label }}
+        </option>
+      </select>
     </div>
+
+    <!-- Canvas -->
     <div ref="wrapRef" class="canvas-wrap" />
+
+    <!-- Bottom controls bar -->
+    <div class="viewer-controls">
+      <!-- Environment rotation -->
+      <label class="ctrl-group" title="Environment rotation">
+        <span class="ctrl-label">↻</span>
+        <input
+          type="range"
+          v-model.number="envRotation"
+          min="0"
+          max="360"
+          step="1"
+          class="ctrl-slider"
+        />
+      </label>
+
+      <!-- Exposure -->
+      <label class="ctrl-group" title="Exposure">
+        <span class="ctrl-label">EV</span>
+        <input
+          type="range"
+          v-model.number="exposure"
+          min="0.1"
+          max="3.0"
+          step="0.05"
+          class="ctrl-slider"
+        />
+        <span class="ctrl-value">{{ exposure.toFixed(1) }}</span>
+        <button
+          v-if="exposure !== 1.0"
+          class="ctrl-reset"
+          type="button"
+          title="Reset exposure"
+          @click="exposure = 1.0"
+        >×</button>
+      </label>
+
+      <!-- Tone mapping -->
+      <div class="ctrl-btn-group" title="Tone mapping">
+        <button
+          v-for="opt in TONE_MAPPING_OPTIONS"
+          :key="opt.id"
+          type="button"
+          class="ctrl-btn"
+          :class="{ active: toneMapping === opt.id }"
+          @click="toneMapping = opt.id"
+        >{{ opt.label }}</button>
+      </div>
+
+      <!-- Background -->
+      <div class="ctrl-btn-group" title="Background">
+        <button type="button" class="ctrl-btn" :class="{ active: bgMode === 'none' }" @click="bgMode = 'none'" title="Transparent">·</button>
+        <button type="button" class="ctrl-btn" :class="{ active: bgMode === 'env' }"  @click="bgMode = 'env'"  title="Environment">⬡</button>
+        <button type="button" class="ctrl-btn" :class="{ active: bgMode === 'grey' }" @click="bgMode = 'grey'" title="Grey">▪</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -491,20 +664,23 @@ onBeforeUnmount(() => {
   border-radius: var(--radius);
   background: var(--color-bg-input);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-.canvas-wrap {
-  position: absolute;
-  inset: 0;
-}
-.canvas-wrap :deep(canvas) {
-  display: block;
-}
-.shape-tabs {
+
+/* --- top bar --- */
+.viewer-top-bar {
   position: absolute;
   top: 8px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shape-tabs {
   display: flex;
   gap: 4px;
   padding: 3px;
@@ -513,6 +689,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-1);
 }
+
 .shape-tab {
   padding: 3px 12px;
   font-size: 12px;
@@ -523,6 +700,112 @@ onBeforeUnmount(() => {
 }
 .shape-tab:hover { color: var(--color-text); border-color: transparent; }
 .shape-tab.active {
+  background: var(--orbit-primary);
+  border-color: var(--orbit-primary);
+  color: #fff;
+}
+
+.env-select {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
+  color: var(--color-text);
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+}
+.env-select:disabled { opacity: 0.6; }
+
+/* --- canvas --- */
+.canvas-wrap {
+  position: absolute;
+  inset: 0;
+  bottom: 34px; /* leave room for controls bar */
+}
+.canvas-wrap :deep(canvas) { display: block; }
+
+/* --- bottom controls bar --- */
+.viewer-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  border-top: 1px solid var(--color-border);
+  z-index: 5;
+}
+
+.ctrl-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ctrl-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ctrl-slider {
+  flex: 1;
+  min-width: 40px;
+  height: 3px;
+  accent-color: var(--orbit-primary);
+  cursor: pointer;
+}
+
+.ctrl-value {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  width: 24px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ctrl-reset {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  line-height: 1;
+}
+.ctrl-reset:hover { color: var(--color-text); }
+
+.ctrl-btn-group {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  flex-shrink: 0;
+}
+
+.ctrl-btn {
+  padding: 1px 7px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ctrl-btn:hover { color: var(--color-text); }
+.ctrl-btn.active {
   background: var(--orbit-primary);
   border-color: var(--orbit-primary);
   color: #fff;

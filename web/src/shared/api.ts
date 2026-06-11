@@ -321,7 +321,16 @@ function extractMessage(body: unknown): string | undefined {
   if (typeof body === 'string') return body || undefined;
   if (body && typeof body === 'object') {
     const o = body as Record<string, unknown>;
-    if (typeof o['error'] === 'string') return o['error'];
+    if (typeof o['error'] === 'string') {
+      if (o['error'] === 'forbidden' && typeof o['scope'] === 'string') {
+        return `Permission denied (${o['scope']}). Log in to the admin panel or grant this scope to your API key.`;
+      }
+      if (o['code'] === 'fab_not_configured' && typeof o['hint'] === 'string') {
+        return `${o['error']}. ${o['hint']}`;
+      }
+      if (typeof o['hint'] === 'string') return `${o['error']}. ${o['hint']}`;
+      return o['error'];
+    }
     if (typeof o['message'] === 'string') return o['message'];
   }
   return undefined;
@@ -894,6 +903,18 @@ export const projectAttachmentsApi = {
 export const MATERIAL_SLOTS = [
   'albedo', 'normal', 'roughness', 'metallic', 'ao', 'emissive', 'opacity', 'displacement',
 ] as const;
+
+/**
+ * Left column of the two-column node-graph layout — wired to the LEFT side of
+ * the material output node. These are the "appearance" slots.
+ */
+export const LEFT_MATERIAL_SLOTS = ['albedo', 'roughness', 'ao', 'opacity'] as const satisfies readonly MaterialSlot[];
+
+/**
+ * Right column of the two-column node-graph layout — wired to the RIGHT side
+ * of the material output node. These are the "structure / detail" slots.
+ */
+export const RIGHT_MATERIAL_SLOTS = ['normal', 'metallic', 'emissive', 'displacement'] as const satisfies readonly MaterialSlot[];
 
 export type MaterialSlot = typeof MATERIAL_SLOTS[number];
 

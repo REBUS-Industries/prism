@@ -314,7 +314,7 @@ button.danger:hover { border-color: var(--color-error); }
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 6fr 4fr;
+  grid-template-columns: 7fr 3fr;
   gap: 16px;
 }
 .graph-pane { min-height: 0; min-width: 0; }
