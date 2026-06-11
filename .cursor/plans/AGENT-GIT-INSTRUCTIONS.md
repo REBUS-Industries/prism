@@ -1,8 +1,10 @@
 # Git Instructions for All Agents
 
 **Environment:** All development targets the dev VM (VM 212 — prism-dev.rebus.industries). There is no local dev server.
-**Target repo:** `REBUS-Industries/prism`
+**Target repo:** `REBUS-Industries/prism` (or your workstream repo — see `HANDOFF-overview.md`)
 **Your branch:** see your workstream handoff doc — never commit directly to `main`.
+
+> **Every PRISM agent** (materials-editor, fixture-builder, etc.) must follow this doc for merge and deploy. Dev uses two workflows: **`web-image`** for `web/**` changes, **`server-image`** for `server/**` changes. If your PR touches both, run and wait for both.
 
 ---
 
@@ -171,3 +173,4 @@ If `deploy-dev` is cancelled (flaky runner), wait 2 minutes and re-trigger. Hard
 - Never merge two PRs simultaneously — stagger by at least 5 minutes.
 - Always run `npm run build` locally before opening a PR.
 - If `api.ts` is changed: announce it in team chat so other agents can rebase promptly.
+- If the PR touches `server/**`: deploy/test with **`server-image`**, not only `web-image`. On merge, confirm `server-image` deploy-dev completed before assuming API changes are live on dev.
