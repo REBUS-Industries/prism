@@ -184,11 +184,19 @@ function syncDatums(): void {
   }
 }
 
-function frameLoaded(): void {
+function frameLoaded(precomputedBox?: THREE.Box3): void {
   if (!loadedRoot) return;
-  const box = new THREE.Box3().setFromObject(loadedRoot);
-  modelSize = box.getSize(new THREE.Vector3()).length() || 1;
-  modelCenter = box.getCenter(new THREE.Vector3());
+  // Prefer a pre-computed box (from buildFixtureAssembly, computed while root
+  // had no parent) to avoid stale parent-matrixWorld reads that occur when
+  // Box3.setFromObject runs after the root is inserted into the scene graph.
+  const box = precomputedBox ?? new THREE.Box3().setFromObject(loadedRoot);
+  if (box.isEmpty()) {
+    modelSize = 1;
+    modelCenter.set(0, 0, 0);
+  } else {
+    modelSize = box.getSize(new THREE.Vector3()).length() || 1;
+    box.getCenter(modelCenter);
+  }
   applyCameraPreset();
   syncMotion();
   syncBeam();
@@ -208,7 +216,7 @@ async function loadGlb(url: string): Promise<boolean> {
 
 async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   if (!scene || !tiltGroup || !a.parts?.length) return false;
-  const { root, meshCount } = await buildFixtureAssembly({
+  const { root, meshCount, box } = await buildFixtureAssembly({
     parts: a.parts,
     models: a.models ?? [],
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
@@ -220,7 +228,9 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   clearLoaded();
   loadedRoot = root;
   tiltGroup.add(root);
-  frameLoaded();
+  // Pass the pre-computed box so frameLoaded doesn't re-run setFromObject
+  // after scene insertion (which risks stale parent matrixWorld values).
+  frameLoaded(box);
   return true;
 }
 

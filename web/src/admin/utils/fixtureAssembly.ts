@@ -31,6 +31,13 @@ export interface FixtureAssemblyResult {
   root: THREE.Group;
   /** Number of model meshes actually placed. */
   meshCount: number;
+  /**
+   * World-space bounding box computed immediately after updateMatrixWorld
+   * (before the root is re-parented into the scene graph). Use this directly
+   * instead of re-computing with Box3.setFromObject after scene insertion,
+   * which can read stale parent matrixWorld values.
+   */
+  box: THREE.Box3;
 }
 
 function modelMediaId(model: FixtureModel | undefined): string | null {
@@ -162,6 +169,15 @@ export async function buildFixtureAssembly(
   // double-rotate and tip the whole fixture over.
   const root = new THREE.Group();
   root.add(contentRoot);
+
+  // Compute the bounding box HERE, before inserting into the scene graph. At
+  // this point root has no parent so world matrices equal local matrices;
+  // updateMatrixWorld(true) propagates them cleanly down the full subtree.
+  // Computing the box AFTER tiltGroup.add(root) can read stale parent
+  // matrixWorld values that haven't been refreshed since the previous render
+  // tick, causing the camera to be framed on only the first-rendered part.
   root.updateMatrixWorld(true);
-  return { root, meshCount };
+  const box = new THREE.Box3().setFromObject(root);
+
+  return { root, meshCount, box };
 }
