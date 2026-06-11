@@ -16,7 +16,7 @@ import {
   type MaterialListItem,
 } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
-import FabImportModal from '../components/FabImportModal.vue';
+import ExternalMaterialsModal from '../components/ExternalMaterialsModal.vue';
 
 const router = useRouter();
 const PAGE = 36;
@@ -31,7 +31,7 @@ const activeTags = ref<string[]>([]);
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showCreate = ref(false);
-const showFabImport = ref(false);
+const showExternal = ref(false);
 const newName = ref('');
 const creating = ref(false);
 
@@ -157,12 +157,9 @@ async function removeMaterial(m: MaterialListItem): Promise<void> {
   }
 }
 
-function onFabImported(id: string, skipped: string[]): void {
-  if (skipped.length) {
-    skippedDialog.value = { id, name: 'Fab import', skipped };
-  } else {
-    openEditor(id);
-  }
+function onExternalImported(id: string): void {
+  showExternal.value = false;
+  openEditor(id);
   void load(true);
 }
 
@@ -174,7 +171,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   <div class="h-row">
     <h1 class="flex-1">Materials</h1>
     <button class="primary" @click="showCreate = true"><Icon name="add" :size="16" />Blank material</button>
-    <button @click="showFabImport = true"><Icon name="storefront" :size="16" />Import from Fab</button>
+    <button @click="showExternal = true"><Icon name="travel_explore" :size="16" />Browse external</button>
     <button :disabled="importing" @click="zipInput?.click()"><Icon name="folder_zip" :size="16" />Import ZIP</button>
     <input
       ref="zipInput"
@@ -269,10 +266,10 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   </div>
 
   <!-- Fab import -->
-  <FabImportModal
-    :open="showFabImport"
-    @close="showFabImport = false"
-    @imported="onFabImported"
+  <ExternalMaterialsModal
+    :open="showExternal"
+    @close="showExternal = false"
+    @imported="onExternalImported"
   />
 
   <!-- Import skipped files -->

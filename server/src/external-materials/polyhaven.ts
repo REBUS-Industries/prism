@@ -102,11 +102,16 @@ function filterAndSortCatalog(
   }
   return entries
     .map(([id, asset]) => {
-      const detail = normalizeAsset(id, asset, q);
-      return { id, asset, score: detail.relevanceScore };
+      const title = asset.name?.trim() || id;
+      const textScore = scoreQueryMatch(q, {
+        title,
+        tags: asset.tags,
+        categories: asset.categories,
+      });
+      return { id, asset, textScore };
     })
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || (b.asset.download_count ?? 0) - (a.asset.download_count ?? 0))
+    .filter((row) => row.textScore > 0)
+    .sort((a, b) => b.textScore - a.textScore || (b.asset.download_count ?? 0) - (a.asset.download_count ?? 0))
     .map((row) => [row.id, row.asset] as [string, PolyAsset]);
 }
 

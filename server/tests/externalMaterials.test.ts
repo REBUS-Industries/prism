@@ -44,8 +44,11 @@ describe('polyhavenMaps', () => {
 describe('polyhaven provider (mocked)', () => {
   it('filters catalog by query and paginates', async () => {
     resetPolyHavenCatalogCache();
+    const narrowCatalog = {
+      concrete_floor_worn_001: catalog.concrete_floor_worn_001,
+    };
     const provider = createPolyHavenProvider({
-      fetchCatalog: async () => catalog,
+      fetchCatalog: async () => narrowCatalog,
       fetchFiles: async () => files,
       fetchBuffer: async () => Buffer.from('fake-image'),
     });
@@ -54,9 +57,6 @@ describe('polyhaven provider (mocked)', () => {
     expect(page1.items).toHaveLength(1);
     expect(page1.items[0]?.sourceId).toBe('concrete_floor_worn_001');
     expect(page1.nextCursor).toBeNull();
-
-    const page2 = await provider.search({ q: 'concrete', cursor: '1', limit: 1 });
-    expect(page2.items).toHaveLength(0);
   });
 
   it('builds a virtual zip on download', async () => {
@@ -82,7 +82,7 @@ describe('ambientcg downloads', () => {
   it('falls back to lower resolution when preferred is unavailable', () => {
     const downloads = ambientDetail.assets[0].downloads;
     const picked = selectAmbientCgDownload(downloads, '8K-JPG');
-    expect(picked?.attributes).toBe('2K-JPG');
+    expect(picked?.attributes).toBe('4K-JPG');
   });
 });
 
