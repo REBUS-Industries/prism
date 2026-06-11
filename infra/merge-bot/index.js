@@ -19,7 +19,6 @@ const crypto  = require('crypto');
 const {
   SLACK_SIGNING_SECRET,  // from Slack app Basic Information page
   SLACK_BOT_TOKEN,       // Bot OAuth token (xoxb-…)
-  SLACK_CHANNEL_ID,      // Channel ID to post status messages
   GITHUB_TOKEN,          // PAT with repo + workflow scope
 } = process.env;
 
@@ -34,14 +33,14 @@ let lock = null;
 
 // ─── Slack helpers ────────────────────────────────────────────────────────────
 
-async function postToSlack(text) {
+async function postToSlack(channelId, text) {
   const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ channel: SLACK_CHANNEL_ID, text }),
+    body: JSON.stringify({ channel: channelId, text }),
   });
   const data = await res.json();
   if (!data.ok) console.error('Slack post failed:', data.error);
@@ -98,7 +97,7 @@ async function pollWorkflow(afterIso, maxMinutes = 12) {
 
 // ─── Main merge flow (runs in background) ─────────────────────────────────────
 
-async function doMerge(prNumber, userName) {
+async function doMerge(prNumber, userName, channelId) {
   const startIso = new Date().toISOString();
   try {
     const merge = await mergePR(prNumber);
@@ -106,11 +105,12 @@ async function doMerge(prNumber, userName) {
       const reason = merge.status === 405
         ? 'PR is not mergeable (conflicts or CI failing)'
         : merge.message || `HTTP ${merge.status}`;
-      await postToSlack(`:x: Failed to merge PR #${prNumber}: ${reason}`);
+      await postToSlack(channelId, `:x: Failed to merge PR #${prNumber}: ${reason}`);
       return;
     }
 
     await postToSlack(
+      channelId,
       `:merged: PR #${prNumber} merged by ${userName} — waiting for prism-dev deploy…`,
     );
 
@@ -118,20 +118,23 @@ async function doMerge(prNumber, userName) {
 
     if (result.conclusion === 'success') {
       await postToSlack(
+        channelId,
         `:white_check_mark: *PR #${prNumber} is live on prism-dev.* <${result.url}|View CI run>`,
       );
     } else if (result.conclusion === 'timeout') {
       await postToSlack(
+        channelId,
         `:warning: PR #${prNumber} merged but the CI deploy timed out — check <https://github.com/${REPO}/actions|GitHub Actions> manually.`,
       );
     } else {
       await postToSlack(
+        channelId,
         `:x: PR #${prNumber} merged but deploy *${result.conclusion}*. <${result.url}|View CI run>`,
       );
     }
   } catch (err) {
     console.error('doMerge error:', err);
-    await postToSlack(`:x: Unexpected error merging PR #${prNumber}: ${err.message}`);
+    await postToSlack(channelId, `:x: Unexpected error merging PR #${prNumber}: ${err.message}`);
   } finally {
     lock = null;
     console.log(`Lock released (PR #${prNumber})`);
@@ -222,6 +225,7 @@ app.post('/merge', async (req, res) => {
   }
 
   // Acquire lock
+  const channelId = req.body.channel_id;
   lock = { prNumber, userName: `@${userName}`, startedAt: Date.now() };
   console.log(`Lock acquired: PR #${prNumber} by @${userName}`);
 
@@ -231,12 +235,12 @@ app.post('/merge', async (req, res) => {
     text: `:hourglass_flowing_sand: *@${userName}* is merging PR #${prNumber}: _${pr.title}_`,
   });
 
-  doMerge(prNumber, `@${userName}`).catch(console.error);
+  doMerge(prNumber, `@${userName}`, channelId).catch(console.error);
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
-const missing = ['SLACK_SIGNING_SECRET', 'SLACK_BOT_TOKEN', 'SLACK_CHANNEL_ID', 'GITHUB_TOKEN']
+const missing = ['SLACK_SIGNING_SECRET', 'SLACK_BOT_TOKEN', 'GITHUB_TOKEN']
   .filter(k => !process.env[k]);
 
 if (missing.length) {
