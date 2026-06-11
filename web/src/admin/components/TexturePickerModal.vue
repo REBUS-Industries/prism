@@ -8,7 +8,7 @@
  * "Upload New" multipart-POSTs to /api/textures then emits the created row
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { texturesApi, SLOT_LABELS, SLOT_SUFFIX_HINTS, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
+import { texturesApi, SLOT_LABELS, SLOT_SUFFIX_HINTS, textureMatchesSlotFilter, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
 const props = defineProps<{ open: boolean; slot?: MaterialSlot }>();
@@ -36,6 +36,11 @@ const slotFilterLabel = computed(() =>
 function slotSuffixHint(slot: MaterialSlot): string {
   return SLOT_SUFFIX_HINTS[slot];
 }
+
+const visibleTextures = computed(() => {
+  if (!props.slot || !slotFilterEnabled.value) return textures.value;
+  return textures.value.filter((t) => textureMatchesSlotFilter(t, props.slot!));
+});
 
 const availableTags = computed<string[]>(() => {
   const set = new Set<string>();
@@ -177,11 +182,11 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
       <div v-if="error" class="error-box mt-sm">{{ error }}</div>
 
       <div class="picker-body">
-        <div v-if="loading && !textures.length" class="muted pad">Loading…</div>
-        <div v-else-if="!textures.length" class="muted pad">No textures match.</div>
+        <div v-if="loading && !visibleTextures.length" class="muted pad">Loading…</div>
+        <div v-else-if="!visibleTextures.length" class="muted pad">No textures match.</div>
         <div v-else class="grid">
           <button
-            v-for="t in textures"
+            v-for="t in visibleTextures"
             :key="t.id"
             class="tex-card"
             type="button"
@@ -279,12 +284,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   width: 100%;
   min-width: 0;
   font-size: 12px; font-weight: 500;
+  line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tex-meta {
   display: block;
   width: 100%;
   font-size: 11px;
+  line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .picker-foot { display: flex; justify-content: center; }
