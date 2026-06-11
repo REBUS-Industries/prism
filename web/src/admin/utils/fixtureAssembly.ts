@@ -30,6 +30,16 @@ export interface FixtureAssemblyInput {
    * the legacy whole-assembly panGroup/tiltGroup wrappers.
    */
   motionAxes?: MotionAxisRef[];
+  /**
+   * GDTF geometry name of the DMX mode root to render. Multi-mode fixtures ship
+   * one top-level geometry per mode (e.g. "Base Yoke M1".."M6"); rendering all
+   * of them stacks every mode at once. When set, only the matching top-level
+   * geometry subtree is rendered — sibling mode roots and shared library
+   * geometries stay built so GeometryReferences still resolve, but they are not
+   * placed in the scene standalone. Falls back to rendering all top-level
+   * geometries when null or when no top-level part matches the id.
+   */
+  selectedModeGeometryId?: string | null;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -248,10 +258,22 @@ export async function buildFixtureAssembly(
 
   const contentRoot = new THREE.Group();
   contentRoot.name = 'Fixture';
+  // When a DMX mode root is selected, only that top-level geometry subtree is
+  // placed in the scene. Other top-level geometries (sibling mode roots, shared
+  // library geometries) remain in partGroups so GeometryReferences inside the
+  // selected subtree still clone correctly — they just don't render standalone.
+  const selectedRoot = input.selectedModeGeometryId ?? null;
+  const hasSelectedRoot = selectedRoot != null
+    && parts.some((p) => !p.parentPartId && p.sourceGdtfGeometryId === selectedRoot);
   for (const part of parts) {
     const g = partGroups.get(part.partId)!;
     const parent = part.parentPartId ? partGroups.get(part.parentPartId) : null;
-    (parent ?? contentRoot).add(g);
+    if (parent) {
+      parent.add(g);
+      continue;
+    }
+    if (hasSelectedRoot && part.sourceGdtfGeometryId !== selectedRoot) continue;
+    contentRoot.add(g);
   }
 
   let meshCount = 0;

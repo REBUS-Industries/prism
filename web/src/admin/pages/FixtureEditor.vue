@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import { RouterLink, useRouter } from 'vue-router';
 
@@ -121,11 +121,49 @@ const previewUrl = computed(() =>
 
 );
 
+interface EditorDmxMode { modeId: string; name: string; geometry?: string }
+
+const dmxModes = computed<EditorDmxMode[]>(() => {
+  const raw = (fixture.value?.definition?.dmxMapping as { modes?: unknown })?.modes;
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<Record<string, unknown>>).map((m) => ({
+    modeId: String(m.modeId ?? m.name ?? ''),
+    name: String(m.name ?? m.modeId ?? 'Mode'),
+    geometry: typeof m.geometry === 'string' ? m.geometry : undefined,
+  }));
+});
+
+// Top-level geometries referenced by the modes — only filter when modes
+// actually map to distinct root geometries (multi-mode fixtures like JDC1).
+const hasModeGeometries = computed(() =>
+  new Set(dmxModes.value.map((m) => m.geometry).filter(Boolean)).size > 1,
+);
+
+const selectedModeId = ref<string | null>(null);
+
+const selectedModeGeometryId = computed<string | null>(() => {
+  if (!hasModeGeometries.value) return null;
+  const mode = dmxModes.value.find((m) => m.modeId === selectedModeId.value) ?? dmxModes.value[0];
+  return mode?.geometry ?? null;
+});
+
+watch(dmxModes, (modes) => {
+  if (!modes.some((m) => m.modeId === selectedModeId.value)) {
+    selectedModeId.value = modes[0]?.modeId ?? null;
+  }
+}, { immediate: true });
+
 const assembly = computed(() => {
   const def = fixture.value?.definition;
   const id = fixture.value?.id;
   if (!def || !id || !def.parts?.length) return null;
-  return { fixtureId: id, parts: def.parts, models: def.models ?? [], motionAxes: def.motionRig ?? [] };
+  return {
+    fixtureId: id,
+    parts: def.parts,
+    models: def.models ?? [],
+    motionAxes: def.motionRig ?? [],
+    selectedModeGeometryId: selectedModeGeometryId.value,
+  };
 });
 
 
@@ -714,6 +752,16 @@ onMounted(() => {
 
               <button type="button" class="gizmo-btn space" :title="`Gizmo space: ${gizmoSpace}`" @click="gizmoSpace = gizmoSpace === 'local' ? 'world' : 'local'">{{ gizmoSpace === 'local' ? 'LOCAL' : 'WORLD' }}</button>
 
+              <template v-if="hasModeGeometries">
+                <span class="gizmo-sep" aria-hidden="true" />
+                <label class="gizmo-mode-select" title="DMX mode — shows only this mode's 3D model">
+                  <span>Mode</span>
+                  <select v-model="selectedModeId">
+                    <option v-for="m in dmxModes" :key="m.modeId" :value="m.modeId">{{ m.name }}</option>
+                  </select>
+                </label>
+              </template>
+
             </div>
 
             <FixtureViewer
@@ -1273,6 +1321,20 @@ onMounted(() => {
 .gizmo-btn.space { font-family: var(--font-mono, monospace); min-width: 52px; }
 
 .gizmo-sep { width: 1px; height: 18px; background: var(--color-border); margin: 0 2px; }
+
+.gizmo-mode-select { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+
+.gizmo-mode-select > span { color: var(--color-text-muted, #9aa0a6); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.gizmo-mode-select select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  max-width: 220px;
+}
 
 .gizmo-hint { margin: 8px 0 0; }
 
