@@ -398,10 +398,18 @@ function applyBackground(): void {
   }
 }
 
+/** Scene env/background rotation (three r162+); @types/three may lag the runtime API. */
+type SceneWithEnvRotation = THREE.Scene & {
+  environmentRotation: THREE.Euler;
+  backgroundRotation: THREE.Euler;
+};
+
 function applyEnvRotation(): void {
   if (!scene) return;
-  (scene as unknown as { environmentRotation: THREE.Euler }).environmentRotation.y =
-    (envRotation.value * Math.PI) / 180;
+  const radians = (envRotation.value * Math.PI) / 180;
+  const s = scene as SceneWithEnvRotation;
+  s.environmentRotation.y = radians;
+  s.backgroundRotation.y = radians;
 }
 
 function applyToneMapping(): void {
@@ -572,7 +580,10 @@ watch(activeEnv, () => void loadEnvironment());
 watch(envRotation, () => applyEnvRotation());
 watch(exposure, () => { if (renderer) { renderer.toneMappingExposure = exposure.value; } });
 watch(toneMapping, () => applyToneMapping());
-watch(bgMode, () => applyBackground());
+watch(bgMode, () => {
+  applyBackground();
+  if (bgMode.value === 'env') applyEnvRotation();
+});
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown);
