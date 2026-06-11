@@ -5,6 +5,10 @@
  * slot is filled and grey when empty, driven by the `filled` map the graph
  * feeds in. Handles are nested inside position:relative rows so each lines up
  * with its label — Vue Flow measures the real DOM position when routing edges.
+ *
+ * A `param` target handle sits on the right edge to receive edges from
+ * ParamNode blocks (displacement, textureUv, alpha, extensions) that live to
+ * the right of this node on the canvas.
  */
 import { Handle, Position } from '@vue-flow/core';
 import { MATERIAL_SLOTS, SLOT_LABELS, type MaterialSlot } from '../../shared/api';
@@ -22,6 +26,7 @@ defineProps<{ filled: Partial<Record<MaterialSlot, boolean>> }>();
         <span class="on-label">{{ SLOT_LABELS[slot] }}</span>
       </div>
     </div>
+    <Handle id="param" type="target" :position="Position.Right" :connectable="false" />
   </div>
 </template>
 
