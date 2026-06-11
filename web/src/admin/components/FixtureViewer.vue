@@ -75,6 +75,8 @@ let tiltGroup: THREE.Group | null = null;
 let panNode: MotionNode | null = null;
 /** Tilt node from the assembly motion rig (Head). Overrides tiltGroup when set. */
 let tiltNode: MotionNode | null = null;
+/** BEAM part group from assembly — preferred parent for beam wireframe. */
+let beamPartGroup: THREE.Object3D | null = null;
 let loadedRoot: THREE.Object3D | null = null;
 let dirLight: THREE.DirectionalLight | null = null;
 let beamMesh: THREE.Mesh | null = null;
@@ -86,12 +88,22 @@ let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
 
 function clearLoaded(): void {
+  // Detach beam before disposing assembly nodes it may be parented to.
+  beamMesh?.removeFromParent();
   // removeFromParent() works whether the root was added to scene or tiltGroup.
   loadedRoot?.removeFromParent();
   if (loadedRoot) disposeAssembly(loadedRoot);
   loadedRoot = null;
   panNode = null;
   tiltNode = null;
+  beamPartGroup = null;
+}
+
+/** Parent for beam wireframe — inherits pan/tilt via Three.js hierarchy. */
+function beamParent(): THREE.Object3D | null {
+  if (beamPartGroup) return beamPartGroup;
+  if (tiltNode) return tiltNode.obj;
+  return tiltGroup;
 }
 
 function dispose(): void {
@@ -100,9 +112,9 @@ function dispose(): void {
   controls?.dispose();
   clearLoaded();
   if (beamMesh) {
+    beamMesh.removeFromParent();
     beamMesh.geometry.dispose();
     (beamMesh.material as THREE.Material).dispose();
-    scene?.remove(beamMesh);
     beamMesh = null;
   }
   for (const m of datumMeshes.values()) {
@@ -166,9 +178,10 @@ function syncDimmer(): void {
 
 function syncBeam(): void {
   if (!scene) return;
-  if (!props.showBeam) {
+  const parent = beamParent();
+  if (!props.showBeam || !parent) {
     if (beamMesh) {
-      scene.remove(beamMesh);
+      beamMesh.removeFromParent();
       beamMesh.geometry.dispose();
       (beamMesh.material as THREE.Material).dispose();
       beamMesh = null;
@@ -185,12 +198,22 @@ function syncBeam(): void {
       side: THREE.DoubleSide,
     });
     beamMesh = new THREE.Mesh(geo, mat);
-    beamMesh.rotation.x = Math.PI;
-    scene.add(beamMesh);
   }
-  const s = modelSize;
-  beamMesh.position.set(modelCenter.x, modelCenter.y + s * 0.2, modelCenter.z);
-  beamMesh.scale.setScalar(Math.max(s * 0.5, 0.3));
+  if (beamMesh.parent !== parent) {
+    beamMesh.removeFromParent();
+    parent.add(beamMesh);
+  }
+  // Local origin at head/beam pivot; pan+tilt inherited from parent hierarchy.
+  beamMesh.position.set(0, 0, 0);
+  if (tiltNode || beamPartGroup) {
+    // GDTF Z-up: beam axis is −Z; cone default +Y → −Z via −90° X.
+    beamMesh.rotation.set(-Math.PI / 2, 0, 0);
+    beamMesh.scale.setScalar(1);
+  } else {
+    // Single-GLB fallback (Y-up tiltGroup): beam extends −Y.
+    beamMesh.rotation.set(Math.PI, 0, 0);
+    beamMesh.scale.setScalar(Math.max(modelSize * 0.5, 0.3));
+  }
 }
 
 function syncDatums(): void {
@@ -250,7 +273,7 @@ async function loadGlb(url: string): Promise<boolean> {
 
 async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   if (!scene || !a.parts?.length) return false;
-  const { root, meshCount, box, panNode: pn, tiltNode: tn } = await buildFixtureAssembly({
+  const { root, meshCount, box, panNode: pn, tiltNode: tn, beamPart } = await buildFixtureAssembly({
     parts: a.parts,
     models: a.models ?? [],
     motionAxes: a.motionAxes ?? [],
@@ -264,6 +287,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   loadedRoot = root;
   panNode = pn ?? null;
   tiltNode = tn ?? null;
+  beamPartGroup = beamPart ?? null;
   // Add directly to scene so Base stays static and only Yoke / Head rotate.
   // The legacy panGroup/tiltGroup remain for single-GLB mode.
   scene.add(root);

@@ -67,6 +67,8 @@ export interface FixtureAssemblyResult {
    * in the Three.js hierarchy.
    */
   tiltNode?: MotionNode;
+  /** BEAM geometry node when present — preferred attach point for beam viz. */
+  beamPart?: THREE.Object3D;
 }
 
 interface ModelDims {
@@ -329,11 +331,15 @@ export async function buildFixtureAssembly(
     return undefined;
   };
 
+  const beamTagged = parts.find((p) => p.tag === 'BEAM');
+  const beamPart = beamTagged ? partGroups.get(beamTagged.partId) : undefined;
+
   return {
     root,
     meshCount,
     box,
     panNode: findMotionNode('PAN'),
     tiltNode: findMotionNode('TILT'),
+    beamPart,
   };
 }
