@@ -2,11 +2,11 @@
 /**
  * three.js PBR material preview.
  *
- * Renders a single MeshStandardMaterial on a swappable Sphere / Cube / Plane
- * and wires the eight PBR slots onto the corresponding material maps. The
- * parent passes a slot -> URL map (`sources`); each URL is either a blob URL
- * (pre-save) or `/api/textures/:id/download` (post-save), loaded same-origin
- * so the admin session cookie rides along.
+ * Renders a MeshPhysicalMaterial (or MeshBasicMaterial when `unlit`) on a
+ * swappable Sphere / Cube / Plane and wires the eight PBR slots onto the
+ * corresponding material maps. The parent passes a slot -> URL map (`sources`);
+ * each URL is either a blob URL (pre-save) or `/api/textures/:id/download`
+ * (post-save), loaded same-origin so the admin session cookie rides along.
  *
  * Environment lighting comes from a PMREM-prefiltered RoomEnvironment so PBR
  * reflections look correct without shipping an HDRI; a directional + ambient
@@ -52,7 +52,9 @@ let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let controls: OrbitControls | null = null;
-let material: THREE.MeshStandardMaterial | null = null;
+let material: THREE.MeshPhysicalMaterial | THREE.MeshBasicMaterial | null = null;
+/** Tracks whether the live material is the unlit (basic) variant. */
+let isUnlitMaterial = false;
 let mesh: THREE.Mesh | null = null;
 let envRT: THREE.WebGLRenderTarget | null = null;
 let resizeObs: ResizeObserver | null = null;
@@ -67,6 +69,7 @@ const currentUrls: Partial<Record<MaterialSlot, string | null>> = {};
 // tweaks are uniform updates and need no needsUpdate.
 let lastTransparent = false;
 let lastSide: THREE.Side = THREE.FrontSide;
+let lastAlphaTest = 0;
 
 function buildGeometry(shape: Shape): THREE.BufferGeometry {
   let geo: THREE.BufferGeometry;
@@ -112,16 +115,57 @@ function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
   // Map references only — every scalar/colour comes from applyParameters so the
   // stored PBR parameters stay the single source of truth (e.g. a roughnessMap
   // is scaled by the `roughness` multiplier, not reset to 1).
-  switch (slot) {
-    case 'albedo':       material.map = tex; break;
-    case 'normal':       material.normalMap = tex; break;
-    case 'roughness':    material.roughnessMap = tex; break;
-    case 'metallic':     material.metalnessMap = tex; break;
-    case 'ao':           material.aoMap = tex; break;
-    case 'emissive':     material.emissiveMap = tex; break;
-    case 'opacity':      material.alphaMap = tex; break;
-    case 'displacement': material.displacementMap = tex; break;
+  if (isUnlitMaterial) {
+    const m = material as THREE.MeshBasicMaterial;
+    switch (slot) {
+      case 'albedo':  m.map = tex; break;
+      case 'opacity': m.alphaMap = tex; break;
+    }
+    return;
   }
+  const m = material as THREE.MeshPhysicalMaterial;
+  switch (slot) {
+    case 'albedo':       m.map = tex; break;
+    case 'normal':       m.normalMap = tex; break;
+    case 'roughness':    m.roughnessMap = tex; break;
+    case 'metallic':     m.metalnessMap = tex; break;
+    case 'ao':           m.aoMap = tex; break;
+    case 'emissive':     m.emissiveMap = tex; break;
+    case 'opacity':      m.alphaMap = tex; break;
+    case 'displacement': m.displacementMap = tex; break;
+  }
+}
+
+/** Swap between lit (physical) and unlit (basic) materials when the flag flips. */
+function ensureMaterialKind(unlit: boolean): void {
+  if (!mesh || (unlit === isUnlitMaterial && material)) return;
+
+  const prev = material;
+  if (unlit) {
+    material = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      side: THREE.FrontSide,
+    });
+  } else {
+    material = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      roughness: 1,
+      metalness: 0,
+      side: THREE.FrontSide,
+    });
+  }
+  mesh.material = material;
+  isUnlitMaterial = unlit;
+  lastTransparent = false;
+  lastSide = THREE.FrontSide;
+  lastAlphaTest = 0;
+
+  for (const slot of MATERIAL_SLOTS) {
+    assignMap(slot, loadedTextures[slot] ?? null);
+  }
+
+  prev?.dispose();
+  material.needsUpdate = true;
 }
 
 function applySources(next: SlotSources | undefined): void {
@@ -151,20 +195,49 @@ function applySources(next: SlotSources | undefined): void {
  * shader recompile. Texture tiling/offset ride the texture matrix so no
  * per-tick image re-upload is needed.
  */
+function applyAlphaAndSide(
+  m: THREE.MeshPhysicalMaterial | THREE.MeshBasicMaterial,
+  p: MaterialParameters,
+): void {
+  const hasAlphaMap = !!m.alphaMap;
+  const hasTransmission = !isUnlitMaterial && (m as THREE.MeshPhysicalMaterial).transmission > 0;
+
+  let nextTransparent: boolean;
+  let nextAlphaTest: number;
+  if (p.alphaMode === 'blend') {
+    nextTransparent = true;
+    nextAlphaTest = 0;
+  } else if (p.alphaMode === 'mask') {
+    nextTransparent = false;
+    nextAlphaTest = p.alphaCutoff;
+  } else {
+    nextAlphaTest = 0;
+    nextTransparent = p.opacity < 1 || hasAlphaMap || hasTransmission;
+  }
+
+  const nextSide: THREE.Side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+  m.transparent = nextTransparent;
+  m.alphaTest = nextAlphaTest;
+  m.side = nextSide;
+
+  if (
+    nextTransparent !== lastTransparent
+    || nextSide !== lastSide
+    || nextAlphaTest !== lastAlphaTest
+  ) {
+    m.needsUpdate = true;
+    lastTransparent = nextTransparent;
+    lastSide = nextSide;
+    lastAlphaTest = nextAlphaTest;
+  }
+}
+
 function applyParameters(): void {
   if (!material) return;
   const p = params.value;
 
-  material.color.set(p.baseColor);
-  material.roughness = p.roughness;
-  material.metalness = p.metallic;
-  material.emissive.set(p.emissiveColor);
-  material.emissiveIntensity = p.emissiveIntensity;
-  material.opacity = p.opacity;
-  material.aoMapIntensity = p.aoIntensity;
-  material.displacementScale = p.displacementScale;
-  material.displacementBias = p.displacementBias;
-  material.normalScale.set(p.normalScale, p.flipNormalY ? -p.normalScale : p.normalScale);
+  ensureMaterialKind(p.unlit);
+  if (!material) return;
 
   for (const slot of MATERIAL_SLOTS) {
     const tex = loadedTextures[slot];
@@ -173,15 +246,56 @@ function applyParameters(): void {
     tex.offset.set(p.offsetX, p.offsetY);
   }
 
-  const nextTransparent = p.opacity < 1 || !!material.alphaMap;
-  const nextSide: THREE.Side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
-  material.transparent = nextTransparent;
-  material.side = nextSide;
-  if (nextTransparent !== lastTransparent || nextSide !== lastSide) {
-    material.needsUpdate = true;
-    lastTransparent = nextTransparent;
-    lastSide = nextSide;
+  if (isUnlitMaterial) {
+    const m = material as THREE.MeshBasicMaterial;
+    m.color.set(p.baseColor);
+    m.opacity = p.opacity;
+    applyAlphaAndSide(m, p);
+    return;
   }
+
+  const m = material as THREE.MeshPhysicalMaterial;
+
+  m.color.set(p.baseColor);
+  m.roughness = p.roughness;
+  m.metalness = p.metallic;
+  m.emissive.set(p.emissiveColor);
+  m.emissiveIntensity = p.emissiveIntensity * p.emissiveStrength;
+  // Transmission and opacity interact — keep opacity at 1 when transmissive.
+  m.opacity = p.transmissionFactor > 0 ? 1 : p.opacity;
+  m.aoMapIntensity = p.aoIntensity;
+  m.displacementScale = p.displacementScale;
+  m.displacementBias = p.displacementBias;
+  m.normalScale.set(p.normalScale, p.flipNormalY ? -p.normalScale : p.normalScale);
+
+  // glTF extension scalars/colours → MeshPhysicalMaterial
+  m.clearcoat = p.clearCoatFactor;
+  m.clearcoatRoughness = p.clearCoatRoughness;
+  m.transmission = p.transmissionFactor;
+  m.ior = p.ior;
+  m.specularIntensity = p.specularFactor;
+  m.specularColor.set(p.specularColor);
+
+  const sheenCol = new THREE.Color(p.sheenColor);
+  const sheenLuma = Math.max(sheenCol.r, sheenCol.g, sheenCol.b);
+  m.sheen = sheenLuma > 0 ? sheenLuma : (p.sheenRoughness > 0 ? 1 : 0);
+  m.sheenColor.copy(sheenCol);
+  m.sheenRoughness = p.sheenRoughness;
+
+  m.thickness = p.volumeThicknessFactor;
+  m.attenuationDistance = p.volumeAttenuationDistance;
+  m.attenuationColor.set(p.volumeAttenuationColor);
+
+  m.anisotropy = p.anisotropyStrength;
+  m.anisotropyRotation = p.anisotropyRotation;
+
+  m.iridescence = p.iridescenceFactor;
+  m.iridescenceIOR = p.iridescenceIor;
+  m.iridescenceThicknessRange = [p.iridescenceThicknessMin, p.iridescenceThicknessMax];
+
+  m.dispersion = p.dispersionFactor;
+
+  applyAlphaAndSide(m, p);
 }
 
 function setShape(shape: Shape): void {
@@ -250,12 +364,13 @@ onMounted(() => {
   controls.minDistance = 1.4;
   controls.maxDistance = 12;
 
-  material = new THREE.MeshStandardMaterial({
+  material = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
     roughness: 1,
     metalness: 0,
     side: THREE.FrontSide,
   });
+  isUnlitMaterial = false;
   mesh = new THREE.Mesh(buildGeometry(activeShape.value), material);
   scene.add(mesh);
 
