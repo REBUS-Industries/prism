@@ -11,6 +11,7 @@ import ParamColor from './ParamColor.vue';
 import type { MaterialParameters } from '../../shared/api';
 
 const PARAM_LABELS: Record<string, string> = {
+  base:               'Base Properties',
   displacement:     'Displacement',
   textureUv:        'Texture UV',
   alpha:            'Alpha',
@@ -32,7 +33,7 @@ const props = defineProps<{
     paramType: string;
     parameters: MaterialParameters;
     onParamChange: (change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }) => void;
-    onRemove: () => void;
+    onRemove?: () => void;
   };
 }>();
 
@@ -45,10 +46,11 @@ function onParam<K extends keyof MaterialParameters>(
 </script>
 
 <template>
-  <div class="param-node nodrag nopan">
-    <div class="pn-head">
+  <div class="param-node">
+    <div class="pn-head node-drag-handle">
       <span class="pn-label">{{ PARAM_LABELS[data.paramType] ?? data.paramType }}</span>
       <button
+        v-if="data.onRemove"
         type="button"
         class="pn-remove nodrag nopan"
         title="Remove block"
@@ -56,7 +58,46 @@ function onParam<K extends keyof MaterialParameters>(
       >×</button>
     </div>
 
-    <div class="pn-body">
+    <div class="pn-body nodrag nopan">
+
+      <!-- base (always-on consolidated PBR scalars) -->
+      <template v-if="data.paramType === 'base'">
+        <ParamColor
+          label="Base Color"
+          :model-value="data.parameters.baseColor"
+          @update:model-value="(v) => onParam('baseColor', v)"
+        />
+        <ParamSlider
+          label="Metallic" :min="0" :max="1" :step="0.01"
+          :model-value="data.parameters.metallic"
+          @update:model-value="(v) => onParam('metallic', v)"
+        />
+        <ParamSlider
+          label="Roughness" :min="0" :max="1" :step="0.01"
+          :model-value="data.parameters.roughness"
+          @update:model-value="(v) => onParam('roughness', v)"
+        />
+        <ParamColor
+          label="Emissive"
+          :model-value="data.parameters.emissiveColor"
+          @update:model-value="(v) => onParam('emissiveColor', v)"
+        />
+        <ParamSlider
+          label="Emissive Intensity" :min="0" :max="10" :step="0.1"
+          :model-value="data.parameters.emissiveIntensity"
+          @update:model-value="(v) => onParam('emissiveIntensity', v)"
+        />
+        <ParamSlider
+          label="Normal Scale" :min="0" :max="2" :step="0.01"
+          :model-value="data.parameters.normalScale"
+          @update:model-value="(v) => onParam('normalScale', v)"
+        />
+        <ParamSlider
+          label="Occlusion" sublabel="AO intensity" :min="0" :max="1" :step="0.01"
+          :model-value="data.parameters.aoIntensity"
+          @update:model-value="(v) => onParam('aoIntensity', v)"
+        />
+      </template>
 
       <!-- displacement -->
       <template v-if="data.paramType === 'displacement'">

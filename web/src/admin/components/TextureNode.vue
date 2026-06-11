@@ -67,10 +67,10 @@ function onPicked(tex: Texture): void {
 </script>
 
 <template>
-  <div class="texture-node nodrag nopan">
-    <div class="tn-head">{{ SLOT_LABELS[slot] }}</div>
+  <div class="texture-node">
+    <div class="tn-head node-drag-handle">{{ SLOT_LABELS[slot] }}</div>
 
-    <div v-if="texture" class="tn-assigned">
+    <div v-if="texture" class="tn-assigned nodrag nopan">
       <span class="tn-thumb">
         <img :src="texturesApi.downloadUrl(texture.id)" :alt="texture.displayName" />
       </span>
@@ -81,7 +81,7 @@ function onPicked(tex: Texture): void {
       </div>
     </div>
 
-    <div v-else class="tn-empty">
+    <div v-else class="tn-empty nodrag nopan">
       <button type="button" class="primary" :disabled="uploading" @click="fileInput?.click()">
         {{ uploading ? 'Uploading…' : 'Upload New' }}
       </button>

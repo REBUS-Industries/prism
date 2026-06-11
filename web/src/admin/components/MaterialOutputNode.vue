@@ -17,9 +17,9 @@ defineProps<{ filled: Partial<Record<MaterialSlot, boolean>> }>();
 </script>
 
 <template>
-  <div class="output-node nodrag nopan">
-    <div class="on-head">PBR Material</div>
-    <div class="on-rows">
+  <div class="output-node">
+    <div class="on-head node-drag-handle">PBR Material</div>
+    <div class="on-rows nodrag nopan">
       <div v-for="slot in MATERIAL_SLOTS" :key="slot" class="on-row">
         <Handle :id="slot" type="target" :position="Position.Left" :connectable="false" />
         <span class="dot" :class="{ filled: filled[slot] }" />

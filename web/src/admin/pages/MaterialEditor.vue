@@ -2,22 +2,17 @@
 /**
  * Material editor (route /materials/:id). Loads the full material detail and
  * lays out a node-graph editor (left ~60%) beside a live three.js PBR preview
- * + metadata form + comprehensive properties panel (right ~40%). Slot
- * assignments from the graph are persisted via PUT/DELETE …/slots/:slot and
- * applied optimistically so the preview and the graph update instantly;
- * name / description / tags save via PUT. Export downloads the material ZIP;
- * delete soft-deletes and returns to the library.
+ * + metadata form (right ~40%). Slot assignments from the graph are persisted
+ * via PUT/DELETE …/slots/:slot and applied optimistically so the preview and
+ * the graph update instantly; name / description / tags save via PUT. Export
+ * downloads the material ZIP; delete soft-deletes and returns to the library.
  *
- * The Properties panel replicates the glTF-extension editing convention
- * visible in the reference screenshots: always-present base sections + an
- * add/remove Extensions system for optional material extensions.
+ * PBR parameters (base + extensions) are edited entirely on the node graph.
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import PbrNodeGraph from '../components/PbrNodeGraph.vue';
 import GlbViewer from '../components/GlbViewer.vue';
-import ParamSlider from '../components/ParamSlider.vue';
-import ParamColor from '../components/ParamColor.vue';
 import Icon from '../../shared/Icon.vue';
 import {
   materialsApi,
@@ -53,21 +48,6 @@ const parameters = ref<MaterialParameters>({ ...DEFAULT_MATERIAL_PARAMETERS });
 const paramError = ref<string | null>(null);
 const pendingPatch: Partial<MaterialParameters> = {};
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-// ---------------------------------------------------------------------------
-// Properties panel state (base section only — other blocks live as graph nodes)
-// ---------------------------------------------------------------------------
-
-const openSections = ref<Record<string, boolean>>({
-  base: true,
-});
-
-function isOpen(section: string): boolean {
-  return openSections.value[section] !== false;
-}
-function toggleSection(section: string): void {
-  openSections.value[section] = !isOpen(section);
-}
 
 // ---------------------------------------------------------------------------
 // Slot + material helpers
@@ -256,11 +236,11 @@ onBeforeUnmount(() => {
       <header class="topbar">
         <RouterLink :to="{ name: 'materials' }" class="back" title="Back to materials" aria-label="Back to materials"><Icon name="arrow_back" :size="18" /></RouterLink>
         <input v-model="name" class="title-input flex-1" placeholder="Material name" @keyup.enter="save" />
-        <button class="primary" :disabled="saving || !name.trim()" @click="save">
+        <button class="primary" :disabled="saving || !name.trim()" title="Save name, description, and tags" @click="save">
           <Icon name="save" :size="16" />{{ saving ? 'Saving…' : 'Save' }}
         </button>
-        <button @click="exportZip"><Icon name="download" :size="16" />Export ZIP</button>
-        <button class="danger" @click="remove"><Icon name="delete" :size="16" />Delete</button>
+        <button title="Download material ZIP" @click="exportZip"><Icon name="download" :size="16" />Export ZIP</button>
+        <button class="danger" title="Delete material" @click="remove"><Icon name="delete" :size="16" />Delete</button>
       </header>
 
       <div v-if="saveError" class="error-box">{{ saveError }}</div>
@@ -304,58 +284,6 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
-
-          <!-- ============================================================
-               Material Properties panel
-               ============================================================ -->
-          <div class="card properties">
-
-            <!-- ── BASE PROPERTIES ──────────────────────────────────────── -->
-            <div class="prop-section">
-              <button class="sect-head" @click="toggleSection('base')">
-                <Icon name="chevron_right" :size="13" :class="['sect-chevron', { open: isOpen('base') }]" />
-                <span>BASE PROPERTIES</span>
-              </button>
-              <div v-if="isOpen('base')" class="sect-body">
-                <ParamColor
-                  label="Base Color"
-                  :model-value="parameters.baseColor"
-                  @update:model-value="(v) => onParamChange({ key: 'baseColor', value: v })"
-                />
-                <ParamSlider
-                  label="Metallic" :min="0" :max="1" :step="0.01"
-                  :model-value="parameters.metallic"
-                  @update:model-value="(v) => onParamChange({ key: 'metallic', value: v })"
-                />
-                <ParamSlider
-                  label="Roughness" :min="0" :max="1" :step="0.01"
-                  :model-value="parameters.roughness"
-                  @update:model-value="(v) => onParamChange({ key: 'roughness', value: v })"
-                />
-                <ParamColor
-                  label="Emissive"
-                  :model-value="parameters.emissiveColor"
-                  @update:model-value="(v) => onParamChange({ key: 'emissiveColor', value: v })"
-                />
-                <ParamSlider
-                  label="Emissive Intensity" :min="0" :max="10" :step="0.1"
-                  :model-value="parameters.emissiveIntensity"
-                  @update:model-value="(v) => onParamChange({ key: 'emissiveIntensity', value: v })"
-                />
-                <ParamSlider
-                  label="Normal Scale" :min="0" :max="2" :step="0.01"
-                  :model-value="parameters.normalScale"
-                  @update:model-value="(v) => onParamChange({ key: 'normalScale', value: v })"
-                />
-                <ParamSlider
-                  label="Occlusion" sublabel="AO intensity" :min="0" :max="1" :step="0.01"
-                  :model-value="parameters.aoIntensity"
-                  @update:model-value="(v) => onParamChange({ key: 'aoIntensity', value: v })"
-                />
-              </div>
-            </div>
-
-          </div><!-- .properties -->
         </div>
       </div>
     </template>
@@ -400,96 +328,6 @@ button.danger:hover { border-color: var(--color-error); }
 .field textarea { resize: vertical; font-family: inherit; }
 .small { font-size: 12px; }
 .meta-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-
-/* ── Properties panel ─────────────────────────────────────────────────── */
-.properties {
-  padding: 0;
-  overflow: hidden;
-  flex: 0 0 auto;
-}
-
-.prop-section {
-  border-bottom: 1px solid var(--color-border);
-}
-.prop-section:last-child { border-bottom: none; }
-
-.sect-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 12px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  border-radius: 0;
-}
-.sect-head:hover {
-  color: var(--color-text);
-  background: var(--color-bg-hover);
-}
-.sect-chevron {
-  flex: none;
-  color: var(--color-text-subtle);
-  transition: transform 0.15s;
-}
-.sect-chevron.open { transform: rotate(90deg); }
-
-.sect-body {
-  padding: 10px 14px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--color-bg-input);
-}
-.sect-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 12px;
-}
-
-/* prop-field: a labelled row (for selects + number inputs) */
-.prop-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.prop-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-.prop-select {
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
-  cursor: pointer;
-}
-.prop-number {
-  width: 100%;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.prop-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.prop-toggle input { width: 14px; height: 14px; cursor: pointer; }
 
 @media (max-width: 1100px) {
   .body { grid-template-columns: 1fr; }
