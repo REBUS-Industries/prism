@@ -10,7 +10,7 @@ Three concurrent workstreams, two repos, three developer seats (human + Cursor a
 |---|---|---|---|---|
 | **Fixture builder** | `REBUS-Industries/prism` | `feat/fixture-builder` | `HANDOFF-fixture-builder.md` | Colleague PC |
 | **Materials editor** | `REBUS-Industries/prism` | `feat/materials-editor` | `HANDOFF-materials-editor.md` | Main dev PC |
-| **Connectors** | `REBUS-Industries/orbit-connectors` | feature branches off `main` | `HANDOFF-connectors.md` | Third seat (or async) |
+| **Connectors** | `REBUS-Industries/orbit-connectors` | feature branches off `main` | `orbit-connectors/.cursor/plans/HANDOFF-connectors.md` | Third seat (or async) |
 
 Fixture builder + materials editor share one repo but use separate branches and own mostly non-overlapping files. Connectors are a completely separate repo with no cross-repo conflict risk.
 
@@ -111,11 +111,10 @@ Work only on the feat/materials-editor branch. Do not edit fixture viewer/assemb
 If the PR touches server/**, run server-image (not just web-image) to deploy API changes to dev.
 ```
 
-For the connectors seat:
+For the connectors seat (open **orbit-connectors** as workspace root):
 ```
-Read orbit-connectors-repo/README.md fully before starting any work.
-Read orbit-connectors-repo/HANDOFF-connectors.md for current state.
-Work on feature branches in orbit-connectors-repo only.
+Read .cursor/plans/README.md, AGENT-GIT-INSTRUCTIONS.md, and HANDOFF-connectors.md fully before starting any work.
+Then read README.md. Work on feature branches off main only.
 ```
 
 ---
