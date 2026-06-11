@@ -139,8 +139,17 @@ function nodeHeight(slot: MaterialSlot, isFilled: boolean): number {
 // ---------------------------------------------------------------------------
 type PositionMap = Record<string, { x: number; y: number }>;
 
+/** Retired node ids — stripped on load/reset so layout reset never resurrects them. */
+const LEGACY_NODE_IDS = ['param-base'] as const;
+
 function storageKey(id: string): string {
   return `prism-node-layout-${id}`;
+}
+
+function stripLegacyPositions(map: PositionMap): PositionMap {
+  const next = { ...map };
+  for (const id of LEGACY_NODE_IDS) delete next[id];
+  return next;
 }
 
 function loadPositions(id: string): PositionMap | null {
@@ -148,7 +157,7 @@ function loadPositions(id: string): PositionMap | null {
     const raw = localStorage.getItem(storageKey(id));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed === 'object' && parsed !== null) return parsed as PositionMap;
+    if (typeof parsed === 'object' && parsed !== null) return stripLegacyPositions(parsed as PositionMap);
   } catch {
     // ignore parse errors
   }
@@ -165,6 +174,9 @@ function savePositions(id: string, map: PositionMap): void {
 
 const customPositions = ref<PositionMap>(loadPositions(props.materialId) ?? {});
 
+/** Bumped on reset so Vue Flow remounts and drops any stale internal node state. */
+const layoutEpoch = ref(0);
+
 // Re-load when material changes (navigating between materials in same session)
 watch(
   () => props.materialId,
@@ -173,14 +185,21 @@ watch(
   },
 );
 
+/** Param blocks on the canvas — excludes retired `base` extension id if present in stored data. */
+const activeParamExtensions = computed(() =>
+  props.parameters.activeExtensions.filter((id) => id !== 'base'),
+);
+
 function onNodeDragStop(ev: NodeDragEvent): void {
   const { node } = ev;
+  if (LEGACY_NODE_IDS.includes(node.id as (typeof LEGACY_NODE_IDS)[number])) return;
   customPositions.value = { ...customPositions.value, [node.id]: node.position };
   savePositions(props.materialId, customPositions.value);
 }
 
 function resetLayout(): void {
   customPositions.value = {};
+  layoutEpoch.value += 1;
   try {
     localStorage.removeItem(storageKey(props.materialId));
   } catch {
@@ -245,7 +264,7 @@ const nodes = computed<Node[]>(() => {
     targetPosition: Position.Left,
   };
 
-  const paramNodes: Node[] = props.parameters.activeExtensions.map((paramType, i) => {
+  const paramNodes: Node[] = activeParamExtensions.value.map((paramType, i) => {
     const nodeId = `param-${paramType}`;
     const defaultPos = { x: PARAM_NODE_X, y: i * PARAM_NODE_STEP };
     return {
@@ -287,7 +306,7 @@ const edges = computed<Edge[]>(() => {
     } satisfies Edge;
   });
 
-  const paramEdges: Edge[] = props.parameters.activeExtensions.map((paramType) => ({
+  const paramEdges: Edge[] = activeParamExtensions.value.map((paramType) => ({
     id: `e-param-${paramType}`,
     source: `param-${paramType}`,
     target: 'material',
@@ -321,6 +340,7 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
 <template>
   <div class="graph-wrap" :class="{ 'select-mode': interactionMode === 'select' }">
     <VueFlow
+      :key="layoutEpoch"
       :nodes="nodes"
       :edges="edges"
       :fit-view-on-init="true"
