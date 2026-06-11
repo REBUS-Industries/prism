@@ -2,7 +2,7 @@ name: web-image
 
 # Builds the PRISM admin/convert/viewer SPA as a standalone nginx container
 # (prism-web) and deploys it to VM 212 (prism-dev.rebus.industries) only.
-# VM 211 (prod) is NOT touched.
+# Server API changes deploy via server-image (separate workflow).
 
 on:
   push:
@@ -78,8 +78,8 @@ jobs:
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
             docker compose pull prism-web prism-fixtures
-            docker compose up -d prism-server prism-materials prism-fixtures prism-visualiser prism-agent prism-web prism-router
-            docker compose ps prism-server prism-materials prism-fixtures prism-visualiser prism-agent prism-web prism-router
+            docker compose up -d prism-web prism-fixtures prism-router
+            docker compose ps prism-web prism-fixtures prism-router
             # Keep VM 212 disk healthy — remove images older than 24h
             docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
