@@ -192,11 +192,8 @@ async function applyLatestUpdate(): Promise<void> {
   }
 }
 
-async function applyModelQuality(): Promise<void> {
+async function runMeshReimport(quality: GdtfModelQuality): Promise<void> {
   if (!fixture.value) return;
-  const stored = modelQualityFromDefinition(fixture.value.definition.metadata);
-  if (stored === modelQuality.value) return;
-
   reimportingMeshes.value = true;
   error.value = null;
   try {
@@ -205,11 +202,11 @@ async function applyModelQuality(): Promise<void> {
       // GDTF-Share fixtures: re-download the active revision with the chosen mesh LOD.
       await fixturesApi.downloadVersion(props.id, shareRid, {
         carryEdits: true,
-        modelQuality: modelQuality.value,
+        modelQuality: quality,
       });
     } else {
       // Uploaded/manual fixtures: swap meshes from the stored local GDTF package.
-      const res = await fixturesApi.reimportMeshes(props.id, modelQuality.value);
+      const res = await fixturesApi.reimportMeshes(props.id, quality);
       fixture.value = res.fixture;
     }
     assemblyRevision.value += 1;
@@ -219,6 +216,20 @@ async function applyModelQuality(): Promise<void> {
   } finally {
     reimportingMeshes.value = false;
   }
+}
+
+async function applyModelQuality(): Promise<void> {
+  if (!fixture.value) return;
+  const stored = modelQualityFromDefinition(fixture.value.definition.metadata);
+  if (stored === modelQuality.value) return;
+  await runMeshReimport(modelQuality.value);
+}
+
+// Re-run mesh conversion at the current quality without changing the LOD. Lets
+// users refresh a fixture's 3D model after a pipeline fix (e.g. 3DS->GLB) even
+// when the GDTF ships a single mesh and the quality picker is hidden.
+async function reloadModelMeshes(): Promise<void> {
+  await runMeshReimport(modelQuality.value);
 }
 
 async function onSwitchStoredVersion(versionId: string): Promise<void> {
@@ -852,6 +863,16 @@ onMounted(() => {
                 GDTF-Share fixtures re-download the active revision with the chosen mesh LOD. Uploaded fixtures re-parse the stored local package. Part transforms and edits are kept.
               </p>
             </template>
+            <button
+              class="mt-sm"
+              :disabled="reimportingMeshes"
+              @click="reloadModelMeshes"
+            >
+              {{ reimportingMeshes ? 'Reloading 3D model…' : 'Reload 3D model' }}
+            </button>
+            <p class="muted small">
+              Re-converts the GDTF mesh (e.g. 3DS → glTF) with the current pipeline. Use if the fixture is showing placeholder boxes instead of its model.
+            </p>
           </template>
         </section>
 

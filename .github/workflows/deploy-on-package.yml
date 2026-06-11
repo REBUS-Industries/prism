@@ -25,6 +25,10 @@ jobs:
             *prism-materials-service*) echo "service=prism-materials" >> "$GITHUB_OUTPUT" ;;
             *prism-agent-service*) echo "service=prism-agent" >> "$GITHUB_OUTPUT" ;;
             *prism-visualiser-service*) echo "service=prism-visualiser" >> "$GITHUB_OUTPUT" ;;
+            # prism-assimp is built in this monorepo (assimp.yml) and runs as
+            # the prism-assimp compose service; without this case its image was
+            # published to GHCR but never pulled/restarted on the VM.
+            *prism-assimp*) echo "service=prism-assimp" >> "$GITHUB_OUTPUT" ;;
             *prism-server*) echo "service=prism-server" >> "$GITHUB_OUTPUT" ;;
             *) echo "service=" >> "$GITHUB_OUTPUT" ;;
           esac
