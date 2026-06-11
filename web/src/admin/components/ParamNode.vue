@@ -6,6 +6,7 @@
  * the MaterialOutputNode, connected by a smoothstep edge.
  */
 import { Handle, Position } from '@vue-flow/core';
+import Icon from '../../shared/Icon.vue';
 import ParamSlider from './ParamSlider.vue';
 import ParamColor from './ParamColor.vue';
 import type { MaterialParameters } from '../../shared/api';
@@ -32,6 +33,8 @@ const props = defineProps<{
     parameters: MaterialParameters;
     onParamChange: (change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }) => void;
     onRemove?: () => void;
+    onReset?: () => void;
+    canReset?: boolean;
   };
 }>();
 
@@ -45,8 +48,19 @@ function onParam<K extends keyof MaterialParameters>(
 
 <template>
   <div class="param-node">
-    <div class="pn-head node-drag-handle">
-      <span class="pn-label">{{ PARAM_LABELS[data.paramType] ?? data.paramType }}</span>
+    <div class="pn-head">
+      <span class="pn-label node-drag-handle">{{ PARAM_LABELS[data.paramType] ?? data.paramType }}</span>
+      <button
+        v-if="data.onReset"
+        type="button"
+        class="pn-reset nodrag nopan"
+        :disabled="!data.canReset"
+        title="Reset parameters"
+        aria-label="Reset parameters"
+        @click="data.onReset()"
+      >
+        <Icon name="restart_alt" :size="14" />
+      </button>
       <button
         v-if="data.onRemove"
         type="button"
@@ -325,6 +339,21 @@ function onParam<K extends keyof MaterialParameters>(
   letter-spacing: 0.02em;
   color: var(--color-text);
 }
+.pn-reset {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.pn-reset:hover:not(:disabled) { color: var(--color-text); border-color: var(--color-border); }
+.pn-reset:disabled { opacity: 0.35; cursor: default; }
 .pn-remove {
   width: 22px;
   height: 22px;

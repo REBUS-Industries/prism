@@ -3,6 +3,7 @@
  */
 import type {
   ExternalMaterialProvider,
+  ExternalMaterialSource,
   ExternalMaterialSummary,
   UnifiedCursorMap,
   UnifiedSearchParams,
@@ -34,6 +35,11 @@ export function scoreQueryMatch(
   return score;
 }
 
+function providerErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 export async function unifiedSearch(
   providers: ExternalMaterialProvider[],
   params: UnifiedSearchParams,
@@ -41,7 +47,7 @@ export async function unifiedSearch(
   const active = providers.filter((p) => p.enabled && params.sources.includes(p.id));
   const perProviderCursors: UnifiedCursorMap = params.cursor ?? {};
 
-  const pages = await Promise.all(
+  const settled = await Promise.allSettled(
     active.map(async (provider) => {
       const page = await provider.search({
         q: params.q,
@@ -51,6 +57,19 @@ export async function unifiedSearch(
       return { provider, page };
     }),
   );
+
+  const pages: Array<{ provider: ExternalMaterialProvider; page: Awaited<ReturnType<ExternalMaterialProvider['search']>> }> = [];
+  const providerErrors: Partial<Record<ExternalMaterialSource, string>> = {};
+
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i]!;
+    const provider = active[i]!;
+    if (result.status === 'fulfilled') {
+      pages.push(result.value);
+    } else {
+      providerErrors[provider.id] = providerErrorMessage(result.reason);
+    }
+  }
 
   const merged = pages
     .flatMap(({ page }) => page.items)
@@ -72,6 +91,7 @@ export async function unifiedSearch(
     cursor: params.cursor ? encodeUnifiedCursor(params.cursor) : null,
     nextCursor: hasMore ? nextCursor : null,
     sources: active.map((p) => p.id),
+    providerErrors: Object.keys(providerErrors).length ? providerErrors : undefined,
   };
 }
 

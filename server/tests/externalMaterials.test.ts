@@ -10,6 +10,7 @@ import {
 } from '../src/external-materials/ambientcg.js';
 import { createPolyHavenProvider, resetPolyHavenCatalogCache } from '../src/external-materials/polyhaven.js';
 import { estimatePolyHavenDownloadSize, selectPolyHavenMaps } from '../src/external-materials/polyhavenMaps.js';
+import { FabApiError } from '../src/fab/client.js';
 import { scoreQueryMatch, unifiedSearch } from '../src/external-materials/unifiedSearch.js';
 import { createFabProvider } from '../src/external-materials/fab.js';
 import { encodeUnifiedCursor } from '../src/external-materials/types.js';
@@ -190,5 +191,32 @@ describe('unifiedSearch', () => {
   it('round-trips unified cursor encoding', () => {
     const encoded = encodeUnifiedCursor({ fab: 'abc', polyhaven: '10' });
     expect(encoded).toBeTruthy();
+  });
+
+  it('returns partial results when one provider fails', async () => {
+    resetPolyHavenCatalogCache();
+    const poly = createPolyHavenProvider({ fetchCatalog: async () => catalog, fetchFiles: async () => files });
+    const fab = createFabProvider({
+      search: async () => {
+        throw new FabApiError(
+          'Fab is blocked by Cloudflare from this server.',
+          403,
+          'fab_cloudflare_blocked',
+        );
+      },
+      getListing: async () => null,
+      download: async () => ({ buffer: Buffer.from(''), filename: 'x.zip', name: 'x' }),
+    });
+
+    const result = await unifiedSearch([fab, poly], {
+      q: 'concrete',
+      sources: ['fab', 'polyhaven'],
+      cursor: null,
+      limit: 5,
+    });
+
+    expect(result.items.some((i) => i.source === 'polyhaven')).toBe(true);
+    expect(result.items.some((i) => i.source === 'fab')).toBe(false);
+    expect(result.providerErrors?.fab).toContain('Cloudflare');
   });
 });

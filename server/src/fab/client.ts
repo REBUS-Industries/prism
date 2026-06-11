@@ -4,7 +4,7 @@
 import {
   fabAuthConfigured,
   fabAuthorizedFetch,
-  fabPublicFetch,
+  fabBrowseFetch,
   ensureFabCsrf,
 } from './auth.js';
 import { assembleFileFromManifest, fetchManifestBytes } from './downloadManifest.js';
@@ -23,6 +23,21 @@ import type {
 
 const FAB_BASE = 'https://www.fab.com';
 
+const CF_MARKERS = [
+  'cloudflare',
+  'cf-ray',
+  'just a moment',
+  'attention required',
+  'enable javascript and cookies',
+];
+
+/** Exported for unit tests. */
+export function isFabCloudflareResponse(body: string, status: number): boolean {
+  if (status !== 403 && status !== 503) return false;
+  const lower = body.toLowerCase();
+  return CF_MARKERS.some((m) => lower.includes(m));
+}
+
 export class FabApiError extends Error {
   constructor(
     message: string,
@@ -39,11 +54,29 @@ export function isFabImportConfigured(): boolean {
 }
 
 async function fabJson<T>(res: Response): Promise<T> {
+  const body = await res.text().catch(() => '');
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
+    if (isFabCloudflareResponse(body, res.status)) {
+      throw new FabApiError(
+        'Fab is blocked by Cloudflare from this server. Set FAB_EPIC_REFRESH_TOKEN and/or FAB_HTTP_PROXY (see infra/.env.example).',
+        res.status,
+        'fab_cloudflare_blocked',
+      );
+    }
     throw new FabApiError(`Fab API ${res.status}: ${body.slice(0, 300)}`, res.status);
   }
-  return res.json() as Promise<T>;
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    if (isFabCloudflareResponse(body, res.status)) {
+      throw new FabApiError(
+        'Fab returned a non-JSON Cloudflare challenge page.',
+        res.status,
+        'fab_cloudflare_blocked',
+      );
+    }
+    throw new FabApiError(`Fab API returned invalid JSON (${res.status})`, res.status);
+  }
 }
 
 export async function fabSearch(
@@ -51,6 +84,7 @@ export async function fabSearch(
   limit: number,
   cursor: string | null,
 ): Promise<FabSearchPage> {
+  await ensureFabCsrf();
   const params = new URLSearchParams();
   if (q.trim()) params.set('q', q.trim());
   params.set('listing_types', 'material');
@@ -58,13 +92,14 @@ export async function fabSearch(
   params.set('sort_by', 'relevance');
   if (cursor) params.set('cursor', cursor);
 
-  const res = await fabPublicFetch(`${FAB_BASE}/i/listings/search?${params.toString()}`);
+  const res = await fabBrowseFetch(`${FAB_BASE}/i/listings/search?${params.toString()}`);
   const raw = await fabJson<FabSearchResponse>(res);
   return normalizeSearchPage(raw, limit, cursor);
 }
 
 export async function fabGetListing(uid: string): Promise<FabAssetDetail | null> {
-  const res = await fabPublicFetch(`${FAB_BASE}/i/listings/${encodeURIComponent(uid)}`);
+  await ensureFabCsrf();
+  const res = await fabBrowseFetch(`${FAB_BASE}/i/listings/${encodeURIComponent(uid)}`);
   if (res.status === 404) return null;
   const raw = await fabJson<FabListingDetail>(res);
   return normalizeListingDetail(raw);

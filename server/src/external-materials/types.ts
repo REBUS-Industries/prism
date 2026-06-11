@@ -70,6 +70,8 @@ export interface UnifiedSearchResult {
   cursor: string | null;
   nextCursor: string | null;
   sources: ExternalMaterialSource[];
+  /** Per-provider failures when Promise.allSettled catches an error (partial results still returned). */
+  providerErrors?: Partial<Record<ExternalMaterialSource, string>>;
 }
 
 /** Per-provider cursors encoded as base64url JSON. */
