@@ -57,10 +57,18 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     concurrency:
       group: prism-deploy-vm212
-      cancel-in-progress: true
+      # Queue rather than cancel — never kill an in-progress deploy.
+      cancel-in-progress: false
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
+      # Clean up the runner workspace after every run to prevent disk fill.
+      - name: Clean runner workspace
+        if: always()
+        run: |
+          rm -rf "$GITHUB_WORKSPACE"
+          docker system prune -af --filter "until=24h" 2>/dev/null || true
 
       - name: Sync split compose + deploy prism-web to VM 212
         run: |
@@ -79,4 +87,6 @@ jobs:
             docker compose pull prism-web prism-fixtures
             docker compose up -d prism-server prism-materials prism-fixtures prism-visualiser prism-agent prism-web prism-router
             docker compose ps prism-server prism-materials prism-fixtures prism-visualiser prism-agent prism-web prism-router
+            # Keep VM 212 disk healthy — remove images older than 24h
+            docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
