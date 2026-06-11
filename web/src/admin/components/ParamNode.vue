@@ -11,7 +11,6 @@ import ParamColor from './ParamColor.vue';
 import type { MaterialParameters } from '../../shared/api';
 
 const PARAM_LABELS: Record<string, string> = {
-  displacement:     'Displacement',
   textureUv:        'Texture UV',
   alpha:            'Alpha',
   clearCoat:        'Clear Coat',
@@ -59,22 +58,8 @@ function onParam<K extends keyof MaterialParameters>(
 
     <div class="pn-body nodrag nopan">
 
-      <!-- displacement -->
-      <template v-if="data.paramType === 'displacement'">
-        <ParamSlider
-          label="Scale" :min="0" :max="0.5" :step="0.005"
-          :model-value="data.parameters.displacementScale"
-          @update:model-value="(v) => onParam('displacementScale', v)"
-        />
-        <ParamSlider
-          label="Bias" :min="-0.5" :max="0.5" :step="0.005"
-          :model-value="data.parameters.displacementBias"
-          @update:model-value="(v) => onParam('displacementBias', v)"
-        />
-      </template>
-
       <!-- textureUv -->
-      <template v-else-if="data.paramType === 'textureUv'">
+      <template v-if="data.paramType === 'textureUv'">
         <div class="pn-grid-2">
           <ParamSlider
             label="Tiling X" :min="0.1" :max="16" :step="0.1"
@@ -164,6 +149,7 @@ function onParam<K extends keyof MaterialParameters>(
 
       <!-- ior -->
       <template v-else-if="data.paramType === 'ior'">
+        <p class="pn-hint">Most visible with Transmission on, or at low roughness.</p>
         <ParamSlider
           label="IOR" :min="1" :max="2.5" :step="0.01"
           :model-value="data.parameters.ior"
@@ -201,6 +187,7 @@ function onParam<K extends keyof MaterialParameters>(
 
       <!-- volume -->
       <template v-else-if="data.paramType === 'volume'">
+        <p class="pn-hint">Requires Transmission &gt; 0 to be visible.</p>
         <ParamSlider
           label="Thickness Factor" :min="0" :max="10" :step="0.1"
           :model-value="data.parameters.volumeThicknessFactor"
@@ -272,6 +259,7 @@ function onParam<K extends keyof MaterialParameters>(
 
       <!-- emissiveStrength -->
       <template v-else-if="data.paramType === 'emissiveStrength'">
+        <p class="pn-hint">Multiplies the Emissive color — set one on the Emissive slot.</p>
         <label class="pn-field">
           <span class="pn-field-label">Strength</span>
           <input
@@ -285,6 +273,7 @@ function onParam<K extends keyof MaterialParameters>(
 
       <!-- dispersion -->
       <template v-else-if="data.paramType === 'dispersion'">
+        <p class="pn-hint">Requires Transmission and Volume thickness.</p>
         <ParamSlider
           label="Factor" :min="0" :max="1" :step="0.01"
           :model-value="data.parameters.dispersionFactor"
@@ -398,4 +387,10 @@ function onParam<K extends keyof MaterialParameters>(
   cursor: pointer;
 }
 .pn-toggle input { width: 14px; height: 14px; cursor: pointer; }
+.pn-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  line-height: 1.4;
+}
 </style>

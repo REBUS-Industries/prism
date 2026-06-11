@@ -71,7 +71,6 @@ const interactionMode = ref<'pan' | 'select'>('pan');
 // Param block palette — the addable node types for the canvas.
 // ---------------------------------------------------------------------------
 const PARAM_TILES = [
-  { id: 'displacement',     label: 'Displacement',      icon: 'terrain' },
   { id: 'textureUv',        label: 'Texture UV',        icon: 'grid_on' },
   { id: 'alpha',            label: 'Alpha',             icon: 'opacity' },
   { id: 'clearCoat',        label: 'Clear Coat',        icon: 'layers' },
@@ -140,7 +139,7 @@ function nodeHeight(slot: MaterialSlot, isFilled: boolean): number {
 type PositionMap = Record<string, { x: number; y: number }>;
 
 /** Retired node ids — stripped on load/reset so layout reset never resurrects them. */
-const LEGACY_NODE_IDS = ['param-base'] as const;
+const LEGACY_NODE_IDS = ['param-base', 'param-displacement'] as const;
 
 function storageKey(id: string): string {
   return `prism-node-layout-${id}`;
@@ -185,9 +184,9 @@ watch(
   },
 );
 
-/** Param blocks on the canvas — excludes retired `base` extension id if present in stored data. */
+/** Param blocks on the canvas — excludes retired ids if present in stored data. */
 const activeParamExtensions = computed(() =>
-  props.parameters.activeExtensions.filter((id) => id !== 'base'),
+  props.parameters.activeExtensions.filter((id) => id !== 'base' && id !== 'displacement'),
 );
 
 function onNodeDragStop(ev: NodeDragEvent): void {
