@@ -27,6 +27,7 @@ import {
   type MaterialParameters,
   type MaterialSlot,
 } from '../../shared/api';
+import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 
 type SlotSources = Partial<Record<MaterialSlot, string | null>>;
 type Shape = 'sphere' | 'cube' | 'plane';
@@ -195,12 +196,13 @@ function setShape(shape: Shape): void {
 function resize(): void {
   const wrap = wrapRef.value;
   if (!wrap || !renderer || !camera) return;
-  const w = wrap.clientWidth;
-  const h = wrap.clientHeight;
-  if (!w || !h) return;
-  camera.aspect = w / h;
+  const size = readContainerCssSize(wrap);
+  if (!size) return;
+  const { width, height } = size;
+  renderer.setPixelRatio(threePixelRatio());
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(w, h);
+  renderer.setSize(width, height, true);
 }
 
 function animate(): void {
@@ -217,8 +219,8 @@ onMounted(() => {
   const h = wrap.clientHeight || 360;
 
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(w, h);
+  renderer.setPixelRatio(threePixelRatio());
+  renderer.setSize(w, h, true);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   wrap.appendChild(renderer.domElement);

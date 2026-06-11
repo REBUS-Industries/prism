@@ -305,6 +305,7 @@ onMounted(() => void load());
               :tilt-deg="tiltDeg"
               :dimmer="dimmer"
               :show-beam="showBeam"
+              fill
               light-background
             />
             <p v-else class="muted no-preview">No GLB preview available.</p>
@@ -328,6 +329,7 @@ onMounted(() => void load());
             :tilt-deg="tiltDeg"
             :dimmer="dimmer"
             :show-beam="showBeam"
+            fill
             light-background
           />
           <p v-else class="muted no-preview">No GLB preview available.</p>
@@ -556,14 +558,11 @@ onMounted(() => void load());
 .assembly-viewport {
   flex: 1;
   min-height: 280px;
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   overflow: hidden;
-}
-.preview-viewport :deep(.fixture-viewer),
-.assembly-viewport :deep(.fixture-viewer) {
-  min-height: 280px;
-  height: 100%;
+  contain: strict;
 }
 .debug-assembly {
   min-height: 400px;

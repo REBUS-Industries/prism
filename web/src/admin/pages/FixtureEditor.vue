@@ -843,6 +843,14 @@ onMounted(() => {
 
 }
 
+.preview-card {
+
+  min-height: 0;
+
+  overflow: hidden;
+
+}
+
 .preview-caption { margin: 8px 0 0; }
 
 .info-card h2, .panel-card h2 {

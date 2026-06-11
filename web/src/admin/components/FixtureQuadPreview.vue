@@ -29,6 +29,8 @@ defineProps<{
             :url="previewUrl"
             :view-preset="view[0]"
             :interactive="view[0] === 'iso'"
+            fill
+            light-background
           />
           <div v-else class="quad-placeholder">
             <span class="quad-grid-bg" aria-hidden="true" />
@@ -70,18 +72,15 @@ defineProps<{
 .quad-viewport {
   position: relative;
   aspect-ratio: 1;
+  min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: #e8eaed;
+  contain: strict;
 }
 [data-theme="dark"] .quad-viewport {
   background: #1a1c22;
-}
-.quad-viewport :deep(.fixture-viewer) {
-  min-height: 100%;
-  height: 100%;
-  border-radius: 0;
 }
 .quad-placeholder {
   display: flex;

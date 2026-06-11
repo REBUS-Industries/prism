@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { RouterLink, useRouter } from 'vue-router';
 
@@ -29,7 +29,7 @@ import {
 const router = useRouter();
 const fixtureTypesStore = useFixtureTypesStore();
 
-const PAGE = 80;
+const PAGE = 500;
 
 type DownloadFilter = 'all' | 'downloaded' | 'missing';
 type MetadataFilter = 'all' | 'fix' | 'control' | 'anchor' | 'manufacturer' | 'authors';
@@ -39,6 +39,9 @@ const fixtures = ref<FixtureListItem[]>([]);
 const shareManufacturers = ref<GdtfShareManufacturer[]>([]);
 
 const shareEntries = ref<GdtfShareCatalogEntry[]>([]);
+
+/** Catalog rows fetched for library fixtures absent from the current share page. */
+const supplementalEntries = ref<GdtfShareCatalogEntry[]>([]);
 
 const shareTotal = ref(0);
 
@@ -93,23 +96,42 @@ function catalogQueryParams(): { q?: string; manufacturer?: string; limit: numbe
   return { q: q || undefined, manufacturer, limit: 120 };
 }
 
+const localByShareUuid = computed(() => {
+  const map = new Map<string, FixtureListItem>();
+  for (const f of fixtures.value) {
+    if (f.gdtfShareUuid) map.set(f.gdtfShareUuid, f);
+  }
+  return map;
+});
+
+/** True when a catalog entry has a matching row in the local fixture library. */
+function isLibraryDownload(entry: GdtfShareCatalogEntry): boolean {
+  return !!matchLocal(entry);
+}
+
 function matchLocal(entry: GdtfShareCatalogEntry): FixtureListItem | undefined {
+  const byUuid = localByShareUuid.value.get(entry.uuid);
+  if (byUuid) return byUuid;
 
   const mfg = entry.manufacturer.toLowerCase();
-
   const fix = entry.fixture.toLowerCase();
-
   return fixtures.value.find((f) => {
-
     const fm = f.manufacturer.toLowerCase();
-
     const fn = f.fixtureName.toLowerCase();
-
     return fm === mfg && (fn === fix || f.name.toLowerCase().includes(fix));
-
   });
-
 }
+
+const catalogEntries = computed(() => {
+  const seen = new Set<string>();
+  const merged: GdtfShareCatalogEntry[] = [];
+  for (const entry of [...shareEntries.value, ...supplementalEntries.value]) {
+    if (seen.has(entry.uuid)) continue;
+    seen.add(entry.uuid);
+    merged.push(entry);
+  }
+  return merged;
+});
 
 
 
@@ -117,17 +139,18 @@ const filteredEntries = computed(() => {
 
   const q = search.value.trim().toLowerCase();
 
-  return shareEntries.value.filter((entry) => {
+  return catalogEntries.value.filter((entry) => {
 
     if (selectedManufacturer.value !== '__all__' && entry.manufacturer !== selectedManufacturer.value) {
       return false;
     }
 
     const local = matchLocal(entry);
+    const downloaded = !!local;
 
-    if (downloadFilter.value === 'downloaded' && !local) return false;
+    if (downloadFilter.value === 'downloaded' && !downloaded) return false;
 
-    if (downloadFilter.value === 'missing' && local) return false;
+    if (downloadFilter.value === 'missing' && downloaded) return false;
 
     if (metadataFilter.value === 'fix' && local && local.hasPreview) return false;
     if (metadataFilter.value === 'fix' && !local) return false;
@@ -218,7 +241,7 @@ const fixturesWith3d = computed(() =>
 
 const selectedShare = computed(() =>
 
-  shareEntries.value.find((e) => e.uuid === selectedShareUuid.value) ?? null,
+  catalogEntries.value.find((e) => e.uuid === selectedShareUuid.value) ?? null,
 
 );
 
@@ -257,7 +280,7 @@ interface EntryRowMetrics {
 
 function entryRowMetrics(entry: GdtfShareCatalogEntry): EntryRowMetrics {
   const local = matchLocal(entry);
-  const downloaded = !!local;
+  const downloaded = isLibraryDownload(entry);
   const dmxCount = entry.modes?.length ?? 0;
   let d3Badge: string | null = null;
   let wheelsBadge: string | null = null;
@@ -270,6 +293,15 @@ function entryRowMetrics(entry: GdtfShareCatalogEntry): EntryRowMetrics {
 
 
 
+function upsertLocalFixture(item: FixtureListItem): void {
+  const idx = fixtures.value.findIndex((f) => f.id === item.id);
+  if (idx >= 0) {
+    fixtures.value[idx] = { ...fixtures.value[idx], ...item };
+  } else {
+    fixtures.value = [item, ...fixtures.value];
+  }
+}
+
 async function loadLocal(): Promise<void> {
 
   try {
@@ -277,6 +309,7 @@ async function loadLocal(): Promise<void> {
     const res = await fixturesApi.list({ limit: PAGE });
 
     fixtures.value = res.fixtures;
+    void syncDownloadedCatalogEntries();
 
   } catch {
 
@@ -284,6 +317,32 @@ async function loadLocal(): Promise<void> {
 
   }
 
+}
+
+async function syncDownloadedCatalogEntries(): Promise<void> {
+  if (downloadFilter.value !== 'downloaded') {
+    supplementalEntries.value = [];
+    return;
+  }
+
+  const inCatalog = new Set(shareEntries.value.map((e) => e.uuid));
+  const missingUuids = fixtures.value
+    .filter((f) => f.gdtfShareUuid && !inCatalog.has(f.gdtfShareUuid))
+    .map((f) => f.gdtfShareUuid!);
+
+  if (!missingUuids.length) {
+    supplementalEntries.value = [];
+    return;
+  }
+
+  const fetched = await Promise.all(
+    missingUuids.map((uuid) =>
+      fixturesApi.versionsGdtfShare(uuid)
+        .then((res) => res.entry)
+        .catch(() => null),
+    ),
+  );
+  supplementalEntries.value = fetched.filter((e): e is GdtfShareCatalogEntry => e != null);
 }
 
 
@@ -436,7 +495,7 @@ function selectShareEntry(entry: GdtfShareCatalogEntry): void {
 
 function setDownloadFilter(chip: DownloadFilter): void {
   downloadFilter.value = chip;
-  ensureVisibleManufacturer();
+  void syncDownloadedCatalogEntries().then(() => ensureVisibleManufacturer());
 }
 
 function setMetadataFilter(chip: MetadataFilter): void {
@@ -550,10 +609,12 @@ async function confirmDownload(fixtureType: string): Promise<void> {
   pendingFixtureType.value = fixtureType;
   try {
     const res = await fixturesApi.importGdtfShare(rid, `${entry.manufacturer} ${entry.fixture}`);
-    await fixturesApi.update(res.fixture.id, {
+    const tagged = await fixturesApi.update(res.fixture.id, {
       tags: tagsWithFixtureCategory(res.fixture.tags, fixtureType, fixtureTypesStore.assignableLabels),
     });
-    await loadLocal();
+    upsertLocalFixture(tagged.fixture);
+    selectShareEntry(entry);
+    await syncDownloadedCatalogEntries();
     showDownloadModal.value = false;
     openEditor(res.fixture.id);
   } catch (err) {
@@ -619,6 +680,13 @@ function formatVersionSub(entry: GdtfShareCatalogEntry): string {
 }
 
 
+
+watch(downloadFilter, () => { void syncDownloadedCatalogEntries(); });
+
+watch(
+  () => fixtures.value.map((f) => `${f.id}:${f.gdtfShareUuid ?? ''}`).join(','),
+  () => { void syncDownloadedCatalogEntries(); },
+);
 
 onMounted(() => {
   void fixtureTypesStore.ensureLoaded();
