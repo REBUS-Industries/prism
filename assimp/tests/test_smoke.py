@@ -33,6 +33,25 @@ def test_formats() -> None:
     assert ".gltf" in exts
     assert ".glb" in exts
     assert ".stl" in exts
+    # GDTF fixture meshes ship as 3DS; the web viewer needs them as GLB.
+    assert ".3ds" in exts
+
+
+def test_convert_glb_unsupported_extension() -> None:
+    r = client.post(
+        "/v1/convert-glb",
+        files={"file": ("model.foo", b"\x00\x01\x02\x03", "application/octet-stream")},
+    )
+    assert r.status_code == 415
+
+
+def test_convert_glb_bad_target_unit() -> None:
+    r = client.post(
+        "/v1/convert-glb",
+        files={"file": ("model.3ds", b"\x00" * 32, "application/octet-stream")},
+        data={"target_unit": "parsec"},
+    )
+    assert r.status_code == 400
 
 
 def test_preconvert_unsupported_extension() -> None:

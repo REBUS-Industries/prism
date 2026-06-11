@@ -10,6 +10,7 @@ import {
   coerceModelQuality,
   defaultModelQualityForAvailable,
   type GdtfModelQuality,
+  type GdtfModelFormat,
 } from '../utils/fixtureModelQuality';
 
 const router = useRouter();
@@ -20,6 +21,7 @@ const error = ref<string | null>(null);
 const name = ref('');
 const selectedFile = ref<File | null>(null);
 const availableModelQualities = ref<GdtfModelQuality[] | null>(null);
+const availableModelFormats = ref<GdtfModelFormat[] | null>(null);
 const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
 
 async function onFileChosen(ev: Event): Promise<void> {
@@ -29,9 +31,11 @@ async function onFileChosen(ev: Event): Promise<void> {
   inspecting.value = true;
   error.value = null;
   availableModelQualities.value = null;
+  availableModelFormats.value = null;
   try {
     const res = await fixturesApi.inspectGdtf(file);
     availableModelQualities.value = res.availableModelQualities;
+    availableModelFormats.value = res.availableModelFormats ?? null;
     modelQuality.value = defaultModelQualityForAvailable(res.availableModelQualities);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to read GDTF mesh options';
@@ -83,6 +87,7 @@ function onImported(id: string): void {
       v-model="modelQuality"
       class="mt-sm"
       :available="availableModelQualities"
+      :formats="availableModelFormats"
       :loading="inspecting"
       :disabled="importing"
     />

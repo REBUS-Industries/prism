@@ -162,6 +162,63 @@ def _assimp_last_error() -> str:
         return ""
 
 
+def convert_file_to_glb(
+    src_path: Path,
+    work_dir: Path,
+    options: PreconvertOptions,
+) -> Path:
+    """Convert an Assimp-readable mesh (e.g. ``.3ds``) into a binary glTF.
+
+    Used by the fixtures service to turn GDTF ``./models/3ds`` meshes into the
+    GLB the web Three.js viewer can load. Returns the path to ``model.glb``
+    under ``work_dir``. Node transforms are baked into the vertices (see
+    :func:`_postprocess_flags`) so the single-mesh output matches what the
+    GDTF geometry tree expects. Scale is irrelevant downstream — the viewer
+    fits the mesh bbox to the GDTF model dimensions — so we leave units as
+    authored.
+    """
+    logger.info("convert-glb src=%s options=%s", src_path, options)
+
+    out_path = work_dir / "model.glb"
+
+    import pyassimp  # type: ignore
+    from pyassimp import postprocess  # type: ignore
+
+    flags = _postprocess_flags(options)
+
+    scene = None
+    try:
+        scene = pyassimp.load(str(src_path), processing=flags)
+        if not list(getattr(scene, "meshes", []) or []):
+            raise RuntimeError("source file contains no meshes")
+        # "glb2" = binary glTF 2.0 exporter (Assimp 5.x). Re-triangulate on
+        # export as a belt-and-brace; the load pass already triangulated.
+        pyassimp.export(
+            scene,
+            str(out_path),
+            file_type="glb2",
+            processing=postprocess.aiProcess_Triangulate,
+        )
+    except pyassimp.AssimpError as exc:
+        detail = _assimp_last_error()
+        logger.exception(
+            "assimp failed to load %s (aiGetErrorString=%r)", src_path, detail
+        )
+        raise RuntimeError(
+            f"Assimp failed to load file: {detail or exc}"
+        ) from exc
+    finally:
+        if scene is not None:
+            try:
+                pyassimp.release(scene)
+            except Exception:
+                logger.exception("pyassimp.release raised; ignoring")
+
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        raise RuntimeError("GLB export produced no output")
+    return out_path
+
+
 def preconvert_file(
     src_path: Path,
     bundle_path: Optional[Path],

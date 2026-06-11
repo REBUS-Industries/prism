@@ -1,0 +1,45 @@
+---
+description: Fixture Builder workstream scope, branch, and coordination rules
+alwaysApply: true
+---
+
+# Fixture Builder workstream
+
+Read `.cursor/plans/HANDOFF-fixture-builder.md` before starting work. Git workflow: `.cursor/plans/AGENT-GIT-INSTRUCTIONS.md`.
+
+## Branch and repo
+
+- Repo: `REBUS-Industries/prism` — branch `feat/fixture-builder` only (never commit to `main`)
+- Fixtures API: `REBUS-Industries/prism-fixtures-service` — feature branches off `main`
+- Daily sync: `git fetch origin && git rebase origin/main`
+
+## Owned files (edit freely)
+
+- `web/src/admin/pages/FixtureEditor.vue`, `FixtureGdtfDebug.vue`
+- `web/src/admin/components/FixtureViewer.vue`, `FixturePartProperties.vue`, `FixturePartTree.vue`, `FixtureQuadPreview.vue`, `DatumEditor.vue`, `DmxModePanel.vue`, `IesUploader.vue`
+- `web/src/admin/utils/fixtureAssembly.ts`, `fixtureTransform.ts`
+- `prism-fixtures-service/src/**` when API/import changes are needed
+
+## Do not edit (materials-editor workstream)
+
+- `prism/server/**`, materials editor pages/components
+- `server/src/db/schema.ts` and migrations (open an issue if schema change needed)
+
+## Shared files — coordinate before merge
+
+- `web/src/shared/api.ts` — add types at end of relevant block; announce in team chat
+- `web/src/admin/App.vue` — routes/nav only when necessary; announce first
+
+## Build and deploy (keep UI + API in sync)
+
+- Pre-PR check: `cd web && npm run build`
+- **Web only:** `gh workflow run web-image --repo REBUS-Industries/prism --ref feat/fixture-builder`
+- **prism `server/**` changed** (rare — avoid): also `server-image` on `prism`
+- **Fixtures API changed:** merge `prism-fixtures-service` PR; `fixtures-image` auto-runs on merge to `main`, or manually:
+  `gh workflow run fixtures-image --repo REBUS-Industries/prism-fixtures-service --ref <branch>`
+- Merge via `/prism-merge <PR#>` in #prism-dev; confirm **web-image** and **fixtures-image** deploy-dev completed when both repos changed
+- Dev target: https://prism-dev.rebus.industries
+
+## Commit format
+
+`feat|fix|chore(web): <description>` (fixtures-service: `feat:` / `fix:` without web scope)

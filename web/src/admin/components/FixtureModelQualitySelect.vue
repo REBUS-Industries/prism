@@ -4,16 +4,21 @@ import {
   GDTF_MODEL_QUALITIES,
   GDTF_MODEL_QUALITY_LABELS,
   coerceModelQuality,
+  modelFormatSummary,
   type GdtfModelQuality,
+  type GdtfModelFormat,
 } from '../utils/fixtureModelQuality';
 
 const props = withDefaults(defineProps<{
   modelValue: GdtfModelQuality;
   available?: readonly GdtfModelQuality[] | null;
+  formats?: readonly GdtfModelFormat[] | null;
   label?: string;
   disabled?: boolean;
   loading?: boolean;
 }>(), {
+  available: null,
+  formats: null,
   label: '3D model quality',
   disabled: false,
   loading: false,
@@ -28,9 +33,24 @@ const options = computed(() => {
   return [...GDTF_MODEL_QUALITIES];
 });
 
+// A package that ships a single mesh (very common — e.g. GLP fixtures with one
+// 3DS folder) has nothing to choose between. Show an honest note instead of a
+// picker that implies resolutions the GDTF does not contain.
+const singleMesh = computed(() => !props.loading && !!props.available && props.available.length === 1);
+
+const formatNote = computed(() => modelFormatSummary(props.formats));
+
+const singleMeshMessage = computed(() => {
+  const quality = props.available?.[0];
+  const qualityLabel = quality ? GDTF_MODEL_QUALITY_LABELS[quality] : 'a single mesh';
+  const base = `This GDTF ships one mesh (${qualityLabel}). It does not include high or low resolution variants`;
+  const fmt = formatNote.value ? ` — ${formatNote.value}` : '';
+  return `${base}${fmt}. GDTF-Share's “3D Low/High Resolution” modes are viewer render settings, not separate meshes.`;
+});
+
 const hint = computed(() => {
   if (props.loading) return 'Reading mesh options from GDTF package…';
-  if (props.available?.length) {
+  if (props.available && props.available.length > 1) {
     return 'Options are based on mesh LOD folders shipped in this GDTF file (gltf_high, gltf, gltf_low).';
   }
   return 'GDTF packages may ship high, default, and low glTF meshes. Pick which LOD to import.';
@@ -53,26 +73,34 @@ function onChange(ev: Event): void {
 </script>
 
 <template>
-  <label class="quality-field">
+  <div class="quality-field">
     <span class="quality-label">{{ label }}</span>
-    <select
-      :value="modelValue"
-      :disabled="disabled || loading || options.length === 0"
-      @change="onChange"
-    >
-      <option
-        v-for="q in options"
-        :key="q"
-        :value="q"
-      >
-        {{ GDTF_MODEL_QUALITY_LABELS[q] }}
-      </option>
-    </select>
-    <p v-if="options.length === 0 && !loading" class="muted small quality-hint">
-      No 3D mesh LOD folders found in this GDTF package.
+
+    <p v-if="available && available.length === 0 && !loading" class="muted small quality-hint">
+      No 3D mesh found in this GDTF package.
     </p>
-    <p v-else class="muted small quality-hint">{{ hint }}</p>
-  </label>
+
+    <p v-else-if="singleMesh" class="muted small quality-hint single-mesh">
+      {{ singleMeshMessage }}
+    </p>
+
+    <template v-else>
+      <select
+        :value="modelValue"
+        :disabled="disabled || loading || options.length === 0"
+        @change="onChange"
+      >
+        <option
+          v-for="q in options"
+          :key="q"
+          :value="q"
+        >
+          {{ GDTF_MODEL_QUALITY_LABELS[q] }}
+        </option>
+      </select>
+      <p class="muted small quality-hint">{{ hint }}</p>
+    </template>
+  </div>
 </template>
 
 <style scoped>
