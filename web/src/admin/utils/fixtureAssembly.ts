@@ -296,20 +296,37 @@ export async function buildFixtureAssembly(
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
 
-  // Resolve PAN and TILT motion nodes from the motion rig.
-  // Axes are hardcoded to GDTF convention (local-Z rotation per spec):
-  //   PAN  → {0,0,1} (GDTF Z = vertical, standard for Yoke)
-  //   TILT → {1,0,0} (GDTF X = horizontal in the Yoke's local frame, which
-  //                   automatically tracks pan because Head is a child of Yoke)
+  // Resolve PAN and TILT motion nodes.
+  // Strategy (first match wins):
+  //   1. motionAxes entry with axisType === 'PAN'/'TILT' and a known controlledPartId
+  //      (works for fixtures that name their axes "Pan"/"Tilt" explicitly)
+  //   2. Part-tag fallback: tag === 'YOKE' → PAN, tag === 'HEAD' → TILT
+  //      (covers the common Yoke/Head naming convention used by most GDTF files)
+  // Rotation axes follow GDTF convention:
+  //   PAN  → {0,0,1} (GDTF Z = vertical, standard Yoke pan axis)
+  //   TILT → {1,0,0} (GDTF X = horizontal in the Yoke's local frame; tracks
+  //                   pan automatically because Head is a Three.js child of Yoke)
+  const makeMotionNode = (obj: THREE.Object3D, type: string): MotionNode => ({
+    obj,
+    axis: type === 'PAN' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0),
+    restQuaternion: obj.quaternion.clone(),
+  });
+
   const findMotionNode = (type: string): MotionNode | undefined => {
+    // 1. Explicit motion rig entry
     const entry = input.motionAxes?.find(m => m.axisType === type && m.controlledPartId);
-    if (!entry?.controlledPartId) return undefined;
-    const obj = partGroups.get(entry.controlledPartId);
-    if (!obj) return undefined;
-    const axis = type === 'PAN'
-      ? new THREE.Vector3(0, 0, 1)
-      : new THREE.Vector3(1, 0, 0);
-    return { obj, axis, restQuaternion: obj.quaternion.clone() };
+    if (entry?.controlledPartId) {
+      const obj = partGroups.get(entry.controlledPartId);
+      if (obj) return makeMotionNode(obj, type);
+    }
+    // 2. Tag-based fallback (YOKE = pan, HEAD = tilt)
+    const fallbackTag = type === 'PAN' ? 'YOKE' : 'HEAD';
+    const fallbackPart = parts.find(p => p.tag === fallbackTag);
+    if (fallbackPart) {
+      const obj = partGroups.get(fallbackPart.partId);
+      if (obj) return makeMotionNode(obj, type);
+    }
+    return undefined;
   };
 
   return {
