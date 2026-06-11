@@ -43,6 +43,8 @@ const props = withDefaults(defineProps<{
   lightBackground?: boolean;
   /** Fill parent height (quad/debug panels); omit min-height when true. */
   fill?: boolean;
+  /** Bump to force assembly reload after in-place geometry edits. */
+  assemblyRevision?: number;
 }>(), {
   url: null,
   assembly: null,
@@ -54,6 +56,7 @@ const props = withDefaults(defineProps<{
   interactive: true,
   lightBackground: false,
   fill: false,
+  assemblyRevision: 0,
 });
 
 const emit = defineEmits<{
@@ -401,7 +404,7 @@ const assemblyKey = (): string => {
   return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}`;
 };
 
-watch(() => [props.url, assemblyKey()], () => { void loadContent(); });
+watch(() => [props.url, assemblyKey(), props.assemblyRevision], () => { void loadContent(); });
 watch(() => props.datums, syncDatums, { deep: true });
 watch(() => props.viewPreset, applyCameraPreset);
 watch(() => [props.panDeg, props.tiltDeg], syncMotion);

@@ -8,6 +8,10 @@ import FixtureQuadPreview from '../components/FixtureQuadPreview.vue';
 
 import FixturePartTree from '../components/FixturePartTree.vue';
 
+import FixturePartProperties from '../components/FixturePartProperties.vue';
+
+import FixtureViewer from '../components/FixtureViewer.vue';
+
 import DmxModePanel from '../components/DmxModePanel.vue';
 
 import IesUploader from '../components/IesUploader.vue';
@@ -53,6 +57,8 @@ const error = ref<string | null>(null);
 const saving = ref(false);
 
 const selectedPartId = ref<string | null>(null);
+
+const assemblyRevision = ref(0);
 
 const activeTab = ref<'overview' | 'dmx' | 'parts' | 'ies' | 'settings'>('overview');
 
@@ -317,6 +323,14 @@ function updatePivot(pivot: Vec3): void {
 
 
 
+function onGeometryChange(): void {
+
+  assemblyRevision.value += 1;
+
+}
+
+
+
 async function assignDefaultMaterials(): Promise<void> {
 
   if (!fixture.value) return;
@@ -554,9 +568,9 @@ onMounted(() => {
 
       <div v-else-if="activeTab === 'parts'" class="tab-panel parts-panel">
 
-        <section class="panel-card">
+        <aside class="panel-card parts-tree-card">
 
-          <h2>Part hierarchy</h2>
+          <h2>Geometry</h2>
 
           <FixturePartTree
 
@@ -568,15 +582,67 @@ onMounted(() => {
 
           />
 
+        </aside>
+
+        <section class="panel-card parts-viewport-card">
+
+          <div class="viewport-head">
+
+            <h2>Assembly preview</h2>
+
+            <span v-if="selectedPart" class="muted small">{{ selectedPart.name }}</span>
+
+          </div>
+
+          <div class="parts-viewport">
+
+            <FixtureViewer
+
+              v-if="previewUrl || assembly"
+
+              :url="previewUrl"
+
+              :assembly="assembly"
+
+              :assembly-revision="assemblyRevision"
+
+              :datums="datumMarkers"
+
+              fill
+
+              light-background
+
+              @select-datum="selectedPartId = $event"
+
+            />
+
+            <p v-else class="muted no-preview">No 3D preview available.</p>
+
+          </div>
+
         </section>
 
-        <section class="panel-card">
+        <aside class="panel-card parts-props-card">
 
-          <h2>Pivot / datum</h2>
+          <FixturePartProperties
 
-          <DatumEditor :part="selectedPart" @update="updatePivot" />
+            :part="selectedPart"
 
-        </section>
+            :models="fixture.definition.models"
+
+            @change="onGeometryChange"
+
+          />
+
+          <details class="datum-block">
+
+            <summary>Pivot / datum</summary>
+
+            <DatumEditor :part="selectedPart" @update="updatePivot" />
+
+          </details>
+
+        </aside>
 
       </div>
 
@@ -904,9 +970,99 @@ onMounted(() => {
 
   display: grid;
 
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 220px 1fr 280px;
 
   gap: 16px;
+
+  min-height: 480px;
+
+}
+
+.parts-tree-card,
+
+.parts-props-card {
+
+  overflow-y: auto;
+
+  max-height: calc(100vh - 220px);
+
+}
+
+.parts-viewport-card {
+
+  display: flex;
+
+  flex-direction: column;
+
+  min-height: 0;
+
+}
+
+.viewport-head {
+
+  display: flex;
+
+  align-items: baseline;
+
+  justify-content: space-between;
+
+  gap: 8px;
+
+  margin-bottom: 8px;
+
+}
+
+.viewport-head h2 { margin: 0; }
+
+.parts-viewport {
+
+  flex: 1;
+
+  min-height: 360px;
+
+  border: 1px solid var(--color-border);
+
+  border-radius: var(--radius-sm);
+
+  overflow: hidden;
+
+  contain: strict;
+
+}
+
+.no-preview {
+
+  padding: 24px;
+
+  text-align: center;
+
+}
+
+.datum-block {
+
+  margin-top: 16px;
+
+  padding-top: 12px;
+
+  border-top: 1px solid var(--color-border);
+
+}
+
+.datum-block summary {
+
+  cursor: pointer;
+
+  font-size: 11px;
+
+  font-weight: 700;
+
+  text-transform: uppercase;
+
+  letter-spacing: 0.05em;
+
+  color: var(--color-text-muted);
+
+  margin-bottom: 8px;
 
 }
 
@@ -937,6 +1093,8 @@ onMounted(() => {
 @media (max-width: 960px) {
 
   .overview-panel, .parts-panel { grid-template-columns: 1fr; }
+
+  .parts-tree-card, .parts-props-card { max-height: none; }
 
 }
 
