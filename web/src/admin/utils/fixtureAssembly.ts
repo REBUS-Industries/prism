@@ -13,11 +13,36 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FixturePart, FixtureModel } from '../../shared/api';
 
+/** Minimal motion axis descriptor passed from FixtureDefinition.motionRig. */
+interface MotionAxisRef {
+  axisType: string;
+  controlledPartId?: string | null;
+}
+
 export interface FixtureAssemblyInput {
   parts: FixturePart[];
   models: FixtureModel[];
   /** Resolve a fixture_media id to a same-origin GLB URL. */
   resolveUrl: (mediaId: string) => string;
+  /**
+   * Optional motion rig entries. When provided, buildFixtureAssembly will
+   * return panNode / tiltNode references for FixtureViewer to use instead of
+   * the legacy whole-assembly panGroup/tiltGroup wrappers.
+   */
+  motionAxes?: MotionAxisRef[];
+}
+
+/** A reference to the Three.js object that represents a motion axis node. */
+export interface MotionNode {
+  obj: THREE.Object3D;
+  /**
+   * Rotation axis in the group's parent coordinate space (GDTF Z-up).
+   * PAN = {0,0,1} (GDTF vertical Z); TILT = {1,0,0} (GDTF horizontal X,
+   * which automatically tracks the yoke pan via the parent-child hierarchy).
+   */
+  axis: THREE.Vector3;
+  /** Quaternion at rest pose (before any pan/tilt is applied). */
+  restQuaternion: THREE.Quaternion;
 }
 
 export interface FixtureAssemblyResult {
@@ -30,6 +55,18 @@ export interface FixtureAssemblyResult {
    * (before the root is re-parented into the scene graph).
    */
   box: THREE.Box3;
+  /**
+   * The geometry node that drives pan (typically Yoke). Rotate this around
+   * its axis to pan the fixture; Base stays static.
+   */
+  panNode?: MotionNode;
+  /**
+   * The geometry node that drives tilt (typically Head). Rotate this around
+   * its axis to tilt the fixture; Base and Yoke stay static. The tilt axis
+   * automatically tracks the current pan angle because Head is a child of Yoke
+   * in the Three.js hierarchy.
+   */
+  tiltNode?: MotionNode;
 }
 
 interface ModelDims {
@@ -259,5 +296,27 @@ export async function buildFixtureAssembly(
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
 
-  return { root, meshCount, box };
+  // Resolve PAN and TILT motion nodes from the motion rig.
+  // Axes are hardcoded to GDTF convention (local-Z rotation per spec):
+  //   PAN  → {0,0,1} (GDTF Z = vertical, standard for Yoke)
+  //   TILT → {1,0,0} (GDTF X = horizontal in the Yoke's local frame, which
+  //                   automatically tracks pan because Head is a child of Yoke)
+  const findMotionNode = (type: string): MotionNode | undefined => {
+    const entry = input.motionAxes?.find(m => m.axisType === type && m.controlledPartId);
+    if (!entry?.controlledPartId) return undefined;
+    const obj = partGroups.get(entry.controlledPartId);
+    if (!obj) return undefined;
+    const axis = type === 'PAN'
+      ? new THREE.Vector3(0, 0, 1)
+      : new THREE.Vector3(1, 0, 0);
+    return { obj, axis, restQuaternion: obj.quaternion.clone() };
+  };
+
+  return {
+    root,
+    meshCount,
+    box,
+    panNode: findMotionNode('PAN'),
+    tiltNode: findMotionNode('TILT'),
+  };
 }

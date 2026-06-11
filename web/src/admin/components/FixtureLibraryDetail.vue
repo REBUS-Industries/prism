@@ -70,7 +70,7 @@ const assembly = computed(() => {
   const def = definition.value;
   const id = props.localFixture?.id;
   if (!def || !id || !def.parts?.length) return null;
-  return { fixtureId: id, parts: def.parts, models: def.models ?? [] };
+  return { fixtureId: id, parts: def.parts, models: def.models ?? [], motionAxes: def.motionRig ?? [] };
 });
 
 const wheelRows = computed(() => {

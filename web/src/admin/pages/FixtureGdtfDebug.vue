@@ -39,7 +39,7 @@ const assembly = computed(() => {
   const def = fixture.value?.definition;
   const id = fixture.value?.id;
   if (!def || !id || !def.parts?.length) return null;
-  return { fixtureId: id, parts: def.parts, models: def.models ?? [] };
+  return { fixtureId: id, parts: def.parts, models: def.models ?? [], motionAxes: def.motionRig ?? [] };
 });
 
 const info = computed(() => fixture.value?.definition.fixtureInformation);

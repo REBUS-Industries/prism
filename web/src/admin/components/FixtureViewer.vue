@@ -12,13 +12,19 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
-import { buildFixtureAssembly, disposeAssembly } from '../utils/fixtureAssembly';
-import { fixturesApi, type FixturePart, type FixtureModel } from '../../shared/api';
+import { buildFixtureAssembly, disposeAssembly, type MotionNode } from '../utils/fixtureAssembly';
+import { fixturesApi, type FixturePart, type FixtureModel, type MotionAxis } from '../../shared/api';
 
 interface AssemblyProp {
   fixtureId: string;
   parts: FixturePart[];
   models: FixtureModel[];
+  /**
+   * Motion rig entries used to target pan/tilt rotations at the correct
+   * geometry nodes (Yoke for pan, Head for tilt) rather than wrapping the
+   * whole assembly.
+   */
+  motionAxes?: MotionAxis[];
 }
 
 const props = withDefaults(defineProps<{
@@ -65,6 +71,10 @@ let resizeObs: ResizeObserver | null = null;
 let rafId: number | null = null;
 let panGroup: THREE.Group | null = null;
 let tiltGroup: THREE.Group | null = null;
+/** Pan node from the assembly motion rig (Yoke). Overrides panGroup when set. */
+let panNode: MotionNode | null = null;
+/** Tilt node from the assembly motion rig (Head). Overrides tiltGroup when set. */
+let tiltNode: MotionNode | null = null;
 let loadedRoot: THREE.Object3D | null = null;
 let dirLight: THREE.DirectionalLight | null = null;
 let beamMesh: THREE.Mesh | null = null;
@@ -76,9 +86,12 @@ let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
 
 function clearLoaded(): void {
-  if (loadedRoot && tiltGroup) tiltGroup.remove(loadedRoot);
+  // removeFromParent() works whether the root was added to scene or tiltGroup.
+  loadedRoot?.removeFromParent();
   if (loadedRoot) disposeAssembly(loadedRoot);
   loadedRoot = null;
+  panNode = null;
+  tiltNode = null;
 }
 
 function dispose(): void {
@@ -122,8 +135,29 @@ function applyCameraPreset(): void {
 }
 
 function syncMotion(): void {
-  if (panGroup) panGroup.rotation.y = (props.panDeg * Math.PI) / 180;
-  if (tiltGroup) tiltGroup.rotation.x = (props.tiltDeg * Math.PI) / 180;
+  const panRad = (props.panDeg * Math.PI) / 180;
+  const tiltRad = (props.tiltDeg * Math.PI) / 180;
+
+  if (panNode) {
+    // Rotate the Yoke (or equivalent pan geometry) around GDTF Z (vertical).
+    // Base stays static; Head and Beam follow as children.
+    panNode.obj.quaternion
+      .copy(panNode.restQuaternion)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(panNode.axis, panRad));
+  } else if (panGroup) {
+    panGroup.rotation.y = panRad;
+  }
+
+  if (tiltNode) {
+    // Rotate the Head (or equivalent tilt geometry) around GDTF X (horizontal).
+    // The axis automatically tracks the current pan because Head is a Three.js
+    // child of the Yoke group whose rotation is already applied.
+    tiltNode.obj.quaternion
+      .copy(tiltNode.restQuaternion)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(tiltNode.axis, tiltRad));
+  } else if (tiltGroup) {
+    tiltGroup.rotation.x = tiltRad;
+  }
 }
 
 function syncDimmer(): void {
@@ -215,10 +249,11 @@ async function loadGlb(url: string): Promise<boolean> {
 }
 
 async function loadAssembly(a: AssemblyProp): Promise<boolean> {
-  if (!scene || !tiltGroup || !a.parts?.length) return false;
-  const { root, meshCount, box } = await buildFixtureAssembly({
+  if (!scene || !a.parts?.length) return false;
+  const { root, meshCount, box, panNode: pn, tiltNode: tn } = await buildFixtureAssembly({
     parts: a.parts,
     models: a.models ?? [],
+    motionAxes: a.motionAxes ?? [],
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
   if (meshCount === 0) {
@@ -227,9 +262,11 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   }
   clearLoaded();
   loadedRoot = root;
-  tiltGroup.add(root);
-  // Pass the pre-computed box so frameLoaded doesn't re-run setFromObject
-  // after scene insertion (which risks stale parent matrixWorld values).
+  panNode = pn ?? null;
+  tiltNode = tn ?? null;
+  // Add directly to scene so Base stays static and only Yoke / Head rotate.
+  // The legacy panGroup/tiltGroup remain for single-GLB mode.
+  scene.add(root);
   frameLoaded(box);
   return true;
 }
