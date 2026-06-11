@@ -71,8 +71,12 @@ jobs:
     # Same LAN-local runner as the server deploy (LXC 261, 10.0.200.61);
     # SSH alias `prism-prod` -> rebus@10.0.200.211 is configured under
     # ~runner/.ssh/config.
+    #
+    # PROD GATE: only deploy to VM 211 on a version tag push (`v*`) or an
+    # explicit workflow_dispatch.  Main-branch pushes build + push the image
+    # but must NOT auto-deploy to production.
     runs-on: [self-hosted, prism-deploy]
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
