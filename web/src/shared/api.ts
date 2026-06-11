@@ -1287,9 +1287,10 @@ export const materialsApi = {
   /** Absolute URL for the export ZIP — trigger via <a download> / window.open. */
   downloadUrl: (id: string): string => `/api/materials/${id}/download`,
   /**
-   * Import a Megascans-style ZIP into a new material. The optional `name`
-   * field is appended BEFORE the file part. Reports upload progress (0..1)
-   * via the optional callback. Returns the full detail plus `skipped[]`.
+   * Import a material ZIP (Megascans-style filename channels or a packaged
+   * glTF / GLB). The optional `name` field is appended BEFORE the file part.
+   * Reports upload progress (0..1) via the optional callback. Returns the
+   * full detail plus `skipped[]`.
    */
   import: (file: File, name?: string, onProgress?: (fraction: number) => void) => {
     const fd = new FormData();

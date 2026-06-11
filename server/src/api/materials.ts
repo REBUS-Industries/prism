@@ -7,7 +7,8 @@
  * the `material_textures` join table, so the same texture can back many
  * materials. Materials can be created blank and filled slot-by-slot, exported
  * as a ZIP (texture bodies + a manifest), or created in bulk by importing a
- * Megascans-style ZIP whose entries are matched to slots by filename.
+ * Megascans-style ZIP whose entries are matched to slots by filename, or a
+ * packaged glTF / GLB whose material texture references are mapped to slots.
  *
  * Each material also carries editable PBR `parameters` (base colour,
  * roughness/metallic/opacity, emissive, UV tiling/offset, etc. — see
@@ -25,7 +26,7 @@
  *   PUT    /api/materials/:id/slots/:slot     assign a texture to a slot (write)
  *   DELETE /api/materials/:id/slots/:slot     clear a slot               (write)
  *   GET    /api/materials/:id/download        stream a ZIP of the material
- *   POST   /api/materials/import              Megascans ZIP -> material  (write)
+ *   POST   /api/materials/import              ZIP -> material (Megascans or glTF) (write)
  *
  * Reads require `materials:read`; admin sessions and ORBIT bearers bypass
  * scope checks as usual (see auth/middleware.ts requireScope).
@@ -44,6 +45,7 @@ import { requireAuth, requireScope } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
 import { ALLOWED_SLOTS, detectSlot, imageContentType, isImageFilename, isMaterialSlot } from '../materials/slots.js';
 import { normalizeTextureBody } from '../materials/textureNormalize.js';
+import { parseGltfMaterialZip } from '../materials/gltfImport.js';
 import {
   type MaterialParameters,
   type MaterialParametersPatch,
@@ -509,25 +511,41 @@ const plugin: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid zip archive' });
     }
 
-    // First image entry per slot wins; everything else (non-image, unmatched,
-    // or a duplicate slot) lands in `skipped`.
+    // glTF packages: map material texture references. Otherwise Megascans-style
+    // filename tokens. First image entry per slot wins; everything else lands in
+    // `skipped`.
     const detected = new Map<string, { base: string; contentType: string; data: Buffer }>();
-    const skipped: string[] = [];
-    for (const entry of entries) {
-      if (entry.isDirectory) continue;
-      const base = baseName(entry.entryName);
-      if (!base) continue;
-      const contentType = imageContentType(base);
-      const slot = isImageFilename(base) ? detectSlot(base) : null;
-      if (!contentType || !slot || detected.has(slot)) {
-        skipped.push(base);
-        continue;
+    let skipped: string[] = [];
+    let parametersPatch: MaterialParametersPatch | undefined;
+
+    const gltfImport = parseGltfMaterialZip(entries);
+    if (gltfImport) {
+      for (const slot of ALLOWED_SLOTS) {
+        const tex = gltfImport.slots[slot];
+        if (tex) {
+          detected.set(slot, { base: tex.filename, contentType: tex.contentType, data: tex.data });
+        }
       }
-      detected.set(slot, { base, contentType, data: entry.getData() });
+      skipped = gltfImport.skipped;
+      if (Object.keys(gltfImport.parameters).length) parametersPatch = gltfImport.parameters;
+    } else {
+      for (const entry of entries) {
+        if (entry.isDirectory) continue;
+        const base = baseName(entry.entryName);
+        if (!base) continue;
+        const contentType = imageContentType(base);
+        const slot = isImageFilename(base) ? detectSlot(base) : null;
+        if (!contentType || !slot || detected.has(slot)) {
+          skipped.push(base);
+          continue;
+        }
+        detected.set(slot, { base, contentType, data: entry.getData() });
+      }
     }
 
     const zipBase = (part.filename || '').replace(/\.zip$/i, '');
-    const name = (nameField?.trim() || zipBase || 'Imported material').slice(0, 256);
+    const defaultName = gltfImport?.materialName?.trim() || zipBase || 'Imported material';
+    const name = (nameField?.trim() || defaultName).slice(0, 256);
     const { adminId, apiKeyId } = provenance(req.principal);
 
     const writtenPaths: string[] = [];
@@ -535,42 +553,55 @@ const plugin: FastifyPluginAsync = async (app) => {
       const materialId = await db.transaction(async (tx) => {
         const insertedMaterial = await tx
           .insert(materials)
-          .values({ name, tags: [], createdByAdminId: adminId, createdByApiKeyId: apiKeyId })
+          .values({
+            name,
+            tags: [],
+            ...(parametersPatch ? { parameters: parametersPatch } : {}),
+            createdByAdminId: adminId,
+            createdByApiKeyId: apiKeyId,
+          })
           .returning({ id: materials.id });
         const newMaterialId = insertedMaterial[0]!.id;
 
         let thumbnailTextureId: string | null = null;
+        const textureIdByFilename = new Map<string, string>();
         for (const slot of ALLOWED_SLOTS) {
           const det = detected.get(slot);
           if (!det) continue;
-          let body: Buffer;
-          let storageName: string;
-          let contentType: string;
-          try {
-            const normalized = await normalizeTextureBody(det.data, det.base, det.contentType);
-            body = normalized.data;
-            storageName = normalized.storageFilename;
-            contentType = normalized.contentType;
-          } catch {
-            skipped.push(det.base);
-            continue;
-          }
-          const textureId = randomUUID();
-          const storagePath = resolve(TEXTURES_ROOT, `${textureId}_${sanitiseFilename(storageName)}`);
-          await writeFile(storagePath, body);
-          writtenPaths.push(storagePath);
 
-          await tx.insert(textures).values({
-            id: textureId,
-            originalFilename: det.base.slice(0, 256),
-            displayName: det.base.slice(0, 256),
-            contentType,
-            sizeBytes: body.length,
-            storagePath,
-            tags: [],
-            uploadedByAdminId: adminId,
-            uploadedByApiKeyId: apiKeyId,
-          });
+          let textureId = textureIdByFilename.get(det.base);
+          if (!textureId) {
+            let body: Buffer;
+            let storageName: string;
+            let contentType: string;
+            try {
+              const normalized = await normalizeTextureBody(det.data, det.base, det.contentType);
+              body = normalized.data;
+              storageName = normalized.storageFilename;
+              contentType = normalized.contentType;
+            } catch {
+              skipped.push(det.base);
+              continue;
+            }
+            textureId = randomUUID();
+            const storagePath = resolve(TEXTURES_ROOT, `${textureId}_${sanitiseFilename(storageName)}`);
+            await writeFile(storagePath, body);
+            writtenPaths.push(storagePath);
+
+            await tx.insert(textures).values({
+              id: textureId,
+              originalFilename: det.base.slice(0, 256),
+              displayName: det.base.slice(0, 256),
+              contentType,
+              sizeBytes: body.length,
+              storagePath,
+              tags: [],
+              uploadedByAdminId: adminId,
+              uploadedByApiKeyId: apiKeyId,
+            });
+            textureIdByFilename.set(det.base, textureId);
+          }
+
           await tx.insert(materialTextures).values({ materialId: newMaterialId, slot, textureId });
           if (slot === 'albedo') thumbnailTextureId = textureId;
         }

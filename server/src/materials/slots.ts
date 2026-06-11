@@ -28,12 +28,12 @@ export function isMaterialSlot(value: string): value is MaterialSlot {
 const SLOT_TOKENS: Record<MaterialSlot, readonly string[]> = {
   albedo:       ['_albedo', '_color', '_basecolor', '_diffuse', '_diff', '_col'],
   normal:       ['_normal', '_nrm', '_nor'],
-  roughness:    ['_roughness', '_rough', '_rgh'],
+  roughness:    ['_roughness', '_rough', '_rgh', '_gloss'],
   metallic:     ['_metallic', '_metalness', '_metal'],
-  ao:           ['_ao', '_ambientocclusion', '_occlusion'],
+  ao:           ['_ao', '_ambientocclusion', '_occlusion', '_cavity'],
   emissive:     ['_emissive', '_emission', '_emi'],
   opacity:      ['_opacity', '_alpha', '_mask'],
-  displacement: ['_displacement', '_height', '_disp'],
+  displacement: ['_displacement', '_height', '_disp', '_bump'],
 };
 
 /** Filename tokens for a slot — used by texture-library filtering. */

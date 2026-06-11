@@ -32,6 +32,9 @@ describe('detectSlot', () => {
       ['leaf_alpha.png', 'opacity'],
       ['terrain_Displacement.exr', 'displacement'],
       ['terrain_height.png', 'displacement'],
+      ['rock_Bump.jpg', 'displacement'],
+      ['fabric_Cavity.jpg', 'ao'],
+      ['metal_Gloss.jpg', 'roughness'],
       ['ROCK_NORMAL.PNG', 'normal'],
     ];
     for (const [filename, slot] of cases) {
