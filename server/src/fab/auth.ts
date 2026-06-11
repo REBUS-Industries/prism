@@ -47,20 +47,22 @@ interface TokenResponse {
 
 let cachedAccessToken: string | null = null;
 let cachedRefreshToken: string | null = process.env.FAB_EPIC_REFRESH_TOKEN?.trim() || null;
+let cachedHttpProxy: string | null = process.env.FAB_HTTP_PROXY?.trim() || null;
 let tokenExpiresAt = 0;
 
 /** In-memory cookie jar keyed by hostname. */
 const cookieJar = new Map<string, Map<string, string>>();
 
-function fabDispatcher(): Dispatcher {
-  const proxy = process.env.FAB_HTTP_PROXY?.trim();
-  if (proxy) {
-    return new ProxyAgent(proxy);
-  }
-  return new Agent({ connect: { timeout: 30_000 } });
-}
+let fabAgent: Dispatcher | null = null;
+let fabAgentProxy: string | null | undefined = undefined;
 
-const fabAgent = fabDispatcher();
+function fabDispatcher(): Dispatcher {
+  const proxy = cachedHttpProxy?.trim() || null;
+  if (fabAgent && fabAgentProxy === proxy) return fabAgent;
+  fabAgentProxy = proxy;
+  fabAgent = proxy ? new ProxyAgent(proxy) : new Agent({ connect: { timeout: 30_000 } });
+  return fabAgent;
+}
 
 function hostnameFromUrl(url: string): string {
   return new URL(url).hostname;
@@ -111,7 +113,7 @@ async function fabUndiciFetch(url: string, init: RequestInit = {}): Promise<Resp
   const res = await undiciFetch(url, {
     ...init,
     headers,
-    dispatcher: fabAgent,
+    dispatcher: fabDispatcher(),
   });
 
   storeResponseCookies(url, res.headers);
@@ -120,6 +122,23 @@ async function fabUndiciFetch(url: string, init: RequestInit = {}): Promise<Resp
 
 export function fabAuthConfigured(): boolean {
   return !!cachedRefreshToken;
+}
+
+/** Apply Fab runtime config from DB settings (overrides env when loaded). */
+export function applyFabRuntimeConfig(config: {
+  refreshToken?: string | null;
+  httpProxy?: string | null;
+}): void {
+  if (config.refreshToken !== undefined) {
+    cachedRefreshToken = config.refreshToken?.trim() || null;
+    cachedAccessToken = null;
+    tokenExpiresAt = 0;
+  }
+  if (config.httpProxy !== undefined) {
+    cachedHttpProxy = config.httpProxy?.trim() || null;
+    fabAgent = null;
+    fabAgentProxy = undefined;
+  }
 }
 
 export function setFabRefreshTokenForTests(token: string | null): void {
@@ -142,7 +161,7 @@ async function exchangeToken(params: Record<string, string>): Promise<TokenRespo
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: body.toString(),
-    dispatcher: fabAgent,
+    dispatcher: fabDispatcher(),
   });
   const json = await res.json() as TokenResponse;
   if (!res.ok || json.error) {

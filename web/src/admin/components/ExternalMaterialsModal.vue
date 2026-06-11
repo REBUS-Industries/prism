@@ -54,7 +54,7 @@ const fabImportConfigured = computed(() => {
 
 const fabImportBlockedReason = computed(() => {
   if (fabImportConfigured.value) return '';
-  return 'Fab import needs FAB_EPIC_REFRESH_TOKEN on the server (see infra/.env.example). Search and preview still work.';
+  return 'Fab import needs an Epic refresh token (Admin → Settings → External materials). Search and preview still work.';
 });
 
 const importDisabled = computed(() =>
@@ -229,9 +229,11 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
                 <span v-for="tag in detail.tags.slice(0, 12)" :key="tag" class="pill tag">{{ tag }}</span>
               </div>
               <p v-if="!fabImportConfigured" class="warn small">
-                Fab import is not configured on this server.
-                Set <code>FAB_EPIC_REFRESH_TOKEN</code> in the server environment
-                (see <code>infra/.env.example</code>). Search and preview still work.
+                Fab import is not configured.
+                Set an Epic refresh token under
+                <strong>Admin → Settings → External materials</strong>
+                (or <code>FAB_EPIC_REFRESH_TOKEN</code> in the server environment).
+                Search and preview still work.
               </p>
             </template>
             <div v-if="importError" class="error-box mt-sm">{{ importError }}</div>

@@ -4,12 +4,17 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { getAllSettings, getSetting, setSetting, type SettingKey } from '../db/settings.js';
+import {
+  loadExternalMaterialsSettingsPublic,
+  patchExternalMaterialsSettings,
+} from '../settings/externalMaterials.js';
 import { requireAdmin } from '../auth/middleware.js';
 
 const SECRET_KEYS = new Set<SettingKey>([
   'orbit_token',
   'orbit_dev_token',
   'gdtf_share_password',
+  'fab_epic_refresh_token',
 ]);
 
 const plugin: FastifyPluginAsync = async (app) => {
@@ -23,6 +28,29 @@ const plugin: FastifyPluginAsync = async (app) => {
       out[k] = SECRET_KEYS.has(k as SettingKey) ? mask(v) : v;
     }
     return { settings: out };
+  });
+
+  const externalMaterialsPatchSchema = z.object({
+    fab: z.object({
+      enabled: z.boolean().optional(),
+      epicRefreshToken: z.string().optional(),
+      httpProxy: z.string().optional(),
+    }).optional(),
+    polyhaven: z.object({ enabled: z.boolean().optional() }).optional(),
+    ambientcg: z.object({ enabled: z.boolean().optional() }).optional(),
+  });
+
+  // GET /api/settings/external-materials — structured provider config (secrets masked)
+  app.get('/external-materials', async () => {
+    return { settings: await loadExternalMaterialsSettingsPublic() };
+  });
+
+  // PATCH /api/settings/external-materials
+  app.patch('/external-materials', async (req, reply) => {
+    const body = externalMaterialsPatchSchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid body', details: body.error.flatten() });
+    const settings = await patchExternalMaterialsSettings(body.data);
+    return { ok: true, settings };
   });
 
   // GET /api/settings/:key

@@ -479,6 +479,34 @@ export const settingsApi = {
   set:  (key: string, value: string) => api.put<{ ok: true }>(`/api/settings/${encodeURIComponent(key)}`, { value }),
 };
 
+export interface ExternalMaterialsSettings {
+  fab: {
+    enabled: boolean;
+    httpProxy: string;
+    tokenConfigured: boolean;
+    tokenPreview: string | null;
+    tokenSource: 'db' | 'env' | 'none';
+  };
+  polyhaven: { enabled: boolean };
+  ambientcg: { enabled: boolean };
+}
+
+export interface ExternalMaterialsSettingsPatch {
+  fab?: {
+    enabled?: boolean;
+    epicRefreshToken?: string;
+    httpProxy?: string;
+  };
+  polyhaven?: { enabled?: boolean };
+  ambientcg?: { enabled?: boolean };
+}
+
+export const externalMaterialsSettingsApi = {
+  get: () => api.get<{ settings: ExternalMaterialsSettings }>('/api/settings/external-materials'),
+  patch: (body: ExternalMaterialsSettingsPatch) =>
+    api.patch<{ ok: true; settings: ExternalMaterialsSettings }>('/api/settings/external-materials', body),
+};
+
 export interface ServerHealth {
   status: string;
   service: string;
