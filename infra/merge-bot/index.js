@@ -89,18 +89,35 @@ async function mergePR(repo, prNumber) {
   return { ok: res.ok, status: res.status, message: body.message ?? '' };
 }
 
-async function pollWorkflow(repo, afterIso, maxMinutes = 12) {
+async function pollDeploys(repo, afterIso, maxMinutes = 12) {
+  const WATCH = new Set(['web-image', 'server-image']);
   const deadline = Date.now() + maxMinutes * 60_000;
+
   while (Date.now() < deadline) {
     await sleep(15_000);
-    const res = await GH(`/repos/${repo}/actions/runs?per_page=10&branch=main`);
+    const res = await GH(`/repos/${repo}/actions/runs?per_page=30&branch=main`);
     if (!res.ok) continue;
     const { workflow_runs: runs } = await res.json();
-    const run = runs.find(r => r.created_at >= afterIso);
-    if (!run) continue;
-    if (run.status === 'completed') return { conclusion: run.conclusion, url: run.html_url };
+    const recent = runs.filter(r => r.created_at >= afterIso && WATCH.has(r.name));
+    if (recent.length === 0) continue;
+
+    const pending = recent.filter(r => r.status !== 'completed');
+    if (pending.length > 0) continue;
+
+    // Keep the latest run per workflow — a merge may trigger both web-image
+    // and server-image; don't report success until every triggered deploy finishes.
+    const latestByName = new Map();
+    for (const r of recent) latestByName.set(r.name, r);
+    const latest = [...latestByName.values()];
+    const anyFailed = latest.some(r => r.conclusion !== 'success');
+    const detail = latest.map(r => `${r.name}=${r.conclusion}`).join(', ');
+    return {
+      conclusion: anyFailed ? 'failure' : 'success',
+      url: latest.find(r => r.conclusion !== 'success')?.html_url ?? latest[0]?.html_url ?? null,
+      detail,
+    };
   }
-  return { conclusion: 'timeout', url: null };
+  return { conclusion: 'timeout', url: null, detail: '' };
 }
 
 // ─── Text argument parser ─────────────────────────────────────────────────────
@@ -251,9 +268,10 @@ async function doMerge(repo, prNumber, userName, channelId) {
       return;
     }
     await postToSlack(channelId, `:twisted_rightwards_arrows: ${label} merged by ${userName} — waiting for CI deploy…`);
-    const result = await pollWorkflow(repo, startIso);
+    const result = await pollDeploys(repo, startIso);
     if (result.conclusion === 'success') {
-      await postToSlack(channelId, `:white_check_mark: *${label} is deployed.* <${result.url}|View CI run>`);
+      const detail = result.detail ? ` (${result.detail})` : '';
+      await postToSlack(channelId, `:white_check_mark: *${label} is deployed.*${detail} <${result.url}|View CI run>`);
     } else if (result.conclusion === 'timeout') {
       await postToSlack(channelId, `:warning: ${label} merged but CI timed out — check <https://github.com/${repo}/actions|GitHub Actions> manually.`);
     } else {
