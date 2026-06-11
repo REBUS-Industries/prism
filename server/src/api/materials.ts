@@ -105,6 +105,23 @@ function provenance(principal: Principal | undefined) {
   };
 }
 
+/**
+ * Append 'external-edited' to the material's tags if it was imported from an
+ * external provider (has 'external-import' tag) but has not yet been marked
+ * edited. Called whenever a slot or parameter is changed after initial import.
+ * No-op for non-external materials; idempotent if already tagged.
+ */
+async function maybeMarkExternalEdited(materialId: string): Promise<void> {
+  await db.execute(sql`
+    UPDATE ${materials}
+    SET tags = tags || ARRAY['external-edited']::text[]
+    WHERE id = ${materialId}
+      AND tags @> ARRAY['external-import']::text[]
+      AND NOT tags @> ARRAY['external-edited']::text[]
+      AND deleted_at IS NULL
+  `);
+}
+
 const slotsFilledSql = sql<number>`(
   select count(*)::int from ${materialTextures} mt where mt.material_id = ${materials.id}
 )`;
@@ -238,6 +255,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       .where(and(eq(materials.id, parsedId.data.id), isNull(materials.deletedAt)))
       .returning({ id: materials.id });
     if (!updated[0]) return reply.code(404).send({ error: 'not found' });
+    await maybeMarkExternalEdited(parsedId.data.id);
     return reply.send(await loadMaterialDetail(parsedId.data.id));
   });
 
@@ -292,6 +310,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       .set({ updatedAt: new Date(), ...(slot === 'albedo' ? { thumbnailTextureId: parsed.data.textureId } : {}) })
       .where(eq(materials.id, parsedId.data.id));
 
+    await maybeMarkExternalEdited(parsedId.data.id);
     return reply.send(await loadMaterialDetail(parsedId.data.id));
   });
 
@@ -321,6 +340,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       .set({ updatedAt: new Date(), ...(slot === 'albedo' ? { thumbnailTextureId: null } : {}) })
       .where(eq(materials.id, parsedId.data.id));
 
+    await maybeMarkExternalEdited(parsedId.data.id);
     return reply.send(await loadMaterialDetail(parsedId.data.id));
   });
 
