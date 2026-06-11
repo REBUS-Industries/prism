@@ -3,14 +3,15 @@
  * Reusable texture-library picker. Opens as an overlay; the parent controls
  * visibility via `open` and listens for `select` (a chosen / freshly-uploaded
  * texture) and `close`. Search is debounced into `?q=`, tag pills map to
- * `?tags=`, and "Upload New" multipart-POSTs to /api/textures then emits the
- * created row straight back so the caller can assign it without a round-trip.
+ * `?tags=`, and an optional `slot` prop enables suffix filtering (`?slot=`)
+ * so only textures whose filename matches that PBR channel are listed.
+ * "Upload New" multipart-POSTs to /api/textures then emits the created row
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { texturesApi, type ApiError, type Texture } from '../../shared/api';
+import { texturesApi, SLOT_LABELS, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
-const props = defineProps<{ open: boolean }>();
+const props = defineProps<{ open: boolean; slot?: MaterialSlot }>();
 const emit = defineEmits<{ select: [texture: Texture]; close: [] }>();
 
 const PAGE = 24;
@@ -22,10 +23,31 @@ const nextCursor = ref<string | null>(null);
 
 const search = ref('');
 const activeTags = ref<string[]>([]);
+const slotFilterEnabled = ref(true);
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const uploading = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
+
+const slotFilterLabel = computed(() =>
+  props.slot ? SLOT_LABELS[props.slot] : null,
+);
+
+/** Short suffix examples shown beside the slot filter toggle. */
+const SLOT_SUFFIX_HINTS: Record<MaterialSlot, string> = {
+  albedo:       '_albedo, _color, _basecolor…',
+  normal:       '_normal, _nrm, _nor',
+  roughness:    '_roughness, _rough, _rgh',
+  metallic:     '_metallic, _metalness, _metal',
+  ao:           '_ao, _ambientocclusion…',
+  emissive:     '_emissive, _emission, _emi',
+  opacity:      '_opacity, _alpha, _mask',
+  displacement: '_displacement, _height, _disp',
+};
+
+function slotSuffixHint(slot: MaterialSlot): string {
+  return SLOT_SUFFIX_HINTS[slot];
+}
 
 const availableTags = computed<string[]>(() => {
   const set = new Set<string>();
@@ -46,6 +68,7 @@ async function load(reset = true): Promise<void> {
     const res = await texturesApi.list({
       q: search.value || undefined,
       tags: activeTags.value.length ? activeTags.value : undefined,
+      slot: props.slot && slotFilterEnabled.value ? props.slot : undefined,
       limit: PAGE,
       cursor: reset ? undefined : nextCursor.value,
     });
@@ -93,10 +116,15 @@ async function onFileChosen(ev: Event): Promise<void> {
   }
 }
 
+function onSlotFilterChange(): void {
+  void load(true);
+}
+
 watch(() => props.open, (o) => {
   if (!o) return;
   search.value = '';
   activeTags.value = [];
+  slotFilterEnabled.value = true;
   nextCursor.value = null;
   void load(true);
 });
@@ -131,6 +159,20 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
           style="display: none;"
           @change="onFileChosen"
         />
+      </div>
+
+      <div v-if="slot" class="slot-filter-row">
+        <label class="slot-filter-toggle">
+          <input
+            v-model="slotFilterEnabled"
+            type="checkbox"
+            @change="onSlotFilterChange"
+          />
+          Match {{ slotFilterLabel }} suffixes
+        </label>
+        <span v-if="slotFilterEnabled" class="slot-filter-hint subtle">
+          e.g. {{ slotSuffixHint(slot) }}
+        </span>
       </div>
 
       <div v-if="availableTags.length" class="tag-row">
@@ -191,6 +233,26 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .picker-head { display: flex; align-items: center; justify-content: space-between; }
 .picker-head h2 { font-size: 16px; margin: 0; }
 .picker-toolbar { display: flex; align-items: center; gap: 8px; }
+.slot-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+}
+.slot-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.slot-filter-toggle input { width: 14px; height: 14px; cursor: pointer; }
+.slot-filter-hint { font-size: 11px; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag-pill {
   padding: 2px 10px; font-size: 11px; border-radius: 999px;

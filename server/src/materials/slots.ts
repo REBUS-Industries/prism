@@ -36,6 +36,17 @@ const SLOT_TOKENS: Record<MaterialSlot, readonly string[]> = {
   displacement: ['_displacement', '_height', '_disp'],
 };
 
+/** Filename tokens for a slot — used by texture-library filtering. */
+export function slotFilenameTokens(slot: MaterialSlot): readonly string[] {
+  return SLOT_TOKENS[slot];
+}
+
+/** True when `filename` contains any suffix token for `slot` (case-insensitive). */
+export function textureMatchesSlot(filename: string, slot: MaterialSlot): boolean {
+  const lower = filename.toLowerCase();
+  return SLOT_TOKENS[slot].some((token) => lower.includes(token));
+}
+
 /** Detect the PBR slot for a texture filename, or null if none matches. */
 export function detectSlot(filename: string): MaterialSlot | null {
   const lower = filename.toLowerCase();

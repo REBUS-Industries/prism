@@ -33,6 +33,7 @@ import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
+import { isMaterialSlot, slotFilenameTokens } from '../materials/slots.js';
 
 const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/prism';
 const TEXTURES_ROOT = resolve(DATA_DIR, 'textures');
@@ -143,13 +144,14 @@ const plugin: FastifyPluginAsync = async (app) => {
   await mkdir(TEXTURES_ROOT, { recursive: true }).catch(() => { /* race-tolerant */ });
 
   /* ---------- GET /api/textures ---------- */
-  app.get<{ Querystring: { q?: string; tags?: string; cursor?: string; limit?: string } }>('/', {
+  app.get<{ Querystring: { q?: string; tags?: string; slot?: string; cursor?: string; limit?: string } }>('/', {
     preHandler: [requireAuth, requireScope('materials:read')],
   }, async (req) => {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 100);
     const offset = Math.max(Number(req.query.cursor ?? 0), 0);
     const q = (req.query.q ?? '').trim();
     const tags = (req.query.tags ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+    const slot = (req.query.slot ?? '').trim();
 
     const conditions = [isNull(textures.deletedAt)];
     if (q) {
@@ -157,6 +159,14 @@ const plugin: FastifyPluginAsync = async (app) => {
     }
     if (tags.length) {
       conditions.push(sql`${textures.tags} && ARRAY[${sql.join(tags.map((t) => sql`${t}`), sql`, `)}]::text[]`);
+    }
+    if (slot && isMaterialSlot(slot)) {
+      const tokens = slotFilenameTokens(slot);
+      const tokenConds = tokens.flatMap((token) => [
+        sql`position(${token} in lower(${textures.originalFilename})) > 0`,
+        sql`position(${token} in lower(${textures.displayName})) > 0`,
+      ]);
+      if (tokenConds.length) conditions.push(or(...tokenConds)!);
     }
 
     const rows = await db
