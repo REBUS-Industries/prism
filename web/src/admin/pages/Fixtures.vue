@@ -9,6 +9,7 @@ import FixtureDownloadModal from '../components/FixtureDownloadModal.vue';
 import Icon from '../../shared/Icon.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
+import type { GdtfModelQuality } from '../utils/fixtureModelQuality';
 
 import {
 
@@ -598,7 +599,7 @@ function requestImport(): void {
   showDownloadModal.value = true;
 }
 
-async function confirmDownload(fixtureType: string): Promise<void> {
+async function confirmDownload(fixtureType: string, modelQuality: GdtfModelQuality): Promise<void> {
   const entry = selectedShare.value;
   if (!entry) return;
   const rid = selectedShareRid.value ?? entry.versions[0]?.rid;
@@ -608,7 +609,11 @@ async function confirmDownload(fixtureType: string): Promise<void> {
   error.value = null;
   pendingFixtureType.value = fixtureType;
   try {
-    const res = await fixturesApi.importGdtfShare(rid, `${entry.manufacturer} ${entry.fixture}`);
+    const res = await fixturesApi.importGdtfShare(
+      rid,
+      `${entry.manufacturer} ${entry.fixture}`,
+      modelQuality,
+    );
     const tagged = await fixturesApi.update(res.fixture.id, {
       tags: tagsWithFixtureCategory(res.fixture.tags, fixtureType, fixtureTypesStore.assignableLabels),
     });

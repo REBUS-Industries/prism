@@ -20,7 +20,16 @@ import IesUploader from '../components/IesUploader.vue';
 
 import DatumEditor from '../components/DatumEditor.vue';
 
+import FixtureModelQualitySelect from '../components/FixtureModelQualitySelect.vue';
+
 import Icon from '../../shared/Icon.vue';
+
+import {
+  DEFAULT_GDTF_MODEL_QUALITY,
+  GDTF_MODEL_QUALITY_LABELS,
+  modelQualityFromDefinition,
+  type GdtfModelQuality,
+} from '../utils/fixtureModelQuality';
 
 import {
 
@@ -86,6 +95,10 @@ const switchingVersion = ref(false);
 
 const carryReport = ref<string[]>([]);
 
+const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
+
+const reimportingMeshes = ref(false);
+
 
 
 const previewUrl = computed(() =>
@@ -150,7 +163,10 @@ async function applyLatestUpdate(): Promise<void> {
   applyingUpdate.value = true;
   carryReport.value = [];
   try {
-    const res = await fixturesApi.downloadVersion(props.id, updateCheck.value.latestRid, true);
+    const res = await fixturesApi.downloadVersion(props.id, updateCheck.value.latestRid, {
+      carryEdits: true,
+      modelQuality: modelQuality.value,
+    });
     carryReport.value = [
       ...res.report.applied.map((a) => `Applied: ${a}`),
       ...res.report.unmapped.map((u) => `Unmapped: ${u}`),
@@ -162,12 +178,34 @@ async function applyLatestUpdate(): Promise<void> {
   }
 }
 
+async function applyModelQuality(): Promise<void> {
+  if (!fixture.value) return;
+  const stored = modelQualityFromDefinition(fixture.value.definition.metadata);
+  if (stored === modelQuality.value) return;
+
+  reimportingMeshes.value = true;
+  error.value = null;
+  try {
+    const res = await fixturesApi.reimportMeshes(props.id, modelQuality.value);
+    fixture.value = res.fixture;
+    assemblyRevision.value += 1;
+    await reload();
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'mesh reimport failed';
+  } finally {
+    reimportingMeshes.value = false;
+  }
+}
+
 async function onSwitchStoredVersion(versionId: string): Promise<void> {
   switchingVersion.value = true;
   carryReport.value = [];
   try {
     const res = await fixturesApi.switchActiveVersion(props.id, versionId);
     fixture.value = res.fixture;
+    modelQuality.value = modelQualityFromDefinition(res.fixture.definition.metadata)
+      ?? DEFAULT_GDTF_MODEL_QUALITY;
+    assemblyRevision.value += 1;
     carryReport.value = [
       ...res.report.applied.map((a) => `Applied: ${a}`),
       ...res.report.unmapped.map((u) => `Unmapped: ${u}`),
@@ -256,6 +294,9 @@ async function reload(): Promise<void> {
     tags.value = res.fixture.tags.join(', ');
 
     status.value = res.fixture.status;
+
+    modelQuality.value = modelQualityFromDefinition(res.fixture.definition.metadata)
+      ?? DEFAULT_GDTF_MODEL_QUALITY;
 
     if (!selectedPartId.value && res.fixture.definition.parts[0]) {
 
@@ -752,6 +793,24 @@ onMounted(() => {
 
           <button class="mt-sm" @click="assignDefaultMaterials">Assign default materials to empty parts</button>
 
+        </section>
+
+        <section class="panel-card settings-card">
+          <h2>3D models</h2>
+          <p v-if="modelQualityFromDefinition(fixture?.definition.metadata)" class="muted small">
+            Current import: {{ GDTF_MODEL_QUALITY_LABELS[modelQualityFromDefinition(fixture!.definition.metadata)!] }}
+          </p>
+          <FixtureModelQualitySelect v-model="modelQuality" :disabled="reimportingMeshes" />
+          <button
+            class="mt-sm"
+            :disabled="reimportingMeshes || modelQualityFromDefinition(fixture?.definition.metadata) === modelQuality"
+            @click="applyModelQuality"
+          >
+            {{ reimportingMeshes ? 'Re-importing meshes…' : 'Apply model quality' }}
+          </button>
+          <p class="muted small">
+            Re-selects glTF meshes from the stored GDTF package. Part transforms and edits are kept.
+          </p>
         </section>
 
       </div>

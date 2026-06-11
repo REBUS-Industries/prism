@@ -159,7 +159,7 @@ async function updateFixtureBeforeUpload(fixtureTypeId: string): Promise<void> {
   updatingFixtureId.value = fixtureTypeId;
   error.value = null;
   try {
-    await fixturesApi.downloadVersion(fixtureTypeId, check.latestRid, true);
+    await fixturesApi.downloadVersion(fixtureTypeId, check.latestRid, { carryEdits: true });
     const res = await fixturesApi.checkUpdates(fixtureTypeId);
     fixtureUpdates.value = { ...fixtureUpdates.value, [fixtureTypeId]: res.check };
     resolveNotes.value.push(`Updated fixture ${fixtureTypeId} to ${check.latestRevision ?? 'latest'}`);

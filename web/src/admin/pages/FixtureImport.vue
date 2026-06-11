@@ -2,14 +2,17 @@
 import { ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import GdtfShareSearch from '../components/GdtfShareSearch.vue';
+import FixtureModelQualitySelect from '../components/FixtureModelQualitySelect.vue';
 import { fixturesApi, type ApiError } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
+import { DEFAULT_GDTF_MODEL_QUALITY, type GdtfModelQuality } from '../utils/fixtureModelQuality';
 
 const router = useRouter();
 const fileInput = ref<HTMLInputElement | null>(null);
 const importing = ref(false);
 const error = ref<string | null>(null);
 const name = ref('');
+const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
 
 async function onFile(ev: Event): Promise<void> {
   const file = (ev.target as HTMLInputElement).files?.[0];
@@ -17,7 +20,10 @@ async function onFile(ev: Event): Promise<void> {
   importing.value = true;
   error.value = null;
   try {
-    const res = await fixturesApi.importGdtf(file, name.value || undefined);
+    const res = await fixturesApi.importGdtf(file, {
+      name: name.value || undefined,
+      modelQuality: modelQuality.value,
+    });
     void router.push({ name: 'fixture-editor', params: { id: res.fixture.id } });
   } catch (err) {
     error.value = (err as ApiError).message ?? 'import failed';
@@ -42,6 +48,7 @@ function onImported(id: string): void {
     <h2>Upload .gdtf file</h2>
     <label class="muted small">Optional display name</label>
     <input v-model="name" placeholder="Override name" />
+    <FixtureModelQualitySelect v-model="modelQuality" class="mt-sm" />
     <button class="mt-sm" :disabled="importing" @click="fileInput?.click()">
       <Icon name="upload_file" :size="16" />{{ importing ? 'Importing…' : 'Choose .gdtf file' }}
     </button>
