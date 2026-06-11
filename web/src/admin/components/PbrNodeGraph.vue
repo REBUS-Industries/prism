@@ -218,7 +218,6 @@ const layout = computed<{ ys: number[]; total: number }>(() => {
 // ---------------------------------------------------------------------------
 const PARAM_NODE_X = OUTPUT_X + 260;
 const PARAM_NODE_STEP = 260;
-const BASE_NODE_H = 340;
 
 const nodes = computed<Node[]>(() => {
   const texNodes: Node[] = MATERIAL_SLOTS.map((slot, i) => {
@@ -246,23 +245,9 @@ const nodes = computed<Node[]>(() => {
     targetPosition: Position.Left,
   };
 
-  const baseNodeId = 'param-base';
-  const baseNode: Node = {
-    id: baseNodeId,
-    type: 'param',
-    position: customPositions.value[baseNodeId] ?? { x: PARAM_NODE_X, y: 0 },
-    data: {
-      paramType: 'base',
-      parameters: props.parameters,
-      onParamChange,
-    },
-    draggable: true,
-    sourcePosition: Position.Left,
-  };
-
   const paramNodes: Node[] = props.parameters.activeExtensions.map((paramType, i) => {
     const nodeId = `param-${paramType}`;
-    const defaultPos = { x: PARAM_NODE_X, y: BASE_NODE_H + i * PARAM_NODE_STEP };
+    const defaultPos = { x: PARAM_NODE_X, y: i * PARAM_NODE_STEP };
     return {
       id: nodeId,
       type: 'param',
@@ -278,7 +263,7 @@ const nodes = computed<Node[]>(() => {
     } satisfies Node;
   });
 
-  return [...texNodes, outputNode, baseNode, ...paramNodes];
+  return [...texNodes, outputNode, ...paramNodes];
 });
 
 const edges = computed<Edge[]>(() => {
@@ -302,23 +287,6 @@ const edges = computed<Edge[]>(() => {
     } satisfies Edge;
   });
 
-  const baseEdge: Edge = {
-    id: 'e-param-base',
-    source: 'param-base',
-    target: 'material',
-    targetHandle: 'param',
-    type: 'smoothstep',
-    animated: true,
-    style: {
-      stroke: 'var(--orbit-primary)',
-      strokeWidth: 2,
-    },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: 'var(--orbit-primary)',
-    },
-  };
-
   const paramEdges: Edge[] = props.parameters.activeExtensions.map((paramType) => ({
     id: `e-param-${paramType}`,
     source: `param-${paramType}`,
@@ -336,7 +304,7 @@ const edges = computed<Edge[]>(() => {
     },
   }));
 
-  return [...texEdges, baseEdge, ...paramEdges];
+  return [...texEdges, ...paramEdges];
 });
 
 function onAssign(slot: MaterialSlot, texture: Texture): void {
