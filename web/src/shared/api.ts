@@ -1411,6 +1411,8 @@ export interface ExternalMaterialsSearchPage {
   sources: ExternalMaterialSource[];
   providerLabels: Record<string, string>;
   configuredSources: ExternalMaterialSource[];
+  /** Per-provider search failures — partial results may still be present. */
+  providerErrors?: Partial<Record<ExternalMaterialSource, string>>;
 }
 
 export interface ExternalMaterialImportResult extends MaterialDetail {

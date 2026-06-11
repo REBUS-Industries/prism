@@ -1,5 +1,5 @@
 /**
- * Epic Games OAuth session for authenticated Fab download endpoints.
+ * Epic Games OAuth session + Fab HTTP client for authenticated download endpoints.
  *
  * Fab import requires an Epic account that owns (or can acquire free) the
  * target material. Configure a long-lived refresh token on the server:
@@ -10,14 +10,31 @@
  * (launcher public client `34a02cf8f4414e29b15921876da36f9a`). The server
  * refreshes access tokens automatically and never exposes credentials to the
  * browser.
+ *
+ * Fab search/detail use a cookie-aware undici client with browser-like headers
+ * to avoid Cloudflare bot challenges. When FAB_EPIC_REFRESH_TOKEN is set, those
+ * calls also send the Epic bearer token.
  */
-import { Agent, fetch as undiciFetch } from 'undici';
+import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
 const EPIC_TOKEN_URL = 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token';
 const EPIC_CLIENT_ID = process.env.FAB_EPIC_CLIENT_ID ?? '34a02cf8f4414e29b15921876da36f9a';
 const EPIC_CLIENT_SECRET = process.env.FAB_EPIC_CLIENT_SECRET ?? 'daafbccc737745039dffe53d94fc76cf';
 
-const USER_AGENT = 'UELauncher/17.0.1-37584233+++Portal+Release-Live Windows/10.0.19043.1.0.64bit';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+const FAB_BROWSER_HEADERS: Record<string, string> = {
+  'User-Agent': USER_AGENT,
+  Accept: 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Sec-Fetch-Dest': 'empty',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Site': 'same-origin',
+  'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+  'Sec-Ch-Ua-Mobile': '?0',
+  'Sec-Ch-Ua-Platform': '"Windows"',
+};
 
 interface TokenResponse {
   access_token?: string;
@@ -32,6 +49,75 @@ let cachedAccessToken: string | null = null;
 let cachedRefreshToken: string | null = process.env.FAB_EPIC_REFRESH_TOKEN?.trim() || null;
 let tokenExpiresAt = 0;
 
+/** In-memory cookie jar keyed by hostname. */
+const cookieJar = new Map<string, Map<string, string>>();
+
+function fabDispatcher(): Dispatcher {
+  const proxy = process.env.FAB_HTTP_PROXY?.trim();
+  if (proxy) {
+    return new ProxyAgent(proxy);
+  }
+  return new Agent({ connect: { timeout: 30_000 } });
+}
+
+const fabAgent = fabDispatcher();
+
+function hostnameFromUrl(url: string): string {
+  return new URL(url).hostname;
+}
+
+function parseSetCookie(header: string, hostname: string): void {
+  const part = header.split(';')[0]?.trim();
+  if (!part || !part.includes('=')) return;
+  const eq = part.indexOf('=');
+  const name = part.slice(0, eq).trim();
+  const value = part.slice(eq + 1).trim();
+  if (!name) return;
+  let jar = cookieJar.get(hostname);
+  if (!jar) {
+    jar = new Map();
+    cookieJar.set(hostname, jar);
+  }
+  jar.set(name, value);
+}
+
+function cookieHeaderFor(url: string): string | undefined {
+  const jar = cookieJar.get(hostnameFromUrl(url));
+  if (!jar?.size) return undefined;
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+function storeResponseCookies(url: string, headers: Headers): void {
+  const hostname = hostnameFromUrl(url);
+  const raw = headers.getSetCookie?.() ?? [];
+  if (raw.length) {
+    for (const line of raw) parseSetCookie(line, hostname);
+    return;
+  }
+  const single = headers.get('set-cookie');
+  if (single) {
+    for (const line of single.split(/,(?=[^;]+?=)/)) parseSetCookie(line.trim(), hostname);
+  }
+}
+
+async function fabUndiciFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  for (const [k, v] of Object.entries(FAB_BROWSER_HEADERS)) {
+    if (!headers.has(k)) headers.set(k, v);
+  }
+  const cookies = cookieHeaderFor(url);
+  if (cookies) headers.set('Cookie', cookies);
+
+  const res = await undiciFetch(url, {
+    ...init,
+    headers,
+    dispatcher: fabAgent,
+  });
+
+  storeResponseCookies(url, res.headers);
+  return res as unknown as Response;
+}
+
 export function fabAuthConfigured(): boolean {
   return !!cachedRefreshToken;
 }
@@ -40,6 +126,10 @@ export function setFabRefreshTokenForTests(token: string | null): void {
   cachedRefreshToken = token;
   cachedAccessToken = null;
   tokenExpiresAt = 0;
+}
+
+export function clearFabCookieJarForTests(): void {
+  cookieJar.clear();
 }
 
 async function exchangeToken(params: Record<string, string>): Promise<TokenResponse> {
@@ -52,7 +142,7 @@ async function exchangeToken(params: Record<string, string>): Promise<TokenRespo
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: body.toString(),
-    dispatcher: new Agent({ connect: { timeout: 30_000 } }),
+    dispatcher: fabAgent,
   });
   const json = await res.json() as TokenResponse;
   if (!res.ok || json.error) {
@@ -85,18 +175,28 @@ export async function fabAuthorizedFetch(url: string, init: RequestInit = {}): P
   const token = await getFabAccessToken();
   const headers = new Headers(init.headers);
   headers.set('Authorization', `bearer ${token}`);
-  headers.set('User-Agent', USER_AGENT);
-  return fetch(url, { ...init, headers });
+  return fabUndiciFetch(url, { ...init, headers });
 }
 
 export async function fabPublicFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const headers = new Headers(init.headers);
-  headers.set('User-Agent', USER_AGENT);
-  headers.set('Accept', 'application/json');
-  return fetch(url, { ...init, headers });
+  return fabUndiciFetch(url, init);
 }
 
-/** Prime Fab CSRF cookie jar — best-effort before authorized Fab calls. */
+/**
+ * Fab search/detail — uses bearer when configured, otherwise cookie-primed public fetch.
+ */
+export async function fabBrowseFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (fabAuthConfigured()) {
+    try {
+      return await fabAuthorizedFetch(url, init);
+    } catch {
+      // Fall back to public cookie session if token refresh fails.
+    }
+  }
+  return fabPublicFetch(url, init);
+}
+
+/** Prime Fab CSRF cookie jar — best-effort before Fab browse calls. */
 export async function ensureFabCsrf(): Promise<void> {
   await fabPublicFetch('https://www.fab.com/i/csrf');
 }

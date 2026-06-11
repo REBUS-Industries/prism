@@ -33,6 +33,7 @@ const nextCursor = ref<string | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const providerLabels = ref<Record<string, string>>({});
+const providerErrors = ref<Partial<Record<ExternalMaterialSource, string>>>({});
 
 const selected = ref<ExternalMaterialSummary | null>(null);
 const detail = ref<ExternalMaterialDetail | null>(null);
@@ -81,6 +82,7 @@ async function load(reset = true): Promise<void> {
       cursor: reset ? undefined : nextCursor.value,
     });
     providerLabels.value = res.providerLabels ?? {};
+    providerErrors.value = res.providerErrors ?? {};
     items.value = reset ? res.items : [...items.value, ...res.items];
     nextCursor.value = res.nextCursor;
   } catch (err) {
@@ -181,6 +183,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
         </div>
 
         <div v-if="error" class="error-box">{{ error }}</div>
+        <div v-if="providerErrors.fab" class="warn-banner">
+          Fab search unavailable: {{ providerErrors.fab }}
+        </div>
 
         <div class="body">
           <section class="results">
@@ -321,6 +326,15 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag { font-size: 10px; text-transform: none; letter-spacing: normal; }
 .warn { color: var(--color-warning, #c90); margin: 0; line-height: 1.45; }
+.warn-banner {
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #c90) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning, #c90) 12%, var(--color-bg-input));
+  color: var(--color-text);
+}
 .import-btn { margin-top: auto; flex: none; }
 .import-btn:disabled { cursor: not-allowed; opacity: 0.55; }
 .load-more { display: flex; justify-content: center; padding: 8px 0; }

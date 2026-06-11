@@ -9,11 +9,16 @@
  * The picker is Teleported to <body>: a position:fixed overlay rendered inside
  * Vue Flow's CSS-transformed pane would otherwise be mis-positioned + scaled.
  */
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
+import Icon from '../../shared/Icon.vue';
 import TexturePickerModal from './TexturePickerModal.vue';
 import ParamSlider from './ParamSlider.vue';
 import ParamColor from './ParamColor.vue';
+import {
+  SLOT_PARAMETER_KEYS,
+  parametersGroupDiffers,
+} from '../../shared/materialParameterGroups';
 import {
   SLOT_LABELS,
   texturesApi,
@@ -28,6 +33,7 @@ const props = defineProps<{
   slot: MaterialSlot;
   texture: MaterialSlotTexture | null;
   params: MaterialParameters;
+  baseline: MaterialParameters;
   /** Which side the source handle appears on. Defaults to 'right' (left column). */
   handleSide?: 'left' | 'right';
 }>();
@@ -37,7 +43,17 @@ const emit = defineEmits<{
   assign: [slot: MaterialSlot, texture: Texture];
   remove: [slot: MaterialSlot];
   'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }];
+  'reset-keys': [keys: Array<keyof MaterialParameters>];
 }>();
+
+const slotKeys = computed(() => SLOT_PARAMETER_KEYS[props.slot]);
+const canReset = computed(() =>
+  parametersGroupDiffers(props.params, props.baseline, slotKeys.value),
+);
+
+function resetSlotParams(): void {
+  emit('reset-keys', [...slotKeys.value]);
+}
 
 function onParam<K extends keyof MaterialParameters>(key: K, value: MaterialParameters[K] | string[]): void {
   emit('param-change', { key, value: value as number | string | boolean | string[] });
@@ -72,7 +88,19 @@ function onPicked(tex: Texture): void {
 
 <template>
   <div class="texture-node">
-    <div class="tn-head node-drag-handle">{{ SLOT_LABELS[slot] }}</div>
+    <div class="tn-head">
+      <span class="tn-title node-drag-handle">{{ SLOT_LABELS[slot] }}</span>
+      <button
+        type="button"
+        class="tn-reset nodrag nopan"
+        :disabled="!canReset"
+        title="Reset slot parameters"
+        aria-label="Reset slot parameters"
+        @click="resetSlotParams"
+      >
+        <Icon name="restart_alt" :size="14" />
+      </button>
+    </div>
 
     <div v-if="texture" class="tn-assigned nodrag nopan">
       <span class="tn-thumb">
@@ -236,13 +264,40 @@ function onPicked(tex: Texture): void {
   cursor: default;
 }
 .tn-head {
-  padding: 9px 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 7px 14px;
+  background: var(--color-bg-input);
+  border-bottom: 1px solid var(--color-border);
+}
+.tn-title {
+  flex: 1;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-text);
-  background: var(--color-bg-input);
-  border-bottom: 1px solid var(--color-border);
+}
+.tn-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.tn-reset:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+.tn-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 .tn-assigned { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .tn-thumb {

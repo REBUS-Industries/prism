@@ -40,6 +40,10 @@ import TextureNode from './TextureNode.vue';
 import MaterialOutputNode from './MaterialOutputNode.vue';
 import ParamNode from './ParamNode.vue';
 import {
+  ALL_NODE_PARAMETER_KEYS,
+  parametersGroupDiffers,
+} from '../../shared/materialParameterGroups';
+import {
   MATERIAL_SLOTS,
   LEFT_MATERIAL_SLOTS,
   RIGHT_MATERIAL_SLOTS,
@@ -54,12 +58,18 @@ const props = defineProps<{
   materialId: string;
   slots: MaterialSlotAssignment[];
   parameters: MaterialParameters;
+  baseline: MaterialParameters;
 }>();
 const emit = defineEmits<{
   assign: [slot: MaterialSlot, texture: Texture];
   unassign: [slot: MaterialSlot];
   'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }];
+  'reset-keys': [keys: Array<keyof MaterialParameters>];
 }>();
+
+const canResetAll = computed(() =>
+  parametersGroupDiffers(props.parameters, props.baseline, ALL_NODE_PARAMETER_KEYS),
+);
 
 const interactionMode = ref<'pan' | 'select'>('pan');
 
@@ -259,7 +269,18 @@ const nodes = computed<Node[]>(() => {
       x: OUTPUT_X + MATERIAL_W / 2 - 80, // centred under material
       y: layout.value.totalHeight + NODE_GAP,
     },
-    data: { paramType: 'textureUv', parameters: props.parameters, onParamChange },
+    data: {
+      paramType: 'textureUv',
+      parameters: props.parameters,
+      baseline: props.baseline,
+      onParamChange,
+      onReset: () => emit('reset-keys', ['tilingX', 'tilingY', 'offsetX', 'offsetY']),
+      canReset: parametersGroupDiffers(
+        props.parameters,
+        props.baseline,
+        ['tilingX', 'tilingY', 'offsetX', 'offsetY'],
+      ),
+    },
     draggable: true,
     sourcePosition: Position.Top,
   };
@@ -312,6 +333,14 @@ function onUnassign(slot: MaterialSlot): void {
 function onParamChange(change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }): void {
   emit('param-change', change);
 }
+
+function onResetKeys(keys: Array<keyof MaterialParameters>): void {
+  emit('reset-keys', keys);
+}
+
+function resetAllParameters(): void {
+  emit('reset-keys', [...ALL_NODE_PARAMETER_KEYS]);
+}
 </script>
 
 <template>
@@ -339,10 +368,12 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
           :slot="nodeProps.data.slot"
           :texture="nodeProps.data.texture"
           :params="parameters"
+          :baseline="baseline"
           :handle-side="nodeProps.data.handleSide ?? 'right'"
           @assign="onAssign"
           @remove="onUnassign"
           @param-change="onParamChange"
+          @reset-keys="onResetKeys"
         />
       </template>
 
@@ -388,6 +419,16 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
           @click="resetLayout"
         >
           <Icon name="grid_view" :size="16" />
+        </button>
+        <button
+          type="button"
+          class="mode-btn reset-btn"
+          :disabled="!canResetAll"
+          title="Reset all node parameters to loaded values"
+          aria-label="Reset all parameters"
+          @click="resetAllParameters"
+        >
+          <Icon name="restart_alt" :size="16" />
         </button>
       </Panel>
     </VueFlow>
@@ -451,6 +492,15 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
   background: var(--orbit-primary);
   border-color: var(--orbit-primary);
   color: #fff;
+}
+.mode-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.mode-btn:disabled:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-muted);
 }
 .mode-btn svg {
   width: 16px;
