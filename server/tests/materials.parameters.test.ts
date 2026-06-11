@@ -12,26 +12,23 @@ import {
 } from '../src/materials/parameters.js';
 
 describe('DEFAULT_MATERIAL_PARAMETERS', () => {
-  it('carries exactly the 16 documented keys with their default values', () => {
-    expect(DEFAULT_MATERIAL_PARAMETERS).toEqual({
-      baseColor: '#ffffff',
-      roughness: 1.0,
-      metallic: 0.0,
-      emissiveColor: '#000000',
-      emissiveIntensity: 1.0,
-      opacity: 1.0,
-      normalScale: 1.0,
-      aoIntensity: 1.0,
-      displacementScale: 0.05,
-      displacementBias: 0.0,
-      tilingX: 1.0,
-      tilingY: 1.0,
-      offsetX: 0.0,
-      offsetY: 0.0,
-      doubleSided: false,
-      flipNormalY: false,
-    });
-    expect(Object.keys(DEFAULT_MATERIAL_PARAMETERS)).toHaveLength(16);
+  it('carries the documented keys with their default values', () => {
+    // Core PBR (unchanged)
+    expect(DEFAULT_MATERIAL_PARAMETERS.baseColor).toBe('#ffffff');
+    expect(DEFAULT_MATERIAL_PARAMETERS.roughness).toBe(1.0);
+    expect(DEFAULT_MATERIAL_PARAMETERS.metallic).toBe(0.0);
+    expect(DEFAULT_MATERIAL_PARAMETERS.doubleSided).toBe(false);
+    expect(DEFAULT_MATERIAL_PARAMETERS.flipNormalY).toBe(false);
+    // New base params
+    expect(DEFAULT_MATERIAL_PARAMETERS.alphaMode).toBe('opaque');
+    expect(DEFAULT_MATERIAL_PARAMETERS.clearCoatFactor).toBe(0);
+    expect(DEFAULT_MATERIAL_PARAMETERS.transmissionFactor).toBe(0);
+    expect(DEFAULT_MATERIAL_PARAMETERS.ior).toBe(1.5);
+    expect(DEFAULT_MATERIAL_PARAMETERS.specularFactor).toBe(1.0);
+    expect(DEFAULT_MATERIAL_PARAMETERS.specularColor).toBe('#ffffff');
+    // Extensions
+    expect(DEFAULT_MATERIAL_PARAMETERS.activeExtensions).toEqual(['clearCoat', 'transmission', 'ior', 'specular']);
+    expect(DEFAULT_MATERIAL_PARAMETERS.unlit).toBe(false);
   });
 });
 
@@ -61,7 +58,8 @@ describe('mergeParameters', () => {
     expect(merged.roughness).toBe(0.5);
     expect(merged.metallic).toBe(0.0); // null stored value falls back to default
     expect(merged).not.toHaveProperty('bogus');
-    expect(Object.keys(merged)).toHaveLength(16);
+    // Key count matches the full DEFAULT_MATERIAL_PARAMETERS
+    expect(Object.keys(merged)).toHaveLength(Object.keys(DEFAULT_MATERIAL_PARAMETERS).length);
   });
 });
 

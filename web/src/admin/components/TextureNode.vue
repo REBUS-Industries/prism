@@ -32,11 +32,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   assign: [slot: MaterialSlot, texture: Texture];
   remove: [slot: MaterialSlot];
-  'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean }];
+  'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }];
 }>();
 
-function onParam<K extends keyof MaterialParameters>(key: K, value: MaterialParameters[K]): void {
-  emit('param-change', { key, value });
+function onParam<K extends keyof MaterialParameters>(key: K, value: MaterialParameters[K] | string[]): void {
+  emit('param-change', { key, value: value as number | string | boolean | string[] });
 }
 
 const pickerOpen = ref(false);

@@ -1020,6 +1020,7 @@ export interface MaterialSlotAssignment {
  * server/src/materials/parameters.ts; keep the two in sync.
  */
 export interface MaterialParameters {
+  // ---- Core PBR ---------------------------------------------------------
   /** material.color — also tints the albedo map when one is assigned. */
   baseColor: string;
   /** material.roughness — multiplies the roughnessMap when present. */
@@ -1052,6 +1053,56 @@ export interface MaterialParameters {
   doubleSided: boolean;
   /** negate material.normalScale.y. */
   flipNormalY: boolean;
+
+  // ---- Alpha ------------------------------------------------------------
+  alphaMode: 'opaque' | 'blend' | 'mask';
+  alphaCutoff: number;
+
+  // ---- KHR_materials_clearcoat ------------------------------------------
+  clearCoatFactor: number;
+  clearCoatRoughness: number;
+
+  // ---- KHR_materials_transmission ---------------------------------------
+  transmissionFactor: number;
+
+  // ---- KHR_materials_ior ------------------------------------------------
+  ior: number;
+
+  // ---- KHR_materials_specular -------------------------------------------
+  specularFactor: number;
+  specularColor: string;
+
+  // ---- Active extensions ------------------------------------------------
+  /** Names of currently-enabled material extensions, e.g. ['clearCoat', 'ior']. */
+  activeExtensions: string[];
+
+  // ---- KHR_materials_sheen ----------------------------------------------
+  sheenColor: string;
+  sheenRoughness: number;
+
+  // ---- KHR_materials_volume ---------------------------------------------
+  volumeThicknessFactor: number;
+  volumeAttenuationDistance: number;
+  volumeAttenuationColor: string;
+
+  // ---- KHR_materials_anisotropy -----------------------------------------
+  anisotropyStrength: number;
+  anisotropyRotation: number;
+
+  // ---- KHR_materials_iridescence ----------------------------------------
+  iridescenceFactor: number;
+  iridescenceIor: number;
+  iridescenceThicknessMin: number;
+  iridescenceThicknessMax: number;
+
+  // ---- KHR_materials_emissive_strength ----------------------------------
+  emissiveStrength: number;
+
+  // ---- KHR_materials_dispersion -----------------------------------------
+  dispersionFactor: number;
+
+  // ---- KHR_materials_unlit ----------------------------------------------
+  unlit: boolean;
 }
 
 /** Canonical defaults — mirror server DEFAULT_MATERIAL_PARAMETERS. Merged over
@@ -1073,6 +1124,42 @@ export const DEFAULT_MATERIAL_PARAMETERS: MaterialParameters = {
   offsetY: 0.0,
   doubleSided: false,
   flipNormalY: false,
+
+  alphaMode: 'opaque',
+  alphaCutoff: 0.5,
+
+  clearCoatFactor: 0,
+  clearCoatRoughness: 0,
+
+  transmissionFactor: 0,
+
+  ior: 1.5,
+
+  specularFactor: 1.0,
+  specularColor: '#ffffff',
+
+  activeExtensions: ['clearCoat', 'transmission', 'ior', 'specular'],
+
+  sheenColor: '#000000',
+  sheenRoughness: 0,
+
+  volumeThicknessFactor: 0,
+  volumeAttenuationDistance: 1000,
+  volumeAttenuationColor: '#ffffff',
+
+  anisotropyStrength: 0,
+  anisotropyRotation: 0,
+
+  iridescenceFactor: 0,
+  iridescenceIor: 1.3,
+  iridescenceThicknessMin: 100,
+  iridescenceThicknessMax: 400,
+
+  emissiveStrength: 1.0,
+
+  dispersionFactor: 0,
+
+  unlit: false,
 };
 
 export interface MaterialDetail {

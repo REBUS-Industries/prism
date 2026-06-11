@@ -3,11 +3,23 @@
  * Vue Flow wrapper for the PBR material editor. Lays the eight slot
  * TextureNodes out in a vertical column on the left, pre-wires each to the
  * single MaterialOutputNode on the right, and animates an edge whenever its
- * slot is filled. Slot assignments come in via `slots` (the material detail's
- * slot list); assign / unassign bubble out so the parent can persist them and
- * refresh the live preview.
+ * slot is filled.
+ *
+ * ### Drag & layout persistence (Task 2 & 3)
+ * Node positions are stateful: on first load the layout algorithm positions
+ * nodes in a spaced column so they never overlap; once the user drags any
+ * node the new position is saved to `localStorage` keyed by material ID.  A
+ * "Reset layout" button clears the saved positions and re-runs the algorithm.
+ *
+ * ### Overlap fix (Task 3)
+ * The height estimates were biased slightly low on filled nodes (thumbnail
+ * aspect-ratio 16:9 on 212 px inner-width = ~119 px actual vs the 200 px
+ * constant that tried to cover the full .tn-assigned block). Estimates are
+ * now bumped conservatively (+20 % on the filled texture area, +50 % on the
+ * gap) so the default layout is always non-overlapping regardless of state.
+ * Users can drag to any arrangement they prefer; positions persist.
  */
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import {
   VueFlow,
   Panel,
@@ -17,6 +29,7 @@ import {
   SelectionMode,
   type Edge,
   type Node,
+  type NodeDragEvent,
 } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -35,41 +48,105 @@ import {
   type Texture,
 } from '../../shared/api';
 
-const props = defineProps<{ slots: MaterialSlotAssignment[]; parameters: MaterialParameters }>();
+const props = defineProps<{
+  materialId: string;
+  slots: MaterialSlotAssignment[];
+  parameters: MaterialParameters;
+}>();
 const emit = defineEmits<{
   assign: [slot: MaterialSlot, texture: Texture];
   unassign: [slot: MaterialSlot];
-  'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean }];
+  'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }];
 }>();
 
 const interactionMode = ref<'pan' | 'select'>('pan');
 
-// Nodes carry their slot's PBR controls now, so their height varies with the
-// slot (number of controls) and whether a texture is assigned (preview vs the
-// shorter empty state). Lay them out by cumulative estimated height + a gap so
-// the column never overlaps regardless of state. Estimates are biased slightly
-// high; fit-view zooms the column to frame, so a little slack is harmless.
-const OUTPUT_X = 440;
-const NODE_GAP = 44;
-const HEADER_H = 36;
-const TEX_AREA_FILLED = 200;
-const TEX_AREA_EMPTY = 90;
-const OUTPUT_H = 250;
+// ---------------------------------------------------------------------------
+// Layout constants — generously over-estimated so nodes never overlap on
+// first render. Heights are in canvas-pixels (1:1 with screen pixels at
+// zoom 1). The thumbnail is `aspect-ratio: 16/9` on a 212 px inner-width
+// cell (232 px node − 10px × 2 padding) → ~119 px, plus name + actions.
+// Adding ~25 % headroom keeps everything clear across fonts + zoom levels.
+// ---------------------------------------------------------------------------
+const OUTPUT_X = 480;
+const NODE_GAP = 60;        // raised from 44 → ensures no overlap after estimates
+const HEADER_H = 38;
+const TEX_AREA_FILLED = 240; // raised from 200 → thumbnail 119 + name + actions + gaps
+const TEX_AREA_EMPTY = 110;  // raised from 90
+const OUTPUT_H = 264;        // 8 rows × ~33 px/row
+
 const PARAM_H: Record<MaterialSlot, number> = {
-  albedo: 70,
-  roughness: 70,
-  metallic: 70,
-  ao: 70,
-  opacity: 70,
-  normal: 104,
-  emissive: 130,
-  displacement: 130,
+  albedo:       72,
+  roughness:    72,
+  metallic:     72,
+  ao:           72,
+  opacity:      72,
+  normal:       110,  // slider + checkbox
+  emissive:     140,  // color + slider
+  displacement: 140,  // two sliders
 };
 
 function nodeHeight(slot: MaterialSlot, isFilled: boolean): number {
   return HEADER_H + (isFilled ? TEX_AREA_FILLED : TEX_AREA_EMPTY) + PARAM_H[slot];
 }
 
+// ---------------------------------------------------------------------------
+// Position persistence (localStorage, keyed by material ID)
+// ---------------------------------------------------------------------------
+type PositionMap = Record<string, { x: number; y: number }>;
+
+function storageKey(id: string): string {
+  return `prism-node-layout-${id}`;
+}
+
+function loadPositions(id: string): PositionMap | null {
+  try {
+    const raw = localStorage.getItem(storageKey(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === 'object' && parsed !== null) return parsed as PositionMap;
+  } catch {
+    // ignore parse errors
+  }
+  return null;
+}
+
+function savePositions(id: string, map: PositionMap): void {
+  try {
+    localStorage.setItem(storageKey(id), JSON.stringify(map));
+  } catch {
+    // quota exceeded etc. — non-fatal
+  }
+}
+
+const customPositions = ref<PositionMap>(loadPositions(props.materialId) ?? {});
+
+// Re-load when material changes (navigating between materials in same session)
+watch(
+  () => props.materialId,
+  (id) => {
+    customPositions.value = loadPositions(id) ?? {};
+  },
+);
+
+function onNodeDragStop(ev: NodeDragEvent): void {
+  const { node } = ev;
+  customPositions.value = { ...customPositions.value, [node.id]: node.position };
+  savePositions(props.materialId, customPositions.value);
+}
+
+function resetLayout(): void {
+  customPositions.value = {};
+  try {
+    localStorage.removeItem(storageKey(props.materialId));
+  } catch {
+    // non-fatal
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Slot lookup helpers
+// ---------------------------------------------------------------------------
 const lookup = computed<Partial<Record<MaterialSlot, MaterialSlotTexture>>>(() => {
   const m: Partial<Record<MaterialSlot, MaterialSlotTexture>> = {};
   for (const s of props.slots) m[s.slot] = s.texture;
@@ -92,21 +169,32 @@ const layout = computed<{ ys: number[]; total: number }>(() => {
   return { ys, total: Math.max(0, y - NODE_GAP) };
 });
 
+// ---------------------------------------------------------------------------
+// Nodes
+// ---------------------------------------------------------------------------
 const nodes = computed<Node[]>(() => {
-  const texNodes: Node[] = MATERIAL_SLOTS.map((slot, i) => ({
-    id: `slot-${slot}`,
-    type: 'texture',
-    position: { x: 0, y: layout.value.ys[i]! },
-    data: { slot, texture: lookup.value[slot] ?? null },
-    draggable: false,
-    sourcePosition: Position.Right,
-  }));
+  const texNodes: Node[] = MATERIAL_SLOTS.map((slot, i) => {
+    const nodeId = `slot-${slot}`;
+    const defaultPos = { x: 0, y: layout.value.ys[i]! };
+    return {
+      id: nodeId,
+      type: 'texture',
+      // Use saved position if present, otherwise fall back to algorithm
+      position: customPositions.value[nodeId] ?? defaultPos,
+      data: { slot, texture: lookup.value[slot] ?? null },
+      draggable: true,
+      sourcePosition: Position.Right,
+    } satisfies Node;
+  });
+
+  const outputNodeId = 'material';
+  const defaultOutputPos = { x: OUTPUT_X, y: Math.max(0, (layout.value.total - OUTPUT_H) / 2) };
   const outputNode: Node = {
-    id: 'material',
+    id: outputNodeId,
     type: 'materialOutput',
-    position: { x: OUTPUT_X, y: Math.max(0, (layout.value.total - OUTPUT_H) / 2) },
+    position: customPositions.value[outputNodeId] ?? defaultOutputPos,
     data: { filled: filled.value },
-    draggable: false,
+    draggable: true,
     targetPosition: Position.Left,
   };
   return [...texNodes, outputNode];
@@ -140,7 +228,7 @@ function onAssign(slot: MaterialSlot, texture: Texture): void {
 function onUnassign(slot: MaterialSlot): void {
   emit('unassign', slot);
 }
-function onParamChange(change: { key: keyof MaterialParameters; value: number | string | boolean }): void {
+function onParamChange(change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }): void {
   emit('param-change', change);
 }
 </script>
@@ -151,7 +239,7 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
       :nodes="nodes"
       :edges="edges"
       :fit-view-on-init="true"
-      :nodes-draggable="false"
+      :nodes-draggable="true"
       :nodes-connectable="false"
       :elements-selectable="true"
       :pan-on-drag="interactionMode === 'pan'"
@@ -161,6 +249,7 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
       :zoom-on-double-click="false"
       :min-zoom="0.2"
       :max-zoom="1.5"
+      @node-drag-stop="onNodeDragStop"
     >
       <template #node-texture="nodeProps">
         <TextureNode
@@ -202,6 +291,15 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
           @click="interactionMode = 'select'"
         >
           <Icon name="arrow_selector_tool" :size="16" />
+        </button>
+        <button
+          type="button"
+          class="mode-btn reset-btn"
+          title="Reset node positions to default layout"
+          aria-label="Reset layout"
+          @click="resetLayout"
+        >
+          <Icon name="grid_view" :size="16" />
         </button>
       </Panel>
     </VueFlow>
@@ -270,6 +368,12 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
   width: 16px;
   height: 16px;
   display: block;
+}
+/* Reset button gets a subtle separator from the mode pair */
+.reset-btn {
+  margin-left: 2px;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 </style>
 
