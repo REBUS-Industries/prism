@@ -5,7 +5,7 @@ import type { FixturePart, FixtureModel } from '../../shared/api';
 defineProps<{
   previewUrl?: string | null;
   /** Full geometry tree + models for assembled rendering (preferred). */
-  assembly?: { fixtureId: string; parts: FixturePart[]; models: FixtureModel[]; motionAxes?: import('../../shared/api').MotionAxis[] } | null;
+  assembly?: { fixtureId: string; parts: FixturePart[]; models: FixtureModel[]; motionAxes?: import('../../shared/api').MotionAxis[]; selectedModeGeometryId?: string | null } | null;
   fixtureName?: string;
   /** Mesh / GDTF record count for footer caption. */
   recordCount?: number;

@@ -1451,6 +1451,8 @@ export interface DmxModeRef {
   modeId: string;
   name: string;
   footprint: number;
+  /** GDTF root geometry this mode renders (DMXMode@Geometry). */
+  geometry?: string;
 }
 
 export interface FixturePart {
