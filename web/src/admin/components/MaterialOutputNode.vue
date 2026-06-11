@@ -22,6 +22,7 @@ defineProps<{ filled: Partial<Record<MaterialSlot, boolean>> }>();
         <span class="on-label">{{ SLOT_LABELS[slot] }}</span>
       </div>
     </div>
+    <Handle id="param" type="target" :position="Position.Right" :connectable="false" />
   </div>
 </template>
 

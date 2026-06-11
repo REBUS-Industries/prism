@@ -321,7 +321,16 @@ function extractMessage(body: unknown): string | undefined {
   if (typeof body === 'string') return body || undefined;
   if (body && typeof body === 'object') {
     const o = body as Record<string, unknown>;
-    if (typeof o['error'] === 'string') return o['error'];
+    if (typeof o['error'] === 'string') {
+      if (o['error'] === 'forbidden' && typeof o['scope'] === 'string') {
+        return `Permission denied (${o['scope']}). Log in to the admin panel or grant this scope to your API key.`;
+      }
+      if (o['code'] === 'fab_not_configured' && typeof o['hint'] === 'string') {
+        return `${o['error']}. ${o['hint']}`;
+      }
+      if (typeof o['hint'] === 'string') return `${o['error']}. ${o['hint']}`;
+      return o['error'];
+    }
     if (typeof o['message'] === 'string') return o['message'];
   }
   return undefined;

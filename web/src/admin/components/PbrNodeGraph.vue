@@ -38,6 +38,7 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import TextureNode from './TextureNode.vue';
 import MaterialOutputNode from './MaterialOutputNode.vue';
+import ParamNode from './ParamNode.vue';
 import {
   MATERIAL_SLOTS,
   type MaterialParameters,
@@ -68,6 +69,8 @@ const interactionMode = ref<'pan' | 'select'>('pan');
 // Adding ~25 % headroom keeps everything clear across fonts + zoom levels.
 // ---------------------------------------------------------------------------
 const OUTPUT_X = 480;
+const UV_NODE_X = OUTPUT_X + 260;
+const UV_NODE_Y = 40;
 const NODE_GAP = 60;        // raised from 44 → ensures no overlap after estimates
 const HEADER_H = 38;
 const TEX_AREA_FILLED = 240; // raised from 200 → thumbnail 119 + name + actions + gaps
@@ -211,11 +214,25 @@ const nodes = computed<Node[]>(() => {
     targetPosition: Position.Left,
   };
 
-  return [...texNodes, outputNode];
+  const uvNodeId = 'param-textureUv';
+  const uvNode: Node = {
+    id: uvNodeId,
+    type: 'param',
+    position: customPositions.value[uvNodeId] ?? { x: UV_NODE_X, y: UV_NODE_Y },
+    data: {
+      paramType: 'textureUv',
+      parameters: props.parameters,
+      onParamChange,
+    },
+    draggable: true,
+    sourcePosition: Position.Left,
+  };
+
+  return [...texNodes, outputNode, uvNode];
 });
 
-const edges = computed<Edge[]>(() =>
-  MATERIAL_SLOTS.map((slot) => {
+const edges = computed<Edge[]>(() => {
+  const texEdges: Edge[] = MATERIAL_SLOTS.map((slot) => {
     const on = !!lookup.value[slot];
     return {
       id: `e-${slot}`,
@@ -233,8 +250,21 @@ const edges = computed<Edge[]>(() =>
         color: on ? 'var(--orbit-primary)' : 'var(--color-border-strong)',
       },
     } satisfies Edge;
-  }),
-);
+  });
+
+  const uvEdge: Edge = {
+    id: 'e-param-textureUv',
+    source: 'param-textureUv',
+    target: 'material',
+    targetHandle: 'param',
+    type: 'smoothstep',
+    animated: true,
+    style: { stroke: 'var(--orbit-primary)', strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--orbit-primary)' },
+  };
+
+  return [...texEdges, uvEdge];
+});
 
 function onAssign(slot: MaterialSlot, texture: Texture): void {
   emit('assign', slot, texture);
@@ -280,6 +310,10 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
 
       <template #node-materialOutput="nodeProps">
         <MaterialOutputNode :filled="nodeProps.data.filled" />
+      </template>
+
+      <template #node-param="nodeProps">
+        <ParamNode :data="nodeProps.data" />
       </template>
 
       <Background pattern-color="var(--color-border)" :gap="22" />
@@ -398,7 +432,8 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
 /* Unscoped: applies inside Vue Flow's node tree. Custom node types carry no
    default theme chrome, so we only neutralise the wrapper + brand the handles. */
 .vue-flow__node-texture,
-.vue-flow__node-materialOutput {
+.vue-flow__node-materialOutput,
+.vue-flow__node-param {
   padding: 0;
   border: none;
   background: transparent;
