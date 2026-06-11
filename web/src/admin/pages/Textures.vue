@@ -467,13 +467,23 @@ h1 { font-size: 22px; margin: 0; }
   display: grid; gap: 12px;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
-.tex-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; }
+.tex-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
 .thumb {
-  display: block; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
+  display: block; width: 100%; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
   overflow: hidden; background: var(--color-bg-hover);
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.tex-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tex-name {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag {
   text-transform: none; letter-spacing: normal; font-weight: 500;

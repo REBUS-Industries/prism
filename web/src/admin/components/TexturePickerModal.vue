@@ -223,9 +223,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .picker-toolbar { display: flex; align-items: center; gap: 8px; }
 .slot-filter-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   padding: 6px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -256,12 +256,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 .tex-card {
   display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--color-border); border-radius: var(--radius);
   background: var(--color-bg-input); text-align: left; cursor: pointer;
 }
 .tex-card:hover { border-color: var(--orbit-primary); }
 .thumb {
-  display: block; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
+  display: block; width: 100%; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
   overflow: hidden; background: var(--color-bg-hover);
   background-image:
     linear-gradient(45deg, var(--color-bg-hover) 25%, transparent 25%),
@@ -273,9 +275,17 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .tex-name {
+  display: block;
+  width: 100%;
+  min-width: 0;
   font-size: 12px; font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tex-meta { font-size: 11px; }
+.tex-meta {
+  display: block;
+  width: 100%;
+  font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .picker-foot { display: flex; justify-content: center; }
 </style>
