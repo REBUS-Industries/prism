@@ -80,6 +80,8 @@ let beamPartGroup: THREE.Object3D | null = null;
 let loadedRoot: THREE.Object3D | null = null;
 let dirLight: THREE.DirectionalLight | null = null;
 let beamMesh: THREE.Mesh | null = null;
+/** Cone height — tip translated to local origin in syncBeam(). */
+const BEAM_CONE_HEIGHT = 0.6;
 let modelCenter = new THREE.Vector3();
 let modelSize = 1;
 let lastCssW = 0;
@@ -189,7 +191,9 @@ function syncBeam(): void {
     return;
   }
   if (!beamMesh) {
-    const geo = new THREE.ConeGeometry(0.08, 0.6, 16, 1, true);
+    const geo = new THREE.ConeGeometry(0.08, BEAM_CONE_HEIGHT, 16, 1, true);
+    // ConeGeometry: tip at +Y, base at −Y. Shift so tip sits on the attach origin.
+    geo.translate(0, -BEAM_CONE_HEIGHT / 2, 0);
     const mat = new THREE.MeshBasicMaterial({
       color: 0xff6600,
       transparent: true,
@@ -206,12 +210,12 @@ function syncBeam(): void {
   // Local origin at head/beam pivot; pan+tilt inherited from parent hierarchy.
   beamMesh.position.set(0, 0, 0);
   if (tiltNode || beamPartGroup) {
-    // GDTF Z-up: beam axis is −Z; cone default +Y → −Z via −90° X.
-    beamMesh.rotation.set(-Math.PI / 2, 0, 0);
+    // GDTF Z-up: beam axis is −Z; tip at origin, wide end opens along −Z.
+    beamMesh.rotation.set(Math.PI / 2, 0, 0);
     beamMesh.scale.setScalar(1);
   } else {
-    // Single-GLB fallback (Y-up tiltGroup): beam extends −Y.
-    beamMesh.rotation.set(Math.PI, 0, 0);
+    // Single-GLB fallback (Y-up tiltGroup): tip at origin, beam extends −Y.
+    beamMesh.rotation.set(0, 0, 0);
     beamMesh.scale.setScalar(Math.max(modelSize * 0.5, 0.3));
   }
 }
