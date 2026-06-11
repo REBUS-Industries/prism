@@ -43,6 +43,7 @@ import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
 import { ALLOWED_SLOTS, detectSlot, imageContentType, isImageFilename, isMaterialSlot } from '../materials/slots.js';
+import { normalizeTextureBody } from '../materials/textureNormalize.js';
 import {
   type MaterialParameters,
   type MaterialParametersPatch,
@@ -542,17 +543,29 @@ const plugin: FastifyPluginAsync = async (app) => {
         for (const slot of ALLOWED_SLOTS) {
           const det = detected.get(slot);
           if (!det) continue;
+          let body: Buffer;
+          let storageName: string;
+          let contentType: string;
+          try {
+            const normalized = await normalizeTextureBody(det.data, det.base, det.contentType);
+            body = normalized.data;
+            storageName = normalized.storageFilename;
+            contentType = normalized.contentType;
+          } catch {
+            skipped.push(det.base);
+            continue;
+          }
           const textureId = randomUUID();
-          const storagePath = resolve(TEXTURES_ROOT, `${textureId}_${sanitiseFilename(det.base)}`);
-          await writeFile(storagePath, det.data);
+          const storagePath = resolve(TEXTURES_ROOT, `${textureId}_${sanitiseFilename(storageName)}`);
+          await writeFile(storagePath, body);
           writtenPaths.push(storagePath);
 
           await tx.insert(textures).values({
             id: textureId,
             originalFilename: det.base.slice(0, 256),
             displayName: det.base.slice(0, 256),
-            contentType: det.contentType,
-            sizeBytes: det.data.length,
+            contentType,
+            sizeBytes: body.length,
             storagePath,
             tags: [],
             uploadedByAdminId: adminId,
