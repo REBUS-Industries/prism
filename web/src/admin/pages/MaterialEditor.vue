@@ -320,10 +320,19 @@ button.danger:hover { border-color: var(--color-error); }
 .graph-pane { min-height: 0; min-width: 0; }
 .side-pane {
   display: flex; flex-direction: column; gap: 12px;
-  min-height: 0; overflow: auto;
+  min-height: 0; overflow: hidden;
 }
-.viewer-pane { flex: 0 0 auto; min-height: 280px; }
-.meta { display: flex; flex-direction: column; gap: 10px; }
+.viewer-pane {
+  flex: 1 1 400px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.viewer-pane :deep(.glb-viewer) {
+  flex: 1;
+  min-height: 0;
+}
+.meta { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field textarea { resize: vertical; font-family: inherit; }
 .small { font-size: 12px; }
