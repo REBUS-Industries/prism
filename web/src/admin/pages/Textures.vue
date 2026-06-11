@@ -3,22 +3,45 @@
  * Shared texture library. Cards show a thumbnail (streamed from
  * /api/textures/:id/download), display name, human-readable size, tag pills
  * and how many materials reference the texture. Search is debounced into
- * `?q=`, tag pills map to `?tags=`, and the drop-zone multipart-POSTs new
- * textures. Display name + tags are editable inline (PUT); deletes are
- * refused with a 409 when a material still references the texture, in which
- * case we surface the blocking materials.
+ * `?q=`, tag pills map to `?tags=`, slot pills filter by PBR suffix (`?slot=`)
+ * or group loaded rows by detected slot when "All" is selected.
  */
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import {
   texturesApi,
+  MATERIAL_SLOTS,
+  SLOT_LABELS,
+  SLOT_SUFFIX_HINTS,
+  textureSlotFor,
   type ApiError,
+  type MaterialSlot,
   type Texture,
   type TextureInUseError,
 } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
 const PAGE = 36;
+
+type SlotFilter = 'all' | MaterialSlot | 'other';
+
+interface TextureSection {
+  id: SlotFilter;
+  label: string;
+  hint?: string;
+  textures: Texture[];
+}
+
+const SLOT_FILTER_LABELS: Record<MaterialSlot, string> = {
+  albedo:       'Albedo',
+  normal:       'Normal',
+  roughness:    'Roughness',
+  metallic:     'Metallic',
+  ao:           'AO',
+  emissive:     'Emissive',
+  opacity:      'Opacity',
+  displacement: 'Displacement',
+};
 
 const textures = ref<Texture[]>([]);
 const loading = ref(false);
@@ -27,6 +50,7 @@ const nextCursor = ref<string | null>(null);
 
 const search = ref('');
 const activeTags = ref<string[]>([]);
+const activeSlotFilter = ref<SlotFilter>('all');
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const uploading = ref(false);
@@ -46,6 +70,50 @@ const availableTags = computed<string[]>(() => {
   return [...set].sort((a, b) => a.localeCompare(b));
 });
 
+const displaySections = computed<TextureSection[]>(() => {
+  if (activeSlotFilter.value === 'all') {
+    const buckets = new Map<MaterialSlot | 'other', Texture[]>();
+    for (const slot of MATERIAL_SLOTS) buckets.set(slot, []);
+    buckets.set('other', []);
+    for (const t of textures.value) {
+      buckets.get(textureSlotFor(t))!.push(t);
+    }
+    const sections: TextureSection[] = [];
+    for (const slot of MATERIAL_SLOTS) {
+      const items = buckets.get(slot)!;
+      if (items.length) {
+        sections.push({
+          id: slot,
+          label: SLOT_LABELS[slot],
+          hint: SLOT_SUFFIX_HINTS[slot],
+          textures: items,
+        });
+      }
+    }
+    const other = buckets.get('other')!;
+    if (other.length) {
+      sections.push({
+        id: 'other',
+        label: 'Other / Unclassified',
+        hint: 'No recognised PBR suffix',
+        textures: other,
+      });
+    }
+    return sections;
+  }
+
+  const filter = activeSlotFilter.value;
+  const label = filter === 'other' ? 'Other / Unclassified' : SLOT_LABELS[filter];
+  const hint = filter === 'other' ? 'No recognised PBR suffix' : SLOT_SUFFIX_HINTS[filter];
+  return [{ id: filter, label, hint, textures: textures.value }];
+});
+
+const hasTextures = computed(() => textures.value.length > 0);
+
+const isFiltered = computed(() =>
+  !!search.value.trim() || activeTags.value.length > 0 || activeSlotFilter.value !== 'all',
+);
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -59,6 +127,7 @@ async function load(reset = true): Promise<void> {
     const res = await texturesApi.list({
       q: search.value || undefined,
       tags: activeTags.value.length ? activeTags.value : undefined,
+      slot: activeSlotFilter.value === 'all' ? undefined : activeSlotFilter.value,
       limit: PAGE,
       cursor: reset ? undefined : nextCursor.value,
     });
@@ -80,6 +149,12 @@ function toggleTag(tag: string): void {
   activeTags.value = activeTags.value.includes(tag)
     ? activeTags.value.filter((t) => t !== tag)
     : [...activeTags.value, tag];
+  void load(true);
+}
+
+function setSlotFilter(filter: SlotFilter): void {
+  if (activeSlotFilter.value === filter) return;
+  activeSlotFilter.value = filter;
   void load(true);
 }
 
@@ -201,6 +276,33 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
       @input="onSearchInput"
     />
   </div>
+
+  <div class="slot-filter-row mt-sm">
+    <span class="slot-filter-label">Type</span>
+    <button
+      type="button"
+      class="slot-pill"
+      :class="{ active: activeSlotFilter === 'all' }"
+      @click="setSlotFilter('all')"
+    >All</button>
+    <button
+      v-for="slot in MATERIAL_SLOTS"
+      :key="slot"
+      type="button"
+      class="slot-pill"
+      :class="{ active: activeSlotFilter === slot }"
+      :title="SLOT_SUFFIX_HINTS[slot]"
+      @click="setSlotFilter(slot)"
+    >{{ SLOT_FILTER_LABELS[slot] }}</button>
+    <button
+      type="button"
+      class="slot-pill"
+      :class="{ active: activeSlotFilter === 'other' }"
+      title="No recognised PBR suffix"
+      @click="setSlotFilter('other')"
+    >Other</button>
+  </div>
+
   <div v-if="availableTags.length" class="tag-row mt-sm">
     <button
       v-for="tag in availableTags"
@@ -215,39 +317,56 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   <div v-if="error" class="error-box mt">{{ error }}</div>
 
   <div v-if="loading && !textures.length" class="muted mt-lg">Loading…</div>
-  <div v-else-if="!textures.length" class="muted mt-lg">No textures yet. Upload some above to get started.</div>
-
-  <div v-else class="grid mt">
-    <div v-for="t in textures" :key="t.id" class="card tex-card">
-      <span class="thumb">
-        <img :src="texturesApi.downloadUrl(t.id)" :alt="t.displayName" loading="lazy" />
-      </span>
-
-      <template v-if="editingId === t.id">
-        <input v-model="editName" class="edit-input" placeholder="Display name" />
-        <input v-model="editTags" class="edit-input" placeholder="tag1, tag2" />
-        <div class="card-actions">
-          <button class="primary flex-1" @click="saveEdit(t)"><Icon name="save" :size="14" />Save</button>
-          <button class="flex-1" @click="cancelEdit">Cancel</button>
-        </div>
-      </template>
-
-      <template v-else>
-        <div class="tex-name" :title="t.displayName">{{ t.displayName }}</div>
-        <div class="subtle small">{{ formatBytes(t.sizeBytes) }}</div>
-        <div v-if="t.tags.length" class="tags">
-          <span v-for="tag in t.tags" :key="tag" class="pill tag">{{ tag }}</span>
-        </div>
-        <div class="ref muted small">
-          {{ t.referenceCount === 0 ? 'Unused' : `Used by ${t.referenceCount} material${t.referenceCount === 1 ? '' : 's'}` }}
-        </div>
-        <div class="card-actions">
-          <button class="flex-1" @click="startEdit(t)"><Icon name="edit" :size="14" />Edit</button>
-          <button class="flex-1 danger" @click="removeTexture(t)"><Icon name="delete" :size="14" />Delete</button>
-        </div>
-      </template>
-    </div>
+  <div v-else-if="!hasTextures" class="muted mt-lg">
+    {{ isFiltered ? 'No textures match.' : 'No textures yet. Upload some above to get started.' }}
   </div>
+
+  <template v-else>
+    <section
+      v-for="section in displaySections"
+      :key="section.id"
+      class="slot-section mt"
+      :class="{ grouped: activeSlotFilter === 'all' }"
+    >
+      <header v-if="activeSlotFilter === 'all'" class="slot-section-head">
+        <h2>{{ section.label }}</h2>
+        <span class="subtle small">{{ section.textures.length }}</span>
+        <span v-if="section.hint" class="subtle small slot-hint">{{ section.hint }}</span>
+      </header>
+
+      <div class="grid">
+        <div v-for="t in section.textures" :key="t.id" class="card tex-card">
+          <span class="thumb">
+            <img :src="texturesApi.downloadUrl(t.id)" :alt="t.displayName" loading="lazy" />
+          </span>
+
+          <template v-if="editingId === t.id">
+            <input v-model="editName" class="edit-input" placeholder="Display name" />
+            <input v-model="editTags" class="edit-input" placeholder="tag1, tag2" />
+            <div class="card-actions">
+              <button class="primary flex-1" @click="saveEdit(t)"><Icon name="save" :size="14" />Save</button>
+              <button class="flex-1" @click="cancelEdit">Cancel</button>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="tex-name" :title="t.displayName">{{ t.displayName }}</div>
+            <div class="subtle small">{{ formatBytes(t.sizeBytes) }}</div>
+            <div v-if="t.tags.length" class="tags">
+              <span v-for="tag in t.tags" :key="tag" class="pill tag">{{ tag }}</span>
+            </div>
+            <div class="ref muted small">
+              {{ t.referenceCount === 0 ? 'Unused' : `Used by ${t.referenceCount} material${t.referenceCount === 1 ? '' : 's'}` }}
+            </div>
+            <div class="card-actions">
+              <button class="flex-1" @click="startEdit(t)"><Icon name="edit" :size="14" />Edit</button>
+              <button class="flex-1 danger" @click="removeTexture(t)"><Icon name="delete" :size="14" />Delete</button>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+  </template>
 
   <div v-if="nextCursor" class="load-more mt">
     <button :disabled="loading" @click="load(false)">{{ loading ? 'Loading…' : 'Load more' }}</button>
@@ -276,6 +395,38 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 h1 { font-size: 22px; margin: 0; }
 .small { font-size: 12px; }
 .toolbar { display: flex; gap: 8px; }
+.slot-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.slot-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-right: 2px;
+}
+.slot-pill {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-input);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.slot-pill:hover {
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+.slot-pill.active {
+  background: var(--orbit-primary);
+  border-color: var(--orbit-primary);
+  color: #fff;
+}
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag-pill {
   padding: 2px 10px; font-size: 11px; border-radius: 999px;
@@ -297,17 +448,42 @@ h1 { font-size: 22px; margin: 0; }
 .dropzone.disabled { opacity: 0.65; cursor: progress; }
 .dropzone p { margin: 4px 0 0; }
 
+.slot-section.grouped + .slot-section.grouped { margin-top: 20px; }
+.slot-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.slot-section-head h2 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+.slot-hint { font-style: italic; }
+
 .grid {
   display: grid; gap: 12px;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
-.tex-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; }
+.tex-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
 .thumb {
-  display: block; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
+  display: block; width: 100%; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
   overflow: hidden; background: var(--color-bg-hover);
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.tex-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tex-name {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag {
   text-transform: none; letter-spacing: normal; font-weight: 500;

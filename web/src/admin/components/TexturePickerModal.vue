@@ -8,7 +8,7 @@
  * "Upload New" multipart-POSTs to /api/textures then emits the created row
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { texturesApi, SLOT_LABELS, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
+import { texturesApi, SLOT_LABELS, SLOT_SUFFIX_HINTS, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
 const props = defineProps<{ open: boolean; slot?: MaterialSlot }>();
@@ -32,18 +32,6 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const slotFilterLabel = computed(() =>
   props.slot ? SLOT_LABELS[props.slot] : null,
 );
-
-/** Short suffix examples shown beside the slot filter toggle. */
-const SLOT_SUFFIX_HINTS: Record<MaterialSlot, string> = {
-  albedo:       '_albedo, _color, _basecolor…',
-  normal:       '_normal, _nrm, _nor',
-  roughness:    '_roughness, _rough, _rgh',
-  metallic:     '_metallic, _metalness, _metal',
-  ao:           '_ao, _ambientocclusion…',
-  emissive:     '_emissive, _emission, _emi',
-  opacity:      '_opacity, _alpha, _mask',
-  displacement: '_displacement, _height, _disp',
-};
 
 function slotSuffixHint(slot: MaterialSlot): string {
   return SLOT_SUFFIX_HINTS[slot];
@@ -235,9 +223,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .picker-toolbar { display: flex; align-items: center; gap: 8px; }
 .slot-filter-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   padding: 6px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -268,12 +256,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 .tex-card {
   display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--color-border); border-radius: var(--radius);
   background: var(--color-bg-input); text-align: left; cursor: pointer;
 }
 .tex-card:hover { border-color: var(--orbit-primary); }
 .thumb {
-  display: block; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
+  display: block; width: 100%; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
   overflow: hidden; background: var(--color-bg-hover);
   background-image:
     linear-gradient(45deg, var(--color-bg-hover) 25%, transparent 25%),
@@ -285,9 +275,17 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .tex-name {
+  display: block;
+  width: 100%;
+  min-width: 0;
   font-size: 12px; font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tex-meta { font-size: 11px; }
+.tex-meta {
+  display: block;
+  width: 100%;
+  font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .picker-foot { display: flex; justify-content: center; }
 </style>

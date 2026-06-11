@@ -909,6 +909,40 @@ export const SLOT_LABELS: Record<MaterialSlot, string> = {
   displacement: 'Displacement',
 };
 
+/** Short suffix examples for slot filter UI. Mirrors server/src/materials/slots.ts. */
+export const SLOT_SUFFIX_HINTS: Record<MaterialSlot, string> = {
+  albedo:       '_albedo, _color, _basecolor…',
+  normal:       '_normal, _nrm, _nor',
+  roughness:    '_roughness, _rough, _rgh',
+  metallic:     '_metallic, _metalness, _metal',
+  ao:           '_ao, _ambientocclusion…',
+  emissive:     '_emissive, _emission, _emi',
+  opacity:      '_opacity, _alpha, _mask',
+  displacement: '_displacement, _height, _disp',
+};
+
+const SLOT_FILENAME_TOKENS: Record<MaterialSlot, readonly string[]> = {
+  albedo:       ['_albedo', '_color', '_basecolor', '_diffuse', '_diff', '_col'],
+  normal:       ['_normal', '_nrm', '_nor'],
+  roughness:    ['_roughness', '_rough', '_rgh'],
+  metallic:     ['_metallic', '_metalness', '_metal'],
+  ao:           ['_ao', '_ambientocclusion', '_occlusion'],
+  emissive:     ['_emissive', '_emission', '_emi'],
+  opacity:      ['_opacity', '_alpha', '_mask'],
+  displacement: ['_displacement', '_height', '_disp'],
+};
+
+/** Detect PBR slot from a texture filename (Megascans-style). Mirrors server detectSlot. */
+export function detectTextureSlot(filename: string): MaterialSlot | null {
+  const lower = filename.toLowerCase();
+  for (const slot of MATERIAL_SLOTS) {
+    for (const token of SLOT_FILENAME_TOKENS[slot]) {
+      if (lower.includes(token)) return slot;
+    }
+  }
+  return null;
+}
+
 export interface Texture {
   id: string;
   originalFilename: string;
@@ -922,6 +956,13 @@ export interface Texture {
   referenceCount: number;
 }
 
+/** Resolved slot for a library row — checks display name then original filename. */
+export function textureSlotFor(texture: Pick<Texture, 'displayName' | 'originalFilename'>): MaterialSlot | 'other' {
+  return detectTextureSlot(texture.displayName)
+    ?? detectTextureSlot(texture.originalFilename)
+    ?? 'other';
+}
+
 export interface TextureListResponse {
   textures: Texture[];
   limit: number;
@@ -933,7 +974,7 @@ export interface TextureListParams {
   q?: string;
   tags?: string[];
   /** When set, only textures whose filename matches this slot's suffix tokens. */
-  slot?: MaterialSlot;
+  slot?: MaterialSlot | 'other';
   limit?: number;
   /** Numeric offset (as returned in `nextCursor`) for "load more". */
   cursor?: string | number | null;
