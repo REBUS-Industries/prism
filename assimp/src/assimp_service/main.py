@@ -20,7 +20,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import __version__
-from .converter import preconvert_file, PreconvertOptions, PreconvertResult
+from .converter import (
+    convert_file_to_glb,
+    preconvert_file,
+    PreconvertOptions,
+    PreconvertResult,
+)
 
 logger = logging.getLogger("prism-assimp")
 # Python's logging.basicConfig is case-sensitive on the level name (it
@@ -48,6 +53,12 @@ SUPPORTED_EXTS = frozenset({
     ".blend",
     ".x",
     ".usdz",
+    # GDTF ships fixture meshes as 3DS (./models/3ds) or glTF (./models/gltf);
+    # 3DS must be converted to GLB for the web viewer. FBX/OBJ are common in
+    # uploaded fixtures and read cleanly via Assimp too.
+    ".3ds",
+    ".fbx",
+    ".obj",
 })
 
 app = FastAPI(
@@ -147,4 +158,46 @@ async def preconvert(
             "stats": result.stats,
             "manifest": result.manifest,
         }
+    )
+
+
+@app.post("/v1/convert-glb", response_model=None)
+async def convert_glb(
+    file: UploadFile = File(..., description="The source mesh to convert (e.g. .3ds)."),
+    target_unit: str = Form(default="m"),
+) -> FileResponse:
+    """Convert an Assimp-readable mesh into a binary glTF (GLB).
+
+    The fixtures service calls this for GDTF ``./models/3ds`` meshes so the web
+    viewer (Three.js ``GLTFLoader``) gets a GLB instead of a raw 3DS it cannot
+    parse. Returns the GLB bytes as a stream.
+    """
+    job_id = uuid.uuid4().hex
+    work_dir = WORK_ROOT / job_id
+    work_dir.mkdir(parents=True, exist_ok=False)
+
+    src_path = work_dir / (file.filename or "input.bin")
+    with src_path.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    logger.info(
+        "convert-glb job %s: saved input %s (%d bytes)",
+        job_id, src_path.name, src_path.stat().st_size,
+    )
+
+    if src_path.suffix.lower() not in SUPPORTED_EXTS:
+        raise HTTPException(status_code=415, detail=f"Unsupported extension '{src_path.suffix}'.")
+    if target_unit not in {"mm", "cm", "m", "inch", "ft"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported target_unit '{target_unit}'.")
+
+    options = PreconvertOptions(target_unit=target_unit)
+    try:
+        glb_path = convert_file_to_glb(src_path, work_dir, options)
+    except Exception as exc:
+        logger.exception("convert-glb job %s failed", job_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return FileResponse(
+        path=glb_path,
+        media_type="model/gltf-binary",
+        filename=f"{job_id}.glb",
     )
