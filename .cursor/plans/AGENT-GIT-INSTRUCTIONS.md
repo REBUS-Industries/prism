@@ -1,7 +1,9 @@
 # Git Instructions for All Agents
 
+**Start:** [README.md](./README.md) in this folder — then your workstream handoff.
+
 **Environment:** All development targets the dev VM (VM 212 — prism-dev.rebus.industries). There is no local dev server.
-**Target repo:** `REBUS-Industries/prism` (or your workstream repo — see `HANDOFF-overview.md`)
+**Target repo:** `REBUS-Industries/prism` (connectors agents: use `orbit-connectors` — see [HANDOFF-connectors.md](./HANDOFF-connectors.md))
 **Your branch:** see your workstream handoff doc — never commit directly to `main`.
 
 > **Every PRISM agent** (materials-editor, fixture-builder, etc.) must follow this doc for merge and deploy. Dev uses two workflows: **`web-image`** for `web/**` changes, **`server-image`** for `server/**` changes. If your PR touches both, run and wait for both.

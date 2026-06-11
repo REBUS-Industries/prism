@@ -3,6 +3,8 @@
 ORBIT-native file-conversion pipeline + Unreal visualiser. Monorepo for the
 `REBUS-Industries/prism` repo.
 
+**New agent session:** read `.cursor/plans/README.md` first (git, deploy, workstream handoff).
+
 **Architecture:** `orbit-infra` repo → `systems/prism.md`. **Deploy:** `infra/runbooks/deploy-prism.md`.
 
 ## Layout
