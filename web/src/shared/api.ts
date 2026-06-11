@@ -1365,6 +1365,15 @@ export type FixtureImportSource = 'upload' | 'gdtf-share' | 'mvr-embedded';
 /** GDTF mesh LOD folder preference (gltf_high / gltf / gltf_low). */
 export type GdtfModelQuality = 'low' | 'default' | 'high';
 
+/** GDTF mesh file format shipped in the package (./models/gltf or ./models/3ds). */
+export type GdtfModelFormat = 'gltf' | '3ds';
+
+/** Mesh LODs + formats detected in a GDTF package without importing it. */
+export interface GdtfModelInspection {
+  availableModelQualities: GdtfModelQuality[];
+  availableModelFormats: GdtfModelFormat[];
+}
+
 /**
  * Library-level provenance class (mirror of prism-shared FixtureOrigin).
  * Distinguishes the two fixture libraries: a `gdtf-share` record was
@@ -1605,7 +1614,7 @@ export const fixturesApi = {
   inspectGdtf: (file: File) => {
     const fd = new FormData();
     fd.append('file', file);
-    return api.postForm<{ availableModelQualities: GdtfModelQuality[] }>('/api/fixtures/inspect/gdtf', fd);
+    return api.postForm<GdtfModelInspection>('/api/fixtures/inspect/gdtf', fd);
   },
   importGdtf: (file: File, options: { name?: string; modelQuality?: GdtfModelQuality } = {}) => {
     const fd = new FormData();
@@ -1663,7 +1672,7 @@ export const fixturesApi = {
   versionsGdtfShare: (uuid: string) =>
     api.get<{ entry: GdtfShareCatalogEntry }>(`/api/gdtf-share/versions?uuid=${encodeURIComponent(uuid)}`),
   gdtfShareModelQualities: (rid: number) =>
-    api.get<{ availableModelQualities: GdtfModelQuality[] }>(
+    api.get<GdtfModelInspection>(
       `/api/gdtf-share/model-qualities?rid=${rid}`,
     ),
   // Connector / ORBIT export — the PRISM Library is the authoritative source.

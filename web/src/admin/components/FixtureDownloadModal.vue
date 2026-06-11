@@ -8,6 +8,7 @@ import {
   coerceModelQuality,
   defaultModelQualityForAvailable,
   type GdtfModelQuality,
+  type GdtfModelFormat,
 } from '../utils/fixtureModelQuality';
 
 const props = defineProps<{
@@ -25,6 +26,7 @@ const emit = defineEmits<{
 const fixtureType = ref<string>('Spot');
 const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
 const availableModelQualities = ref<GdtfModelQuality[] | null>(null);
+const availableModelFormats = ref<GdtfModelFormat[] | null>(null);
 const loadingQualities = ref(false);
 const qualityError = ref<string | null>(null);
 
@@ -32,9 +34,11 @@ async function loadQualities(rid: number): Promise<void> {
   loadingQualities.value = true;
   qualityError.value = null;
   availableModelQualities.value = null;
+  availableModelFormats.value = null;
   try {
     const res = await fixturesApi.gdtfShareModelQualities(rid);
     availableModelQualities.value = res.availableModelQualities;
+    availableModelFormats.value = res.availableModelFormats ?? null;
     modelQuality.value = defaultModelQualityForAvailable(res.availableModelQualities);
   } catch (err) {
     qualityError.value = (err as ApiError).message ?? 'failed to read GDTF mesh options';
@@ -66,6 +70,7 @@ watch(
       <FixtureModelQualitySelect
         v-model="modelQuality"
         :available="availableModelQualities"
+        :formats="availableModelFormats"
         :loading="loadingQualities"
         :disabled="saving"
       />

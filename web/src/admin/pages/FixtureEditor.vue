@@ -28,6 +28,7 @@ import {
   DEFAULT_GDTF_MODEL_QUALITY,
   GDTF_MODEL_QUALITY_LABELS,
   availableModelQualitiesFromDefinition,
+  availableModelFormatsFromDefinition,
   coerceModelQuality,
   modelQualityFromDefinition,
   type GdtfModelQuality,
@@ -104,6 +105,13 @@ const reimportingMeshes = ref(false);
 const availableModelQualities = computed(() =>
   availableModelQualitiesFromDefinition(fixture.value?.definition.metadata),
 );
+
+const availableModelFormats = computed(() =>
+  availableModelFormatsFromDefinition(fixture.value?.definition.metadata),
+);
+
+// A quality choice only exists when the GDTF ships more than one mesh LOD.
+const canChooseModelQuality = computed(() => (availableModelQualities.value?.length ?? 0) > 1);
 
 
 
@@ -822,24 +830,29 @@ onMounted(() => {
           <p v-if="!availableModelQualities" class="muted small">
             Mesh options not recorded for this fixture — re-download or apply an update to refresh from the GDTF package.
           </p>
-          <p v-else-if="modelQualityFromDefinition(fixture?.definition.metadata)" class="muted small">
-            Current import: {{ GDTF_MODEL_QUALITY_LABELS[modelQualityFromDefinition(fixture!.definition.metadata)!] }}
-          </p>
-          <FixtureModelQualitySelect
-            v-model="modelQuality"
-            :available="availableModelQualities"
-            :disabled="reimportingMeshes"
-          />
-          <button
-            class="mt-sm"
-            :disabled="reimportingMeshes || modelQualityFromDefinition(fixture?.definition.metadata) === modelQuality"
-            @click="applyModelQuality"
-          >
-            {{ reimportingMeshes ? 'Re-importing meshes…' : 'Apply model quality' }}
-          </button>
-          <p class="muted small">
-            GDTF-Share fixtures re-download the active revision with the chosen mesh LOD. Uploaded fixtures re-parse the stored local package. Part transforms and edits are kept.
-          </p>
+          <template v-else>
+            <p v-if="modelQualityFromDefinition(fixture?.definition.metadata)" class="muted small">
+              Current import: {{ GDTF_MODEL_QUALITY_LABELS[modelQualityFromDefinition(fixture!.definition.metadata)!] }}
+            </p>
+            <FixtureModelQualitySelect
+              v-model="modelQuality"
+              :available="availableModelQualities"
+              :formats="availableModelFormats"
+              :disabled="reimportingMeshes"
+            />
+            <template v-if="canChooseModelQuality">
+              <button
+                class="mt-sm"
+                :disabled="reimportingMeshes || modelQualityFromDefinition(fixture?.definition.metadata) === modelQuality"
+                @click="applyModelQuality"
+              >
+                {{ reimportingMeshes ? 'Re-importing meshes…' : 'Apply model quality' }}
+              </button>
+              <p class="muted small">
+                GDTF-Share fixtures re-download the active revision with the chosen mesh LOD. Uploaded fixtures re-parse the stored local package. Part transforms and edits are kept.
+              </p>
+            </template>
+          </template>
         </section>
 
       </div>
