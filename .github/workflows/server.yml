@@ -114,7 +114,8 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     concurrency:
       group: prism-deploy-vm212
-      cancel-in-progress: true
+      # Queue rather than cancel — never kill an in-progress deploy.
+      cancel-in-progress: false
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
