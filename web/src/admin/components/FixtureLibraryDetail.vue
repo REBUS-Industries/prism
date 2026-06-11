@@ -225,7 +225,7 @@ async function applyLatestUpdate(): Promise<void> {
     const res = await fixturesApi.downloadVersion(
       props.localFixture.id,
       updateCheck.value.latestRid,
-      true,
+      { carryEdits: true },
     );
     carryReport.value = [
       ...res.report.applied.map((a) => `Applied: ${a}`),

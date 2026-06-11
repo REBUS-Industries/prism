@@ -1362,6 +1362,9 @@ export interface FixtureDefinition {
 
 export type FixtureImportSource = 'upload' | 'gdtf-share' | 'mvr-embedded';
 
+/** GDTF mesh LOD folder preference (gltf_high / gltf / gltf_low). */
+export type GdtfModelQuality = 'low' | 'default' | 'high';
+
 /**
  * Library-level provenance class (mirror of prism-shared FixtureOrigin).
  * Distinguishes the two fixture libraries: a `gdtf-share` record was
@@ -1599,24 +1602,39 @@ export const fixturesApi = {
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/fixtures/${id}`),
   previewUrl: (id: string) => `/api/fixtures/${id}/preview.glb`,
   mediaUrl: (fixtureId: string, mediaId: string) => `/api/fixtures/${fixtureId}/media/${mediaId}`,
-  importGdtf: (file: File, name?: string) => {
+  importGdtf: (file: File, options: { name?: string; modelQuality?: GdtfModelQuality } = {}) => {
     const fd = new FormData();
-    if (name) fd.append('name', name);
+    if (options.name) fd.append('name', options.name);
+    if (options.modelQuality) fd.append('modelQuality', options.modelQuality);
     fd.append('file', file);
     return api.postForm<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf', fd);
   },
-  importGdtfShare: (rid: number, name?: string) =>
-    api.post<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf-share', { rid, name }),
+  importGdtfShare: (
+    rid: number,
+    name?: string,
+    modelQuality?: GdtfModelQuality,
+  ) =>
+    api.post<{ fixture: FixtureListItem }>('/api/fixtures/import/gdtf-share', {
+      rid,
+      name,
+      modelQuality,
+    }),
+  reimportMeshes: (id: string, modelQuality: GdtfModelQuality) =>
+    api.post<{ fixture: FixtureDetail }>(`/api/fixtures/${id}/reimport-meshes`, { modelQuality }),
   listVersions: (id: string) =>
     api.get<{ versions: FixtureVersionSummary[] }>(`/api/fixtures/${id}/versions`),
   checkUpdates: (id: string) =>
     api.get<{ check: FixtureUpdateCheck }>(`/api/fixtures/${id}/check-updates`),
   bulkCheckUpdates: (ids: string[]) =>
     api.post<{ updates: Record<string, boolean> }>('/api/fixtures/check-updates', { ids }),
-  downloadVersion: (id: string, rid: number, carryEdits = true) =>
+  downloadVersion: (
+    id: string,
+    rid: number,
+    options: { carryEdits?: boolean; modelQuality?: GdtfModelQuality } = {},
+  ) =>
     api.post<{ fixture: FixtureListItem; version: FixtureVersionSummary; report: FixtureEditCarryReport }>(
       `/api/fixtures/${id}/versions`,
-      { rid, carryEdits },
+      { rid, carryEdits: options.carryEdits ?? true, modelQuality: options.modelQuality },
     ),
   switchActiveVersion: (id: string, versionId: string) =>
     api.post<{ fixture: FixtureDetail; report: FixtureEditCarryReport }>(
