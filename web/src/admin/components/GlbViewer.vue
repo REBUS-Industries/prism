@@ -636,6 +636,15 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="view-section">
+          <span class="view-section-label">Background</span>
+          <div class="view-pills">
+            <button type="button" class="view-pill" :class="{ active: bgMode === 'none' }" @click="bgMode = 'none'">None</button>
+            <button type="button" class="view-pill" :class="{ active: bgMode === 'env' }" @click="bgMode = 'env'">Env</button>
+            <button type="button" class="view-pill" :class="{ active: bgMode === 'grey' }" @click="bgMode = 'grey'">Grey</button>
+          </div>
+        </section>
+
+        <section class="view-section">
           <span class="view-section-label">Environment</span>
           <select
             v-model="activeEnv"
@@ -703,15 +712,6 @@ onBeforeUnmount(() => {
               :class="{ active: toneMapping === opt.id }"
               @click="toneMapping = opt.id"
             >{{ opt.label }}</button>
-          </div>
-        </section>
-
-        <section class="view-section">
-          <span class="view-section-label">Background</span>
-          <div class="view-pills">
-            <button type="button" class="view-pill" :class="{ active: bgMode === 'none' }" @click="bgMode = 'none'">None</button>
-            <button type="button" class="view-pill" :class="{ active: bgMode === 'env' }" @click="bgMode = 'env'">Env</button>
-            <button type="button" class="view-pill" :class="{ active: bgMode === 'grey' }" @click="bgMode = 'grey'">Grey</button>
           </div>
         </section>
       </div>

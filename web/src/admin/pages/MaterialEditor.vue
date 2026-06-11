@@ -4,9 +4,9 @@
 
  * Material editor (route /materials/:id). Loads the full material detail and
 
- * lays out a node-graph editor (left ~60%) beside a live three.js PBR preview
+ * lays out a node-graph editor beside a live three.js PBR preview
 
- * + metadata form (right ~40%). Slot assignments from the graph are persisted
+ * + metadata form (default 50/50 split, resizable). Slot assignments from the graph are persisted
 
  * via PUT/DELETE …/slots/:slot and applied optimistically so the preview and
 
@@ -20,7 +20,7 @@
 
  */
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
 import { RouterLink, useRouter } from 'vue-router';
 
@@ -58,11 +58,11 @@ import {
 
 const SIDE_WIDTH_KEY = 'prism-material-editor-side-width';
 
-const SIDE_WIDTH_DEFAULT = 380;
-
 const SIDE_WIDTH_MIN = 280;
 
-const SIDE_WIDTH_MAX = 720;
+const MIN_GRAPH_WIDTH = 280;
+
+const OLD_SIDE_WIDTH_DEFAULT = 380;
 
 
 
@@ -108,27 +108,61 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const bodyRef = ref<HTMLDivElement | null>(null);
 
-const sidePaneWidth = ref(SIDE_WIDTH_DEFAULT);
+const sidePaneWidth = ref(400);
 
 const draggingSplitter = ref(false);
 
+let bodyResizeObserver: ResizeObserver | null = null;
 
 
-function readStoredSideWidth(): number {
+
+function getBodyWidth(): number {
+
+  return bodyRef.value?.clientWidth ?? 1200;
+
+}
+
+
+
+function defaultSideWidth(bodyW = getBodyWidth()): number {
+
+  return Math.floor(bodyW * 0.5);
+
+}
+
+
+
+function maxSideWidth(bodyW = getBodyWidth()): number {
+
+  return Math.max(SIDE_WIDTH_MIN, bodyW - MIN_GRAPH_WIDTH);
+
+}
+
+
+
+function clampSideWidth(px: number, bodyW = getBodyWidth()): number {
+
+  return Math.min(Math.max(px, SIDE_WIDTH_MIN), maxSideWidth(bodyW));
+
+}
+
+
+
+function readStoredSideWidth(): number | null {
 
   try {
 
     const raw = localStorage.getItem(SIDE_WIDTH_KEY);
 
-    if (!raw) return SIDE_WIDTH_DEFAULT;
+    if (!raw) return null;
 
     const n = Number(raw);
 
-    return Number.isFinite(n) ? n : SIDE_WIDTH_DEFAULT;
+    return Number.isFinite(n) ? n : null;
 
   } catch {
 
-    return SIDE_WIDTH_DEFAULT;
+    return null;
 
   }
 
@@ -136,13 +170,51 @@ function readStoredSideWidth(): number {
 
 
 
-function clampSideWidth(px: number): number {
+function resolveInitialSideWidth(bodyW: number): number {
 
-  const bodyW = bodyRef.value?.clientWidth ?? 1200;
+  const stored = readStoredSideWidth();
 
-  const max = Math.min(SIDE_WIDTH_MAX, Math.floor(bodyW * 0.55));
+  if (stored === null) {
 
-  return Math.min(Math.max(px, SIDE_WIDTH_MIN), Math.max(SIDE_WIDTH_MIN, max));
+    return clampSideWidth(defaultSideWidth(bodyW), bodyW);
+
+  }
+
+  const tooNarrow = stored < bodyW * 0.3;
+
+  const oldDefault = stored === OLD_SIDE_WIDTH_DEFAULT && bodyW > 800;
+
+  if (tooNarrow || oldDefault) {
+
+    return clampSideWidth(defaultSideWidth(bodyW), bodyW);
+
+  }
+
+  return clampSideWidth(stored, bodyW);
+
+}
+
+
+
+function setupBodyLayout(): void {
+
+  if (!bodyRef.value) return;
+
+  const bodyW = bodyRef.value.clientWidth;
+
+  sidePaneWidth.value = resolveInitialSideWidth(bodyW);
+
+  if (!bodyResizeObserver) {
+
+    bodyResizeObserver = new ResizeObserver(() => {
+
+      sidePaneWidth.value = clampSideWidth(sidePaneWidth.value);
+
+    });
+
+    bodyResizeObserver.observe(bodyRef.value);
+
+  }
 
 }
 
@@ -562,15 +634,31 @@ watch(() => props.id, () => void reload(), { immediate: true });
 
 
 
-onMounted(() => {
+watch(
 
-  sidePaneWidth.value = clampSideWidth(readStoredSideWidth());
+  () => material.value,
 
-});
+  async (m) => {
+
+    if (!m) return;
+
+    await nextTick();
+
+    setupBodyLayout();
+
+  },
+
+  { immediate: true },
+
+);
 
 
 
 onBeforeUnmount(() => {
+
+  bodyResizeObserver?.disconnect();
+
+  bodyResizeObserver = null;
 
   if (flushTimer) {
 
@@ -826,7 +914,7 @@ button.danger:hover { border-color: var(--color-error); }
 
   border-radius: 3px;
 
-  background: transparent;
+  background: color-mix(in srgb, var(--color-border-strong) 45%, transparent);
 
   transition: background 0.15s;
 
