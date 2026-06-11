@@ -27,6 +27,8 @@ import Icon from '../../shared/Icon.vue';
 import {
   DEFAULT_GDTF_MODEL_QUALITY,
   GDTF_MODEL_QUALITY_LABELS,
+  availableModelQualitiesFromDefinition,
+  coerceModelQuality,
   modelQualityFromDefinition,
   type GdtfModelQuality,
 } from '../utils/fixtureModelQuality';
@@ -98,6 +100,10 @@ const carryReport = ref<string[]>([]);
 const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
 
 const reimportingMeshes = ref(false);
+
+const availableModelQualities = computed(() =>
+  availableModelQualitiesFromDefinition(fixture.value?.definition.metadata),
+);
 
 
 
@@ -213,8 +219,11 @@ async function onSwitchStoredVersion(versionId: string): Promise<void> {
   try {
     const res = await fixturesApi.switchActiveVersion(props.id, versionId);
     fixture.value = res.fixture;
-    modelQuality.value = modelQualityFromDefinition(res.fixture.definition.metadata)
-      ?? DEFAULT_GDTF_MODEL_QUALITY;
+    const available = availableModelQualitiesFromDefinition(res.fixture.definition.metadata);
+    modelQuality.value = coerceModelQuality(
+      modelQualityFromDefinition(res.fixture.definition.metadata) ?? DEFAULT_GDTF_MODEL_QUALITY,
+      available,
+    );
     assemblyRevision.value += 1;
     carryReport.value = [
       ...res.report.applied.map((a) => `Applied: ${a}`),
@@ -305,8 +314,11 @@ async function reload(): Promise<void> {
 
     status.value = res.fixture.status;
 
-    modelQuality.value = modelQualityFromDefinition(res.fixture.definition.metadata)
-      ?? DEFAULT_GDTF_MODEL_QUALITY;
+    const available = availableModelQualitiesFromDefinition(res.fixture.definition.metadata);
+    modelQuality.value = coerceModelQuality(
+      modelQualityFromDefinition(res.fixture.definition.metadata) ?? DEFAULT_GDTF_MODEL_QUALITY,
+      available,
+    );
 
     if (!selectedPartId.value && res.fixture.definition.parts[0]) {
 
@@ -807,10 +819,17 @@ onMounted(() => {
 
         <section class="panel-card settings-card">
           <h2>3D models</h2>
-          <p v-if="modelQualityFromDefinition(fixture?.definition.metadata)" class="muted small">
+          <p v-if="!availableModelQualities" class="muted small">
+            Mesh options not recorded for this fixture — re-download or apply an update to refresh from the GDTF package.
+          </p>
+          <p v-else-if="modelQualityFromDefinition(fixture?.definition.metadata)" class="muted small">
             Current import: {{ GDTF_MODEL_QUALITY_LABELS[modelQualityFromDefinition(fixture!.definition.metadata)!] }}
           </p>
-          <FixtureModelQualitySelect v-model="modelQuality" :disabled="reimportingMeshes" />
+          <FixtureModelQualitySelect
+            v-model="modelQuality"
+            :available="availableModelQualities"
+            :disabled="reimportingMeshes"
+          />
           <button
             class="mt-sm"
             :disabled="reimportingMeshes || modelQualityFromDefinition(fixture?.definition.metadata) === modelQuality"

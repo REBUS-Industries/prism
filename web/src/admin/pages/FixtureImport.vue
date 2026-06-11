@@ -5,31 +5,56 @@ import GdtfShareSearch from '../components/GdtfShareSearch.vue';
 import FixtureModelQualitySelect from '../components/FixtureModelQualitySelect.vue';
 import { fixturesApi, type ApiError } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
-import { DEFAULT_GDTF_MODEL_QUALITY, type GdtfModelQuality } from '../utils/fixtureModelQuality';
+import {
+  DEFAULT_GDTF_MODEL_QUALITY,
+  coerceModelQuality,
+  defaultModelQualityForAvailable,
+  type GdtfModelQuality,
+} from '../utils/fixtureModelQuality';
 
 const router = useRouter();
 const fileInput = ref<HTMLInputElement | null>(null);
 const importing = ref(false);
+const inspecting = ref(false);
 const error = ref<string | null>(null);
 const name = ref('');
+const selectedFile = ref<File | null>(null);
+const availableModelQualities = ref<GdtfModelQuality[] | null>(null);
 const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
 
-async function onFile(ev: Event): Promise<void> {
+async function onFileChosen(ev: Event): Promise<void> {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
+  selectedFile.value = file;
+  inspecting.value = true;
+  error.value = null;
+  availableModelQualities.value = null;
+  try {
+    const res = await fixturesApi.inspectGdtf(file);
+    availableModelQualities.value = res.availableModelQualities;
+    modelQuality.value = defaultModelQualityForAvailable(res.availableModelQualities);
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'failed to read GDTF mesh options';
+    selectedFile.value = null;
+  } finally {
+    inspecting.value = false;
+  }
+}
+
+async function runImport(): Promise<void> {
+  if (!selectedFile.value) return;
   importing.value = true;
   error.value = null;
   try {
-    const res = await fixturesApi.importGdtf(file, {
+    const res = await fixturesApi.importGdtf(selectedFile.value, {
       name: name.value || undefined,
-      modelQuality: modelQuality.value,
+      modelQuality: coerceModelQuality(modelQuality.value, availableModelQualities.value),
     });
     void router.push({ name: 'fixture-editor', params: { id: res.fixture.id } });
   } catch (err) {
     error.value = (err as ApiError).message ?? 'import failed';
   } finally {
     importing.value = false;
-    if (fileInput.value) fileInput.value.value = '';
   }
 }
 
@@ -48,11 +73,27 @@ function onImported(id: string): void {
     <h2>Upload .gdtf file</h2>
     <label class="muted small">Optional display name</label>
     <input v-model="name" placeholder="Override name" />
-    <FixtureModelQualitySelect v-model="modelQuality" class="mt-sm" />
-    <button class="mt-sm" :disabled="importing" @click="fileInput?.click()">
-      <Icon name="upload_file" :size="16" />{{ importing ? 'Importing…' : 'Choose .gdtf file' }}
+    <button class="mt-sm" :disabled="importing || inspecting" @click="fileInput?.click()">
+      <Icon name="upload_file" :size="16" />{{ inspecting ? 'Reading GDTF…' : 'Choose .gdtf file' }}
     </button>
-    <input ref="fileInput" type="file" accept=".gdtf" style="display:none" @change="onFile" />
+    <input ref="fileInput" type="file" accept=".gdtf" style="display:none" @change="onFileChosen" />
+    <p v-if="selectedFile" class="muted small mt-sm">{{ selectedFile.name }}</p>
+    <FixtureModelQualitySelect
+      v-if="selectedFile"
+      v-model="modelQuality"
+      class="mt-sm"
+      :available="availableModelQualities"
+      :loading="inspecting"
+      :disabled="importing"
+    />
+    <button
+      v-if="selectedFile && availableModelQualities?.length"
+      class="mt-sm"
+      :disabled="importing || inspecting"
+      @click="runImport"
+    >
+      <Icon name="download" :size="16" />{{ importing ? 'Importing…' : 'Import' }}
+    </button>
   </section>
 
   <section class="card mt">

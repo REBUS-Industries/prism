@@ -1602,6 +1602,11 @@ export const fixturesApi = {
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/fixtures/${id}`),
   previewUrl: (id: string) => `/api/fixtures/${id}/preview.glb`,
   mediaUrl: (fixtureId: string, mediaId: string) => `/api/fixtures/${fixtureId}/media/${mediaId}`,
+  inspectGdtf: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.postForm<{ availableModelQualities: GdtfModelQuality[] }>('/api/fixtures/inspect/gdtf', fd);
+  },
   importGdtf: (file: File, options: { name?: string; modelQuality?: GdtfModelQuality } = {}) => {
     const fd = new FormData();
     if (options.name) fd.append('name', options.name);
@@ -1657,6 +1662,10 @@ export const fixturesApi = {
   },
   versionsGdtfShare: (uuid: string) =>
     api.get<{ entry: GdtfShareCatalogEntry }>(`/api/gdtf-share/versions?uuid=${encodeURIComponent(uuid)}`),
+  gdtfShareModelQualities: (rid: number) =>
+    api.get<{ availableModelQualities: GdtfModelQuality[] }>(
+      `/api/gdtf-share/model-qualities?rid=${rid}`,
+    ),
   // Connector / ORBIT export — the PRISM Library is the authoritative source.
   exportList: (params: { q?: string; origin?: FixtureOrigin | FixtureOrigin[]; status?: 'draft' | 'published'; limit?: number } = {}) => {
     const qs = new URLSearchParams();

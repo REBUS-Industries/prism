@@ -1,23 +1,55 @@
 <script setup lang="ts">
+import { computed, watch } from 'vue';
 import {
-  DEFAULT_GDTF_MODEL_QUALITY,
   GDTF_MODEL_QUALITIES,
   GDTF_MODEL_QUALITY_LABELS,
+  coerceModelQuality,
   type GdtfModelQuality,
 } from '../utils/fixtureModelQuality';
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: GdtfModelQuality;
+  available?: readonly GdtfModelQuality[] | null;
   label?: string;
   disabled?: boolean;
+  loading?: boolean;
 }>(), {
   label: '3D model quality',
   disabled: false,
+  loading: false,
 });
 
 const emit = defineEmits<{
   'update:modelValue': [value: GdtfModelQuality];
 }>();
+
+const options = computed(() => {
+  if (props.available?.length) return [...props.available];
+  return [...GDTF_MODEL_QUALITIES];
+});
+
+const hint = computed(() => {
+  if (props.loading) return 'Reading mesh options from GDTF package…';
+  if (props.available?.length) {
+    return 'Options are based on mesh LOD folders shipped in this GDTF file (gltf_high, gltf, gltf_low).';
+  }
+  return 'GDTF packages may ship high, default, and low glTF meshes. Pick which LOD to import.';
+});
+
+watch(
+  () => props.available,
+  (available) => {
+    if (!available?.length) return;
+    const next = coerceModelQuality(props.modelValue, available);
+    if (next !== props.modelValue) emit('update:modelValue', next);
+  },
+  { immediate: true },
+);
+
+function onChange(ev: Event): void {
+  const value = (ev.target as HTMLSelectElement).value as GdtfModelQuality;
+  emit('update:modelValue', coerceModelQuality(value, props.available));
+}
 </script>
 
 <template>
@@ -25,20 +57,21 @@ const emit = defineEmits<{
     <span class="quality-label">{{ label }}</span>
     <select
       :value="modelValue"
-      :disabled="disabled"
-      @change="emit('update:modelValue', ($event.target as HTMLSelectElement).value as GdtfModelQuality)"
+      :disabled="disabled || loading || options.length === 0"
+      @change="onChange"
     >
       <option
-        v-for="q in GDTF_MODEL_QUALITIES"
+        v-for="q in options"
         :key="q"
         :value="q"
       >
         {{ GDTF_MODEL_QUALITY_LABELS[q] }}
       </option>
     </select>
-    <p class="muted small quality-hint">
-      GDTF packages may ship high, default, and low glTF meshes. Pick which LOD to import; you can change this later in the fixture editor.
+    <p v-if="options.length === 0 && !loading" class="muted small quality-hint">
+      No 3D mesh LOD folders found in this GDTF package.
     </p>
+    <p v-else class="muted small quality-hint">{{ hint }}</p>
   </label>
 </template>
 

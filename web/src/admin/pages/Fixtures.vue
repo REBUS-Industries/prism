@@ -1056,9 +1056,10 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 
     <FixtureDownloadModal
-      v-if="showDownloadModal && selectedShare"
+      v-if="showDownloadModal && selectedShare && (selectedShareRid ?? selectedShare.versions[0]?.rid)"
       :fixture-name="selectedShare.fixture"
       :manufacturer="selectedShare.manufacturer"
+      :rid="selectedShareRid ?? selectedShare.versions[0]!.rid"
       :saving="importing"
       @cancel="showDownloadModal = false"
       @confirm="confirmDownload"
