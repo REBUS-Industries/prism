@@ -1,19 +1,13 @@
 /**
  * Build a full GDTF fixture assembly as a Three.js group by walking the parsed
- * geometry tree, loading every linked model's GLB and applying the composed
- * parent→child transforms. Mirrors how the GDTF-Share fixture builder stacks
- * Base → Yoke → Head → Beam into the complete fixture.
+ * geometry tree — matching the GDTF-Share fixture builder scene graph:
  *
- * GDTF facts honoured here:
- *  - Geometry `Position` is a 4x4 transform (metres) relative to the parent;
- *    the parser normalises it to a THREE row-major `matrix4x4`.
- *  - Each Model's GLB is the geometry of THAT part only, authored in metres at
- *    the geometry origin — so placing it at the node's world transform assembles
- *    the fixture with no extra per-model offset.
- *  - GeometryReference nodes re-instance another geometry subtree at a new
- *    transform (e.g. repeated connectors).
- *  - GDTF is Z-up; the result root is rotated so it stands upright in Three's
- *    Y-up world (base at the bottom, beam pointing up).
+ *  - Geometry node matrices applied directly in native GDTF Z-up space (metres).
+ *  - Each linked model GLB is wrapped in a +90° X group scaled so its bounding
+ *    box matches the Model's declared Length / Width / Height (metres).
+ *  - Parts without a mesh file render as scaled unit primitives (box / cylinder).
+ *  - A single −90° X rotation on the root presents the Z-up assembly in Three's
+ *    Y-up viewer (fixture hangs downward like the builder).
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -29,60 +23,137 @@ export interface FixtureAssemblyInput {
 export interface FixtureAssemblyResult {
   /** Up-axis-corrected group, ready to add to the scene. */
   root: THREE.Group;
-  /** Number of model meshes actually placed. */
+  /** Number of model meshes / primitives actually placed. */
   meshCount: number;
   /**
    * World-space bounding box computed immediately after updateMatrixWorld
-   * (before the root is re-parented into the scene graph). Use this directly
-   * instead of re-computing with Box3.setFromObject after scene insertion,
-   * which can read stale parent matrixWorld values.
+   * (before the root is re-parented into the scene graph).
    */
   box: THREE.Box3;
 }
+
+interface ModelDims {
+  length?: number;
+  width?: number;
+  height?: number;
+  primitiveType?: string;
+}
+
+const PRIMITIVE_MAT = new THREE.MeshStandardMaterial({
+  color: 0x9ca3af,
+  transparent: true,
+  opacity: 0.55,
+  metalness: 0.15,
+  roughness: 0.75,
+});
 
 function modelMediaId(model: FixtureModel | undefined): string | null {
   const id = (model?.metadata as { mediaId?: unknown } | undefined)?.mediaId;
   return typeof id === 'string' && id ? id : null;
 }
 
+function modelDims(model: FixtureModel | undefined): ModelDims {
+  const m = model?.metadata as Record<string, unknown> | undefined;
+  return {
+    length: typeof m?.length === 'number' && m.length > 0 ? m.length : undefined,
+    width: typeof m?.width === 'number' && m.width > 0 ? m.width : undefined,
+    height: typeof m?.height === 'number' && m.height > 0 ? m.height : undefined,
+    primitiveType: typeof m?.primitiveType === 'string' ? m.primitiveType : undefined,
+  };
+}
+
 function partMeta(part: FixturePart): { isGeometryReference?: boolean; referencedGeometryId?: string } {
   return (part.metadata ?? {}) as { isGeometryReference?: boolean; referencedGeometryId?: string };
 }
 
-// GDTF geometry transforms are authored in a Z-up coordinate system, while the
-// model GLBs are loaded in glTF's Y-up system (verified live: every model's
-// height lands on the mesh Y axis). To compose them consistently we express
-// each GDTF local matrix in the viewer's Y-up space via a basis-change
-// conjugation  M_viewer = B · M_gdtf · B⁻¹,  where B rotates +90° about X so the
-// GDTF chain (beam at the most-negative Z) ends up pointing up. This keeps every
-// mesh upright (as authored) and only re-bases the relative offsets/rotations,
-// so Base/Yoke/Head stack into the full fixture instead of collapsing.
-const GDTF_TO_VIEWER = new THREE.Matrix4().makeRotationX(Math.PI / 2);
-const VIEWER_TO_GDTF = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
-
+/** Apply the GDTF geometry Position matrix directly (Z-up, metres). */
 function applyPartTransform(group: THREE.Object3D, part: FixturePart): void {
   const t = part.localTransform;
-  const m = new THREE.Matrix4();
   const a = t?.matrix4x4;
   if (Array.isArray(a) && a.length === 16) {
+    const m = new THREE.Matrix4();
     m.set(
       a[0], a[1], a[2], a[3],
       a[4], a[5], a[6], a[7],
       a[8], a[9], a[10], a[11],
       a[12], a[13], a[14], a[15],
     );
+    m.decompose(group.position, group.quaternion, group.scale);
   } else if (t?.position) {
     const r = t.rotation ?? { x: 0, y: 0, z: 0 };
-    m.makeRotationFromEuler(new THREE.Euler(
+    group.position.set(t.position.x, t.position.y, t.position.z);
+    group.rotation.set(
       THREE.MathUtils.degToRad(r.x),
       THREE.MathUtils.degToRad(r.y),
       THREE.MathUtils.degToRad(r.z),
       'XYZ',
-    ));
-    m.setPosition(t.position.x, t.position.y, t.position.z);
+    );
+    const s = t.scale ?? { x: 1, y: 1, z: 1 };
+    group.scale.set(s.x, s.y, s.z);
   }
-  const conv = new THREE.Matrix4().multiplyMatrices(GDTF_TO_VIEWER, m).multiply(VIEWER_TO_GDTF);
-  conv.decompose(group.position, group.quaternion, group.scale);
+}
+
+/**
+ * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
+ * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
+ *
+ * After +90° X: mesh local Y → world Z, local Z → world −Y.
+ * Builder scale mapping (verified on Rivale Profile Base):
+ *   scale.x = length / bbox.x
+ *   scale.y = height / bbox.y
+ *   scale.z = width  / bbox.z
+ */
+function wrapModelMesh(meshRoot: THREE.Object3D, dims: ModelDims): THREE.Group {
+  const wrapper = new THREE.Group();
+  wrapper.name = 'Scene';
+  wrapper.rotation.x = Math.PI / 2;
+
+  const bbox = new THREE.Box3().setFromObject(meshRoot);
+  const size = bbox.getSize(new THREE.Vector3());
+  if (
+    dims.length != null && dims.width != null && dims.height != null
+    && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6
+  ) {
+    wrapper.scale.set(
+      dims.length / size.x,
+      dims.height / size.y,
+      dims.width / size.z,
+    );
+  }
+
+  wrapper.add(meshRoot);
+  return wrapper;
+}
+
+function isCylinderPrimitive(dims: ModelDims, part: FixturePart): boolean {
+  const pt = (dims.primitiveType ?? '').toLowerCase();
+  if (pt.includes('cylinder') || pt.includes('beam')) return true;
+  const geoType = String((part.metadata as { geometryType?: string })?.geometryType ?? '').toLowerCase();
+  if (geoType.includes('beam')) return true;
+  return part.tag === 'BEAM';
+}
+
+/** Unit primitive scaled to GDTF model dimensions (metres), builder-style. */
+function buildPrimitive(dims: ModelDims, part: FixturePart): THREE.Group | null {
+  const length = dims.length ?? 0.1;
+  const width = dims.width ?? 0.1;
+  const height = dims.height ?? 0.1;
+  if (length <= 0 || width <= 0 || height <= 0) return null;
+
+  const wrapper = new THREE.Group();
+  wrapper.name = 'Scene';
+  wrapper.rotation.x = Math.PI / 2;
+  wrapper.scale.set(length, height, width);
+
+  let mesh: THREE.Mesh;
+  if (isCylinderPrimitive(dims, part)) {
+    mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 24), PRIMITIVE_MAT);
+  } else {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), PRIMITIVE_MAT);
+  }
+
+  wrapper.add(mesh);
+  return wrapper;
 }
 
 /** Deep-dispose geometries/materials of an assembled group (GPU cleanup). */
@@ -92,7 +163,7 @@ export function disposeAssembly(root: THREE.Object3D): void {
     if (mesh.geometry) mesh.geometry.dispose();
     const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
-    else if (mat) mat.dispose();
+    else if (mat && mat !== PRIMITIVE_MAT) mat.dispose();
   });
 }
 
@@ -103,7 +174,6 @@ export async function buildFixtureAssembly(
   const modelById = new Map(models.map((mm) => [mm.modelId, mm]));
   const loader = new GLTFLoader();
 
-  // Load each GLB once; reuse across parts (and GeometryReference) via clone.
   const glbCache = new Map<string, Promise<THREE.Object3D | null>>();
   const loadGlb = (mediaId: string): Promise<THREE.Object3D | null> => {
     let p = glbCache.get(mediaId);
@@ -116,7 +186,6 @@ export async function buildFixtureAssembly(
     return p;
   };
 
-  // A group per part, transform applied, parented per the geometry tree.
   const partGroups = new Map<string, THREE.Group>();
   const byGeometryId = new Map<string, FixturePart>();
   for (const part of parts) {
@@ -127,27 +196,43 @@ export async function buildFixtureAssembly(
     partGroups.set(part.partId, g);
   }
 
-  const contentRoot = new THREE.Group(); // GDTF (Z-up) space
+  const contentRoot = new THREE.Group();
+  contentRoot.name = 'Fixture';
   for (const part of parts) {
     const g = partGroups.get(part.partId)!;
     const parent = part.parentPartId ? partGroups.get(part.parentPartId) : null;
     (parent ?? contentRoot).add(g);
   }
 
-  // Attach each part's own model GLB.
   let meshCount = 0;
+
   await Promise.all(parts.map(async (part) => {
     if (partMeta(part).isGeometryReference) return;
+
     const model = part.modelId ? modelById.get(part.modelId) : undefined;
+    const dims = modelDims(model);
     const mediaId = modelMediaId(model);
-    if (!mediaId) return;
-    const obj = await loadGlb(mediaId);
-    if (!obj) return;
-    partGroups.get(part.partId)!.add(obj.clone(true));
-    meshCount += 1;
+    const partGroup = partGroups.get(part.partId)!;
+
+    if (mediaId) {
+      const obj = await loadGlb(mediaId);
+      if (obj) {
+        partGroup.add(wrapModelMesh(obj.clone(true), dims));
+        meshCount += 1;
+        return;
+      }
+    }
+
+    // No GLB — render a GDTF primitive (Beam cylinder, Pigtail box, etc.).
+    if (model || dims.length || dims.width || dims.height) {
+      const prim = buildPrimitive(dims, part);
+      if (prim) {
+        partGroup.add(prim);
+        meshCount += 1;
+      }
+    }
   }));
 
-  // Resolve GeometryReference nodes by cloning the referenced subtree.
   for (const part of parts) {
     const meta = partMeta(part);
     if (!meta.isGeometryReference || !meta.referencedGeometryId) continue;
@@ -155,8 +240,6 @@ export async function buildFixtureAssembly(
     const targetGroup = target ? partGroups.get(target.partId) : null;
     if (!targetGroup) continue;
     const clone = targetGroup.clone(true);
-    // The reference node already carries the placement transform; neutralise the
-    // cloned subtree root's own local transform so it inherits the ref's.
     clone.position.set(0, 0, 0);
     clone.quaternion.identity();
     clone.scale.set(1, 1, 1);
@@ -164,18 +247,15 @@ export async function buildFixtureAssembly(
     clone.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshCount += 1; });
   }
 
-  // Each part's local matrix is already re-based into viewer (Y-up) space via
-  // conjugation, so the root needs no extra rotation — applying one here would
-  // double-rotate and tip the whole fixture over.
-  const root = new THREE.Group();
-  root.add(contentRoot);
+  // Present Z-up GDTF assembly in the viewer's Y-up world (single root rotation).
+  const presentation = new THREE.Group();
+  presentation.name = 'Presentation';
+  presentation.rotation.x = -Math.PI / 2;
+  presentation.add(contentRoot);
 
-  // Compute the bounding box HERE, before inserting into the scene graph. At
-  // this point root has no parent so world matrices equal local matrices;
-  // updateMatrixWorld(true) propagates them cleanly down the full subtree.
-  // Computing the box AFTER tiltGroup.add(root) can read stale parent
-  // matrixWorld values that haven't been refreshed since the previous render
-  // tick, causing the camera to be framed on only the first-rendered part.
+  const root = new THREE.Group();
+  root.add(presentation);
+
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
 
