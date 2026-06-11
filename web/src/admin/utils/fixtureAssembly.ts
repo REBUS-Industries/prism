@@ -42,6 +42,17 @@ function partMeta(part: FixturePart): { isGeometryReference?: boolean; reference
   return (part.metadata ?? {}) as { isGeometryReference?: boolean; referencedGeometryId?: string };
 }
 
+// GDTF geometry transforms are authored in a Z-up coordinate system, while the
+// model GLBs are loaded in glTF's Y-up system (verified live: every model's
+// height lands on the mesh Y axis). To compose them consistently we express
+// each GDTF local matrix in the viewer's Y-up space via a basis-change
+// conjugation  M_viewer = B · M_gdtf · B⁻¹,  where B rotates +90° about X so the
+// GDTF chain (beam at the most-negative Z) ends up pointing up. This keeps every
+// mesh upright (as authored) and only re-bases the relative offsets/rotations,
+// so Base/Yoke/Head stack into the full fixture instead of collapsing.
+const GDTF_TO_VIEWER = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+const VIEWER_TO_GDTF = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+
 function applyPartTransform(group: THREE.Object3D, part: FixturePart): void {
   const t = part.localTransform;
   const m = new THREE.Matrix4();
@@ -63,7 +74,8 @@ function applyPartTransform(group: THREE.Object3D, part: FixturePart): void {
     ));
     m.setPosition(t.position.x, t.position.y, t.position.z);
   }
-  m.decompose(group.position, group.quaternion, group.scale);
+  const conv = new THREE.Matrix4().multiplyMatrices(GDTF_TO_VIEWER, m).multiply(VIEWER_TO_GDTF);
+  conv.decompose(group.position, group.quaternion, group.scale);
 }
 
 /** Deep-dispose geometries/materials of an assembled group (GPU cleanup). */
@@ -145,9 +157,10 @@ export async function buildFixtureAssembly(
     clone.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshCount += 1; });
   }
 
-  // GDTF Z-up → Three Y-up (upright, base at the bottom).
+  // Each part's local matrix is already re-based into viewer (Y-up) space via
+  // conjugation, so the root needs no extra rotation — applying one here would
+  // double-rotate and tip the whole fixture over.
   const root = new THREE.Group();
-  root.rotation.x = Math.PI / 2;
   root.add(contentRoot);
   root.updateMatrixWorld(true);
   return { root, meshCount };
