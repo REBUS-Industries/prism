@@ -28,7 +28,11 @@ const props = defineProps<{
   slot: MaterialSlot;
   texture: MaterialSlotTexture | null;
   params: MaterialParameters;
+  /** Which side the source handle appears on. Defaults to 'right' (left column). */
+  handleSide?: 'left' | 'right';
 }>();
+
+const handlePosition = () => props.handleSide === 'left' ? Position.Left : Position.Right;
 const emit = defineEmits<{
   assign: [slot: MaterialSlot, texture: Texture];
   remove: [slot: MaterialSlot];
@@ -216,13 +220,13 @@ function onPicked(tex: Texture): void {
       <TexturePickerModal :open="pickerOpen" :slot="slot" @select="onPicked" @close="pickerOpen = false" />
     </Teleport>
 
-    <Handle type="source" :position="Position.Right" :connectable="false" />
+    <Handle type="source" :position="handlePosition()" :connectable="false" />
   </div>
 </template>
 
 <style scoped>
 .texture-node {
-  width: 232px;
+  width: 300px;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
@@ -232,17 +236,17 @@ function onPicked(tex: Texture): void {
   cursor: default;
 }
 .tn-head {
-  padding: 7px 12px;
-  font-size: 12px;
+  padding: 9px 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-text);
   background: var(--color-bg-input);
   border-bottom: 1px solid var(--color-border);
 }
-.tn-assigned { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.tn-assigned { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .tn-thumb {
-  display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-sm);
+  display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm);
   overflow: hidden; background: var(--color-bg-hover);
 }
 .tn-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -250,31 +254,31 @@ function onPicked(tex: Texture): void {
   font-size: 12px; color: var(--color-text-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tn-actions { display: flex; gap: 6px; }
-.tn-actions button { flex: 1; padding: 4px 8px; font-size: 12px; }
-.tn-empty { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
-.tn-empty button { width: 100%; padding: 6px 8px; font-size: 12px; }
+.tn-actions { display: flex; gap: 8px; }
+.tn-actions button { flex: 1; padding: 6px 10px; font-size: 13px; }
+.tn-empty { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.tn-empty button { width: 100%; padding: 8px 10px; font-size: 13px; }
 .tn-error {
-  margin: 0 10px 10px; font-size: 11px;
+  margin: 0 12px 12px; font-size: 12px;
   color: var(--color-error);
 }
 .tn-params {
-  padding: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-input);
 }
 .tn-check {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 8px;
+  font-size: 12px;
   color: var(--color-text-muted);
   cursor: pointer;
 }
-.tn-check input { width: 13px; height: 13px; cursor: pointer; }
+.tn-check input { width: 14px; height: 14px; cursor: pointer; }
 button.danger { color: var(--color-error); }
 button.danger:hover { border-color: var(--color-error); }
 </style>

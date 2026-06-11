@@ -904,6 +904,18 @@ export const MATERIAL_SLOTS = [
   'albedo', 'normal', 'roughness', 'metallic', 'ao', 'emissive', 'opacity', 'displacement',
 ] as const;
 
+/**
+ * Left column of the two-column node-graph layout — wired to the LEFT side of
+ * the material output node. These are the "appearance" slots.
+ */
+export const LEFT_MATERIAL_SLOTS = ['albedo', 'roughness', 'ao', 'opacity'] as const satisfies readonly MaterialSlot[];
+
+/**
+ * Right column of the two-column node-graph layout — wired to the RIGHT side
+ * of the material output node. These are the "structure / detail" slots.
+ */
+export const RIGHT_MATERIAL_SLOTS = ['normal', 'metallic', 'emissive', 'displacement'] as const satisfies readonly MaterialSlot[];
+
 export type MaterialSlot = typeof MATERIAL_SLOTS[number];
 
 /** Human-friendly labels for each slot — shared by the node graph + editor. */
