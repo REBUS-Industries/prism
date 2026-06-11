@@ -8,7 +8,7 @@
  * "Upload New" multipart-POSTs to /api/textures then emits the created row
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { texturesApi, SLOT_LABELS, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
+import { texturesApi, SLOT_LABELS, SLOT_SUFFIX_HINTS, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
 const props = defineProps<{ open: boolean; slot?: MaterialSlot }>();
@@ -32,18 +32,6 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const slotFilterLabel = computed(() =>
   props.slot ? SLOT_LABELS[props.slot] : null,
 );
-
-/** Short suffix examples shown beside the slot filter toggle. */
-const SLOT_SUFFIX_HINTS: Record<MaterialSlot, string> = {
-  albedo:       '_albedo, _color, _basecolor…',
-  normal:       '_normal, _nrm, _nor',
-  roughness:    '_roughness, _rough, _rgh',
-  metallic:     '_metallic, _metalness, _metal',
-  ao:           '_ao, _ambientocclusion…',
-  emissive:     '_emissive, _emission, _emi',
-  opacity:      '_opacity, _alpha, _mask',
-  displacement: '_displacement, _height, _disp',
-};
 
 function slotSuffixHint(slot: MaterialSlot): string {
   return SLOT_SUFFIX_HINTS[slot];
