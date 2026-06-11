@@ -2,7 +2,7 @@ name: web-image
 
 # Builds the PRISM admin/convert/viewer SPA as a standalone nginx container
 # (prism-web) and deploys it to VM 212 (prism-dev.rebus.industries) only.
-# VM 211 (prod) is NOT touched.
+# Server API changes deploy via server-image (separate workflow).
 
 on:
   push:
@@ -57,7 +57,8 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     concurrency:
       group: prism-deploy-vm212
-      cancel-in-progress: true
+      # Queue rather than cancel — never kill an in-progress deploy.
+      cancel-in-progress: false
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +78,13 @@ jobs:
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
             docker compose pull prism-web prism-fixtures
-            docker compose up -d prism-server prism-materials prism-fixtures prism-visualiser prism-agent prism-web prism-router
-            docker compose ps prism-server prism-materials prism-fixtures prism-visualiser prism-agent prism-web prism-router
+            docker compose up -d prism-web prism-fixtures prism-router
+            docker compose ps prism-web prism-fixtures prism-router
+            # Keep VM 212 disk healthy — remove images older than 24h
+            docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
+
+      # Clean up the runner workspace AFTER deploy to prevent disk fill on CT 261.
+      - name: Clean runner workspace
+        if: always()
+        run: find "$GITHUB_WORKSPACE/.." -mindepth 1 -maxdepth 1 ! -samefile "$GITHUB_WORKSPACE" -exec rm -rf {} + 2>/dev/null || true

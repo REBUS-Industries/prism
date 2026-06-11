@@ -11,7 +11,7 @@ if ! systemctl is-active --quiet "$UNIT"; then
   exit 0
 fi
 
-if ! pgrep -f 'Runner.Listener run' >/dev/null; then
+if ! pgrep -f 'Runner.Listener run --startuptype' >/dev/null; then
   logger -t prism-runner-watchdog "Runner.Listener process missing — restarting"
   systemctl restart "$UNIT"
   exit 0

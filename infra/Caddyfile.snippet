@@ -43,6 +43,18 @@ prism.rebus.industries {
     }
 }
 
+# Slack merge bot — CT 271 (RB-DA2-SlackBot, 10.0.200.71)
+merge-bot.prism-dev.rebus.industries {
+    reverse_proxy http://10.0.200.71:3456
+    log {
+        output file /var/log/caddy/merge-bot.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+
 prism-dev.rebus.industries {
     encode zstd gzip
 

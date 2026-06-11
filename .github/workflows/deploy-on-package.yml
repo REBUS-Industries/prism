@@ -13,7 +13,7 @@ jobs:
     runs-on: [self-hosted, prism-deploy]
     concurrency:
       group: prism-deploy-vm212
-      cancel-in-progress: true
+      cancel-in-progress: false
     timeout-minutes: 10
     steps:
       - name: Map package to compose service

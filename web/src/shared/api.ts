@@ -909,6 +909,46 @@ export const SLOT_LABELS: Record<MaterialSlot, string> = {
   displacement: 'Displacement',
 };
 
+/** Short suffix examples for slot filter UI. Mirrors server/src/materials/slots.ts. */
+export const SLOT_SUFFIX_HINTS: Record<MaterialSlot, string> = {
+  albedo:       '_albedo, _color, _basecolor…',
+  normal:       '_normal, _nrm, _nor',
+  roughness:    '_roughness, _rough, _rgh',
+  metallic:     '_metallic, _metalness, _metal',
+  ao:           '_ao, _ambientocclusion…',
+  emissive:     '_emissive, _emission, _emi',
+  opacity:      '_opacity, _alpha, _mask',
+  displacement: '_displacement, _height, _disp',
+};
+
+const SLOT_FILENAME_TOKENS: Record<MaterialSlot, readonly string[]> = {
+  albedo:       ['_albedo', '_color', '_basecolor', '_diffuse', '_diff', '_col'],
+  normal:       ['_normal', '_nrm', '_nor'],
+  roughness:    ['_roughness', '_rough', '_rgh'],
+  metallic:     ['_metallic', '_metalness', '_metal'],
+  ao:           ['_ao', '_ambientocclusion', '_occlusion'],
+  emissive:     ['_emissive', '_emission', '_emi'],
+  opacity:      ['_opacity', '_alpha', '_mask'],
+  displacement: ['_displacement', '_height', '_disp'],
+};
+
+/** Detect PBR slot from a texture filename (Megascans-style). Mirrors server detectSlot. */
+export function detectTextureSlot(filename: string): MaterialSlot | null {
+  const lower = filename.toLowerCase();
+  for (const slot of MATERIAL_SLOTS) {
+    for (const token of SLOT_FILENAME_TOKENS[slot]) {
+      if (lower.includes(token)) return slot;
+    }
+  }
+  return null;
+}
+
+/** True when `filename` contains any suffix token for `slot`. Mirrors server slot filter. */
+export function textureMatchesSlot(filename: string, slot: MaterialSlot): boolean {
+  const lower = filename.toLowerCase();
+  return SLOT_FILENAME_TOKENS[slot].some((token) => lower.includes(token));
+}
+
 export interface Texture {
   id: string;
   originalFilename: string;
@@ -922,6 +962,23 @@ export interface Texture {
   referenceCount: number;
 }
 
+/** Resolved slot for a library row — checks display name then original filename. */
+export function textureSlotFor(texture: Pick<Texture, 'displayName' | 'originalFilename'>): MaterialSlot | 'other' {
+  return detectTextureSlot(texture.displayName)
+    ?? detectTextureSlot(texture.originalFilename)
+    ?? 'other';
+}
+
+/** Whether a library row matches a slot filter pill (incl. Other). */
+export function textureMatchesSlotFilter(
+  texture: Pick<Texture, 'displayName' | 'originalFilename'>,
+  filter: MaterialSlot | 'other',
+): boolean {
+  if (filter === 'other') return textureSlotFor(texture) === 'other';
+  return textureMatchesSlot(texture.displayName, filter)
+    || textureMatchesSlot(texture.originalFilename, filter);
+}
+
 export interface TextureListResponse {
   textures: Texture[];
   limit: number;
@@ -932,6 +989,8 @@ export interface TextureListResponse {
 export interface TextureListParams {
   q?: string;
   tags?: string[];
+  /** When set, only textures whose filename matches this slot's suffix tokens. */
+  slot?: MaterialSlot | 'other';
   limit?: number;
   /** Numeric offset (as returned in `nextCursor`) for "load more". */
   cursor?: string | number | null;
@@ -942,6 +1001,7 @@ export const texturesApi = {
     const qs = new URLSearchParams();
     if (params.q) qs.set('q', params.q);
     if (params.tags?.length) qs.set('tags', params.tags.join(','));
+    if (params.slot) qs.set('slot', params.slot);
     if (params.limit !== undefined) qs.set('limit', String(params.limit));
     if (params.cursor !== undefined && params.cursor !== null && params.cursor !== '') {
       qs.set('cursor', String(params.cursor));

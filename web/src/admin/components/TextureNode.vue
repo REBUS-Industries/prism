@@ -213,7 +213,7 @@ function onPicked(tex: Texture): void {
     />
 
     <Teleport to="body">
-      <TexturePickerModal :open="pickerOpen" @select="onPicked" @close="pickerOpen = false" />
+      <TexturePickerModal :open="pickerOpen" :slot="slot" @select="onPicked" @close="pickerOpen = false" />
     </Teleport>
 
     <Handle type="source" :position="Position.Right" :connectable="false" />

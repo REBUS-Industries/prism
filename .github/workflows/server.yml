@@ -1,6 +1,8 @@
 name: server-image
 
-# Builds + pushes the PRISM server container to GHCR.
+# Builds + pushes the PRISM server container to GHCR and deploys to VM 212 (dev)
+# when `main` is pushed with server-relevant path changes.
+# Prod (VM 211) deploy is tag-gated only.
 #
 # Image:      ghcr.io/rebus-industries/prism-server
 # Tags:       latest (on main), <branch>, <short-sha>, <tag-name> (on tag push)
@@ -114,7 +116,8 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     concurrency:
       group: prism-deploy-vm212
-      cancel-in-progress: true
+      # Queue rather than cancel — never kill an in-progress deploy.
+      cancel-in-progress: false
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -137,4 +140,9 @@ jobs:
             docker compose pull prism-server prism-materials prism-visualiser
             docker compose up -d prism-server prism-materials prism-visualiser prism-agent prism-web prism-router
             docker compose ps prism-server prism-materials prism-visualiser prism-agent prism-web prism-router
+            docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
+
+      - name: Clean runner workspace
+        if: always()
+        run: find "$GITHUB_WORKSPACE/.." -mindepth 1 -maxdepth 1 ! -samefile "$GITHUB_WORKSPACE" -exec rm -rf {} + 2>/dev/null || true

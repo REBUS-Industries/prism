@@ -1,22 +1,20 @@
 # `.github/workflows/`
 
-CI pipelines for PRISM. Phase 0 leaves these as documented placeholders;
-Phase 8 fills in the actual job definitions.
+CI pipelines for PRISM.
 
-| Workflow | Trigger | Purpose |
+| Workflow | Trigger | Dev deploy (VM 212) |
 |---|---|---|
-| `server.yml` | push to `main`, paths `server/**` `shared/**` | Build + push `ghcr.io/rebus-industries/prism-server:latest` (multi-arch) |
-| `web.yml` | push to `main`, paths `web/**` | Build the admin + convert SPAs; assets are baked into the server image |
-| `agent.yml` | tag matching `agent-v*` | Build + sign the Windows `.msi`, attach to GitHub Release |
-| `deploy.yml` | push to `main` after `server.yml` succeeds, OR manual `workflow_dispatch` | SSH to VM 211 -> `git pull && docker compose pull && docker compose up -d` |
+| `web-image` (`web.yml`) | push to `main`, paths `web/**` | Builds + deploys `prism-web` (+ `prism-fixtures`, `prism-router`) |
+| `server-image` (`server.yml`) | push to `main`, paths `server/**` `shared/**` `agent/install/**` … | Builds + deploys `prism-server` (+ related services) |
+| `agent.yml` | tag matching `agent-v*` | — |
+| `assimp.yml` | push to `main`, paths `assimp/**` | — |
 
-## Required secrets (set in repo settings)
+**On merge to `main`:** each workflow runs independently when its path filter matches. A PR that touches both `web/**` and `server/**` triggers **both** workflows. The Slack merge bot waits for all triggered deploy workflows to finish before reporting success.
 
-| Secret | Used by |
-|---|---|
-| `GHCR_PAT` | `server.yml` to push to GHCR |
-| `VM211_SSH_KEY` | `deploy.yml` to SSH into VM 211 |
-| `VM211_SSH_HOST` | `deploy.yml` (`10.0.200.211`) |
-| `VM211_SSH_USER` | `deploy.yml` (`rebus`) |
-| `CODESIGN_PFX_BASE64` | `agent.yml` for Authenticode signing |
-| `CODESIGN_PFX_PASSWORD` | `agent.yml` |
+**Manual deploy of a feature branch:**
+```powershell
+gh workflow run web-image --repo REBUS-Industries/prism --ref <branch>
+gh workflow run server-image --repo REBUS-Industries/prism --ref <branch>
+```
+
+Prod (VM 211) is tag-gated — `server-image` prod deploy runs only on `v*` tags or `workflow_dispatch`.

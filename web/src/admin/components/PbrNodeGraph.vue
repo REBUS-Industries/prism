@@ -5,25 +5,19 @@
  * single MaterialOutputNode on the right, and animates an edge whenever its
  * slot is filled.
  *
- * ### Drag & layout persistence (Task 2 & 3)
+ * ### Drag & layout persistence
  * Node positions are stateful: on first load the layout algorithm positions
  * nodes in a spaced column so they never overlap; once the user drags any
- * node the new position is saved to `localStorage` keyed by material ID.  A
+ * node the new position is saved to `localStorage` keyed by material ID. A
  * "Reset layout" button clears the saved positions and re-runs the algorithm.
  *
- * ### Overlap fix (Task 3)
+ * ### Overlap fix
  * The height estimates were biased slightly low on filled nodes (thumbnail
  * aspect-ratio 16:9 on 212 px inner-width = ~119 px actual vs the 200 px
  * constant that tried to cover the full .tn-assigned block). Estimates are
  * now bumped conservatively (+20 % on the filled texture area, +50 % on the
  * gap) so the default layout is always non-overlapping regardless of state.
  * Users can drag to any arrangement they prefer; positions persist.
- *
- * ### Param nodes (addable blocks)
- * Displacement, Texture UV, Alpha, and all glTF extension blocks live as
- * draggable ParamNodes on the canvas to the right of the MaterialOutputNode.
- * A palette panel (top-right) lists available blocks; clicking one adds it to
- * `parameters.activeExtensions`. The × on each node removes it.
  */
 import { computed, ref, watch } from 'vue';
 import {
@@ -44,7 +38,6 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import TextureNode from './TextureNode.vue';
 import MaterialOutputNode from './MaterialOutputNode.vue';
-import ParamNode from './ParamNode.vue';
 import {
   MATERIAL_SLOTS,
   type MaterialParameters,
@@ -66,43 +59,6 @@ const emit = defineEmits<{
 }>();
 
 const interactionMode = ref<'pan' | 'select'>('pan');
-
-// ---------------------------------------------------------------------------
-// Param block palette — the addable node types for the canvas.
-// ---------------------------------------------------------------------------
-const PARAM_TILES = [
-  { id: 'textureUv',        label: 'Texture UV',        icon: 'grid_on' },
-  { id: 'alpha',            label: 'Alpha',             icon: 'opacity' },
-  { id: 'clearCoat',        label: 'Clear Coat',        icon: 'layers' },
-  { id: 'transmission',     label: 'Transmission',      icon: 'blur_on' },
-  { id: 'ior',              label: 'IOR',               icon: 'lens' },
-  { id: 'specular',         label: 'Specular',          icon: 'flare' },
-  { id: 'sheen',            label: 'Sheen',             icon: 'auto_awesome' },
-  { id: 'volume',           label: 'Volume',            icon: 'water' },
-  { id: 'anisotropy',       label: 'Anisotropy',        icon: 'texture' },
-  { id: 'emissiveStrength', label: 'Emissive Strength', icon: 'light_mode' },
-  { id: 'iridescence',      label: 'Iridescence',       icon: 'palette' },
-  { id: 'dispersion',       label: 'Dispersion',        icon: 'scatter_plot' },
-  { id: 'unlit',            label: 'Unlit',             icon: 'wb_shade' },
-];
-
-const availableTiles = computed(() =>
-  PARAM_TILES.filter((t) => !props.parameters.activeExtensions.includes(t.id)),
-);
-
-function addParamNode(paramType: string): void {
-  emit('param-change', {
-    key: 'activeExtensions',
-    value: [...props.parameters.activeExtensions, paramType],
-  });
-}
-
-function removeParamNode(paramType: string): void {
-  emit('param-change', {
-    key: 'activeExtensions',
-    value: props.parameters.activeExtensions.filter((id) => id !== paramType),
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Layout constants — generously over-estimated so nodes never overlap on
@@ -184,11 +140,6 @@ watch(
   },
 );
 
-/** Param blocks on the canvas — excludes retired ids if present in stored data. */
-const activeParamExtensions = computed(() =>
-  props.parameters.activeExtensions.filter((id) => id !== 'base' && id !== 'displacement'),
-);
-
 function onNodeDragStop(ev: NodeDragEvent): void {
   const { node } = ev;
   if (LEGACY_NODE_IDS.includes(node.id as (typeof LEGACY_NODE_IDS)[number])) return;
@@ -234,9 +185,6 @@ const layout = computed<{ ys: number[]; total: number }>(() => {
 // ---------------------------------------------------------------------------
 // Nodes
 // ---------------------------------------------------------------------------
-const PARAM_NODE_X = OUTPUT_X + 260;
-const PARAM_NODE_STEP = 260;
-
 const nodes = computed<Node[]>(() => {
   const texNodes: Node[] = MATERIAL_SLOTS.map((slot, i) => {
     const nodeId = `slot-${slot}`;
@@ -263,29 +211,11 @@ const nodes = computed<Node[]>(() => {
     targetPosition: Position.Left,
   };
 
-  const paramNodes: Node[] = activeParamExtensions.value.map((paramType, i) => {
-    const nodeId = `param-${paramType}`;
-    const defaultPos = { x: PARAM_NODE_X, y: i * PARAM_NODE_STEP };
-    return {
-      id: nodeId,
-      type: 'param',
-      position: customPositions.value[nodeId] ?? defaultPos,
-      data: {
-        paramType,
-        parameters: props.parameters,
-        onParamChange,
-        onRemove: () => removeParamNode(paramType),
-      },
-      draggable: true,
-      sourcePosition: Position.Left,
-    } satisfies Node;
-  });
-
-  return [...texNodes, outputNode, ...paramNodes];
+  return [...texNodes, outputNode];
 });
 
-const edges = computed<Edge[]>(() => {
-  const texEdges: Edge[] = MATERIAL_SLOTS.map((slot) => {
+const edges = computed<Edge[]>(() =>
+  MATERIAL_SLOTS.map((slot) => {
     const on = !!lookup.value[slot];
     return {
       id: `e-${slot}`,
@@ -303,27 +233,8 @@ const edges = computed<Edge[]>(() => {
         color: on ? 'var(--orbit-primary)' : 'var(--color-border-strong)',
       },
     } satisfies Edge;
-  });
-
-  const paramEdges: Edge[] = activeParamExtensions.value.map((paramType) => ({
-    id: `e-param-${paramType}`,
-    source: `param-${paramType}`,
-    target: 'material',
-    targetHandle: 'param',
-    type: 'smoothstep',
-    animated: true,
-    style: {
-      stroke: 'var(--orbit-primary)',
-      strokeWidth: 2,
-    },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: 'var(--orbit-primary)',
-    },
-  }));
-
-  return [...texEdges, ...paramEdges];
-});
+  }),
+);
 
 function onAssign(slot: MaterialSlot, texture: Texture): void {
   emit('assign', slot, texture);
@@ -371,32 +282,8 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
         <MaterialOutputNode :filled="nodeProps.data.filled" />
       </template>
 
-      <template #node-param="nodeProps">
-        <ParamNode :data="nodeProps.data" />
-      </template>
-
       <Background pattern-color="var(--color-border)" :gap="22" />
       <Controls :show-interactive="false" />
-
-      <Panel position="top-right" class="param-palette">
-        <template v-if="availableTiles.length > 0">
-          <div class="palette-title">Add Block</div>
-          <div class="palette-tiles">
-            <button
-              v-for="tile in availableTiles"
-              :key="tile.id"
-              type="button"
-              class="palette-tile"
-              :title="`Add ${tile.label} block`"
-              @click="addParamNode(tile.id)"
-            >
-              <Icon :name="tile.icon" :size="13" />
-              <span>{{ tile.label }}</span>
-            </button>
-          </div>
-        </template>
-        <div v-else class="palette-done">All blocks added</div>
-      </Panel>
 
       <Panel position="top-left" class="mode-toggle">
         <button
@@ -505,66 +392,13 @@ function onParamChange(change: { key: keyof MaterialParameters; value: number | 
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
-/* ── Param block palette (top-right) ──────────────────────────────────── */
-.param-palette {
-  max-width: 180px;
-  max-height: 420px;
-  overflow-y: auto;
-  padding: 6px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-1);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.palette-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  padding: 2px 4px 4px;
-}
-.palette-tiles {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.palette-tile {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 8px;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-}
-.palette-tile:hover {
-  color: var(--color-text);
-  background: var(--color-bg-hover);
-  border-color: var(--color-border);
-}
-.palette-done {
-  font-size: 11px;
-  color: var(--color-text-subtle);
-  padding: 4px;
-  text-align: center;
-}
 </style>
 
 <style>
 /* Unscoped: applies inside Vue Flow's node tree. Custom node types carry no
    default theme chrome, so we only neutralise the wrapper + brand the handles. */
 .vue-flow__node-texture,
-.vue-flow__node-materialOutput,
-.vue-flow__node-param {
+.vue-flow__node-materialOutput {
   padding: 0;
   border: none;
   background: transparent;

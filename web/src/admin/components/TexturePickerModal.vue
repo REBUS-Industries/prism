@@ -3,14 +3,15 @@
  * Reusable texture-library picker. Opens as an overlay; the parent controls
  * visibility via `open` and listens for `select` (a chosen / freshly-uploaded
  * texture) and `close`. Search is debounced into `?q=`, tag pills map to
- * `?tags=`, and "Upload New" multipart-POSTs to /api/textures then emits the
- * created row straight back so the caller can assign it without a round-trip.
+ * `?tags=`, and an optional `slot` prop enables suffix filtering (`?slot=`)
+ * so only textures whose filename matches that PBR channel are listed.
+ * "Upload New" multipart-POSTs to /api/textures then emits the created row
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { texturesApi, type ApiError, type Texture } from '../../shared/api';
+import { texturesApi, SLOT_LABELS, SLOT_SUFFIX_HINTS, textureMatchesSlotFilter, type ApiError, type MaterialSlot, type Texture } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
-const props = defineProps<{ open: boolean }>();
+const props = defineProps<{ open: boolean; slot?: MaterialSlot }>();
 const emit = defineEmits<{ select: [texture: Texture]; close: [] }>();
 
 const PAGE = 24;
@@ -22,10 +23,24 @@ const nextCursor = ref<string | null>(null);
 
 const search = ref('');
 const activeTags = ref<string[]>([]);
+const slotFilterEnabled = ref(true);
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const uploading = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
+
+const slotFilterLabel = computed(() =>
+  props.slot ? SLOT_LABELS[props.slot] : null,
+);
+
+function slotSuffixHint(slot: MaterialSlot): string {
+  return SLOT_SUFFIX_HINTS[slot];
+}
+
+const visibleTextures = computed(() => {
+  if (!props.slot || !slotFilterEnabled.value) return textures.value;
+  return textures.value.filter((t) => textureMatchesSlotFilter(t, props.slot!));
+});
 
 const availableTags = computed<string[]>(() => {
   const set = new Set<string>();
@@ -46,6 +61,7 @@ async function load(reset = true): Promise<void> {
     const res = await texturesApi.list({
       q: search.value || undefined,
       tags: activeTags.value.length ? activeTags.value : undefined,
+      slot: props.slot && slotFilterEnabled.value ? props.slot : undefined,
       limit: PAGE,
       cursor: reset ? undefined : nextCursor.value,
     });
@@ -93,10 +109,15 @@ async function onFileChosen(ev: Event): Promise<void> {
   }
 }
 
+function onSlotFilterChange(): void {
+  void load(true);
+}
+
 watch(() => props.open, (o) => {
   if (!o) return;
   search.value = '';
   activeTags.value = [];
+  slotFilterEnabled.value = true;
   nextCursor.value = null;
   void load(true);
 });
@@ -133,6 +154,20 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
         />
       </div>
 
+      <div v-if="slot" class="slot-filter-row">
+        <label class="slot-filter-toggle">
+          <input
+            v-model="slotFilterEnabled"
+            type="checkbox"
+            @change="onSlotFilterChange"
+          />
+          Match {{ slotFilterLabel }} suffixes
+        </label>
+        <span v-if="slotFilterEnabled" class="slot-filter-hint subtle">
+          e.g. {{ slotSuffixHint(slot) }}
+        </span>
+      </div>
+
       <div v-if="availableTags.length" class="tag-row">
         <button
           v-for="tag in availableTags"
@@ -147,11 +182,11 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
       <div v-if="error" class="error-box mt-sm">{{ error }}</div>
 
       <div class="picker-body">
-        <div v-if="loading && !textures.length" class="muted pad">Loading…</div>
-        <div v-else-if="!textures.length" class="muted pad">No textures match.</div>
+        <div v-if="loading && !visibleTextures.length" class="muted pad">Loading…</div>
+        <div v-else-if="!visibleTextures.length" class="muted pad">No textures match.</div>
         <div v-else class="grid">
           <button
-            v-for="t in textures"
+            v-for="t in visibleTextures"
             :key="t.id"
             class="tex-card"
             type="button"
@@ -191,6 +226,26 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .picker-head { display: flex; align-items: center; justify-content: space-between; }
 .picker-head h2 { font-size: 16px; margin: 0; }
 .picker-toolbar { display: flex; align-items: center; gap: 8px; }
+.slot-filter-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+}
+.slot-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.slot-filter-toggle input { width: 14px; height: 14px; cursor: pointer; }
+.slot-filter-hint { font-size: 11px; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag-pill {
   padding: 2px 10px; font-size: 11px; border-radius: 999px;
@@ -206,12 +261,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 .tex-card {
   display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--color-border); border-radius: var(--radius);
   background: var(--color-bg-input); text-align: left; cursor: pointer;
 }
 .tex-card:hover { border-color: var(--orbit-primary); }
 .thumb {
-  display: block; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
+  display: block; width: 100%; aspect-ratio: 1 / 1; border-radius: var(--radius-sm);
   overflow: hidden; background: var(--color-bg-hover);
   background-image:
     linear-gradient(45deg, var(--color-bg-hover) 25%, transparent 25%),
@@ -223,9 +280,19 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .tex-name {
+  display: block;
+  width: 100%;
+  min-width: 0;
   font-size: 12px; font-weight: 500;
+  line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tex-meta { font-size: 11px; }
+.tex-meta {
+  display: block;
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .picker-foot { display: flex; justify-content: center; }
 </style>
