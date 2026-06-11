@@ -1,0 +1,13 @@
+services:
+  merge-bot:
+    build: .
+    container_name: prism-merge-bot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3456:3456"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

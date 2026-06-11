@@ -43,10 +43,9 @@ prism.rebus.industries {
     }
 }
 
-# Slack merge bot — receives slash command webhooks from Slack
-# Slack requires a public HTTPS endpoint; this proxies to VM 212 port 3456.
+# Slack merge bot — CT 271 (RB-DA2-SlackBot, 10.0.200.71)
 merge-bot.prism-dev.rebus.industries {
-    reverse_proxy http://10.0.200.212:3456
+    reverse_proxy http://10.0.200.71:3456
     log {
         output file /var/log/caddy/merge-bot.log {
             roll_size 10mb

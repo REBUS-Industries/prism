@@ -49,29 +49,23 @@ It serialises all merges — only one can run at a time — and posts CI status 
 
 ---
 
-## Part 3 — Deploy on VM 212
+## Part 3 — Deploy on CT 271 (RB-DA2-SlackBot)
 
-SSH to VM 212:
+The bot runs on **CT 271** (`10.0.200.71`) — independent of the PRISM dev stack on VM 212.
 
-```bash
-ssh rebus@10.0.200.212
-cd /opt/prism/infra
-```
-
-Create the secrets file (never commit this):
+On SRV03 (or SSH to `root@10.0.200.71`):
 
 ```bash
-cp .env.merge-bot.example .env.merge-bot
-nano .env.merge-bot   # fill in all four values
-```
-
-Build and start the bot:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --build prism-merge-bot
-docker compose -f docker-compose.dev.yml logs -f prism-merge-bot
+mkdir -p /opt/merge-bot && cd /opt/merge-bot
+# Copy infra/merge-bot/{index.js,package.json,Dockerfile,docker-compose.standalone.yml}
+# Rename docker-compose.standalone.yml → docker-compose.yml
+# Create .env with SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, GITHUB_TOKEN
+docker compose up -d --build
+docker logs prism-merge-bot --tail 5
 # Should print: Merge bot listening on :3456
 ```
+
+See `docker-compose.standalone.yml` and `install-caddy-vhost.sh` in this directory.
 
 ---
 
