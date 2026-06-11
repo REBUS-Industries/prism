@@ -259,6 +259,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  prism-merge-bot:
+    build:
+      context: ./merge-bot
+      dockerfile: Dockerfile
+    container_name: prism-merge-bot
+    restart: unless-stopped
+    env_file:
+      - .env.merge-bot
+    ports:
+      - "3456:3456"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
   prism-assimp:
     image: ghcr.io/rebus-industries/prism-assimp:${PRISM_ASSIMP_TAG:-latest}
     container_name: prism-assimp

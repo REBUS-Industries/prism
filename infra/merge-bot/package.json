@@ -1,0 +1,14 @@
+{
+  "name": "prism-merge-bot",
+  "version": "1.0.0",
+  "description": "Slack bot — serialised PR merges + deploy status for PRISM",
+  "type": "commonjs",
+  "main": "index.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
