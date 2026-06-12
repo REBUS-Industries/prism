@@ -20,6 +20,12 @@ hand-edit DDL.
 ## Commands
 
 ```bash
-npm run db:generate    # diff schema -> new SQL migration file
-npm run db:migrate     # apply pending migrations against $POSTGRES_URL
+npm run db:generate       # diff schema -> new SQL migration file
+npm run db:migrate        # apply pending migrations + heal schema drift
+npm run db:migrate:verify # alias — runs migrate with integrity warnings + idempotent heal
 ```
+
+On boot, `bootstrap.ts` runs Drizzle forward-migrate then `schemaHeal.ts`
+idempotent DDL for any journal-marked migrations whose SQL never ran (e.g.
+manual `drizzle.__drizzle_migrations` inserts). New heal steps belong in
+`schemaHeal.ts` when migrations add columns that must survive journal drift.

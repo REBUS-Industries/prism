@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
+    "db:migrate:verify": "tsx src/db/migrate.ts",
     "codegen:contracts": "node scripts/codegen-contracts.mjs",
     "validate:contracts": "node scripts/codegen-contracts.mjs"
   },

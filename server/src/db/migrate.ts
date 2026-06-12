@@ -1,17 +1,16 @@
 /**
- * Apply pending Drizzle migrations.
+ * Apply pending Drizzle migrations + heal schema drift.
  *
  * Run from the host during dev with: npm run db:migrate
- * Run from the container at boot via the start script.
+ * Run from the container at boot via bootstrap.ts.
  */
 import 'dotenv/config';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { db, pool } from './client.js';
+import { pool } from './client.js';
+import { runMigrations } from './runMigrations.js';
 
 async function main() {
-  const migrationsFolder = process.env.MIGRATIONS_DIR ?? './src/db/migrations';
-  console.log('[migrate] applying pending migrations from', migrationsFolder);
-  await migrate(db, { migrationsFolder });
+  console.log('[migrate] starting');
+  await runMigrations({ log: console });
   console.log('[migrate] done');
   await pool.end();
 }
