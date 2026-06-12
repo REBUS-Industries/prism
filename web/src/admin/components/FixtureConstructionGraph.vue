@@ -29,7 +29,7 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import Icon from '../../shared/Icon.vue';
 import FixtureViewer from './FixtureViewer.vue';
-import FixtureGraphNode, { type FixtureGraphNodeData, type GraphParam } from './FixtureGraphNode.vue';
+import FixtureGraphNode, { type FixtureGraphNodeData } from './FixtureGraphNode.vue';
 import type {
   FixtureDefinition,
   FixturePart,
@@ -47,11 +47,9 @@ const props = defineProps<{
 // ---------------------------------------------------------------------------
 // Layout + formatting helpers
 // ---------------------------------------------------------------------------
-const X = { gdtf: 0, fixture: 300, category: 600, item: 920, sub: 1240 } as const;
-const ROW = 70;
-const CAT_GAP = 30;
-const GROUP_GAP = 16;
-const NODE_H = 44;
+const COL_W = 320;
+const ROW = 66;
+const SIB_GAP = 14;
 
 /** The standard REBUS fixture part tags every GDTF geometry is normalised into. */
 const STANDARD_TAGS = ['ORIGIN', 'CLAMP', 'BASE', 'YOKE', 'HEAD', 'LENS', 'BEAM', 'CELL'] as const;
@@ -109,7 +107,6 @@ const parts = computed<FixturePart[]>(() => def.value.parts ?? []);
 const models = computed<FixtureModel[]>(() => def.value.models ?? []);
 const beams = computed<FixtureBeam[]>(() => def.value.beams ?? []);
 const motion = computed<MotionAxis[]>(() => def.value.motionRig ?? []);
-const cells = computed<FixturePart[]>(() => parts.value.filter((p) => p.tag === 'CELL'));
 const modes = computed<Array<Record<string, unknown>>>(() => {
   const raw = (def.value.dmxMapping as { modes?: unknown })?.modes;
   return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
@@ -176,80 +173,137 @@ const graph = computed<Built>(() => {
     : models.value;
   const fBeams = vis ? beams.value.filter((b) => !!b.parentPartId && vis.has(b.parentPartId)) : beams.value;
   const fMotion = vis ? motion.value.filter((a) => !!a.controlledPartId && vis.has(a.controlledPartId)) : motion.value;
-  const fCells = vis ? cells.value.filter((p) => vis.has(p.partId)) : cells.value;
   const fModes = modeFilter.value === 'all'
     ? modes.value
     : modes.value.filter((m) => String(m.modeId ?? m.name ?? '') === modeFilter.value);
 
   const node = (id: string, x: number, y: number, data: FixtureGraphNodeData): void => {
-    // Explicit width (matches the node CSS) so Vue Flow can compute fit bounds
-    // before the DOM measures the custom nodes — avoids an empty/NaN fit.
     nodes.push({ id, type: 'fixtureNode', position: { x, y }, data, draggable: true,
       width: 252, sourcePosition: Position.Right, targetPosition: Position.Left });
   };
-  const edge = (source: string, target: string, opts: Partial<Edge> = {}): void => {
+  const arrow = (accent: string): Partial<Edge> => ({
+    style: { stroke: accent, strokeWidth: 1.5 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: accent },
+  });
+  const edge = (source: string, target: string, accent: string): void => {
     edges.push({
       id: `e:${source}->${target}`,
       source,
       target,
       type: 'smoothstep',
-      style: { stroke: 'var(--color-border-strong)', strokeWidth: 1.5 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--color-border-strong)' },
-      ...opts,
-    });
-  };
-  const xref = (source: string, target: string): void => {
-    edges.push({
-      id: `x:${source}->${target}`,
-      source,
-      target,
-      type: 'smoothstep',
-      animated: true,
-      style: { stroke: 'var(--accent, #94a3b8)', strokeWidth: 1.25, strokeDasharray: '4 4', opacity: 0.7 },
+      ...arrow(accent),
     });
   };
 
-  // ---- column 3: items, grouped by category, single vertical cursor --------
-  let y = 0;
-
-  interface CatItem { id: string; data: FixtureGraphNodeData; xrefs?: string[] }
-  interface CatGroup { id: string; title: string; icon: string; accent: string; items: CatItem[] }
-  interface Cat {
-    id: string;
-    title: string;
-    icon: string;
-    accent: string;
-    items: CatItem[];
-    /** Sub-groups (e.g. Parts split by REBUS tag); rendered as an extra column. */
-    groups?: CatGroup[];
-    /** Category-level params when it carries data directly (Info/Origin). */
-    selfParams?: GraphParam[];
-    selfNote?: string;
+  // ---- linked-element index: each part owns its model + motion + beams ------
+  const modelById = new Map(fModels.map((m) => [m.modelId, m]));
+  const motionByPart = new Map<string, MotionAxis[]>();
+  for (const a of fMotion) {
+    if (!a.controlledPartId) continue;
+    (motionByPart.get(a.controlledPartId) ?? motionByPart.set(a.controlledPartId, []).get(a.controlledPartId)!).push(a);
+  }
+  const beamsByPart = new Map<string, FixtureBeam[]>();
+  for (const b of fBeams) {
+    if (!b.parentPartId) continue;
+    (beamsByPart.get(b.parentPartId) ?? beamsByPart.set(b.parentPartId, []).get(b.parentPartId)!).push(b);
   }
 
-  const toPartItem = (p: FixturePart): CatItem => ({
-    id: `part:${p.partId}`,
-    xrefs: p.modelId ? [`model:${p.modelId}`] : [],
+  interface TNode { id: string; data: FixtureGraphNodeData; children: TNode[] }
+
+  const modelChild = (m: FixtureModel, partId: string): TNode => ({
+    id: `model:${m.modelId}@${partId}`,
+    children: [],
     data: {
-      kind: 'part', title: p.name, subtitle: p.tag, icon: 'category', accent: ACCENT.parts,
+      kind: 'model', title: m.modelId, subtitle: m.sourceFile, icon: 'deployed_code', accent: ACCENT.models,
+      modelPreview: { fixtureId: props.fixtureId, parts: [previewPart(m)], models: [m] },
       params: [
-        { label: 'Tag', value: str(p.tag) },
-        { label: 'GDTF geom', value: str(p.sourceGdtfGeometryId) },
-        { label: 'Parent', value: partLabel(p.parentPartId) },
-        { label: 'Model', value: p.modelId ? str(p.modelId) : '—' },
-        { label: 'Children', value: String(p.childPartIds?.length ?? 0) },
-        { label: 'Motion axis', value: str(p.motionAxisId) },
-        { label: 'Position', value: vec({ x: p.localTransform.position.x, y: p.localTransform.position.y, z: p.localTransform.position.z }, ' m') },
-        { label: 'Rotation', value: vec(p.localTransform.rotation, '°') },
-        { label: 'Pivot', value: vec(p.pivot, ' m') },
+        { label: 'Source file', value: str(m.sourceFile) },
+        { label: 'Part tag', value: str(m.partTag) },
+        { label: 'Assigned to', value: String(m.assignedPartIds?.length ?? 0) },
+        { label: 'Length', value: mm(metaNum(m.metadata, 'length')) },
+        { label: 'Width', value: mm(metaNum(m.metadata, 'width')) },
+        { label: 'Height', value: mm(metaNum(m.metadata, 'height')) },
+        { label: 'Mesh entry', value: str(m.metadata?.modelEntry) },
+        { label: 'Media id', value: str(m.metadata?.mediaId) },
       ],
     },
   });
 
-  const cats: Cat[] = [
-    {
-      id: 'cat:info', title: 'Fixture Information', icon: 'info', accent: ACCENT.info, items: [],
-      selfParams: [
+  const motionChild = (a: MotionAxis): TNode => ({
+    id: `motion:${a.motionAxisId}`,
+    children: [],
+    data: {
+      kind: 'motion', title: a.axisType, subtitle: 'motion axis', icon: 'rotate_right', accent: ACCENT.motion,
+      params: [
+        { label: 'Axis type', value: str(a.axisType) },
+        { label: 'Controls', value: partLabel(a.controlledPartId) },
+        { label: 'Axis vector', value: vec(a.axisVector) },
+        { label: 'Pivot', value: vec(a.pivot, ' m') },
+        { label: 'Min', value: fmtNum(a.minValue) },
+        { label: 'Max', value: fmtNum(a.maxValue) },
+        { label: 'Default', value: fmtNum(a.defaultValue) },
+      ],
+    },
+  });
+
+  const beamChild = (b: FixtureBeam): TNode => ({
+    id: `beam:${b.beamId}`,
+    children: [],
+    data: {
+      kind: 'beam', title: b.beamType || 'Beam', subtitle: 'REBUS beam', icon: 'wb_incandescent', accent: ACCENT.beams,
+      params: [
+        { label: 'Type', value: str(b.beamType) },
+        { label: 'Beam angle', value: b.beamAngle !== undefined ? `${fmtNum(b.beamAngle)}°` : '—' },
+        { label: 'Field angle', value: b.fieldAngle !== undefined ? `${fmtNum(b.fieldAngle)}°` : '—' },
+        { label: 'Lum. flux', value: b.luminousFlux !== undefined ? `${fmtNum(b.luminousFlux)} lm` : '—' },
+        { label: 'Colour temp', value: b.colourTemperature !== undefined ? `${fmtNum(b.colourTemperature)} K` : '—' },
+        { label: 'IES profile', value: b.iesAssetId ? 'attached' : '—' },
+      ],
+    },
+  });
+
+  const partNode = (p: FixturePart): TNode => {
+    const children: TNode[] = [];
+    if (p.modelId && modelById.has(p.modelId)) children.push(modelChild(modelById.get(p.modelId)!, p.partId));
+    for (const a of motionByPart.get(p.partId) ?? []) children.push(motionChild(a));
+    for (const b of beamsByPart.get(p.partId) ?? []) children.push(beamChild(b));
+    return {
+      id: `part:${p.partId}`,
+      children,
+      data: {
+        kind: 'part', title: p.name, subtitle: p.tag, icon: 'category', accent: TAG_META[p.tag]?.accent ?? ACCENT.parts,
+        params: [
+          { label: 'Tag', value: str(p.tag) },
+          { label: 'GDTF geom', value: str(p.sourceGdtfGeometryId) },
+          { label: 'Parent', value: partLabel(p.parentPartId) },
+          { label: 'Model', value: p.modelId ? str(p.modelId) : '—' },
+          { label: 'Children', value: String(p.childPartIds?.length ?? 0) },
+          { label: 'Position', value: vec({ x: p.localTransform.position.x, y: p.localTransform.position.y, z: p.localTransform.position.z }, ' m') },
+          { label: 'Rotation', value: vec(p.localTransform.rotation, '°') },
+          { label: 'Pivot', value: vec(p.pivot, ' m') },
+        ],
+      },
+    };
+  };
+
+  // ---- tree: GDTF → Fixture → {Information, REBUS tags…, DMX Mapping} -------
+  const tagNodes: TNode[] = STANDARD_TAGS.map((tag) => {
+    const ps = fParts.filter((p) => p.tag === tag);
+    return {
+      id: `tag:${tag}`,
+      children: ps.map(partNode),
+      data: {
+        kind: 'category', title: tag, subtitle: 'REBUS part tag', icon: TAG_META[tag].icon,
+        accent: TAG_META[tag].accent, badge: ps.length,
+      },
+    };
+  });
+
+  const infoNode: TNode = {
+    id: 'cat:info', children: [],
+    data: {
+      kind: 'info', title: 'Fixture Information', icon: 'info', accent: ACCENT.info,
+      params: [
         { label: 'Manufacturer', value: str(info.manufacturer) },
         { label: 'Name', value: str(info.fixtureName) },
         { label: 'Revision', value: str(info.revision) },
@@ -258,218 +312,81 @@ const graph = computed<Built>(() => {
         { label: 'Description', value: str(info.description) },
       ],
     },
-    {
-      id: 'cat:clamp', title: 'Clamp', icon: 'precision_manufacturing', accent: ACCENT.clamp, items: [],
-      selfNote: 'Not populated by the GDTF importer yet.',
-    },
-    {
-      id: 'cat:origin', title: 'Origin', icon: 'my_location', accent: ACCENT.origin, items: [],
-      selfParams: [
-        { label: 'Position', value: '0, 0, 0 m' },
-        { label: 'Reference', value: 'Fixture base (implicit)' },
+  };
+
+  const dmxNode: TNode = {
+    id: 'cat:dmx',
+    data: { kind: 'category', title: 'DMX Mapping', icon: 'tune', accent: ACCENT.dmx, badge: fModes.length },
+    children: fModes.map((m, i) => {
+      const channels = Array.isArray(m.channels) ? (m.channels as unknown[]).length : 0;
+      return {
+        id: `mode:${i}`, children: [],
+        data: {
+          kind: 'dmxmode', title: str(m.name), subtitle: `${str(m.footprint)} ch`, icon: 'settings_input_component', accent: ACCENT.dmx,
+          params: [
+            { label: 'Name', value: str(m.name) },
+            { label: 'Footprint', value: str(m.footprint) },
+            { label: 'Root geom', value: str(m.geometry) },
+            { label: 'Channels', value: String(channels) },
+          ],
+        },
+      };
+    }),
+  };
+
+  const fixtureNode: TNode = {
+    id: 'fixture',
+    children: [infoNode, ...tagNodes, dmxNode],
+    data: {
+      kind: 'fixture', title: info.fixtureName || 'Fixture', subtitle: info.manufacturer, icon: 'lightbulb', accent: ACCENT.fixture,
+      params: [
+        { label: 'Parts', value: String(parts.value.length) },
+        { label: 'Models', value: String(models.value.length) },
+        { label: 'Beams', value: String(beams.value.length) },
+        { label: 'Motion axes', value: String(motion.value.length) },
+        { label: 'DMX modes', value: String(modes.value.length) },
       ],
     },
-    {
-      id: 'cat:parts', title: 'Parts', icon: 'account_tree', accent: ACCENT.parts, items: [],
-      // Split into the standard REBUS part tags so it's clear which GDTF
-      // geometries normalise to each tag.
-      groups: STANDARD_TAGS.map((tag) => ({
-        id: `tag:${tag}`,
-        title: tag,
-        icon: TAG_META[tag].icon,
-        accent: TAG_META[tag].accent,
-        items: fParts.filter((p) => p.tag === tag).map(toPartItem),
-      })),
-    },
-    {
-      id: 'cat:models', title: 'Models', icon: 'view_in_ar', accent: ACCENT.models,
-      items: fModels.map((m) => ({
-        id: `model:${m.modelId}`,
-        data: {
-          kind: 'model', title: m.modelId, subtitle: m.sourceFile, icon: 'deployed_code', accent: ACCENT.models,
-          modelPreview: { fixtureId: props.fixtureId, parts: [previewPart(m)], models: [m] },
-          params: [
-            { label: 'Source file', value: str(m.sourceFile) },
-            { label: 'Part tag', value: str(m.partTag) },
-            { label: 'Assigned to', value: String(m.assignedPartIds?.length ?? 0) },
-            { label: 'Length', value: mm(metaNum(m.metadata, 'length')) },
-            { label: 'Width', value: mm(metaNum(m.metadata, 'width')) },
-            { label: 'Height', value: mm(metaNum(m.metadata, 'height')) },
-            { label: 'Mesh entry', value: str(m.metadata?.modelEntry) },
-            { label: 'Media id', value: str(m.metadata?.mediaId) },
-          ],
-        },
-      })),
-    },
-    {
-      id: 'cat:motion', title: 'MotionRig', icon: 'sync', accent: ACCENT.motion,
-      items: fMotion.map((a) => ({
-        id: `motion:${a.motionAxisId}`,
-        xrefs: a.controlledPartId ? [`part:${a.controlledPartId}`] : [],
-        data: {
-          kind: 'motion', title: a.axisType, subtitle: partLabel(a.controlledPartId), icon: 'rotate_right', accent: ACCENT.motion,
-          params: [
-            { label: 'Axis type', value: str(a.axisType) },
-            { label: 'Controls', value: partLabel(a.controlledPartId) },
-            { label: 'Axis vector', value: vec(a.axisVector) },
-            { label: 'Pivot', value: vec(a.pivot, ' m') },
-            { label: 'Min', value: fmtNum(a.minValue) },
-            { label: 'Max', value: fmtNum(a.maxValue) },
-            { label: 'Default', value: fmtNum(a.defaultValue) },
-          ],
-        },
-      })),
-    },
-    {
-      id: 'cat:cells', title: 'Cells', icon: 'grid_on', accent: ACCENT.cells,
-      items: fCells.map((p) => ({
-        id: `cell:${p.partId}`,
-        xrefs: [`part:${p.partId}`],
-        data: {
-          kind: 'cell', title: p.name, subtitle: 'Cell', icon: 'apps', accent: ACCENT.cells,
-          params: [
-            { label: 'Part', value: str(p.name) },
-            { label: 'GDTF geom', value: str(p.sourceGdtfGeometryId) },
-            { label: 'Model', value: str(p.modelId) },
-          ],
-        },
-      })),
-      selfNote: fCells.length ? undefined : 'No cell geometries in this fixture.',
-    },
-    {
-      id: 'cat:beams', title: 'Beams', icon: 'flare', accent: ACCENT.beams,
-      items: fBeams.map((b, i) => ({
-        id: `beam:${b.beamId}`,
-        xrefs: b.parentPartId ? [`part:${b.parentPartId}`] : [],
-        data: {
-          kind: 'beam', title: b.beamType || `Beam ${i + 1}`, subtitle: partLabel(b.parentPartId), icon: 'wb_incandescent', accent: ACCENT.beams,
-          params: [
-            { label: 'Type', value: str(b.beamType) },
-            { label: 'Parent', value: partLabel(b.parentPartId) },
-            { label: 'Beam angle', value: b.beamAngle !== undefined ? `${fmtNum(b.beamAngle)}°` : '—' },
-            { label: 'Field angle', value: b.fieldAngle !== undefined ? `${fmtNum(b.fieldAngle)}°` : '—' },
-            { label: 'Lum. flux', value: b.luminousFlux !== undefined ? `${fmtNum(b.luminousFlux)} lm` : '—' },
-            { label: 'Colour temp', value: b.colourTemperature !== undefined ? `${fmtNum(b.colourTemperature)} K` : '—' },
-            { label: 'IES', value: b.iesAssetId ? 'attached' : '—' },
-          ],
-        },
-      })),
-    },
-    {
-      id: 'cat:dmx', title: 'DMX Mapping', icon: 'tune', accent: ACCENT.dmx,
-      items: fModes.map((m, i) => {
-        const channels = Array.isArray(m.channels) ? (m.channels as unknown[]).length : 0;
-        return {
-          id: `mode:${i}`,
-          data: {
-            kind: 'dmxmode', title: str(m.name), subtitle: `${str(m.footprint)} ch`, icon: 'settings_input_component', accent: ACCENT.dmx,
-            params: [
-              { label: 'Name', value: str(m.name) },
-              { label: 'Footprint', value: str(m.footprint) },
-              { label: 'Root geom', value: str(m.geometry) },
-              { label: 'Channels', value: String(channels) },
-            ],
-          },
-        };
-      }),
-    },
-  ];
+  };
 
-  // ---- place categories + their items --------------------------------------
-  const arrow = (accent: string): Partial<Edge> => ({
-    style: { stroke: accent, strokeWidth: 1.5 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: accent },
-  });
+  const gdtfNode: TNode = {
+    id: 'gdtf',
+    children: [fixtureNode],
+    data: {
+      kind: 'gdtf', title: 'GDTF Source', subtitle: info.fixtureTypeId, icon: 'folder_zip', accent: ACCENT.gdtf, noTarget: true,
+      params: [
+        { label: 'Manufacturer', value: str(info.manufacturer) },
+        { label: 'Fixture', value: str(info.fixtureName) },
+        { label: 'Revision', value: str(info.revision) },
+        { label: 'Parser', value: str(def.value.metadata?.parserVersion) },
+        { label: 'Pkg entries', value: str(def.value.metadata?.packageEntryCount) },
+        { label: 'Qualities', value: arr(def.value.metadata?.availableModelQualities) },
+        { label: 'Formats', value: arr(def.value.metadata?.availableModelFormats) },
+      ],
+    },
+  };
 
-  for (const cat of cats) {
-    const startY = y;
-    if (cat.groups) {
-      // Three-level branch: category → tag groups (col3) → part items (col4).
-      const groupMids: number[] = [];
-      let total = 0;
-      for (const g of cat.groups) {
-        const gStart = y;
-        let gMid: number;
-        if (g.items.length) {
-          for (const it of g.items) {
-            node(it.id, X.sub, y, it.data);
-            edge(g.id, it.id, arrow(g.accent));
-            for (const target of it.xrefs ?? []) xref(it.id, target);
-            y += ROW;
-          }
-          gMid = gStart + ((g.items.length - 1) * ROW) / 2;
-        } else {
-          gMid = y;
-          y += ROW;
-        }
-        node(g.id, X.item, gMid, {
-          kind: 'category', title: g.title, subtitle: 'REBUS part tag', icon: g.icon, accent: g.accent, badge: g.items.length,
-        });
-        edge(cat.id, g.id, arrow(g.accent));
-        groupMids.push(gMid);
-        total += g.items.length;
-        y += GROUP_GAP;
-      }
-      const catMid = (groupMids[0]! + groupMids[groupMids.length - 1]!) / 2;
-      node(cat.id, X.category, catMid, {
-        kind: 'category', title: cat.title, icon: cat.icon, accent: cat.accent, badge: total,
-      });
-    } else if (cat.items.length === 0) {
-      // Leaf category: it carries its own params/note and reserves one row.
-      const params = cat.selfParams ?? (cat.selfNote ? [{ label: 'Status', value: cat.selfNote }] : []);
-      node(cat.id, X.category, y, {
-        kind: 'category', title: cat.title, icon: cat.icon, accent: cat.accent,
-        badge: cat.selfParams ? undefined : 0,
-        params,
-      });
-      y += ROW;
+  // ---- layered layout: x = depth, y = leaf cursor; parents centre on kids --
+  let cursor = 0;
+  const place = (n: TNode, depth: number): number => {
+    const x = depth * COL_W;
+    let yPos: number;
+    if (!n.children.length) {
+      yPos = cursor;
+      cursor += ROW;
     } else {
-      for (const it of cat.items) {
-        node(it.id, X.item, y, it.data);
-        edge(cat.id, it.id, arrow(cat.accent));
-        for (const target of it.xrefs ?? []) xref(it.id, target);
-        y += ROW;
-      }
-      const midY = startY + ((cat.items.length - 1) * ROW) / 2;
-      node(cat.id, X.category, midY, {
-        kind: 'category', title: cat.title, icon: cat.icon, accent: cat.accent, badge: cat.items.length,
+      const ys: number[] = [];
+      n.children.forEach((c, i) => {
+        ys.push(place(c, depth + 1));
+        if (i < n.children.length - 1) cursor += SIB_GAP;
       });
+      yPos = (ys[0]! + ys[ys.length - 1]!) / 2;
     }
-    edge('fixture', cat.id, arrow(cat.accent));
-    y += CAT_GAP;
-  }
-
-  const totalH = Math.max(0, y - CAT_GAP);
-  const centreY = totalH / 2 - NODE_H / 2;
-
-  // ---- column 1: Fixture root ----------------------------------------------
-  node('fixture', X.fixture, centreY, {
-    kind: 'fixture', title: info.fixtureName || 'Fixture', subtitle: info.manufacturer, icon: 'lightbulb',
-    accent: ACCENT.fixture,
-    params: [
-      { label: 'Parts', value: String(parts.value.length) },
-      { label: 'Models', value: String(models.value.length) },
-      { label: 'Beams', value: String(beams.value.length) },
-      { label: 'Motion axes', value: String(motion.value.length) },
-      { label: 'DMX modes', value: String(modes.value.length) },
-    ],
-  });
-
-  // ---- column 0: GDTF source -----------------------------------------------
-  node('gdtf', X.gdtf, centreY, {
-    kind: 'gdtf', title: 'GDTF Source', subtitle: info.fixtureTypeId, icon: 'folder_zip',
-    accent: ACCENT.gdtf, noTarget: true,
-    params: [
-      { label: 'Manufacturer', value: str(info.manufacturer) },
-      { label: 'Fixture', value: str(info.fixtureName) },
-      { label: 'Revision', value: str(info.revision) },
-      { label: 'Parser', value: str(def.value.metadata?.parserVersion) },
-      { label: 'Pkg entries', value: str(def.value.metadata?.packageEntryCount) },
-      { label: 'Qualities', value: arr(def.value.metadata?.availableModelQualities) },
-      { label: 'Formats', value: arr(def.value.metadata?.availableModelFormats) },
-    ],
-  });
-  edge('gdtf', 'fixture', { style: { stroke: ACCENT.gdtf, strokeWidth: 2 }, markerEnd: { type: MarkerType.ArrowClosed, color: ACCENT.gdtf }, animated: true });
+    node(n.id, x, yPos, n.data);
+    for (const c of n.children) edge(n.id, c.id, c.data.accent ?? 'var(--color-border-strong)');
+    return yPos;
+  };
+  place(gdtfNode, 0);
 
   return { nodes, edges };
 });
