@@ -32,7 +32,13 @@ export interface ExternalMaterialDetail extends ExternalMaterialSummary {
   resolutions?: string[];
   /** Suggested default resolution for import. */
   defaultResolution?: string | null;
+  /** Preview image URL keyed by resolution option (when provider exposes per-resolution previews). */
+  previewUrlByResolution?: Record<string, string>;
   metadata: Record<string, unknown>;
+}
+
+export interface ExternalDetailOptions {
+  resolution?: string;
 }
 
 export interface ExternalImportOptions {
@@ -63,7 +69,7 @@ export interface ExternalMaterialProvider {
   readonly label: string;
   enabled: boolean;
   search(params: ExternalSearchParams): Promise<ExternalSearchPage>;
-  getDetail(sourceId: string): Promise<ExternalMaterialDetail | null>;
+  getDetail(sourceId: string, options?: ExternalDetailOptions): Promise<ExternalMaterialDetail | null>;
   downloadForImport(sourceId: string, options?: ExternalImportOptions): Promise<ExternalImportPayload>;
 }
 

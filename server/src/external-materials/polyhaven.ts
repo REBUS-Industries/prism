@@ -5,6 +5,7 @@
 import AdmZip from 'adm-zip';
 import { fetch } from 'undici';
 import type {
+  ExternalDetailOptions,
   ExternalImportOptions,
   ExternalImportPayload,
   ExternalMaterialDetail,
@@ -16,7 +17,9 @@ import {
   defaultPolyHavenResolution,
   estimatePolyHavenDownloadSize,
   listPolyHavenMapLabels,
+  buildPolyHavenPreviewUrlByResolution,
   listPolyHavenResolutions,
+  polyHavenPreviewUrl,
   selectPolyHavenMaps,
   type PolyHavenFilesTree,
 } from './polyhavenMaps.js';
@@ -154,7 +157,7 @@ export function createPolyHavenProvider(deps?: {
       };
     },
 
-    async getDetail(sourceId: string): Promise<ExternalMaterialDetail | null> {
+    async getDetail(sourceId: string, options?: ExternalDetailOptions): Promise<ExternalMaterialDetail | null> {
       const catalog = await fetchCatalog();
       const asset = catalog[sourceId];
       if (!asset || asset.type !== 1) return null;
@@ -163,9 +166,16 @@ export function createPolyHavenProvider(deps?: {
         const files = await fetchFiles(sourceId);
         const resolutions = listPolyHavenResolutions(files);
         const defaultResolution = defaultPolyHavenResolution(resolutions, TEXTURE_RES);
-        const resolution = defaultResolution ?? TEXTURE_RES;
+        const requested = options?.resolution?.trim();
+        const resolution = (requested && resolutions.includes(requested))
+          ? requested
+          : (defaultResolution ?? TEXTURE_RES);
         detail.resolutions = resolutions;
         detail.defaultResolution = defaultResolution;
+        detail.previewUrlByResolution = buildPolyHavenPreviewUrlByResolution(files, resolutions);
+        detail.previewUrl = polyHavenPreviewUrl(files, resolution)
+          ?? detail.previewUrlByResolution[resolution]
+          ?? detail.previewUrl;
         detail.maps = listPolyHavenMapLabels(files, resolution);
         detail.downloadSize = estimatePolyHavenDownloadSize(files, resolution);
         detail.metadata = {

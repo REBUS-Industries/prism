@@ -2,6 +2,7 @@
  * Fab provider for unified external-materials search/import.
  */
 import type {
+  ExternalDetailOptions,
   ExternalImportOptions,
   ExternalImportPayload,
   ExternalMaterialDetail,
@@ -80,7 +81,7 @@ export function createFabProvider(deps?: {
       };
     },
 
-    async getDetail(sourceId: string): Promise<ExternalMaterialDetail | null> {
+    async getDetail(sourceId: string, _options?: ExternalDetailOptions): Promise<ExternalMaterialDetail | null> {
       const detail = await getListingFn(sourceId);
       if (!detail) return null;
       return toExternalDetail(detail, '');

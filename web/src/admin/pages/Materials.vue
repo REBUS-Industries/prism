@@ -43,6 +43,26 @@ const zipInput = ref<HTMLInputElement | null>(null);
 
 const skippedDialog = ref<{ id: string; name: string; skipped: string[] } | null>(null);
 
+const RESOLUTION_TAG_PREFIX = 'resolution:';
+const HIDDEN_MATERIAL_TAGS = new Set(['external-import']);
+const SOURCE_TAGS = new Set(['fab', 'polyhaven', 'ambientcg']);
+
+function importResolution(m: MaterialListItem): string | null {
+  const tag = m.tags.find((t) => t.startsWith(RESOLUTION_TAG_PREFIX));
+  if (!tag) return null;
+  return tag.slice(RESOLUTION_TAG_PREFIX.length).toUpperCase();
+}
+
+function displayMaterialTags(m: MaterialListItem): string[] {
+  return m.tags.filter(
+    (tag) => !tag.startsWith(RESOLUTION_TAG_PREFIX) && !HIDDEN_MATERIAL_TAGS.has(tag),
+  );
+}
+
+function isSourceTag(tag: string): boolean {
+  return SOURCE_TAGS.has(tag);
+}
+
 const availableTags = computed<string[]>(() => {
   const set = new Set<string>();
   for (const m of materials.value) for (const tag of m.tags) set.add(tag);
@@ -231,8 +251,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
         <span v-else class="thumb-empty subtle">No preview</span>
       </span>
       <div class="mat-name" :title="m.name">{{ m.name }}</div>
-      <div v-if="m.tags.length" class="tags">
-        <span v-for="tag in m.tags" :key="tag" class="pill tag">{{ tag }}</span>
+      <div v-if="importResolution(m) || displayMaterialTags(m).length" class="tags">
+        <span v-if="importResolution(m)" class="pill resolution-badge">{{ importResolution(m) }}</span>
+        <span
+          v-for="tag in displayMaterialTags(m)"
+          :key="tag"
+          class="pill tag"
+          :class="{ 'source-tag': isSourceTag(tag) }"
+        >{{ tag }}</span>
       </div>
       <div class="mat-foot">
         <span class="pill" :class="m.slotsFilled === m.slotsTotal ? 'online' : ''">
@@ -334,7 +360,15 @@ h1 { font-size: 22px; margin: 0; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag {
   text-transform: none; letter-spacing: normal; font-weight: 500;
-  background: var(--color-bg-hover); color: #fff;
+  background: var(--color-bg-hover); color: var(--color-text-muted);
+}
+.pill.tag.source-tag {
+  background: var(--orbit-primary); color: #fff;
+}
+.pill.resolution-badge {
+  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+  background: var(--color-bg-input); color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
 }
 .mat-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .mat-foot .pill { text-transform: none; letter-spacing: normal; }

@@ -4,6 +4,7 @@
  */
 import { fetch } from 'undici';
 import type {
+  ExternalDetailOptions,
   ExternalImportOptions,
   ExternalImportPayload,
   ExternalMaterialDetail,
@@ -140,16 +141,29 @@ async function acgFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function normalizeAsset(asset: AmbientCgAsset, q: string): ExternalMaterialDetail {
+function normalizeAsset(
+  asset: AmbientCgAsset,
+  q: string,
+  options?: { resolution?: string },
+): ExternalMaterialDetail {
   const title = asset.title?.trim() || asset.id;
   const tags = asset.tags ?? [];
   const thumbnailUrl = pickAmbientCgThumbnail(asset.thumbnails);
   const downloads = asset.downloads ?? [];
   const resolutions = listAmbientCgDownloadOptions(downloads);
   const defaultResolution = defaultAmbientCgDownloadAttributes(downloads, DOWNLOAD_ATTRIBUTES);
-  const download = defaultResolution
-    ? downloads.find((d) => d.attributes === defaultResolution) ?? selectAmbientCgDownload(downloads, DOWNLOAD_ATTRIBUTES)
+  const requested = options?.resolution?.trim();
+  const selectedAttributes = (requested && resolutions.includes(requested))
+    ? requested
+    : (defaultResolution ?? resolutions[0] ?? null);
+  const download = selectedAttributes
+    ? downloads.find((d) => d.attributes === selectedAttributes)
+      ?? selectAmbientCgDownload(downloads, selectedAttributes)
     : selectAmbientCgDownload(downloads, DOWNLOAD_ATTRIBUTES);
+  const previewUrlByResolution: Record<string, string> = {};
+  if (thumbnailUrl) {
+    for (const attributes of resolutions) previewUrlByResolution[attributes] = thumbnailUrl;
+  }
   const popularity = asset.downloadStatistics?.total ?? 0;
   const relevanceScore = scoreQueryMatch(q, { title, tags })
     + Math.min(popularity / 1000, 20);
@@ -169,6 +183,7 @@ function normalizeAsset(asset: AmbientCgAsset, q: string): ExternalMaterialDetai
     maps: [...AMBIENTCG_STANDARD_MAPS],
     resolutions,
     defaultResolution,
+    previewUrlByResolution: Object.keys(previewUrlByResolution).length ? previewUrlByResolution : undefined,
     metadata: {
       downloadAttributes: DOWNLOAD_ATTRIBUTES,
       selectedDownload: download?.attributes ?? null,
@@ -229,10 +244,10 @@ export function createAmbientCgProvider(deps?: {
       };
     },
 
-    async getDetail(sourceId: string): Promise<ExternalMaterialDetail | null> {
+    async getDetail(sourceId: string, options?: ExternalDetailOptions): Promise<ExternalMaterialDetail | null> {
       const asset = await fetchAsset(sourceId);
       if (!asset) return null;
-      return normalizeAsset(asset, '');
+      return normalizeAsset(asset, '', options);
     },
 
     async downloadForImport(sourceId: string, options?: ExternalImportOptions): Promise<ExternalImportPayload> {
