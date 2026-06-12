@@ -92,9 +92,13 @@ export function normalizeSearchPage(
   raw: FabSearchResponse,
   limit: number,
   cursor: string | null,
+  filter?: (listing: FabSearchListing) => boolean,
 ): FabSearchPage {
+  const results = filter
+    ? (raw.results ?? []).filter(filter)
+    : (raw.results ?? []);
   return {
-    items: (raw.results ?? []).map(normalizeSearchListing),
+    items: results.map(normalizeSearchListing),
     limit,
     cursor,
     nextCursor: raw.cursors?.next ?? null,
