@@ -19,7 +19,9 @@
 import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import {
   FlareSolverrError,
-  flareSolverrRequestGet,
+  flareSolverrSessionCreate,
+  flareSolverrSessionDestroy,
+  flareSolverrSessionFetch,
   hasCloudflareClearance,
   injectFlareSolverrCookies,
 } from './flaresolverr.js';
@@ -32,8 +34,20 @@ import {
 } from './urlValidation.js';
 
 const EPIC_TOKEN_URL = 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token';
-const EPIC_CLIENT_ID = process.env.FAB_EPIC_CLIENT_ID ?? '34a02cf8f4414e29b15921876da36f9a';
-const EPIC_CLIENT_SECRET = process.env.FAB_EPIC_CLIENT_SECRET ?? 'daafbccc737745039dffe53d94fc76cf';
+
+function epicEnvOrDefault(name: string, defaultValue: string): string {
+  const value = process.env[name]?.trim();
+  return value || defaultValue;
+}
+
+const EPIC_CLIENT_ID = epicEnvOrDefault(
+  'FAB_EPIC_CLIENT_ID',
+  '34a02cf8f4414e29b15921876da36f9a',
+);
+const EPIC_CLIENT_SECRET = epicEnvOrDefault(
+  'FAB_EPIC_CLIENT_SECRET',
+  'daafbccc737745039dffe53d94fc76cf',
+);
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -75,6 +89,8 @@ let cachedHttpProxy: string | null = process.env.FAB_HTTP_PROXY?.trim() || null;
 let cachedFlareSolverrUrl: string | null = process.env.FAB_FLARESOLVERR_URL?.trim() || null;
 let tokenExpiresAt = 0;
 let flareSolverrPrimedAt = 0;
+let flareSolverrSessionId: string | null = null;
+let flareSolverrUserAgent: string | null = null;
 const FLARESOLVERR_TTL_MS = 20 * 60 * 1000;
 const FAB_HOSTNAME = 'www.fab.com';
 
@@ -175,9 +191,71 @@ function storeResponseCookies(url: string, headers: Headers): void {
   }
 }
 
+function resetFlareSolverrSession(): void {
+  flareSolverrSessionId = null;
+  flareSolverrUserAgent = null;
+}
+
+function activeUserAgent(): string {
+  return flareSolverrUserAgent ?? USER_AGENT;
+}
+
+function fabBrowserHeadersFor(url: string): Record<string, string> {
+  const headers: Record<string, string> = { ...FAB_BROWSER_HEADERS, 'User-Agent': activeUserAgent() };
+  const csrf = csrfTokenFor(url);
+  if (csrf) headers['X-CSRFToken'] = csrf;
+  return headers;
+}
+
+async function ensureFlareSolverrSession(): Promise<string> {
+  const solverUrl = cachedFlareSolverrUrl?.trim();
+  if (!solverUrl) {
+    throw new FlareSolverrError('FlareSolverr not configured');
+  }
+  if (flareSolverrSessionId) return flareSolverrSessionId;
+  flareSolverrSessionId = await flareSolverrSessionCreate(solverUrl, { proxy: cachedHttpProxy });
+  return flareSolverrSessionId;
+}
+
+async function fabFlareSolverrFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const solverUrl = cachedFlareSolverrUrl!.trim();
+  const session = await ensureFlareSolverrSession();
+  const initHeaders = new Headers(init.headers);
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fabBrowserHeadersFor(url))) {
+    if (k.toLowerCase() === 'user-agent') continue;
+    if (!initHeaders.has(k)) headers[k] = v;
+  }
+  for (const [k, v] of initHeaders.entries()) {
+    if (k.toLowerCase() === 'user-agent') continue;
+    headers[k] = v;
+  }
+
+  const method = init.method?.toUpperCase() === 'POST' ? 'POST' : 'GET';
+  const postData = method === 'POST' && init.body != null ? String(init.body) : undefined;
+
+  const result = await flareSolverrSessionFetch(solverUrl, url, {
+    session,
+    proxy: cachedHttpProxy,
+    method,
+    postData,
+    headers,
+  });
+
+  if (result.userAgent) flareSolverrUserAgent = result.userAgent;
+  injectFlareSolverrCookies(result.cookies, hostnameFromUrl(url), cookieJar);
+  flareSolverrPrimedAt = Date.now();
+
+  return new Response(result.response, { status: result.status });
+}
+
 async function fabUndiciFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (cachedFlareSolverrUrl?.trim() && hostnameFromUrl(url) === FAB_HOSTNAME) {
+    return fabFlareSolverrFetch(url, init);
+  }
+
   const headers = new Headers(init.headers);
-  for (const [k, v] of Object.entries(FAB_BROWSER_HEADERS)) {
+  for (const [k, v] of Object.entries(fabBrowserHeadersFor(url))) {
     if (!headers.has(k)) headers.set(k, v);
   }
   const cookies = cookieHeaderFor(url);
@@ -227,10 +305,12 @@ export function applyFabRuntimeConfig(config: {
     cachedHttpProxy = normalizeOptionalHttpUrl(config.httpProxy);
     fabAgent = null;
     fabAgentProxy = undefined;
+    resetFlareSolverrSession();
   }
   if (config.flareSolverrUrl !== undefined) {
     cachedFlareSolverrUrl = normalizeOptionalHttpUrl(config.flareSolverrUrl);
     flareSolverrPrimedAt = 0;
+    resetFlareSolverrSession();
   }
 }
 
@@ -243,11 +323,13 @@ export function setFabRefreshTokenForTests(token: string | null): void {
 export function clearFabCookieJarForTests(): void {
   cookieJar.clear();
   flareSolverrPrimedAt = 0;
+  resetFlareSolverrSession();
 }
 
 export function setFabFlareSolverrUrlForTests(url: string | null): void {
   cachedFlareSolverrUrl = url;
   flareSolverrPrimedAt = 0;
+  resetFlareSolverrSession();
 }
 
 async function exchangeToken(params: Record<string, string>): Promise<TokenResponse> {
@@ -334,10 +416,15 @@ export async function ensureFabCloudflareAccess(force = false): Promise<void> {
     return;
   }
 
-  const { cookies } = await flareSolverrRequestGet(solverUrl, 'https://www.fab.com/', {
+  if (force) resetFlareSolverrSession();
+
+  const session = await ensureFlareSolverrSession();
+  const result = await flareSolverrSessionFetch(solverUrl, 'https://www.fab.com/', {
+    session,
     proxy: cachedHttpProxy,
   });
-  injectFlareSolverrCookies(cookies, FAB_HOSTNAME, cookieJar);
+  if (result.userAgent) flareSolverrUserAgent = result.userAgent;
+  injectFlareSolverrCookies(result.cookies, FAB_HOSTNAME, cookieJar);
   flareSolverrPrimedAt = now;
 }
 
