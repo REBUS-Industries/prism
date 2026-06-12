@@ -100,3 +100,44 @@ export function estimatePolyHavenDownloadSize(
   return selectPolyHavenMaps(files, 'estimate', resolution)
     .reduce((sum, m) => sum + m.size, 0);
 }
+
+/** Human-readable labels for Poly Haven channel keys. */
+export const POLYHAVEN_MAP_LABELS: Record<string, string> = {
+  Diffuse: 'Albedo',
+  nor_gl: 'Normal',
+  nor_dx: 'Normal',
+  Rough: 'Roughness',
+  AO: 'AO',
+  Displacement: 'Displacement',
+};
+
+export function listPolyHavenResolutions(files: PolyHavenFilesTree): string[] {
+  const resolutions = new Set<string>();
+  for (const mapTree of Object.values(files)) {
+    for (const res of Object.keys(mapTree)) resolutions.add(res);
+  }
+  return [...resolutions].sort(
+    (a, b) => RESOLUTION_ORDER.indexOf(a as typeof RESOLUTION_ORDER[number])
+      - RESOLUTION_ORDER.indexOf(b as typeof RESOLUTION_ORDER[number]),
+  );
+}
+
+export function listPolyHavenMapLabels(files: PolyHavenFilesTree, resolution: string): string[] {
+  const labels: string[] = [];
+  const usedSlots = new Set<MaterialSlot>();
+  for (const { map, slot } of POLYHAVEN_MAP_SLOTS) {
+    if (usedSlots.has(slot)) continue;
+    if (!pickMapFile(files[map], resolution)) continue;
+    const label = POLYHAVEN_MAP_LABELS[map] ?? map;
+    if (!labels.includes(label)) labels.push(label);
+    usedSlots.add(slot);
+  }
+  return labels;
+}
+
+export function defaultPolyHavenResolution(
+  available: string[],
+  preferred = '2k',
+): string | null {
+  return pickResolution(available, preferred) ?? available[0] ?? null;
+}

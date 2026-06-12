@@ -26,7 +26,17 @@ export interface ExternalMaterialSummary {
 export interface ExternalMaterialDetail extends ExternalMaterialSummary {
   description: string | null;
   formats: string[];
+  /** Map/texture channels included in the download package (e.g. Albedo, Normal). */
+  maps?: string[];
+  /** Available download resolutions (provider-specific, e.g. 2k or 2K-JPG). */
+  resolutions?: string[];
+  /** Suggested default resolution for import. */
+  defaultResolution?: string | null;
   metadata: Record<string, unknown>;
+}
+
+export interface ExternalImportOptions {
+  resolution?: string;
 }
 
 export interface ExternalSearchParams {
@@ -54,7 +64,7 @@ export interface ExternalMaterialProvider {
   enabled: boolean;
   search(params: ExternalSearchParams): Promise<ExternalSearchPage>;
   getDetail(sourceId: string): Promise<ExternalMaterialDetail | null>;
-  downloadForImport(sourceId: string): Promise<ExternalImportPayload>;
+  downloadForImport(sourceId: string, options?: ExternalImportOptions): Promise<ExternalImportPayload>;
 }
 
 export interface UnifiedSearchParams {

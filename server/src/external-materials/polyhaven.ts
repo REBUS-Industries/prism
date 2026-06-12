@@ -5,6 +5,7 @@
 import AdmZip from 'adm-zip';
 import { fetch } from 'undici';
 import type {
+  ExternalImportOptions,
   ExternalImportPayload,
   ExternalMaterialDetail,
   ExternalMaterialProvider,
@@ -12,7 +13,10 @@ import type {
 } from './types.js';
 import { scoreQueryMatch } from './unifiedSearch.js';
 import {
+  defaultPolyHavenResolution,
   estimatePolyHavenDownloadSize,
+  listPolyHavenMapLabels,
+  listPolyHavenResolutions,
   selectPolyHavenMaps,
   type PolyHavenFilesTree,
 } from './polyhavenMaps.js';
@@ -157,22 +161,36 @@ export function createPolyHavenProvider(deps?: {
       const detail = normalizeAsset(sourceId, asset, '');
       try {
         const files = await fetchFiles(sourceId);
-        detail.downloadSize = estimatePolyHavenDownloadSize(files, TEXTURE_RES);
-        detail.metadata = { ...detail.metadata, maps: selectPolyHavenMaps(files, sourceId, TEXTURE_RES).map((m) => m.map) };
+        const resolutions = listPolyHavenResolutions(files);
+        const defaultResolution = defaultPolyHavenResolution(resolutions, TEXTURE_RES);
+        const resolution = defaultResolution ?? TEXTURE_RES;
+        detail.resolutions = resolutions;
+        detail.defaultResolution = defaultResolution;
+        detail.maps = listPolyHavenMapLabels(files, resolution);
+        detail.downloadSize = estimatePolyHavenDownloadSize(files, resolution);
+        detail.metadata = {
+          ...detail.metadata,
+          resolution,
+          maps: selectPolyHavenMaps(files, sourceId, resolution).map((m) => m.map),
+        };
       } catch {
         /* size estimate optional */
       }
       return detail;
     },
 
-    async downloadForImport(sourceId: string): Promise<ExternalImportPayload> {
+    async downloadForImport(sourceId: string, options?: ExternalImportOptions): Promise<ExternalImportPayload> {
       const catalog = await fetchCatalog();
       const asset = catalog[sourceId];
       if (!asset) throw new Error('Poly Haven texture not found');
 
       const files = await fetchFiles(sourceId);
-      const maps = selectPolyHavenMaps(files, sourceId, TEXTURE_RES);
-      if (!maps.length) throw new Error('No downloadable PBR maps at configured resolution');
+      const resolutions = listPolyHavenResolutions(files);
+      const resolution = options?.resolution?.trim()
+        || defaultPolyHavenResolution(resolutions, TEXTURE_RES)
+        || TEXTURE_RES;
+      const maps = selectPolyHavenMaps(files, sourceId, resolution);
+      if (!maps.length) throw new Error(`No downloadable PBR maps at resolution ${resolution}`);
 
       const zip = new AdmZip();
       for (const map of maps) {
@@ -183,7 +201,7 @@ export function createPolyHavenProvider(deps?: {
       const title = asset.name?.trim() || sourceId;
       return {
         buffer: zip.toBuffer(),
-        filename: `${sourceId}_${TEXTURE_RES}.zip`,
+        filename: `${sourceId}_${resolution}.zip`,
         name: title,
       };
     },
