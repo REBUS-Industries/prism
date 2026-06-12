@@ -43,6 +43,7 @@ async function buildApp() {
 
   await app.register(import('./api/textures.js'), { prefix: '/api/textures' });
   await app.register(import('./api/materials.js'), { prefix: '/api/materials' });
+  await app.register(import('./api/materialGroups.js'), { prefix: '/api/material-groups' });
   await app.register(import('./api/externalMaterials.js'), { prefix: '/api/external-materials' });
   await app.register(import('./api/fab.js'), { prefix: '/api/fab' });
 

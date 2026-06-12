@@ -420,11 +420,23 @@ export const textures = pgTable('textures', {
   byCreatedAt: index('textures_created_at_idx').on(t.createdAt),
 }));
 
+/** User-created groupings for the materials admin library (drag-and-drop). */
+export const materialGroups = pgTable('material_groups', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  name:      varchar('name', { length: 128 }).notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  bySortOrder: index('material_groups_sort_order_idx').on(t.sortOrder),
+}));
+
 export const materials = pgTable('materials', {
   id:          uuid('id').primaryKey().defaultRandom(),
   name:        varchar('name', { length: 256 }).notNull(),
   description: text('description'),
   tags:        text('tags').array().notNull().default(sql`'{}'::text[]`),
+  /** Optional user group — cleared when the group row is deleted. */
+  groupId:     uuid('group_id').references(() => materialGroups.id, { onDelete: 'set null' }),
   // Editable PBR parameters (scalar/colour overrides applied on top of the
   // assigned texture maps) that map onto a three.js MeshStandardMaterial.
   // Stored as a partial — only keys the user has changed are persisted; the
@@ -495,6 +507,8 @@ export type ProjectAttachment    = typeof projectAttachments.$inferSelect;
 export type NewProjectAttachment = typeof projectAttachments.$inferInsert;
 export type Texture          = typeof textures.$inferSelect;
 export type NewTexture       = typeof textures.$inferInsert;
+export type MaterialGroup    = typeof materialGroups.$inferSelect;
+export type NewMaterialGroup = typeof materialGroups.$inferInsert;
 export type Material         = typeof materials.$inferSelect;
 export type NewMaterial      = typeof materials.$inferInsert;
 export type MaterialTexture    = typeof materialTextures.$inferSelect;

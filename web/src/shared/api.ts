@@ -1118,6 +1118,8 @@ export interface MaterialListItem {
   thumbnailTextureId: string | null;
   /** Parent material id when this row was created via Branch. */
   branchedFromId: string | null;
+  /** User-created group id, when assigned. */
+  groupId: string | null;
   slotsFilled: number;
   slotsTotal: number;
   createdAt: string;
@@ -1309,6 +1311,7 @@ export interface MaterialDetail {
   tags: string[];
   thumbnailTextureId: string | null;
   branchedFromId: string | null;
+  groupId: string | null;
   createdByAdminId: string | null;
   createdByApiKeyId: string | null;
   createdAt: string;
@@ -1333,6 +1336,27 @@ export interface MaterialListParams {
   cursor?: string | number | null;
 }
 
+export interface MaterialGroup {
+  id: string;
+  name: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface MaterialGroupListResponse {
+  groups: MaterialGroup[];
+}
+
+export const materialGroupsApi = {
+  list: () => api.get<MaterialGroupListResponse>('/api/material-groups'),
+  create: (body: { name: string }) => api.post<MaterialGroup>('/api/material-groups', body),
+  update: (id: string, body: { name?: string; sortOrder?: number }) =>
+    api.patch<MaterialGroup>(`/api/material-groups/${id}`, body),
+  remove: (id: string) => api.delete<void>(`/api/material-groups/${id}`),
+  assignMaterials: (id: string, materialIds: string[]) =>
+    api.post<{ assigned: number; materialIds: string[] }>(`/api/material-groups/${id}/materials`, { materialIds }),
+};
+
 export const materialsApi = {
   list: (params: MaterialListParams = {}) => {
     const qs = new URLSearchParams();
@@ -1348,7 +1372,7 @@ export const materialsApi = {
   get: (id: string) => api.get<MaterialDetail>(`/api/materials/${id}`),
   create: (body: { name: string; description?: string; tags?: string[] }) =>
     api.post<MaterialDetail>('/api/materials', body),
-  update: (id: string, body: { name?: string; description?: string | null; tags?: string[] }) =>
+  update: (id: string, body: { name?: string; description?: string | null; tags?: string[]; groupId?: string | null }) =>
     api.put<MaterialDetail>(`/api/materials/${id}`, body),
   /**
    * Merge a PARTIAL PBR parameters patch (e.g. `{ roughness: 0.4 }`). The

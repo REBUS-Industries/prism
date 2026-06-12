@@ -29,6 +29,7 @@ export interface MaterialDetail {
   tags: string[];
   thumbnailTextureId: string | null;
   branchedFromId: string | null;
+  groupId: string | null;
   createdByAdminId: string | null;
   createdByApiKeyId: string | null;
   createdAt: string;
@@ -82,6 +83,7 @@ export async function loadMaterialDetail(id: string): Promise<MaterialDetail | n
     tags: Array.isArray(m.tags) ? m.tags : [],
     thumbnailTextureId: m.thumbnailTextureId,
     branchedFromId: m.branchedFromId ?? null,
+    groupId: m.groupId ?? null,
     createdByAdminId: m.createdByAdminId,
     createdByApiKeyId: m.createdByApiKeyId,
     createdAt: m.createdAt.toISOString(),
