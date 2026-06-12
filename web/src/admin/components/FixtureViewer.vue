@@ -55,11 +55,12 @@ const props = withDefaults(defineProps<{
   dimmer?: number;
   showBeam?: boolean;
   /**
-   * Beam-sim geometry: a cone that starts at the lens diameter and opens to the
-   * beam angle. When a zoom range is present, the min + max zoom cones are shown.
-   * lensDiameter is metres; angles are degrees.
+   * Beam-sim cones — one per fixture beam, each attached at its own part so
+   * multi-beam (pixel) fixtures array correctly. Each cone starts at the lens
+   * diameter and opens to the beam angle (min + max zoom cones when a zoom range
+   * is present). lensDiameter is metres; angles are degrees.
    */
-  beamSpec?: { lensDiameter?: number; beamAngle?: number; zoomMin?: number; zoomMax?: number } | null;
+  beams?: Array<{ parentPartId?: string | null; lensDiameter?: number; beamAngle?: number; zoomMin?: number; zoomMax?: number }> | null;
   /** When false, orbit controls are disabled (quad ortho views). */
   interactive?: boolean;
   lightBackground?: boolean;
@@ -126,17 +127,18 @@ const motionRest = new Map<string, THREE.Quaternion>();
 let beamPartGroup: THREE.Object3D | null = null;
 let loadedRoot: THREE.Object3D | null = null;
 let dirLight: THREE.DirectionalLight | null = null;
-let beamGroup: THREE.Group | null = null;
+let beamGroups: THREE.Group[] = [];
 
 function disposeBeam(): void {
-  if (!beamGroup) return;
-  beamGroup.removeFromParent();
-  beamGroup.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.geometry) m.geometry.dispose();
-    if (m.material) (m.material as THREE.Material).dispose();
-  });
-  beamGroup = null;
+  for (const g of beamGroups) {
+    g.removeFromParent();
+    g.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.geometry) m.geometry.dispose();
+      if (m.material) (m.material as THREE.Material).dispose();
+    });
+  }
+  beamGroups = [];
 }
 /** Cone height — tip translated to local origin in syncBeam(). */
 const BEAM_CONE_HEIGHT = 0.6;
@@ -163,8 +165,8 @@ function clearLoaded(): void {
   transformControls?.detach();
   partGroups = new Map();
   disposeBuiltMaterials();
-  // Detach beam before disposing assembly nodes it may be parented to.
-  beamGroup?.removeFromParent();
+  // Detach beams before disposing assembly nodes they may be parented to.
+  disposeBeam();
   // removeFromParent() works whether the root was added to scene or tiltGroup.
   loadedRoot?.removeFromParent();
   if (loadedRoot) disposeAssembly(loadedRoot);
@@ -329,36 +331,39 @@ function makeBeamFrustum(topR: number, bottomR: number, opacity: number): THREE.
 
 function syncBeam(): void {
   if (!scene) return;
-  const parent = beamParent();
-  if (!props.showBeam || !parent) { disposeBeam(); return; }
-
-  // Rebuild the cone(s) from the beam spec each time so angle/lens edits show.
   disposeBeam();
-  beamGroup = new THREE.Group();
+  if (!props.showBeam) return;
 
-  const spec = props.beamSpec ?? {};
-  const lensR = Math.max((spec.lensDiameter ?? 0) / 2, 0.01);
-  const bottomFor = (deg: number): number =>
-    lensR + BEAM_CONE_HEIGHT * Math.tan((Math.max(deg, 1) / 2) * Math.PI / 180);
+  const fallback = beamParent();
+  const specs = props.beams ?? [];
+  for (const spec of specs) {
+    // Attach each cone to its own beam part so pixels array across the fixture;
+    // fall back to the single head/beam parent when no part is known.
+    const attach = (spec.parentPartId ? partGroups.get(spec.parentPartId) : null) ?? fallback;
+    if (!attach) continue;
 
-  // Min/max zoom range when present, else the single beam angle.
-  const angles = (spec.zoomMin != null && spec.zoomMax != null)
-    ? [spec.zoomMin, spec.zoomMax]
-    : [spec.beamAngle ?? 20];
-  for (let i = 0; i < angles.length; i++) {
-    beamGroup.add(makeBeamFrustum(lensR, bottomFor(angles[i]!), angles.length > 1 && i === 0 ? 0.5 : 0.32));
-  }
+    const group = new THREE.Group();
+    const lensR = Math.max((spec.lensDiameter ?? 0) / 2, 0.01);
+    const bottomFor = (deg: number): number =>
+      lensR + BEAM_CONE_HEIGHT * Math.tan((Math.max(deg, 1) / 2) * Math.PI / 180);
+    const angles = (spec.zoomMin != null && spec.zoomMax != null)
+      ? [spec.zoomMin, spec.zoomMax]
+      : [spec.beamAngle ?? 20];
+    for (let i = 0; i < angles.length; i++) {
+      group.add(makeBeamFrustum(lensR, bottomFor(angles[i]!), angles.length > 1 && i === 0 ? 0.5 : 0.32));
+    }
 
-  parent.add(beamGroup);
-  beamGroup.position.set(0, 0, 0);
-  if (tiltNode || beamPartGroup) {
-    // GDTF Z-up: beam opens along −Z; top (lens) at origin.
-    beamGroup.rotation.set(Math.PI / 2, 0, 0);
-    beamGroup.scale.setScalar(1);
-  } else {
-    // Single-GLB fallback (Y-up tiltGroup).
-    beamGroup.rotation.set(0, 0, 0);
-    beamGroup.scale.setScalar(Math.max(modelSize * 0.5, 0.3));
+    group.position.set(0, 0, 0);
+    if (spec.parentPartId || tiltNode || beamPartGroup) {
+      // GDTF Z-up: beam opens along −Z; top (lens) at the part origin.
+      group.rotation.set(Math.PI / 2, 0, 0);
+      group.scale.setScalar(1);
+    } else {
+      group.rotation.set(0, 0, 0);
+      group.scale.setScalar(Math.max(modelSize * 0.5, 0.3));
+    }
+    attach.add(group);
+    beamGroups.push(group);
   }
 }
 
@@ -627,7 +632,7 @@ watch(() => [props.panDeg, props.tiltDeg], syncMotion);
 watch(() => props.motionAngles, syncMotion, { deep: true });
 watch(() => props.dimmer, syncDimmer);
 watch(() => props.showBeam, syncBeam);
-watch(() => props.beamSpec, syncBeam, { deep: true });
+watch(() => props.beams, syncBeam, { deep: true });
 watch(() => props.interactive, (v) => { if (controls) controls.enabled = v; });
 watch(() => [props.editable, props.selectedPartId, props.gizmoMode, props.gizmoSpace], syncGizmo);
 watch(() => props.lightBackground, (v) => {

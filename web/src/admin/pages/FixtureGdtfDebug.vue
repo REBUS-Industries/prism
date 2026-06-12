@@ -171,23 +171,27 @@ const motionControls = computed(() => {
     }));
 });
 
-/** Beam-sim cone: lens diameter (start) + beam angle / zoom range. */
-const beamSpec = computed(() => {
+/** Beam-sim cones — one per beam (multi-beam fixtures array across the fixture). */
+const beamSpecs = computed(() => {
   const def = fixture.value?.definition;
-  const beam = def?.beams?.[0];
-  if (!def || !beam) return null;
-  const parent = def.parts.find((p) => p.partId === beam.parentPartId);
-  const model = parent?.modelId ? def.models.find((m) => m.modelId === parent.modelId) : undefined;
-  const meta = (model?.metadata ?? {}) as Record<string, unknown>;
-  const len = typeof meta.length === 'number' ? meta.length : 0;
-  const wid = typeof meta.width === 'number' ? meta.width : 0;
-  const lensDiameter = Math.max(len, wid) || 0.08;
-  return {
-    lensDiameter,
-    beamAngle: beam.beamAngle ?? beam.fieldAngle ?? 20,
-    zoomMin: beam.zoomMinAngle,
-    zoomMax: beam.zoomMaxAngle,
-  };
+  if (!def?.beams?.length) return [];
+  const vis = visiblePartIds.value;
+  return def.beams
+    .filter((b) => !vis || (b.parentPartId ? vis.has(b.parentPartId) : true))
+    .map((b) => {
+      const parent = def.parts.find((p) => p.partId === b.parentPartId);
+      const model = parent?.modelId ? def.models.find((m) => m.modelId === parent.modelId) : undefined;
+      const meta = (model?.metadata ?? {}) as Record<string, unknown>;
+      const len = typeof meta.length === 'number' ? meta.length : 0;
+      const wid = typeof meta.width === 'number' ? meta.width : 0;
+      return {
+        parentPartId: b.parentPartId ?? null,
+        lensDiameter: Math.max(len, wid) || 0.08,
+        beamAngle: b.beamAngle ?? b.fieldAngle ?? 20,
+        zoomMin: b.zoomMinAngle,
+        zoomMax: b.zoomMaxAngle,
+      };
+    });
 });
 
 const meshRecords = computed(() => {
@@ -510,7 +514,7 @@ onMounted(() => void load());
               :motion-angles="appliedAngles"
               :dimmer="dimmer"
               :show-beam="showBeam"
-              :beam-spec="beamSpec"
+              :beams="beamSpecs"
               fill
               light-background
             />
@@ -535,7 +539,7 @@ onMounted(() => void load());
             :motion-angles="appliedAngles"
             :dimmer="dimmer"
             :show-beam="showBeam"
-            :beam-spec="beamSpec"
+            :beams="beamSpecs"
             fill
             light-background
           />
