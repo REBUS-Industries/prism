@@ -28,54 +28,71 @@ function escapeForPowerShellDoubleQuote(value: string): string {
     .replace(/"/g, '`"');
 }
 
+function buildExchangeScript(codeLiteral: string): string {
+  return [
+    `$clientId  = "${EPIC_CLIENT_ID}"`,
+    `$clientSecret = "${EPIC_CLIENT_SECRET}"`,
+    `$code = "${codeLiteral}"`,
+    '',
+    '$basic = [Convert]::ToBase64String(',
+    '  [Text.Encoding]::ASCII.GetBytes("${clientId}:${clientSecret}")',
+    ')',
+    '$body = "grant_type=authorization_code&code=$([uri]::EscapeDataString($code))&token_type=eg1"',
+    '',
+    '$response = Invoke-RestMethod `',
+    '  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" `',
+    '  -Method POST `',
+    '  -Headers @{',
+    '    Authorization = "Basic $basic"',
+    '    "Content-Type" = "application/x-www-form-urlencoded"',
+    '  } `',
+    '  -Body $body',
+    '',
+    '$response.refresh_token',
+  ].join('\n');
+}
+
+function buildVerifyRefreshScript(): string {
+  return [
+    `$clientId  = "${EPIC_CLIENT_ID}"`,
+    `$clientSecret = "${EPIC_CLIENT_SECRET}"`,
+    '$refreshToken = "PASTE_REFRESH_TOKEN_HERE"',
+    '',
+    '$basic = [Convert]::ToBase64String(',
+    '  [Text.Encoding]::ASCII.GetBytes("${clientId}:${clientSecret}")',
+    ')',
+    '$body = "grant_type=refresh_token&refresh_token=$([uri]::EscapeDataString($refreshToken))&token_type=eg1"',
+    '',
+    '$response = Invoke-RestMethod `',
+    '  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" `',
+    '  -Method POST `',
+    '  -Headers @{',
+    '    Authorization = "Basic $basic"',
+    '    "Content-Type" = "application/x-www-form-urlencoded"',
+    '  } `',
+    '  -Body $body',
+    '',
+    '$response.access_token',
+  ].join('\n');
+}
+
+const legendaryCliScript = [
+  'pip install legendary-gl',
+  'legendary auth',
+].join('\n');
+
 const exchangeScript = computed(() => {
   const codeLiteral = authCodeInput.value.trim()
     ? escapeForPowerShellDoubleQuote(authCodeInput.value.trim())
     : 'PASTE_CODE_HERE';
-
-  return `$clientId  = "${EPIC_CLIENT_ID}"
-$clientSecret = "${EPIC_CLIENT_SECRET}"
-$code = "${codeLiteral}"
-
-$basic = [Convert]::ToBase64String(
-  [Text.Encoding]::ASCII.GetBytes("\${clientId}:\${clientSecret}")
-)
-$body = "grant_type=authorization_code&code=$([uri]::EscapeDataString($code))&token_type=eg1"
-
-$response = Invoke-RestMethod \`
-  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" \`
-  -Method POST \`
-  -Headers @{
-    Authorization = "Basic $basic"
-    "Content-Type" = "application/x-www-form-urlencoded"
-  } \`
-  -Body $body
-
-$response.refresh_token`;
+  return buildExchangeScript(codeLiteral);
 });
 
-const verifyRefreshScript = `$clientId  = "${EPIC_CLIENT_ID}"
-$clientSecret = "${EPIC_CLIENT_SECRET}"
-$refreshToken = "PASTE_REFRESH_TOKEN_HERE"
+const verifyRefreshScript = buildVerifyRefreshScript();
 
-$basic = [Convert]::ToBase64String(
-  [Text.Encoding]::ASCII.GetBytes("\${clientId}:\${clientSecret}")
-)
-$body = "grant_type=refresh_token&refresh_token=$([uri]::EscapeDataString($refreshToken))&token_type=eg1"
-
-$response = Invoke-RestMethod \`
-  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" \`
-  -Method POST \`
-  -Headers @{
-    Authorization = "Basic $basic"
-    "Content-Type" = "application/x-www-form-urlencoded"
-  } \`
-  -Body $body
-
-$response.access_token`;
-
-const legendaryCliScript = `pip install legendary-gl
-legendary auth`;
+function openEpicLoginUrl(): void {
+  window.open(epicLoginUrl, '_blank', 'noopener,noreferrer');
+}
 
 async function copyText(text: string, key: string): Promise<void> {
   try {
@@ -242,18 +259,21 @@ onMounted(() => { void refresh(); });
                   Open the Epic login redirect URL (UE Launcher public client):
                   <div class="token-help code-block">
                     <div class="code-block-toolbar">
-                      <a
-                        :href="epicLoginUrl"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="code-link"
-                      >{{ epicLoginUrl }}</a>
-                      <button
-                        type="button"
-                        class="copy-btn"
-                        @click="copyText(epicLoginUrl, 'url')"
-                      >{{ copiedKey === 'url' ? 'Copied' : 'Copy' }}</button>
+                      <span class="code-block-label">Epic login redirect</span>
+                      <div class="code-block-actions">
+                        <button
+                          type="button"
+                          class="copy-btn"
+                          @click="openEpicLoginUrl"
+                        >Open URL</button>
+                        <button
+                          type="button"
+                          class="copy-btn"
+                          @click="copyText(epicLoginUrl, 'url')"
+                        >{{ copiedKey === 'url' ? 'Copied' : 'Copy' }}</button>
+                      </div>
                     </div>
+                    <pre class="token-help-code">{{ epicLoginUrl }}</pre>
                   </div>
                 </li>
                 <li>
@@ -283,7 +303,7 @@ onMounted(() => { void refresh(); });
                         @click="copyText(exchangeScript, 'exchange')"
                       >{{ copiedKey === 'exchange' ? 'Copied' : 'Copy' }}</button>
                     </div>
-                    <pre class="token-help-pre">{{ exchangeScript }}</pre>
+                    <pre class="token-help-code">{{ exchangeScript }}</pre>
                   </div>
                 </li>
                 <li>Copy the printed <code>refresh_token</code> value and paste it above, then Save.</li>
@@ -304,7 +324,7 @@ onMounted(() => { void refresh(); });
                       @click="copyText(verifyRefreshScript, 'verify')"
                     >{{ copiedKey === 'verify' ? 'Copied' : 'Copy' }}</button>
                   </div>
-                  <pre class="token-help-pre">{{ verifyRefreshScript }}</pre>
+                  <pre class="token-help-code">{{ verifyRefreshScript }}</pre>
                 </div>
               </details>
 
@@ -318,7 +338,7 @@ onMounted(() => { void refresh(); });
                     @click="copyText(legendaryCliScript, 'legendary')"
                   >{{ copiedKey === 'legendary' ? 'Copied' : 'Copy' }}</button>
                 </div>
-                <pre class="token-help-pre">{{ legendaryCliScript }}</pre>
+                <pre class="token-help-code">{{ legendaryCliScript }}</pre>
               </div>
               <p>
                 After authenticating, read <code>refresh_token</code> from
@@ -492,17 +512,12 @@ onMounted(() => { void refresh(); });
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.55);
 }
-.code-link {
-  flex: 1;
-  min-width: 0;
-  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #89b4fa;
-  word-break: break-all;
-  text-decoration: none;
+.code-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
-.code-link:hover { text-decoration: underline; }
 .copy-btn {
   flex-shrink: 0;
   padding: 3px 10px;
@@ -519,13 +534,14 @@ onMounted(() => { void refresh(); });
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.25);
 }
-.token-help-pre {
+.token-help-code {
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px;
+  background: #1e1e1e;
   font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
   font-size: 12px;
   line-height: 1.6;
-  color: #cdd6f4;
+  color: #e8e8e8;
   white-space: pre;
   overflow-x: auto;
   tab-size: 2;
