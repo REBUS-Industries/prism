@@ -321,7 +321,16 @@ function extractMessage(body: unknown): string | undefined {
   if (typeof body === 'string') return body || undefined;
   if (body && typeof body === 'object') {
     const o = body as Record<string, unknown>;
-    if (typeof o['error'] === 'string') return o['error'];
+    if (typeof o['error'] === 'string') {
+      if (o['error'] === 'forbidden' && typeof o['scope'] === 'string') {
+        return `Permission denied (${o['scope']}). Log in to the admin panel or grant this scope to your API key.`;
+      }
+      if (o['code'] === 'fab_not_configured' && typeof o['hint'] === 'string') {
+        return `${o['error']}. ${o['hint']}`;
+      }
+      if (typeof o['hint'] === 'string') return `${o['error']}. ${o['hint']}`;
+      return o['error'];
+    }
     if (typeof o['message'] === 'string') return o['message'];
   }
   return undefined;
@@ -468,6 +477,34 @@ export const keysApi = {
 export const settingsApi = {
   list: () => api.get<{ settings: Record<string, string> }>('/api/settings'),
   set:  (key: string, value: string) => api.put<{ ok: true }>(`/api/settings/${encodeURIComponent(key)}`, { value }),
+};
+
+export interface ExternalMaterialsSettings {
+  fab: {
+    enabled: boolean;
+    httpProxy: string;
+    tokenConfigured: boolean;
+    tokenPreview: string | null;
+    tokenSource: 'db' | 'env' | 'none';
+  };
+  polyhaven: { enabled: boolean };
+  ambientcg: { enabled: boolean };
+}
+
+export interface ExternalMaterialsSettingsPatch {
+  fab?: {
+    enabled?: boolean;
+    epicRefreshToken?: string;
+    httpProxy?: string;
+  };
+  polyhaven?: { enabled?: boolean };
+  ambientcg?: { enabled?: boolean };
+}
+
+export const externalMaterialsSettingsApi = {
+  get: () => api.get<{ settings: ExternalMaterialsSettings }>('/api/settings/external-materials'),
+  patch: (body: ExternalMaterialsSettingsPatch) =>
+    api.patch<{ ok: true; settings: ExternalMaterialsSettings }>('/api/settings/external-materials', body),
 };
 
 export interface ServerHealth {
@@ -895,6 +932,18 @@ export const MATERIAL_SLOTS = [
   'albedo', 'normal', 'roughness', 'metallic', 'ao', 'emissive', 'opacity', 'displacement',
 ] as const;
 
+/**
+ * Left column of the two-column node-graph layout — wired to the LEFT side of
+ * the material output node. These are the "appearance" slots.
+ */
+export const LEFT_MATERIAL_SLOTS = ['albedo', 'roughness', 'ao', 'opacity'] as const satisfies readonly MaterialSlot[];
+
+/**
+ * Right column of the two-column node-graph layout — wired to the RIGHT side
+ * of the material output node. These are the "structure / detail" slots.
+ */
+export const RIGHT_MATERIAL_SLOTS = ['normal', 'metallic', 'emissive', 'displacement'] as const satisfies readonly MaterialSlot[];
+
 export type MaterialSlot = typeof MATERIAL_SLOTS[number];
 
 /** Human-friendly labels for each slot — shared by the node graph + editor. */
@@ -906,30 +955,30 @@ export const SLOT_LABELS: Record<MaterialSlot, string> = {
   ao:           'Ambient Occlusion',
   emissive:     'Emissive',
   opacity:      'Opacity',
-  displacement: 'Displacement',
+  displacement: 'Displacement / Bump',
 };
 
 /** Short suffix examples for slot filter UI. Mirrors server/src/materials/slots.ts. */
 export const SLOT_SUFFIX_HINTS: Record<MaterialSlot, string> = {
   albedo:       '_albedo, _color, _basecolor…',
   normal:       '_normal, _nrm, _nor',
-  roughness:    '_roughness, _rough, _rgh',
-  metallic:     '_metallic, _metalness, _metal',
-  ao:           '_ao, _ambientocclusion…',
+  roughness:    '_roughness, _rough, _gloss…',
+  metallic:     '_metallic, _metalness, _specular…',
+  ao:           '_ao, _cavity, _ambientocclusion…',
   emissive:     '_emissive, _emission, _emi',
   opacity:      '_opacity, _alpha, _mask',
-  displacement: '_displacement, _height, _disp',
+  displacement: '_displacement, _height, _bump…',
 };
 
 const SLOT_FILENAME_TOKENS: Record<MaterialSlot, readonly string[]> = {
   albedo:       ['_albedo', '_color', '_basecolor', '_diffuse', '_diff', '_col'],
   normal:       ['_normal', '_nrm', '_nor'],
-  roughness:    ['_roughness', '_rough', '_rgh'],
-  metallic:     ['_metallic', '_metalness', '_metal'],
-  ao:           ['_ao', '_ambientocclusion', '_occlusion'],
+  roughness:    ['_roughness', '_rough', '_rgh', '_gloss', '_glossiness'],
+  metallic:     ['_metallic', '_metalness', '_metal', '_specular', '_spec'],
+  ao:           ['_ao', '_ambientocclusion', '_occlusion', '_cavity'],
   emissive:     ['_emissive', '_emission', '_emi'],
   opacity:      ['_opacity', '_alpha', '_mask'],
-  displacement: ['_displacement', '_height', '_disp'],
+  displacement: ['_displacement', '_height', '_disp', '_bump'],
 };
 
 /** Detect PBR slot from a texture filename (Megascans-style). Mirrors server detectSlot. */
@@ -1113,6 +1162,10 @@ export interface MaterialParameters {
   doubleSided: boolean;
   /** negate material.normalScale.y. */
   flipNormalY: boolean;
+  /** Megascans gloss map in the roughness slot — invert in the preview viewer. */
+  roughnessInvertFromGloss: boolean;
+  /** Megascans specular map stored in the metallic slot — drives specularIntensityMap. */
+  specularMapInMetallicSlot: boolean;
 
   // ---- Alpha ------------------------------------------------------------
   alphaMode: 'opaque' | 'blend' | 'mask';
@@ -1184,6 +1237,8 @@ export const DEFAULT_MATERIAL_PARAMETERS: MaterialParameters = {
   offsetY: 0.0,
   doubleSided: false,
   flipNormalY: false,
+  roughnessInvertFromGloss: false,
+  specularMapInMetallicSlot: false,
 
   alphaMode: 'opaque',
   alphaCutoff: 0.5,
@@ -1287,9 +1342,10 @@ export const materialsApi = {
   /** Absolute URL for the export ZIP — trigger via <a download> / window.open. */
   downloadUrl: (id: string): string => `/api/materials/${id}/download`,
   /**
-   * Import a Megascans-style ZIP into a new material. The optional `name`
-   * field is appended BEFORE the file part. Reports upload progress (0..1)
-   * via the optional callback. Returns the full detail plus `skipped[]`.
+   * Import a material ZIP (Megascans-style filename channels or a packaged
+   * glTF / GLB). The optional `name` field is appended BEFORE the file part.
+   * Reports upload progress (0..1) via the optional callback. Returns the
+   * full detail plus `skipped[]`.
    */
   import: (file: File, name?: string, onProgress?: (fraction: number) => void) => {
     const fd = new FormData();
@@ -1297,6 +1353,122 @@ export const materialsApi = {
     fd.append('file', file);
     return api.postFormWithProgress<MaterialImportResult>('/api/materials/import', fd, onProgress);
   },
+};
+
+// ---------------------------------------------------------------------------
+// Fab marketplace import (server-side proxy — credentials never reach browser)
+// ---------------------------------------------------------------------------
+
+export interface FabAssetSummary {
+  id: string;
+  title: string;
+  listingType: string | null;
+  thumbnailUrl: string | null;
+  previewUrl: string | null;
+  tags: string[];
+  category: string | null;
+  seller: string | null;
+  isFree: boolean;
+  price: number | null;
+  formats: string[];
+}
+
+export interface FabAssetDetail extends FabAssetSummary {
+  description: string | null;
+  publishedAt: string | null;
+  ratingAverage: number | null;
+  ratingCount: number | null;
+  importConfigured?: boolean;
+}
+
+export interface FabSearchPage {
+  items: FabAssetSummary[];
+  limit: number;
+  cursor: string | null;
+  nextCursor: string | null;
+}
+
+export interface FabImportResult extends MaterialDetail {
+  skipped: string[];
+  fabListingId: string;
+}
+
+export const fabApi = {
+  search: (params: { q?: string; cursor?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.limit) qs.set('limit', String(params.limit));
+    const tail = qs.toString();
+    return api.get<FabSearchPage>(`/api/fab/search${tail ? `?${tail}` : ''}`);
+  },
+  getAsset: (id: string) => api.get<FabAssetDetail>(`/api/fab/assets/${id}`),
+  importAsset: (id: string, body?: { name?: string }) =>
+    api.post<FabImportResult>(`/api/fab/assets/${id}/import`, body ?? {}),
+};
+
+// ---------------------------------------------------------------------------
+// Unified external materials (Fab, Poly Haven)
+// ---------------------------------------------------------------------------
+
+export type ExternalMaterialSource = 'fab' | 'polyhaven' | 'ambientcg';
+
+export interface ExternalMaterialSummary {
+  source: ExternalMaterialSource;
+  sourceId: string;
+  title: string;
+  thumbnailUrl: string | null;
+  previewUrl: string | null;
+  tags: string[];
+  category: string | null;
+  downloadSize: number | null;
+  relevanceScore: number;
+}
+
+export interface ExternalMaterialDetail extends ExternalMaterialSummary {
+  description: string | null;
+  formats: string[];
+  metadata: Record<string, unknown>;
+}
+
+export interface ExternalMaterialsSearchPage {
+  items: ExternalMaterialSummary[];
+  limit: number;
+  cursor: string | null;
+  nextCursor: string | null;
+  sources: ExternalMaterialSource[];
+  providerLabels: Record<string, string>;
+  configuredSources: ExternalMaterialSource[];
+  /** Per-provider search failures — partial results may still be present. */
+  providerErrors?: Partial<Record<ExternalMaterialSource, string>>;
+}
+
+export interface ExternalMaterialImportResult extends MaterialDetail {
+  skipped: string[];
+}
+
+export const externalMaterialsApi = {
+  search: (params: {
+    q?: string;
+    sources?: ExternalMaterialSource | 'all';
+    cursor?: string | null;
+    limit?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.sources && params.sources !== 'all') qs.set('sources', params.sources);
+    if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.limit !== undefined) qs.set('limit', String(params.limit));
+    const tail = qs.toString();
+    return api.get<ExternalMaterialsSearchPage>(`/api/external-materials/search${tail ? `?${tail}` : ''}`);
+  },
+  get: (source: ExternalMaterialSource, id: string) =>
+    api.get<ExternalMaterialDetail>(`/api/external-materials/${source}/${encodeURIComponent(id)}`),
+  import: (source: ExternalMaterialSource, id: string, body?: { name?: string }) =>
+    api.post<ExternalMaterialImportResult>(
+      `/api/external-materials/${source}/${encodeURIComponent(id)}/import`,
+      body ?? {},
+    ),
 };
 
 // ---------------------------------------------------------------------------

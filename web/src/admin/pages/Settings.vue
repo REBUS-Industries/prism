@@ -5,6 +5,7 @@ import { orbitApi, settingsApi, type ApiError, type OrbitTestFail, type OrbitTes
 import Modal from '../../shared/Modal.vue';
 import Icon from '../../shared/Icon.vue';
 import FixtureTypesManager from '../components/FixtureTypesManager.vue';
+import ExternalMaterialsSettings from '../components/ExternalMaterialsSettings.vue';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
 interface FieldDef {
@@ -63,6 +64,7 @@ const fixtureTypesStore = useFixtureTypesStore();
 // Each section is a tile; clicking either opens a modal (fields/custom) or
 // navigates to a named route (routeName).
 type TileKey = 'orbit-prod' | 'orbit-dev' | 'gdtf' | 'server' | 'workstation' | 'fixture-types'
+             | 'external-materials'
              | 'users' | 'webhooks' | 'api-keys';
 interface TileDef {
   key: TileKey;
@@ -72,7 +74,7 @@ interface TileDef {
   description: string;
   fields?: FieldDef[];
   testTarget?: 'prod' | 'dev';
-  custom?: 'fixture-types';
+  custom?: 'fixture-types' | 'external-materials';
   /** Navigate to this named route instead of opening a modal. */
   routeName?: string;
 }
@@ -84,6 +86,7 @@ const tiles: TileDef[] = [
   { key: 'orbit-dev',      title: 'ORBIT — Dev / Staging', icon: 'science',   description: 'Dev/staging server URL + API token.', fields: orbitDevFields, testTarget: 'dev' },
   { key: 'gdtf',           title: 'GDTF-Share',            icon: 'lightbulb', description: 'Credentials for fixture library import from GDTF-Share.com.', fields: gdtfShareFields },
   { key: 'fixture-types',  title: 'Fixture Types',         icon: 'palette',   description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
+  { key: 'external-materials', title: 'External materials', icon: 'travel_explore', description: 'Fab, Poly Haven, and ambientCG search providers + Epic OAuth token.', custom: 'external-materials' },
   { key: 'server',         title: 'Server',                icon: 'dns',       description: 'Job retention window and maintenance mode.', fields: otherFields },
   { key: 'workstation',    title: 'Workstation agent',     icon: 'lan',       description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
   { key: 'users',          title: 'Users',                 icon: 'group',     description: 'Manage admin accounts and access.', routeName: 'users' },
@@ -233,6 +236,8 @@ function tileSummary(tile: TileDef): string {
         : 'Auto (derive from host)';
     case 'fixture-types':
       return `${fixtureTypesStore.labels.length} type${fixtureTypesStore.labels.length === 1 ? '' : 's'}`;
+    case 'external-materials':
+      return 'Fab · Poly Haven · ambientCG';
     case 'users':
     case 'webhooks':
     case 'api-keys':
@@ -279,11 +284,14 @@ onMounted(() => {
     v-if="activeTile"
     :title="activeTile.title"
     :subtitle="activeTile.description"
-    :max-width="activeTile.custom === 'fixture-types' ? 600 : 560"
+    :max-width="activeTile.custom === 'fixture-types' ? 600 : activeTile.custom === 'external-materials' ? 620 : 560"
     @close="closeTile"
   >
     <!-- Fixture Types manager -->
     <FixtureTypesManager v-if="activeTile.custom === 'fixture-types'" />
+
+    <!-- External materials providers -->
+    <ExternalMaterialsSettings v-else-if="activeTile.custom === 'external-materials'" />
 
     <!-- Standard key/value field sections -->
     <template v-else>
@@ -356,6 +364,9 @@ onMounted(() => {
 
     <template v-if="activeTile.custom === 'fixture-types'" #footer>
       <button class="primary" @click="closeTile">Done</button>
+    </template>
+    <template v-else-if="activeTile.custom === 'external-materials'" #footer>
+      <button @click="closeTile">Close</button>
     </template>
     <template v-else #footer>
       <button @click="closeTile">Cancel</button>

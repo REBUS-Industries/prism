@@ -9,6 +9,7 @@ import {
   imageContentType,
   isImageFilename,
   isMaterialSlot,
+  megascansImportParameters,
   textureMatchesSlot,
 } from '../src/materials/slots.js';
 
@@ -32,6 +33,14 @@ describe('detectSlot', () => {
       ['leaf_alpha.png', 'opacity'],
       ['terrain_Displacement.exr', 'displacement'],
       ['terrain_height.png', 'displacement'],
+      ['rock_Bump.jpg', 'displacement'],
+      ['fabric_Cavity.jpg', 'ao'],
+      ['metal_Gloss.jpg', 'roughness'],
+      ['metal_Glossiness.jpg', 'roughness'],
+      ['Uncut_Grass_oilpt20_8K_Bump.jpg', 'displacement'],
+      ['Uncut_Grass_oilpt20_8K_Cavity.jpg', 'ao'],
+      ['Uncut_Grass_oilpt20_8K_Gloss.jpg', 'roughness'],
+      ['Uncut_Grass_oilpt20_8K_Specular.jpg', 'metallic'],
       ['ROCK_NORMAL.PNG', 'normal'],
     ];
     for (const [filename, slot] of cases) {
@@ -77,6 +86,23 @@ describe('image helpers', () => {
     expect(imageContentType('a.JPEG')).toBe('image/jpeg');
     expect(imageContentType('a.exr')).toBe('image/x-exr');
     expect(imageContentType('a.txt')).toBeNull();
+  });
+});
+
+describe('megascansImportParameters', () => {
+  it('flags gloss maps for roughness inversion and specular maps for metallic routing', () => {
+    expect(megascansImportParameters({
+      roughness: 'Uncut_Grass_oilpt20_8K_Gloss.jpg',
+    })).toEqual({ roughnessInvertFromGloss: true });
+
+    expect(megascansImportParameters({
+      metallic: 'Uncut_Grass_oilpt20_8K_Specular.jpg',
+    })).toEqual({ specularMapInMetallicSlot: true, metallic: 0 });
+
+    expect(megascansImportParameters({
+      roughness: 'ground_Roughness.jpg',
+      metallic: 'metal_Metallic.jpg',
+    })).toEqual({});
   });
 });
 

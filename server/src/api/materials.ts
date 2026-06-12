@@ -7,7 +7,8 @@
  * the `material_textures` join table, so the same texture can back many
  * materials. Materials can be created blank and filled slot-by-slot, exported
  * as a ZIP (texture bodies + a manifest), or created in bulk by importing a
- * Megascans-style ZIP whose entries are matched to slots by filename.
+ * Megascans-style ZIP whose entries are matched to slots by filename, or a
+ * packaged glTF / GLB whose material texture references are mapped to slots.
  *
  * Each material also carries editable PBR `parameters` (base colour,
  * roughness/metallic/opacity, emissive, UV tiling/offset, etc. — see
@@ -25,26 +26,25 @@
  *   PUT    /api/materials/:id/slots/:slot     assign a texture to a slot (write)
  *   DELETE /api/materials/:id/slots/:slot     clear a slot               (write)
  *   GET    /api/materials/:id/download        stream a ZIP of the material
- *   POST   /api/materials/import              Megascans ZIP -> material  (write)
+ *   POST   /api/materials/import              ZIP -> material (Megascans or glTF) (write)
  *
  * Reads require `materials:read`; admin sessions and ORBIT bearers bypass
  * scope checks as usual (see auth/middleware.ts requireScope).
  */
-import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { ZipArchive } from 'archiver';
-import AdmZip from 'adm-zip';
 import { db } from '../db/client.js';
 import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
-import { ALLOWED_SLOTS, detectSlot, imageContentType, isImageFilename, isMaterialSlot } from '../materials/slots.js';
+import { ALLOWED_SLOTS, isMaterialSlot } from '../materials/slots.js';
+import { importMaterialZipBuffer, MAX_MATERIAL_ZIP_BYTES } from '../materials/importZip.js';
+import { loadMaterialDetail, SLOTS_TOTAL } from '../materials/loadDetail.js';
 import {
-  type MaterialParameters,
   type MaterialParametersPatch,
   materialParametersSchema,
   mergeParameters,
@@ -53,11 +53,9 @@ import {
 const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/prism';
 const TEXTURES_ROOT = resolve(DATA_DIR, 'textures');
 
-const SLOTS_TOTAL = ALLOWED_SLOTS.length;
-
 // Megascans 8K sets routinely run into the hundreds of MB once every channel
 // is bundled; cap the import body generously below the 1 GB multipart ceiling.
-const MAX_ZIP_BYTES = 500 * 1024 * 1024;
+const MAX_ZIP_BYTES = MAX_MATERIAL_ZIP_BYTES;
 
 const idParam = z.object({ id: z.string().uuid() });
 const tagsSchema = z.array(z.string().min(1).max(64)).max(64);
@@ -91,14 +89,6 @@ function sanitiseFilename(input: string): string {
   return base.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 200) || 'texture';
 }
 
-/** Last path segment of a (possibly nested) ZIP entry name. */
-function baseName(entryName: string): string {
-  const norm = entryName.replace(/\\/g, '/');
-  const slash = norm.lastIndexOf('/');
-  return slash === -1 ? norm : norm.slice(slash + 1);
-}
-
-/** Pull a string value out of @fastify/multipart's `fields` bag. */
 function fieldValue(fields: unknown, name: string): string | undefined {
   const bag = fields as Record<string, unknown> | undefined;
   const raw = bag?.[name];
@@ -115,88 +105,21 @@ function provenance(principal: Principal | undefined) {
   };
 }
 
-interface SlotAssignment {
-  slot: string;
-  textureId: string;
-  assignedAt: string;
-  texture: {
-    id: string;
-    displayName: string;
-    originalFilename: string;
-    contentType: string;
-    sizeBytes: number;
-  };
-}
-
-interface MaterialDetail {
-  id: string;
-  name: string;
-  description: string | null;
-  tags: string[];
-  thumbnailTextureId: string | null;
-  createdByAdminId: string | null;
-  createdByApiKeyId: string | null;
-  createdAt: string;
-  updatedAt: string;
-  parameters: MaterialParameters;
-  slotsTotal: number;
-  slotsFilled: number;
-  slots: SlotAssignment[];
-}
-
-/** Load a material plus its slot assignments (with joined texture metadata).
- * Returns null if the material is missing or soft-deleted. */
-async function loadDetail(id: string): Promise<MaterialDetail | null> {
-  const m = await db.query.materials.findFirst({
-    where: and(eq(materials.id, id), isNull(materials.deletedAt)),
-  });
-  if (!m) return null;
-
-  const slotRows = await db
-    .select({
-      slot: materialTextures.slot,
-      textureId: materialTextures.textureId,
-      assignedAt: materialTextures.assignedAt,
-      texId: textures.id,
-      texDisplayName: textures.displayName,
-      texOriginalFilename: textures.originalFilename,
-      texContentType: textures.contentType,
-      texSizeBytes: textures.sizeBytes,
-    })
-    .from(materialTextures)
-    .innerJoin(textures, eq(textures.id, materialTextures.textureId))
-    .where(eq(materialTextures.materialId, id));
-
-  const slots: SlotAssignment[] = slotRows
-    .map((r) => ({
-      slot: r.slot,
-      textureId: r.textureId,
-      assignedAt: r.assignedAt.toISOString(),
-      texture: {
-        id: r.texId,
-        displayName: r.texDisplayName ?? r.texOriginalFilename,
-        originalFilename: r.texOriginalFilename,
-        contentType: r.texContentType,
-        sizeBytes: r.texSizeBytes,
-      },
-    }))
-    .sort((a, b) => ALLOWED_SLOTS.indexOf(a.slot as never) - ALLOWED_SLOTS.indexOf(b.slot as never));
-
-  return {
-    id: m.id,
-    name: m.name,
-    description: m.description,
-    tags: Array.isArray(m.tags) ? m.tags : [],
-    thumbnailTextureId: m.thumbnailTextureId,
-    createdByAdminId: m.createdByAdminId,
-    createdByApiKeyId: m.createdByApiKeyId,
-    createdAt: m.createdAt.toISOString(),
-    updatedAt: m.updatedAt.toISOString(),
-    parameters: mergeParameters(m.parameters),
-    slotsTotal: SLOTS_TOTAL,
-    slotsFilled: slots.length,
-    slots,
-  };
+/**
+ * Append 'external-edited' to the material's tags if it was imported from an
+ * external provider (has 'external-import' tag) but has not yet been marked
+ * edited. Called whenever a slot or parameter is changed after initial import.
+ * No-op for non-external materials; idempotent if already tagged.
+ */
+async function maybeMarkExternalEdited(materialId: string): Promise<void> {
+  await db.execute(sql`
+    UPDATE ${materials}
+    SET tags = tags || ARRAY['external-edited']::text[]
+    WHERE id = ${materialId}
+      AND tags @> ARRAY['external-import']::text[]
+      AND NOT tags @> ARRAY['external-edited']::text[]
+      AND deleted_at IS NULL
+  `);
 }
 
 const slotsFilledSql = sql<number>`(
@@ -274,7 +197,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       })
       .returning({ id: materials.id });
 
-    const detail = await loadDetail(inserted[0]!.id);
+    const detail = await loadMaterialDetail(inserted[0]!.id);
     return reply.code(201).send(detail);
   });
 
@@ -284,7 +207,7 @@ const plugin: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const parsed = idParam.safeParse(req.params);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid id' });
-    const detail = await loadDetail(parsed.data.id);
+    const detail = await loadMaterialDetail(parsed.data.id);
     if (!detail) return reply.code(404).send({ error: 'not found' });
     return reply.send(detail);
   });
@@ -310,7 +233,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       .where(and(eq(materials.id, parsedId.data.id), isNull(materials.deletedAt)))
       .returning({ id: materials.id });
     if (!updated[0]) return reply.code(404).send({ error: 'not found' });
-    return reply.send(await loadDetail(parsedId.data.id));
+    return reply.send(await loadMaterialDetail(parsedId.data.id));
   });
 
   /* ---------- PUT /api/materials/:id/parameters ---------- */
@@ -332,7 +255,8 @@ const plugin: FastifyPluginAsync = async (app) => {
       .where(and(eq(materials.id, parsedId.data.id), isNull(materials.deletedAt)))
       .returning({ id: materials.id });
     if (!updated[0]) return reply.code(404).send({ error: 'not found' });
-    return reply.send(await loadDetail(parsedId.data.id));
+    await maybeMarkExternalEdited(parsedId.data.id);
+    return reply.send(await loadMaterialDetail(parsedId.data.id));
   });
 
   /* ---------- DELETE /api/materials/:id ---------- */
@@ -386,7 +310,8 @@ const plugin: FastifyPluginAsync = async (app) => {
       .set({ updatedAt: new Date(), ...(slot === 'albedo' ? { thumbnailTextureId: parsed.data.textureId } : {}) })
       .where(eq(materials.id, parsedId.data.id));
 
-    return reply.send(await loadDetail(parsedId.data.id));
+    await maybeMarkExternalEdited(parsedId.data.id);
+    return reply.send(await loadMaterialDetail(parsedId.data.id));
   });
 
   /* ---------- DELETE /api/materials/:id/slots/:slot ---------- */
@@ -415,7 +340,8 @@ const plugin: FastifyPluginAsync = async (app) => {
       .set({ updatedAt: new Date(), ...(slot === 'albedo' ? { thumbnailTextureId: null } : {}) })
       .where(eq(materials.id, parsedId.data.id));
 
-    return reply.send(await loadDetail(parsedId.data.id));
+    await maybeMarkExternalEdited(parsedId.data.id);
+    return reply.send(await loadMaterialDetail(parsedId.data.id));
   });
 
   /* ---------- GET /api/materials/:id/download ---------- */
@@ -501,82 +427,29 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (part.file.truncated) return reply.code(413).send({ error: 'zip too large', maxBytes: MAX_ZIP_BYTES });
     if (bytesSoFar === 0) return reply.code(400).send({ error: 'zip is empty' });
 
-    let entries: AdmZip.IZipEntry[];
-    try {
-      entries = new AdmZip(Buffer.concat(chunks, bytesSoFar)).getEntries();
-    } catch {
-      return reply.code(400).send({ error: 'invalid zip archive' });
-    }
-
-    // First image entry per slot wins; everything else (non-image, unmatched,
-    // or a duplicate slot) lands in `skipped`.
-    const detected = new Map<string, { base: string; contentType: string; data: Buffer }>();
-    const skipped: string[] = [];
-    for (const entry of entries) {
-      if (entry.isDirectory) continue;
-      const base = baseName(entry.entryName);
-      if (!base) continue;
-      const contentType = imageContentType(base);
-      const slot = isImageFilename(base) ? detectSlot(base) : null;
-      if (!contentType || !slot || detected.has(slot)) {
-        skipped.push(base);
-        continue;
-      }
-      detected.set(slot, { base, contentType, data: entry.getData() });
-    }
-
+    const zipBuffer = Buffer.concat(chunks, bytesSoFar);
     const zipBase = (part.filename || '').replace(/\.zip$/i, '');
     const name = (nameField?.trim() || zipBase || 'Imported material').slice(0, 256);
     const { adminId, apiKeyId } = provenance(req.principal);
 
-    const writtenPaths: string[] = [];
     try {
-      const materialId = await db.transaction(async (tx) => {
-        const insertedMaterial = await tx
-          .insert(materials)
-          .values({ name, tags: [], createdByAdminId: adminId, createdByApiKeyId: apiKeyId })
-          .returning({ id: materials.id });
-        const newMaterialId = insertedMaterial[0]!.id;
-
-        let thumbnailTextureId: string | null = null;
-        for (const slot of ALLOWED_SLOTS) {
-          const det = detected.get(slot);
-          if (!det) continue;
-          const textureId = randomUUID();
-          const storagePath = resolve(TEXTURES_ROOT, `${textureId}_${sanitiseFilename(det.base)}`);
-          await writeFile(storagePath, det.data);
-          writtenPaths.push(storagePath);
-
-          await tx.insert(textures).values({
-            id: textureId,
-            originalFilename: det.base.slice(0, 256),
-            displayName: det.base.slice(0, 256),
-            contentType: det.contentType,
-            sizeBytes: det.data.length,
-            storagePath,
-            tags: [],
-            uploadedByAdminId: adminId,
-            uploadedByApiKeyId: apiKeyId,
-          });
-          await tx.insert(materialTextures).values({ materialId: newMaterialId, slot, textureId });
-          if (slot === 'albedo') thumbnailTextureId = textureId;
-        }
-
-        if (thumbnailTextureId) {
-          await tx
-            .update(materials)
-            .set({ thumbnailTextureId, updatedAt: new Date() })
-            .where(eq(materials.id, newMaterialId));
-        }
-        return newMaterialId;
+      const { materialId, skipped } = await importMaterialZipBuffer(zipBuffer, {
+        name,
+        zipFilename: part.filename,
+        adminId,
+        apiKeyId,
       });
-
-      const detail = await loadDetail(materialId);
+      const detail = await loadMaterialDetail(materialId);
       return reply.code(201).send({ ...detail, skipped });
     } catch (err) {
-      // Roll back the orphaned files the failed transaction left behind.
-      await Promise.all(writtenPaths.map((p) => unlink(p).catch(() => { /* already gone */ })));
       req.log.error({ err }, 'material import failed');
+      const message = err instanceof Error ? err.message : 'import failed';
+      if (message.includes('too large')) {
+        return reply.code(413).send({ error: message, maxBytes: MAX_ZIP_BYTES });
+      }
+      if (message.includes('empty') || message.includes('invalid zip')) {
+        return reply.code(400).send({ error: message });
+      }
       return reply.code(500).send({ error: 'import failed' });
     }
   });

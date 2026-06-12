@@ -40,7 +40,13 @@ export type SettingKey =
   // layout"; cleared globally if the value fails to parse.
   | 'pipeline_layout_v1'
   | 'gdtf_share_username'
-  | 'gdtf_share_password';
+  | 'gdtf_share_password'
+  // External material providers (Fab / Poly Haven / ambientCG) — admin Settings UI.
+  | 'fab_epic_refresh_token'
+  | 'fab_http_proxy'
+  | 'fab_enabled'
+  | 'external_polyhaven_enabled'
+  | 'external_ambientcg_enabled';
 
 /**
  * Legacy keys that are still read from the DB as a fallback by older code

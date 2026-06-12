@@ -9,11 +9,16 @@
  * The picker is Teleported to <body>: a position:fixed overlay rendered inside
  * Vue Flow's CSS-transformed pane would otherwise be mis-positioned + scaled.
  */
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
+import Icon from '../../shared/Icon.vue';
 import TexturePickerModal from './TexturePickerModal.vue';
 import ParamSlider from './ParamSlider.vue';
 import ParamColor from './ParamColor.vue';
+import {
+  SLOT_PARAMETER_KEYS,
+  parametersGroupDiffers,
+} from '../../shared/materialParameterGroups';
 import {
   SLOT_LABELS,
   texturesApi,
@@ -28,12 +33,27 @@ const props = defineProps<{
   slot: MaterialSlot;
   texture: MaterialSlotTexture | null;
   params: MaterialParameters;
+  baseline: MaterialParameters;
+  /** Which side the source handle appears on. Defaults to 'right' (left column). */
+  handleSide?: 'left' | 'right';
 }>();
+
+const handlePosition = () => props.handleSide === 'left' ? Position.Left : Position.Right;
 const emit = defineEmits<{
   assign: [slot: MaterialSlot, texture: Texture];
   remove: [slot: MaterialSlot];
   'param-change': [change: { key: keyof MaterialParameters; value: number | string | boolean | string[] }];
+  'reset-keys': [keys: Array<keyof MaterialParameters>];
 }>();
+
+const slotKeys = computed(() => SLOT_PARAMETER_KEYS[props.slot]);
+const canReset = computed(() =>
+  parametersGroupDiffers(props.params, props.baseline, slotKeys.value),
+);
+
+function resetSlotParams(): void {
+  emit('reset-keys', [...slotKeys.value]);
+}
 
 function onParam<K extends keyof MaterialParameters>(key: K, value: MaterialParameters[K] | string[]): void {
   emit('param-change', { key, value: value as number | string | boolean | string[] });
@@ -68,7 +88,19 @@ function onPicked(tex: Texture): void {
 
 <template>
   <div class="texture-node">
-    <div class="tn-head node-drag-handle">{{ SLOT_LABELS[slot] }}</div>
+    <div class="tn-head">
+      <span class="tn-title node-drag-handle">{{ SLOT_LABELS[slot] }}</span>
+      <button
+        type="button"
+        class="tn-reset nodrag nopan"
+        :disabled="!canReset"
+        title="Reset slot parameters"
+        aria-label="Reset slot parameters"
+        @click="resetSlotParams"
+      >
+        <Icon name="restart_alt" :size="14" />
+      </button>
+    </div>
 
     <div v-if="texture" class="tn-assigned nodrag nopan">
       <span class="tn-thumb">
@@ -216,13 +248,13 @@ function onPicked(tex: Texture): void {
       <TexturePickerModal :open="pickerOpen" :slot="slot" @select="onPicked" @close="pickerOpen = false" />
     </Teleport>
 
-    <Handle type="source" :position="Position.Right" :connectable="false" />
+    <Handle type="source" :position="handlePosition()" :connectable="false" />
   </div>
 </template>
 
 <style scoped>
 .texture-node {
-  width: 232px;
+  width: 300px;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
@@ -232,17 +264,44 @@ function onPicked(tex: Texture): void {
   cursor: default;
 }
 .tn-head {
-  padding: 7px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 7px 14px;
   background: var(--color-bg-input);
   border-bottom: 1px solid var(--color-border);
 }
-.tn-assigned { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.tn-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text);
+}
+.tn-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.tn-reset:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+.tn-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.tn-assigned { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .tn-thumb {
-  display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-sm);
+  display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm);
   overflow: hidden; background: var(--color-bg-hover);
 }
 .tn-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -250,31 +309,31 @@ function onPicked(tex: Texture): void {
   font-size: 12px; color: var(--color-text-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tn-actions { display: flex; gap: 6px; }
-.tn-actions button { flex: 1; padding: 4px 8px; font-size: 12px; }
-.tn-empty { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
-.tn-empty button { width: 100%; padding: 6px 8px; font-size: 12px; }
+.tn-actions { display: flex; gap: 8px; }
+.tn-actions button { flex: 1; padding: 6px 10px; font-size: 13px; }
+.tn-empty { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.tn-empty button { width: 100%; padding: 8px 10px; font-size: 13px; }
 .tn-error {
-  margin: 0 10px 10px; font-size: 11px;
+  margin: 0 12px 12px; font-size: 12px;
   color: var(--color-error);
 }
 .tn-params {
-  padding: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-input);
 }
 .tn-check {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 8px;
+  font-size: 12px;
   color: var(--color-text-muted);
   cursor: pointer;
 }
-.tn-check input { width: 13px; height: 13px; cursor: pointer; }
+.tn-check input { width: 14px; height: 14px; cursor: pointer; }
 button.danger { color: var(--color-error); }
 button.danger:hover { border-color: var(--color-error); }
 </style>

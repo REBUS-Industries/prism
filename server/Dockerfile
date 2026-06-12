@@ -32,7 +32,7 @@ RUN npm run build
 FROM node:22-alpine AS runtime
 WORKDIR /prism
 
-RUN apk add --no-cache wget tini
+RUN apk add --no-cache wget tini vips
 
 COPY server/package.json server/package-lock.json* ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force

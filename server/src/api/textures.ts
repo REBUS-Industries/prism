@@ -34,6 +34,7 @@ import { db } from '../db/client.js';
 import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import { ALLOWED_SLOTS, isMaterialSlot, slotFilenameTokens } from '../materials/slots.js';
+import { normalizeTextureBody } from '../materials/textureNormalize.js';
 
 const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/prism';
 const TEXTURES_ROOT = resolve(DATA_DIR, 'textures');
@@ -217,7 +218,19 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (part.file.truncated) return reply.code(413).send({ error: 'texture too large', maxBytes: MAX_BODY_BYTES });
     if (bytesSoFar === 0) return reply.code(400).send({ error: 'texture is empty' });
 
-    const body = Buffer.concat(chunks, bytesSoFar);
+    const rawBody = Buffer.concat(chunks, bytesSoFar);
+    let body: Buffer;
+    let storageFilename: string;
+    let contentType: string;
+    try {
+      const normalized = await normalizeTextureBody(rawBody, rawFilename, mime);
+      body = normalized.data;
+      storageFilename = normalized.storageFilename;
+      contentType = normalized.contentType;
+    } catch {
+      return reply.code(415).send({ error: 'unsupported or corrupt image format' });
+    }
+
     const principal = req.principal!;
     const uploadedByAdminId = principal.kind === 'adminSession' ? principal.adminUserId : null;
     const uploadedByApiKeyId = principal.kind === 'apiKey' ? principal.apiKeyId : null;
@@ -227,8 +240,8 @@ const plugin: FastifyPluginAsync = async (app) => {
       .values({
         originalFilename: rawFilename.slice(0, 256),
         displayName: (displayNameField ?? rawFilename).slice(0, 256),
-        contentType: mime,
-        sizeBytes: bytesSoFar,
+        contentType,
+        sizeBytes: body.length,
         storagePath: '',
         tags,
         uploadedByAdminId,
@@ -237,7 +250,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       .returning();
 
     const row = inserted[0]!;
-    const storagePath = resolve(TEXTURES_ROOT, `${row.id}_${sanitiseFilename(rawFilename)}`);
+    const storagePath = resolve(TEXTURES_ROOT, `${row.id}_${sanitiseFilename(storageFilename)}`);
     await writeFile(storagePath, body);
 
     const updated = await db
@@ -334,7 +347,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       reply
         .header('content-type', row.contentType)
         .header('content-length', String(s.size))
-        .header('content-disposition', `attachment; filename="${encodeURIComponent(row.originalFilename)}"`);
+        .header('content-disposition', `inline; filename="${encodeURIComponent(row.originalFilename)}"`);
       return reply.send(createReadStream(row.storagePath));
     } catch {
       return reply.code(410).send({ error: 'texture body missing on disk' });

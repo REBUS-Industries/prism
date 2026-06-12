@@ -3,7 +3,7 @@
  * Materials library. Cards show the albedo-derived thumbnail (or a
  * placeholder), name, tag pills and a slot-fill indicator. Materials are
  * created either blank (name prompt -> POST) or by importing a Megascans-
- * style ZIP (drag-drop / picker -> POST with upload progress); a successful
+ * style or glTF packaged ZIP (drag-drop / picker -> POST with upload progress); a successful
  * import surfaces any skipped files before jumping into the editor. Cards
  * link to the editor; the delete action soft-deletes.
  */
@@ -16,6 +16,7 @@ import {
   type MaterialListItem,
 } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
+import ExternalMaterialsModal from '../components/ExternalMaterialsModal.vue';
 
 const router = useRouter();
 const PAGE = 36;
@@ -30,6 +31,7 @@ const activeTags = ref<string[]>([]);
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showCreate = ref(false);
+const showExternal = ref(false);
 const newName = ref('');
 const creating = ref(false);
 
@@ -155,6 +157,12 @@ async function removeMaterial(m: MaterialListItem): Promise<void> {
   }
 }
 
+function onExternalImported(id: string): void {
+  showExternal.value = false;
+  openEditor(id);
+  void load(true);
+}
+
 onMounted(() => void load(true));
 onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 </script>
@@ -163,7 +171,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   <div class="h-row">
     <h1 class="flex-1">Materials</h1>
     <button class="primary" @click="showCreate = true"><Icon name="add" :size="16" />Blank material</button>
-    <button :disabled="importing" @click="zipInput?.click()"><Icon name="folder_zip" :size="16" />Import Megascans ZIP</button>
+    <button @click="showExternal = true"><Icon name="travel_explore" :size="16" />Browse external</button>
+    <button :disabled="importing" @click="zipInput?.click()"><Icon name="folder_zip" :size="16" />Import ZIP</button>
     <input
       ref="zipInput"
       type="file"
@@ -183,8 +192,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
     @click="!importing && zipInput?.click()"
   >
     <strong v-if="importing">Importing…</strong>
-    <strong v-else>Drop a Megascans <code>.zip</code> here, or click to choose</strong>
-    <p class="subtle">Channels are matched to slots by filename (Albedo, Normal, Roughness…).</p>
+    <strong v-else>Drop a material <code>.zip</code> here, or click to choose</strong>
+    <p class="subtle">Megascans channels match by filename; glTF / GLB packages map material texture slots automatically.</p>
   </div>
 
   <div v-if="importing" class="import-status mt-sm">
@@ -256,13 +265,21 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
     </div>
   </div>
 
+  <!-- Fab import -->
+  <ExternalMaterialsModal
+    :open="showExternal"
+    @close="showExternal = false"
+    @imported="onExternalImported"
+  />
+
   <!-- Import skipped files -->
   <div v-if="skippedDialog" class="modal-backdrop" @click.self="openEditor(skippedDialog.id)">
     <div class="card modal">
       <h2>Imported “{{ skippedDialog.name }}”</h2>
       <p class="muted">
-        {{ skippedDialog.skipped.length }} file{{ skippedDialog.skipped.length === 1 ? '' : 's' }} couldn't be matched to a
-        slot and {{ skippedDialog.skipped.length === 1 ? 'was' : 'were' }} skipped:
+        {{ skippedDialog.skipped.length }} file{{ skippedDialog.skipped.length === 1 ? '' : 's' }}
+        {{ skippedDialog.skipped.length === 1 ? 'was' : 'were' }} skipped
+        (unmatched channels, duplicate slots, or metadata such as <code>.json</code> manifests):
       </p>
       <ul class="skip-list">
         <li v-for="(f, i) in skippedDialog.skipped" :key="i"><code>{{ f }}</code></li>
@@ -317,7 +334,7 @@ h1 { font-size: 22px; margin: 0; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag {
   text-transform: none; letter-spacing: normal; font-weight: 500;
-  background: var(--color-bg-hover); color: var(--color-text-muted);
+  background: var(--color-bg-hover); color: #fff;
 }
 .mat-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .mat-foot .pill { text-transform: none; letter-spacing: normal; }

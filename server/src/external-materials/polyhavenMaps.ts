@@ -1,0 +1,102 @@
+/**
+ * Poly Haven texture map selection + slot filename helpers.
+ */
+import type { MaterialSlot } from '../materials/slots.js';
+
+export interface PolyHavenFileEntry {
+  url: string;
+  size: number;
+  md5?: string;
+}
+
+export type PolyHavenFilesTree = Record<
+  string,
+  Record<string, Record<string, PolyHavenFileEntry>>
+>;
+
+/** Map Poly Haven channel names to PRISM slots (first match wins). */
+export const POLYHAVEN_MAP_SLOTS: Array<{ map: string; slot: MaterialSlot; filenameToken: string }> = [
+  { map: 'Diffuse', slot: 'albedo', filenameToken: '_diff' },
+  { map: 'nor_gl', slot: 'normal', filenameToken: '_nor_gl' },
+  { map: 'nor_dx', slot: 'normal', filenameToken: '_nor_dx' },
+  { map: 'Rough', slot: 'roughness', filenameToken: '_rough' },
+  { map: 'AO', slot: 'ao', filenameToken: '_ao' },
+  { map: 'Displacement', slot: 'displacement', filenameToken: '_disp' },
+];
+
+const RESOLUTION_ORDER = ['1k', '2k', '4k', '8k', '16k'] as const;
+const FORMAT_PREF = ['jpg', 'png', 'exr'] as const;
+
+export function pickResolution(
+  available: string[],
+  preferred: string,
+): string | null {
+  const prefIdx = RESOLUTION_ORDER.indexOf(preferred as typeof RESOLUTION_ORDER[number]);
+  const sorted = [...available].sort(
+    (a, b) => RESOLUTION_ORDER.indexOf(a as typeof RESOLUTION_ORDER[number])
+      - RESOLUTION_ORDER.indexOf(b as typeof RESOLUTION_ORDER[number]),
+  );
+  if (prefIdx >= 0) {
+    const atOrBelow = sorted.filter(
+      (r) => RESOLUTION_ORDER.indexOf(r as typeof RESOLUTION_ORDER[number]) <= prefIdx,
+    );
+    if (atOrBelow.length) return atOrBelow.at(-1)!;
+  }
+  return sorted[0] ?? null;
+}
+
+export function pickMapFile(
+  mapTree: Record<string, Record<string, PolyHavenFileEntry>> | undefined,
+  resolution: string,
+): PolyHavenFileEntry | null {
+  if (!mapTree) return null;
+  const resNode = mapTree[resolution] ?? mapTree[pickResolution(Object.keys(mapTree), resolution)!];
+  if (!resNode) return null;
+  for (const fmt of FORMAT_PREF) {
+    const entry = resNode[fmt];
+    if (entry?.url) return entry;
+  }
+  const anyFmt = Object.values(resNode)[0];
+  return anyFmt?.url ? anyFmt : null;
+}
+
+export interface SelectedPolyHavenMap {
+  slot: MaterialSlot;
+  map: string;
+  filename: string;
+  url: string;
+  size: number;
+}
+
+export function selectPolyHavenMaps(
+  files: PolyHavenFilesTree,
+  assetId: string,
+  resolution: string,
+): SelectedPolyHavenMap[] {
+  const selected: SelectedPolyHavenMap[] = [];
+  const usedSlots = new Set<MaterialSlot>();
+
+  for (const { map, slot, filenameToken } of POLYHAVEN_MAP_SLOTS) {
+    if (usedSlots.has(slot)) continue;
+    const file = pickMapFile(files[map], resolution);
+    if (!file) continue;
+    const ext = file.url.split('.').pop()?.split('?')[0] ?? 'jpg';
+    selected.push({
+      slot,
+      map,
+      filename: `${assetId}${filenameToken}_${resolution}.${ext}`,
+      url: file.url,
+      size: file.size,
+    });
+    usedSlots.add(slot);
+  }
+  return selected;
+}
+
+export function estimatePolyHavenDownloadSize(
+  files: PolyHavenFilesTree,
+  resolution: string,
+): number {
+  return selectPolyHavenMaps(files, 'estimate', resolution)
+    .reduce((sum, m) => sum + m.size, 0);
+}
