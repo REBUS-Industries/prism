@@ -164,13 +164,22 @@ function applyPartTransform(group: THREE.Object3D, part: FixturePart): void {
  *   scale.x = length / bbox.x
  *   scale.y = height / bbox.y
  *   scale.z = width  / bbox.z
+ *
+ * `recenter` shifts the mesh so its bounding-box centre sits on the geometry
+ * origin. GDTF model files are authored centred on their geometry origin, so an
+ * uploaded replacement (arbitrary origin/offset) is re-aligned to match — it
+ * drops into the right place first time instead of floating off.
  */
-function wrapModelMesh(meshRoot: THREE.Object3D, dims: ModelDims): THREE.Group {
+function wrapModelMesh(meshRoot: THREE.Object3D, dims: ModelDims, recenter = false): THREE.Group {
   const wrapper = new THREE.Group();
   wrapper.name = 'Scene';
   wrapper.rotation.x = Math.PI / 2;
 
   const bbox = new THREE.Box3().setFromObject(meshRoot);
+  if (recenter && !bbox.isEmpty()) {
+    const centre = bbox.getCenter(new THREE.Vector3());
+    meshRoot.position.sub(centre); // bbox centre → origin (size unchanged)
+  }
   const size = bbox.getSize(new THREE.Vector3());
   if (
     dims.length != null && dims.width != null && dims.height != null
@@ -304,7 +313,10 @@ export async function buildFixtureAssembly(
     if (mediaId) {
       const obj = await loadGlb(mediaId);
       if (obj) {
-        const wrapped = wrapModelMesh(obj.clone(true), dims);
+        // Uploaded replacement meshes are re-centred on the geometry origin so
+        // they align with the GDTF placement without manual nudging.
+        const recenter = (model?.metadata as { replaced?: unknown } | undefined)?.replaced === true;
+        const wrapped = wrapModelMesh(obj.clone(true), dims, recenter);
         paintMaterial(wrapped, part);
         partGroup.add(wrapped);
         meshCount += 1;
