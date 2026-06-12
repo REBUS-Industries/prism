@@ -121,7 +121,41 @@ async function fabJson<T>(res: Response, retryOnCf = true): Promise<T> {
   }
 }
 
-const FAB_SEARCH_MAX_PAGES = 4;
+const FAB_SEARCH_MAX_PAGES = 3;
+const FAB_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+
+interface CachedFabSearch {
+  expiresAt: number;
+  page: FabSearchPage;
+}
+
+const fabSearchCache = new Map<string, CachedFabSearch>();
+
+/** Exported for unit tests. */
+export function fabSearchCacheKey(q: string, limit: number, cursor: string | null): string {
+  return `${q.trim().toLowerCase()}|${cursor ?? ''}|${limit}`;
+}
+
+export function clearFabSearchCacheForTests(): void {
+  fabSearchCache.clear();
+}
+
+function getCachedFabSearch(key: string): FabSearchPage | null {
+  const entry = fabSearchCache.get(key);
+  if (!entry) return null;
+  if (Date.now() >= entry.expiresAt) {
+    fabSearchCache.delete(key);
+    return null;
+  }
+  return entry.page;
+}
+
+function setCachedFabSearch(key: string, page: FabSearchPage): void {
+  fabSearchCache.set(key, {
+    expiresAt: Date.now() + FAB_SEARCH_CACHE_TTL_MS,
+    page,
+  });
+}
 
 function fabSearchParams(q: string, pageSize: number, cursor: string | null): URLSearchParams {
   const params = new URLSearchParams();
@@ -157,9 +191,13 @@ export async function fabSearch(
   limit: number,
   cursor: string | null,
 ): Promise<FabSearchPage> {
-  await ensureFabCsrf();
   const target = Math.min(Math.max(limit, 1), 48);
-  const pageSize = Math.min(Math.max(target, 12), 48);
+  const cacheKey = fabSearchCacheKey(q, target, cursor);
+  const cached = getCachedFabSearch(cacheKey);
+  if (cached) return cached;
+
+  await ensureFabCsrf();
+  const pageSize = target;
 
   const items: FabSearchPage['items'] = [];
   let requestCursor = cursor;
@@ -181,12 +219,14 @@ export async function fabSearch(
     requestCursor = nextCursor;
   }
 
-  return {
+  const page: FabSearchPage = {
     items: items.slice(0, target),
     limit: target,
     cursor,
     nextCursor: items.length >= target ? nextCursor : null,
   };
+  setCachedFabSearch(cacheKey, page);
+  return page;
 }
 
 export async function fabGetListing(uid: string): Promise<FabAssetDetail | null> {

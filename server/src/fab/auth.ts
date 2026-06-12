@@ -90,8 +90,13 @@ let cachedFlareSolverrUrl: string | null = process.env.FAB_FLARESOLVERR_URL?.tri
 let tokenExpiresAt = 0;
 let flareSolverrPrimedAt = 0;
 let flareSolverrSessionId: string | null = null;
+let flareSolverrSessionCreatedAt = 0;
 let flareSolverrUserAgent: string | null = null;
+let fabCsrfPrimedAt = 0;
+let csrfEnsurePromise: Promise<void> | null = null;
 const FLARESOLVERR_TTL_MS = 20 * 60 * 1000;
+const FLARESOLVERR_SESSION_TTL_MS = 25 * 60 * 1000;
+const FAB_CSRF_TTL_MS = 30 * 60 * 1000;
 const FAB_HOSTNAME = 'www.fab.com';
 
 /** In-memory cookie jar keyed by hostname. */
@@ -193,7 +198,17 @@ function storeResponseCookies(url: string, headers: Headers): void {
 
 function resetFlareSolverrSession(): void {
   flareSolverrSessionId = null;
+  flareSolverrSessionCreatedAt = 0;
   flareSolverrUserAgent = null;
+}
+
+function hasFabCsrfToken(): boolean {
+  return !!cookieJar.get(FAB_HOSTNAME)?.get('fab_csrftoken');
+}
+
+function isStaleFlareSolverrSessionError(err: unknown): boolean {
+  if (!(err instanceof FlareSolverrError)) return false;
+  return /session|expired|invalid/i.test(err.message);
 }
 
 function activeUserAgent(): string {
@@ -212,12 +227,28 @@ async function ensureFlareSolverrSession(): Promise<string> {
   if (!solverUrl) {
     throw new FlareSolverrError('FlareSolverr not configured');
   }
-  if (flareSolverrSessionId) return flareSolverrSessionId;
+  const now = Date.now();
+  if (
+    flareSolverrSessionId
+    && now - flareSolverrSessionCreatedAt < FLARESOLVERR_SESSION_TTL_MS
+  ) {
+    return flareSolverrSessionId;
+  }
+  const staleSession = flareSolverrSessionId;
+  if (staleSession) {
+    resetFlareSolverrSession();
+    await flareSolverrSessionDestroy(solverUrl, staleSession).catch(() => { /* expired */ });
+  }
   flareSolverrSessionId = await flareSolverrSessionCreate(solverUrl, { proxy: cachedHttpProxy });
+  flareSolverrSessionCreatedAt = now;
   return flareSolverrSessionId;
 }
 
-async function fabFlareSolverrFetch(url: string, init: RequestInit = {}): Promise<Response> {
+async function fabFlareSolverrFetch(
+  url: string,
+  init: RequestInit = {},
+  retried = false,
+): Promise<Response> {
   const solverUrl = cachedFlareSolverrUrl!.trim();
   const session = await ensureFlareSolverrSession();
   const initHeaders = new Headers(init.headers);
@@ -234,13 +265,22 @@ async function fabFlareSolverrFetch(url: string, init: RequestInit = {}): Promis
   const method = init.method?.toUpperCase() === 'POST' ? 'POST' : 'GET';
   const postData = method === 'POST' && init.body != null ? String(init.body) : undefined;
 
-  const result = await flareSolverrSessionFetch(solverUrl, url, {
-    session,
-    proxy: cachedHttpProxy,
-    method,
-    postData,
-    headers,
-  });
+  let result: Awaited<ReturnType<typeof flareSolverrSessionFetch>>;
+  try {
+    result = await flareSolverrSessionFetch(solverUrl, url, {
+      session,
+      proxy: cachedHttpProxy,
+      method,
+      postData,
+      headers,
+    });
+  } catch (err) {
+    if (!retried && isStaleFlareSolverrSessionError(err)) {
+      resetFlareSolverrSession();
+      return fabFlareSolverrFetch(url, init, true);
+    }
+    throw err;
+  }
 
   if (result.userAgent) flareSolverrUserAgent = result.userAgent;
   injectFlareSolverrCookies(result.cookies, hostnameFromUrl(url), cookieJar);
@@ -305,11 +345,13 @@ export function applyFabRuntimeConfig(config: {
     cachedHttpProxy = normalizeOptionalHttpUrl(config.httpProxy);
     fabAgent = null;
     fabAgentProxy = undefined;
+    fabCsrfPrimedAt = 0;
     resetFlareSolverrSession();
   }
   if (config.flareSolverrUrl !== undefined) {
     cachedFlareSolverrUrl = normalizeOptionalHttpUrl(config.flareSolverrUrl);
     flareSolverrPrimedAt = 0;
+    fabCsrfPrimedAt = 0;
     resetFlareSolverrSession();
   }
 }
@@ -323,6 +365,8 @@ export function setFabRefreshTokenForTests(token: string | null): void {
 export function clearFabCookieJarForTests(): void {
   cookieJar.clear();
   flareSolverrPrimedAt = 0;
+  fabCsrfPrimedAt = 0;
+  csrfEnsurePromise = null;
   resetFlareSolverrSession();
 }
 
@@ -428,8 +472,7 @@ export async function ensureFabCloudflareAccess(force = false): Promise<void> {
   flareSolverrPrimedAt = now;
 }
 
-/** Prime Fab CSRF cookie jar — best-effort before Fab browse calls. */
-export async function ensureFabCsrf(): Promise<void> {
+async function primeFabCsrf(): Promise<void> {
   if (cachedFlareSolverrUrl?.trim()) {
     try {
       await ensureFabCloudflareAccess();
@@ -440,10 +483,24 @@ export async function ensureFabCsrf(): Promise<void> {
   }
   try {
     await fabBrowseFetch('https://www.fab.com/i/csrf');
+    fabCsrfPrimedAt = Date.now();
   } catch (err) {
     if (err instanceof FlareSolverrError) throw err;
     throw mapFabHttpError(err);
   }
+}
+
+/** Prime Fab CSRF cookie jar — best-effort before Fab browse calls. */
+export async function ensureFabCsrf(): Promise<void> {
+  const now = Date.now();
+  if (fabCsrfPrimedAt && now - fabCsrfPrimedAt < FAB_CSRF_TTL_MS && hasFabCsrfToken()) {
+    return;
+  }
+  if (csrfEnsurePromise) return csrfEnsurePromise;
+  csrfEnsurePromise = primeFabCsrf().finally(() => {
+    csrfEnsurePromise = null;
+  });
+  return csrfEnsurePromise;
 }
 
 export { USER_AGENT };

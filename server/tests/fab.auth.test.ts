@@ -15,7 +15,8 @@ import {
 } from '../src/fab/auth.js';
 
 const undiciFetch = vi.fn();
-const flareSolverrRequestGet = vi.fn();
+const flareSolverrSessionCreate = vi.fn();
+const flareSolverrSessionFetch = vi.fn();
 
 vi.mock('undici', () => ({
   fetch: (...args: unknown[]) => undiciFetch(...args),
@@ -27,19 +28,22 @@ vi.mock('../src/fab/flaresolverr.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/fab/flaresolverr.js')>();
   return {
     ...actual,
-    flareSolverrRequestGet: (...args: unknown[]) => flareSolverrRequestGet(...args),
+    flareSolverrSessionCreate: (...args: unknown[]) => flareSolverrSessionCreate(...args),
+    flareSolverrSessionFetch: (...args: unknown[]) => flareSolverrSessionFetch(...args),
   };
 });
 
 describe('fabBrowseFetch', () => {
   beforeEach(() => {
     undiciFetch.mockReset();
-    flareSolverrRequestGet.mockReset();
+    flareSolverrSessionCreate.mockReset();
+    flareSolverrSessionFetch.mockReset();
     clearFabCookieJarForTests();
     setFabRefreshTokenForTests(null);
     setFabFlareSolverrUrlForTests(null);
     delete process.env.FAB_EPIC_REFRESH_TOKEN;
     delete process.env.FAB_FLARESOLVERR_URL;
+    flareSolverrSessionCreate.mockResolvedValue('session-abc');
   });
 
   afterEach(() => {
@@ -111,37 +115,63 @@ describe('fabBrowseFetch', () => {
     expect(fabFlareSolverrConfigured()).toBe(true);
   });
 
-  it('calls FlareSolverr before CSRF when solver URL is configured', async () => {
+  it('calls FlareSolverr session before CSRF when solver URL is configured', async () => {
     setFabFlareSolverrUrlForTests('http://127.0.0.1:8191/v1');
-    flareSolverrRequestGet.mockResolvedValueOnce({
-      cookies: [{ name: 'cf_clearance', value: 'solver-tok', domain: '.fab.com' }],
+    flareSolverrSessionFetch
+      .mockResolvedValueOnce({
+        cookies: [{ name: 'cf_clearance', value: 'solver-tok', domain: '.fab.com' }],
+        status: 200,
+        response: '',
+      })
+      .mockResolvedValueOnce({
+        cookies: [{ name: 'fab_csrftoken', value: 'csrf123', domain: '.fab.com' }],
+        status: 200,
+        response: '',
+      });
+
+    await ensureFabCsrf();
+    expect(flareSolverrSessionCreate).toHaveBeenCalledTimes(1);
+    expect(flareSolverrSessionFetch).toHaveBeenCalledTimes(2);
+    expect(flareSolverrSessionFetch.mock.calls[0]![1]).toBe('https://www.fab.com/');
+    expect(flareSolverrSessionFetch.mock.calls[1]![1]).toBe('https://www.fab.com/i/csrf');
+    expect(undiciFetch).not.toHaveBeenCalled();
+  });
+
+  it('ensureFabCloudflareAccess skips repeat solve within TTL', async () => {
+    setFabFlareSolverrUrlForTests('http://127.0.0.1:8191/v1');
+    flareSolverrSessionFetch.mockResolvedValueOnce({
+      cookies: [{ name: 'cf_clearance', value: 'solver-tok' }],
+      status: 200,
+      response: '',
     });
-    undiciFetch.mockResolvedValueOnce({
+
+    await ensureFabCloudflareAccess();
+    await ensureFabCloudflareAccess();
+    expect(flareSolverrSessionCreate).toHaveBeenCalledTimes(1);
+    expect(flareSolverrSessionFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('ensureFabCsrf skips repeat CSRF fetch within TTL', async () => {
+    undiciFetch.mockResolvedValue({
       ok: true,
       status: 200,
       headers: new Headers({ 'set-cookie': 'fab_csrftoken=csrf123; Path=/' }),
     });
 
     await ensureFabCsrf();
-    expect(flareSolverrRequestGet).toHaveBeenCalledWith(
-      'http://127.0.0.1:8191/v1',
-      'https://www.fab.com/',
-      expect.objectContaining({ proxy: null }),
-    );
+    await ensureFabCsrf();
     expect(undiciFetch).toHaveBeenCalledTimes(1);
-    const init = undiciFetch.mock.calls[0]![1] as { headers?: Headers };
-    expect((init.headers as Headers).get('Cookie')).toContain('cf_clearance=solver-tok');
   });
 
-  it('ensureFabCloudflareAccess skips repeat solve within TTL', async () => {
-    setFabFlareSolverrUrlForTests('http://127.0.0.1:8191/v1');
-    flareSolverrRequestGet.mockResolvedValueOnce({
-      cookies: [{ name: 'cf_clearance', value: 'solver-tok' }],
-    });
+  it('coalesces concurrent ensureFabCsrf calls', async () => {
+    undiciFetch.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'set-cookie': 'fab_csrftoken=csrf123; Path=/' }),
+    }));
 
-    await ensureFabCloudflareAccess();
-    await ensureFabCloudflareAccess();
-    expect(flareSolverrRequestGet).toHaveBeenCalledTimes(1);
+    await Promise.all([ensureFabCsrf(), ensureFabCsrf(), ensureFabCsrf()]);
+    expect(undiciFetch).toHaveBeenCalledTimes(1);
   });
 
   it('wraps fetch failed from Fab CSRF as marketplace unreachable', async () => {

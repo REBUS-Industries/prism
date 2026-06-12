@@ -4,7 +4,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   FabApiError,
+  clearFabSearchCacheForTests,
   fabCloudflareBlockedMessage,
+  fabSearchCacheKey,
   isFabCloudflareResponse,
   parseFabBrowseDownloadInfo,
 } from '../src/fab/client.js';
@@ -82,5 +84,26 @@ describe('fabCloudflareBlockedMessage', () => {
     applyFabRuntimeConfig({ httpProxy: 'http://proxy.local:8080' });
     const msg = fabCloudflareBlockedMessage();
     expect(msg).toContain('HTTP proxy configured');
+  });
+});
+
+describe('fabSearchCacheKey', () => {
+  beforeEach(() => {
+    clearFabSearchCacheForTests();
+  });
+
+  it('normalizes query case and whitespace', () => {
+    expect(fabSearchCacheKey('  Concrete ', 24, null)).toBe(
+      fabSearchCacheKey('concrete', 24, null),
+    );
+  });
+
+  it('includes cursor and limit in cache key', () => {
+    expect(fabSearchCacheKey('brick', 12, 'page2')).not.toBe(
+      fabSearchCacheKey('brick', 12, null),
+    );
+    expect(fabSearchCacheKey('brick', 12, null)).not.toBe(
+      fabSearchCacheKey('brick', 24, null),
+    );
   });
 });
