@@ -1431,6 +1431,12 @@ export interface ExternalMaterialDetail extends ExternalMaterialSummary {
   metadata: Record<string, unknown>;
 }
 
+export interface FabSearchDiagnostics {
+  tokenConfigured: boolean;
+  tokenSource: 'db' | 'env' | 'none';
+  authPath: 'bearer' | 'public';
+}
+
 export interface ExternalMaterialsSearchPage {
   items: ExternalMaterialSummary[];
   limit: number;
@@ -1441,6 +1447,8 @@ export interface ExternalMaterialsSearchPage {
   configuredSources: ExternalMaterialSource[];
   /** Per-provider search failures — partial results may still be present. */
   providerErrors?: Partial<Record<ExternalMaterialSource, string>>;
+  /** Fab auth path used for this search (materials-service reads DB token each request). */
+  fabDiagnostics?: FabSearchDiagnostics;
 }
 
 export interface ExternalMaterialImportResult extends MaterialDetail {

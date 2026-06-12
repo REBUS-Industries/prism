@@ -10,6 +10,7 @@ import {
   type ExternalMaterialDetail,
   type ExternalMaterialSource,
   type ExternalMaterialSummary,
+  type FabSearchDiagnostics,
 } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
@@ -34,6 +35,7 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const providerLabels = ref<Record<string, string>>({});
 const providerErrors = ref<Partial<Record<ExternalMaterialSource, string>>>({});
+const fabDiagnostics = ref<FabSearchDiagnostics | null>(null);
 
 const selected = ref<ExternalMaterialSummary | null>(null);
 const detail = ref<ExternalMaterialDetail | null>(null);
@@ -83,6 +85,7 @@ async function load(reset = true): Promise<void> {
     });
     providerLabels.value = res.providerLabels ?? {};
     providerErrors.value = res.providerErrors ?? {};
+    fabDiagnostics.value = res.fabDiagnostics ?? null;
     items.value = reset ? res.items : [...items.value, ...res.items];
     nextCursor.value = res.nextCursor;
   } catch (err) {
@@ -184,7 +187,20 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
         <div v-if="error" class="error-box">{{ error }}</div>
         <div v-if="providerErrors.fab" class="warn-banner">
-          Fab search unavailable: {{ providerErrors.fab }}
+          <p>Fab search unavailable: {{ providerErrors.fab }}</p>
+          <p v-if="fabDiagnostics" class="fab-diag muted small">
+            Token: {{ fabDiagnostics.tokenConfigured ? 'configured' : 'missing' }}
+            (source: {{ fabDiagnostics.tokenSource }}, auth: {{ fabDiagnostics.authPath }}).
+            <template v-if="fabDiagnostics.tokenConfigured && fabDiagnostics.authPath === 'public'">
+              Token was not applied — redeploy prism-materials or check settings reload.
+            </template>
+            <template v-else-if="!fabDiagnostics.tokenConfigured">
+              Add an Epic refresh token under Admin → Settings → External materials.
+            </template>
+            <template v-else-if="fabDiagnostics.authPath === 'bearer' && providerErrors.fab.toLowerCase().includes('oauth')">
+              Token refresh failed — re-save a valid Epic refresh token in Settings.
+            </template>
+          </p>
         </div>
 
         <div class="body">
@@ -337,6 +353,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   background: color-mix(in srgb, var(--color-warning, #c90) 12%, var(--color-bg-input));
   color: var(--color-text);
 }
+.warn-banner p { margin: 0 0 4px; }
+.warn-banner p:last-child { margin-bottom: 0; }
+.fab-diag { margin-top: 4px; }
 .import-btn { margin-top: auto; flex: none; }
 .import-btn:disabled { cursor: not-allowed; opacity: 0.55; }
 .load-more { display: flex; justify-content: center; padding: 8px 0; }
