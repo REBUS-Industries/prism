@@ -1913,6 +1913,11 @@ export const fixturesApi = {
     api.get<GdtfModelInspection>(
       `/api/gdtf-share/model-qualities?rid=${rid}`,
     ),
+  /** Global REBUS-tag → material id map, applied across all fixtures. */
+  getTagMaterials: () =>
+    api.get<{ map: Record<string, string | null> }>('/api/fixtures/tag-materials'),
+  setTagMaterials: (map: Record<string, string | null>) =>
+    api.put<{ map: Record<string, string> }>('/api/fixtures/tag-materials', { map }),
   // Connector / ORBIT export — the PRISM Library is the authoritative source.
   exportList: (params: { q?: string; origin?: FixtureOrigin | FixtureOrigin[]; status?: 'draft' | 'published'; limit?: number } = {}) => {
     const qs = new URLSearchParams();
