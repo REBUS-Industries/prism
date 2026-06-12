@@ -40,6 +40,11 @@ export interface FixtureAssemblyInput {
    * geometries when null or when no top-level part matches the id.
    */
   selectedModeGeometryId?: string | null;
+  /**
+   * REBUS materials (built Three.js materials) keyed by material id. When a part
+   * has a resolved `materialId`, its own mesh is painted with this material.
+   */
+  materialsById?: Map<string, THREE.Material>;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -278,6 +283,16 @@ export async function buildFixtureAssembly(
 
   let meshCount = 0;
 
+  // Paint a part's own mesh with its assigned REBUS material (by tag/materialId).
+  const paintMaterial = (obj: THREE.Object3D, part: FixturePart): void => {
+    const mat = part.materialId ? input.materialsById?.get(part.materialId) : undefined;
+    if (!mat) return;
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = mat;
+    });
+  };
+
   await Promise.all(parts.map(async (part) => {
     if (partMeta(part).isGeometryReference) return;
 
@@ -289,7 +304,9 @@ export async function buildFixtureAssembly(
     if (mediaId) {
       const obj = await loadGlb(mediaId);
       if (obj) {
-        partGroup.add(wrapModelMesh(obj.clone(true), dims));
+        const wrapped = wrapModelMesh(obj.clone(true), dims);
+        paintMaterial(wrapped, part);
+        partGroup.add(wrapped);
         meshCount += 1;
         return;
       }
@@ -299,6 +316,7 @@ export async function buildFixtureAssembly(
     if (model || dims.length || dims.width || dims.height) {
       const prim = buildPrimitive(dims, part);
       if (prim) {
+        paintMaterial(prim, part);
         partGroup.add(prim);
         meshCount += 1;
       }
