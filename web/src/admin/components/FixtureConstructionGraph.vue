@@ -17,6 +17,7 @@ import {
   Panel,
   MarkerType,
   Position,
+  useVueFlow,
   type Edge,
   type Node,
 } from '@vue-flow/core';
@@ -377,14 +378,22 @@ function previewPart(m: FixtureModel): FixturePart {
   };
 }
 
-const layoutEpoch = ref(0);
-function fitReset(): void { layoutEpoch.value += 1; }
+const { fitView } = useVueFlow();
+
+// Custom nodes have no measured size at init, so `fit-view-on-init` fits to an
+// empty bound and the canvas looks blank. Re-fit once nodes are measured.
+function onNodesInitialized(): void {
+  void Promise.resolve().then(() => fitView({ padding: 0.2 }));
+}
+
+function fitReset(): void {
+  fitView({ padding: 0.2 });
+}
 </script>
 
 <template>
   <div class="cg-wrap">
     <VueFlow
-      :key="layoutEpoch"
       :nodes="graph.nodes"
       :edges="graph.edges"
       :fit-view-on-init="true"
@@ -395,6 +404,7 @@ function fitReset(): void { layoutEpoch.value += 1; }
       :zoom-on-double-click="false"
       :min-zoom="0.1"
       :max-zoom="2"
+      @nodes-initialized="onNodesInitialized"
     >
       <template #node-fixtureNode="nodeProps">
         <FixtureGraphNode :data="nodeProps.data" />
