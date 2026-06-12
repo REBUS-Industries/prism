@@ -89,7 +89,7 @@ describe('fabBrowseFetch', () => {
     await ensureFabCsrf();
     expect(undiciFetch).toHaveBeenCalledTimes(2);
     const csrfInit = undiciFetch.mock.calls[1]![1] as { headers?: Headers };
-    expect((csrfInit.headers as Headers).get('Authorization')).toBe('bearer access-abc');
+    expect((csrfInit.headers as Headers).get('Authorization')).toBe('Bearer access-abc');
   });
 
   it('uses public fetch when no token is configured', async () => {

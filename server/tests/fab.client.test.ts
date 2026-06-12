@@ -6,6 +6,7 @@ import {
   FabApiError,
   fabCloudflareBlockedMessage,
   isFabCloudflareResponse,
+  parseFabBrowseDownloadInfo,
 } from '../src/fab/client.js';
 import {
   applyFabRuntimeConfig,
@@ -24,6 +25,25 @@ describe('isFabCloudflareResponse', () => {
 
   it('ignores Cloudflare markers on 200', () => {
     expect(isFabCloudflareResponse('cloudflare', 200)).toBe(false);
+  });
+});
+
+describe('parseFabBrowseDownloadInfo', () => {
+  it('rejects API error details with a clear message', () => {
+    expect(() => parseFabBrowseDownloadInfo({ detail: 'listing not owned' }))
+      .toThrowError(/download-info rejected/i);
+  });
+
+  it('extracts signed CDN download URLs', () => {
+    const entry = parseFabBrowseDownloadInfo({
+      downloadInfo: [{
+        assetFormat: 'asset-format/texture-set',
+        downloadUrl: 'https://cdn.example.com/material_2k.zip?f_token=abc',
+        type: 'binary',
+      }],
+    });
+    expect(entry.downloadUrl).toContain('material_2k.zip');
+    expect(entry.type).toBe('binary');
   });
 });
 
