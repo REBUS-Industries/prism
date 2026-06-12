@@ -171,27 +171,47 @@ const motionControls = computed(() => {
     }));
 });
 
-/** Beam-sim cones — one per beam (multi-beam fixtures array across the fixture). */
+/** Beam-sim cones — one per emitter so multi-beam (pixel) fixtures array. */
 const beamSpecs = computed(() => {
   const def = fixture.value?.definition;
-  if (!def?.beams?.length) return [];
+  if (!def) return [];
   const vis = visiblePartIds.value;
-  return def.beams
-    .filter((b) => !vis || (b.parentPartId ? vis.has(b.parentPartId) : true))
-    .map((b) => {
-      const parent = def.parts.find((p) => p.partId === b.parentPartId);
-      const model = parent?.modelId ? def.models.find((m) => m.modelId === parent.modelId) : undefined;
-      const meta = (model?.metadata ?? {}) as Record<string, unknown>;
-      const len = typeof meta.length === 'number' ? meta.length : 0;
-      const wid = typeof meta.width === 'number' ? meta.width : 0;
-      return {
-        parentPartId: b.parentPartId ?? null,
-        lensDiameter: Math.max(len, wid) || 0.08,
-        beamAngle: b.beamAngle ?? b.fieldAngle ?? 20,
-        zoomMin: b.zoomMinAngle,
-        zoomMax: b.zoomMaxAngle,
-      };
-    });
+  const inMode = (id: string | null | undefined): boolean => !vis || (id ? vis.has(id) : true);
+
+  const primary = def.beams?.[0];
+  const angle = primary?.beamAngle ?? primary?.fieldAngle ?? 20;
+  const zoomMin = primary?.zoomMinAngle;
+  const zoomMax = primary?.zoomMaxAngle;
+
+  const diameter = (partId: string | null | undefined): number => {
+    const part = def.parts.find((p) => p.partId === partId);
+    const model = part?.modelId ? def.models.find((m) => m.modelId === part.modelId) : undefined;
+    const meta = (model?.metadata ?? {}) as Record<string, unknown>;
+    const len = typeof meta.length === 'number' ? meta.length : 0;
+    const wid = typeof meta.width === 'number' ? meta.width : 0;
+    return Math.max(len, wid) || 0.08;
+  };
+
+  // 1. One cone per lens/cell emitter part — these are the arrayed pixels.
+  const emitters = def.parts.filter(
+    (p) => (p.tag === 'LENS' || p.tag === 'CELL') && p.modelId && inMode(p.partId),
+  );
+  if (emitters.length) {
+    return emitters.map((p) => ({
+      parentPartId: p.partId, lensDiameter: diameter(p.partId), beamAngle: angle, zoomMin, zoomMax,
+    }));
+  }
+
+  // 2. Fallback: one cone per FixtureBeam at its part.
+  return (def.beams ?? [])
+    .filter((b) => inMode(b.parentPartId))
+    .map((b) => ({
+      parentPartId: b.parentPartId ?? null,
+      lensDiameter: diameter(b.parentPartId),
+      beamAngle: b.beamAngle ?? b.fieldAngle ?? angle,
+      zoomMin: b.zoomMinAngle ?? zoomMin,
+      zoomMax: b.zoomMaxAngle ?? zoomMax,
+    }));
 });
 
 const meshRecords = computed(() => {
