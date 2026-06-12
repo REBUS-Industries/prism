@@ -112,7 +112,21 @@ function mapFabHttpError(err: unknown): Error {
       return new Error(`Fab HTTP proxy unreachable: ${proxy}`);
     }
   }
-  return err instanceof Error ? err : new Error(String(err));
+  if (isInvalidUrlError(err)) {
+    return new Error('Fab request URL invalid');
+  }
+  if (isUnreachableNetworkError(err)) {
+    return new Error(
+      'Fab marketplace unreachable (https://www.fab.com) — check server egress, DNS, and firewall',
+    );
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === 'fetch failed') {
+    return new Error(
+      'Fab marketplace request failed — network error reaching https://www.fab.com (check egress and HTTP proxy)',
+    );
+  }
+  return err instanceof Error ? err : new Error(message);
 }
 
 function hostnameFromUrl(url: string): string {
@@ -337,7 +351,12 @@ export async function ensureFabCsrf(): Promise<void> {
       throw new FlareSolverrError(err instanceof Error ? err.message : 'FlareSolverr failed');
     }
   }
-  await fabBrowseFetch('https://www.fab.com/i/csrf');
+  try {
+    await fabBrowseFetch('https://www.fab.com/i/csrf');
+  } catch (err) {
+    if (err instanceof FlareSolverrError) throw err;
+    throw mapFabHttpError(err);
+  }
 }
 
 export { USER_AGENT };

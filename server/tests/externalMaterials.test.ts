@@ -281,4 +281,23 @@ describe('unifiedSearch', () => {
     expect(result.items.some((i) => i.source === 'fab')).toBe(false);
     expect(result.providerErrors?.fab).toContain('Cloudflare');
   });
+
+  it('wraps bare fetch failed into actionable provider error', async () => {
+    const fab = createFabProvider({
+      search: async () => {
+        throw new TypeError('fetch failed');
+      },
+      getListing: async () => null,
+      download: async () => ({ buffer: Buffer.from(''), filename: 'x.zip', name: 'x' }),
+    });
+
+    const result = await unifiedSearch([fab], {
+      q: 'brick',
+      sources: ['fab'],
+      cursor: null,
+      limit: 5,
+    });
+
+    expect(result.providerErrors?.fab).toContain('FlareSolverr URL');
+  });
 });

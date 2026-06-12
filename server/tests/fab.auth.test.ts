@@ -143,4 +143,22 @@ describe('fabBrowseFetch', () => {
     await ensureFabCloudflareAccess();
     expect(flareSolverrRequestGet).toHaveBeenCalledTimes(1);
   });
+
+  it('wraps fetch failed from Fab CSRF as marketplace unreachable', async () => {
+    undiciFetch.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), {
+      cause: { code: 'ECONNREFUSED' },
+    }));
+
+    await expect(ensureFabCsrf()).rejects.toMatchObject({
+      message: expect.stringContaining('Fab marketplace unreachable'),
+    });
+  });
+
+  it('wraps bare fetch failed from Fab CSRF', async () => {
+    undiciFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    await expect(ensureFabCsrf()).rejects.toMatchObject({
+      message: expect.stringContaining('Fab marketplace'),
+    });
+  });
 });

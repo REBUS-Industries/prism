@@ -161,8 +161,24 @@ function clearFieldError(field: 'fabHttpProxy' | 'fabFlareSolverrUrl'): void {
   fieldErrors[field] = null;
 }
 
-const DEFAULT_FLARESOLVERR_URL = 'http://127.0.0.1:8191/v1';
+const DEFAULT_FLARESOLVERR_URL = 'http://flaresolverr:8191/v1';
+const HOST_FLARESOLVERR_URL = 'http://127.0.0.1:8191/v1';
+const DOCKER_HOST_FLARESOLVERR_URL = 'http://host.docker.internal:8191/v1';
 const FLARESOLVERR_IMAGE = 'https://ghcr.io/flaresolverr/flaresolverr';
+
+const flareSolverrUrlHint = computed(() => {
+  const current = form.fabFlareSolverrUrl.trim();
+  if (!current || current === HOST_FLARESOLVERR_URL) {
+    return (
+      'Split-stack dev (docker-compose.dev.yml): use '
+      + `${DEFAULT_FLARESOLVERR_URL}. `
+      + 'FlareSolverr on the VM host while PRISM runs in Docker: '
+      + `${DOCKER_HOST_FLARESOLVERR_URL} (Windows/Mac) or http://172.17.0.1:8191/v1 (Linux). `
+      + `${HOST_FLARESOLVERR_URL} only when PRISM and FlareSolverr share the same network namespace.`
+    );
+  }
+  return null;
+});
 
 const fabMarketplaceUrl = 'https://www.fab.com';
 const fabTestSearchUrl = computed(() => {
@@ -171,6 +187,10 @@ const fabTestSearchUrl = computed(() => {
 });
 
 const flareSolverrDockerRun = [
+  '# Option A — included in docker-compose.dev.yml (VM 212 dev):',
+  '#   service name flaresolverr → http://flaresolverr:8191/v1',
+  '',
+  '# Option B — standalone on the VM host:',
   'docker run -d --name flaresolverr --restart unless-stopped \\',
   '  -p 8191:8191 \\',
   '  -e LOG_LEVEL=info \\',
@@ -467,11 +487,12 @@ onMounted(() => { void refresh(); });
             Fab search runs on the PRISM server (VM 211 prod / VM 212 dev), not in your
             browser. Cloudflare blocks datacenter IPs; PRISM uses
             <strong>FlareSolverr</strong> to obtain <code>cf_clearance</code> cookies for
-            server-side Fab API calls. Run a FlareSolverr container on the same VM as PRISM
-            (default API: <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>) and set the URL below.
-            Solving a bot challenge on your residential PC does <strong>not</strong> replace
-            FlareSolverr — cookies are bound to egress IP and cannot be pasted from a browser
-            session on another machine.
+            server-side Fab API calls. On the dev split stack,
+            <code>docker-compose.dev.yml</code> includes a <code>flaresolverr</code> service —
+            use <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>. Do not use
+            <code>{{ HOST_FLARESOLVERR_URL }}</code> from inside a container (that address is
+            the container itself). Solving a bot challenge on your residential PC does
+            <strong>not</strong> replace FlareSolverr.
           </p>
           <div class="cf-link-row">
             <button type="button" class="link-btn" @click="openExternalUrl(fabMarketplaceUrl)">
@@ -499,26 +520,27 @@ onMounted(() => { void refresh(); });
             <p v-if="fieldErrors.fabFlareSolverrUrl" class="field-error">{{ fieldErrors.fabFlareSolverrUrl }}</p>
             <p class="hint muted">
               PRISM calls this FlareSolverr <code>/v1</code> API before Fab browse requests to
-              obtain Cloudflare clearance cookies. Default when FlareSolverr runs on the same
-              host: <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>. FlareSolverr must egress
-              through the same IP as Fab HTTP (direct server IP or the proxy above). Overrides
+              obtain Cloudflare clearance cookies. Overrides
               <code>FAB_FLARESOLVERR_URL</code> when set here; see
               <code>infra/.env.example</code>.
             </p>
+            <p v-if="flareSolverrUrlHint" class="hint muted">{{ flareSolverrUrlHint }}</p>
           </div>
 
           <details class="help-details">
             <summary>Run FlareSolverr on the server (Docker)</summary>
             <div class="help-body muted">
               <p>
-                Run FlareSolverr on the PRISM VM (211 prod / 212 dev) beside
-                <code>prism-server</code> or <code>prism-materials</code>. Image:
+                On VM 212 dev, <code>docker-compose.dev.yml</code> already defines a
+                <code>flaresolverr</code> service — set
+                <code>{{ DEFAULT_FLARESOLVERR_URL }}</code> above (or leave env default).
+                For a standalone container on the VM host while PRISM runs in Docker, use
+                <code>{{ DOCKER_HOST_FLARESOLVERR_URL }}</code> (Windows/Mac) or
+                <code>http://172.17.0.1:8191/v1</code> (Linux). Image:
                 <button type="button" class="link-btn inline-link" @click="openExternalUrl(FLARESOLVERR_IMAGE)">
                   ghcr.io/flaresolverr/flaresolverr
                 </button>.
-                When co-located, use <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>; otherwise
-                <code>http://&lt;host&gt;:8191/v1</code>. Save the URL above, then re-test with
-                “Test search API”.
+                Save the URL, then re-test with “Test search API”.
               </p>
               <div class="code-block">
                 <div class="code-block-toolbar">

@@ -1,6 +1,8 @@
 /**
  * Merge search results from multiple external material providers.
  */
+import { FlareSolverrError } from '../fab/flaresolverr.js';
+import { FabApiError } from '../fab/client.js';
 import type {
   ExternalMaterialProvider,
   ExternalMaterialSource,
@@ -36,7 +38,16 @@ export function scoreQueryMatch(
 }
 
 function providerErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
+  if (err instanceof FlareSolverrError || err instanceof FabApiError) return err.message;
+  if (err instanceof Error) {
+    if (err.message === 'fetch failed') {
+      return (
+        'Fab request failed: network error (connection refused or unreachable). '
+        + 'Check FlareSolverr URL, HTTP proxy, and server egress.'
+      );
+    }
+    return err.message;
+  }
   return String(err);
 }
 

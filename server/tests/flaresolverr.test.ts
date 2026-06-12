@@ -90,7 +90,19 @@ describe('flaresolverr', () => {
 
     await expect(
       flareSolverrRequestGet('http://127.0.0.1:8191/v1', 'https://www.fab.com/'),
-    ).rejects.toMatchObject({ message: expect.stringContaining('FlareSolverr unreachable') });
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/FlareSolverr unreachable at http:\/\/127\.0\.0\.1:8191\/v1/),
+    });
+  });
+
+  it('hints docker networking when loopback FlareSolverr URL fails', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    await expect(
+      flareSolverrRequestGet('http://127.0.0.1:8191/v1', 'https://www.fab.com/'),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('http://flaresolverr:8191/v1'),
+    });
   });
 
   it('injects cookies into hostname jar', () => {

@@ -1444,6 +1444,7 @@ export interface FabSearchDiagnostics {
   tokenSource: 'db' | 'env' | 'none';
   authPath: 'bearer' | 'public';
   httpProxyConfigured?: boolean;
+  flareSolverrConfigured?: boolean;
 }
 
 export interface ExternalMaterialsSearchPage {

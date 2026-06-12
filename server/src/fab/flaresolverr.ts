@@ -52,16 +52,38 @@ function normalizeSolverBaseUrl(url: string): string {
   return `${trimmed}/v1`;
 }
 
+function isLoopbackHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function dockerFlareSolverrHint(endpoint: string): string {
+  if (!isLoopbackHost(endpoint)) return '';
+  return (
+    ' In Docker, 127.0.0.1 is the PRISM container itself — use http://flaresolverr:8191/v1'
+    + ' (docker-compose.dev.yml service) or http://host.docker.internal:8191/v1 (FlareSolverr on the VM host).'
+  );
+}
+
 function mapFlareSolverrFetchError(err: unknown, endpoint: string): FlareSolverrError {
   if (isInvalidUrlError(err)) {
     return new FlareSolverrError(`FlareSolverr URL invalid: ${endpoint}`);
   }
   if (isUnreachableNetworkError(err)) {
     return new FlareSolverrError(
-      `FlareSolverr unreachable at ${endpoint} — is the container running and reachable from the PRISM server?`,
+      `FlareSolverr unreachable at ${endpoint} — is FlareSolverr running and reachable from prism-materials?${dockerFlareSolverrHint(endpoint)}`,
     );
   }
   const message = err instanceof Error ? err.message : String(err);
+  if (message === 'fetch failed') {
+    return new FlareSolverrError(
+      `FlareSolverr unreachable at ${endpoint} — connection failed.${dockerFlareSolverrHint(endpoint)}`,
+    );
+  }
   return new FlareSolverrError(`FlareSolverr request failed: ${message}`);
 }
 
