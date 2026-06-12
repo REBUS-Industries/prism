@@ -35,6 +35,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       enabled: z.boolean().optional(),
       epicRefreshToken: z.string().optional(),
       httpProxy: z.string().optional(),
+      flareSolverrUrl: z.string().optional(),
     }).optional(),
     polyhaven: z.object({ enabled: z.boolean().optional() }).optional(),
     ambientcg: z.object({ enabled: z.boolean().optional() }).optional(),

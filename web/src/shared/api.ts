@@ -483,6 +483,7 @@ export interface ExternalMaterialsSettings {
   fab: {
     enabled: boolean;
     httpProxy: string;
+    flareSolverrUrl: string;
     tokenConfigured: boolean;
     tokenPreview: string | null;
     tokenSource: 'db' | 'env' | 'none';
@@ -496,6 +497,7 @@ export interface ExternalMaterialsSettingsPatch {
     enabled?: boolean;
     epicRefreshToken?: string;
     httpProxy?: string;
+    flareSolverrUrl?: string;
   };
   polyhaven?: { enabled?: boolean };
   ambientcg?: { enabled?: boolean };

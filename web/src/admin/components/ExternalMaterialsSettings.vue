@@ -121,9 +121,27 @@ async function copyText(text: string, key: string): Promise<void> {
 const form = reactive({
   fabEnabled: true,
   fabHttpProxy: '',
+  fabFlareSolverrUrl: '',
   polyhavenEnabled: true,
   ambientcgEnabled: true,
 });
+
+const fabMarketplaceUrl = 'https://www.fab.com';
+const fabTestSearchUrl = computed(() => {
+  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${base}/api/external-materials/search?q=brick&sources=fab&limit=1`;
+});
+
+const flareSolverrDockerRun = [
+  'docker run -d --name flaresolverr --restart unless-stopped \\',
+  '  -p 8191:8191 \\',
+  '  -e LOG_LEVEL=info \\',
+  '  ghcr.io/flaresolverr/flaresolverr:latest',
+].join('\n');
+
+function openExternalUrl(url: string): void {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
 
 const fabStatusLine = computed(() => {
   if (!settings.value) return 'Loading…';
@@ -142,6 +160,7 @@ const isDirty = computed(() => {
   return (
     form.fabEnabled !== s.fab.enabled
     || form.fabHttpProxy !== s.fab.httpProxy
+    || form.fabFlareSolverrUrl !== s.fab.flareSolverrUrl
     || form.polyhavenEnabled !== s.polyhaven.enabled
     || form.ambientcgEnabled !== s.ambientcg.enabled
     || tokenDirty.value
@@ -156,6 +175,7 @@ async function refresh(): Promise<void> {
     settings.value = res.settings;
     form.fabEnabled = res.settings.fab.enabled;
     form.fabHttpProxy = res.settings.fab.httpProxy;
+    form.fabFlareSolverrUrl = res.settings.fab.flareSolverrUrl;
     form.polyhavenEnabled = res.settings.polyhaven.enabled;
     form.ambientcgEnabled = res.settings.ambientcg.enabled;
     tokenInput.value = '';
@@ -180,6 +200,7 @@ async function save(): Promise<void> {
       fab: {
         enabled: form.fabEnabled,
         httpProxy: form.fabHttpProxy,
+        flareSolverrUrl: form.fabFlareSolverrUrl,
       },
       polyhaven: { enabled: form.polyhavenEnabled },
       ambientcg: { enabled: form.ambientcgEnabled },
@@ -381,6 +402,73 @@ onMounted(() => { void refresh(); });
             Overrides <code>FAB_HTTP_PROXY</code> when set here.
           </p>
         </div>
+
+        <fieldset class="cloudflare-block">
+          <legend>Cloudflare / Fab access</legend>
+          <p class="hint muted cf-intro">
+            Fab search runs on the PRISM server (e.g. VM 212), not in your browser.
+            Cloudflare <code>cf_clearance</code> cookies are bound to
+            <strong>egress IP + User-Agent + fingerprint</strong>. Solving a bot challenge
+            on your residential PC does <strong>not</strong> unblock server-side search unless
+            that browser uses the <strong>same HTTP proxy</strong> configured above.
+          </p>
+          <div class="cf-link-row">
+            <button type="button" class="link-btn" @click="openExternalUrl(fabMarketplaceUrl)">
+              Open Fab marketplace
+            </button>
+            <button type="button" class="link-btn" @click="openExternalUrl(fabTestSearchUrl)">
+              Test search API
+            </button>
+          </div>
+          <p class="hint muted">
+            “Open Fab marketplace” is for manual browsing only. “Test search API” hits
+            <code>/api/external-materials/search</code> through the server — use it to verify
+            proxy/FlareSolverr fixes, not to paste cookies from your PC.
+          </p>
+
+          <div class="field">
+            <label for="fab-flaresolverr">FlareSolverr URL <code class="muted">fab_flaresolverr_url</code></label>
+            <input
+              id="fab-flaresolverr"
+              v-model="form.fabFlareSolverrUrl"
+              type="text"
+              placeholder="http://127.0.0.1:8191/v1 (optional)"
+            />
+            <p class="hint muted">
+              When set, PRISM asks FlareSolverr to solve Cloudflare for
+              <code>www.fab.com</code> before Fab browse calls. FlareSolverr must egress
+              through the same IP as Fab HTTP (direct server IP or the proxy above).
+              Overrides <code>FAB_FLARESOLVERR_URL</code> when set here.
+            </p>
+          </div>
+
+          <details class="help-details">
+            <summary>Run FlareSolverr on the server (Docker)</summary>
+            <div class="help-body muted">
+              <p>
+                Deploy on the PRISM host or VM beside the materials service. From a machine
+                that can reach port 8191, set the URL above to
+                <code>http://&lt;host&gt;:8191/v1</code> and Save.
+              </p>
+              <div class="code-block">
+                <div class="code-block-toolbar">
+                  <span class="code-block-label">Docker run</span>
+                  <button
+                    type="button"
+                    class="copy-btn"
+                    @click="copyText(flareSolverrDockerRun, 'flaresolverr-docker')"
+                  >{{ copiedKey === 'flaresolverr-docker' ? 'Copied' : 'Copy' }}</button>
+                </div>
+                <pre class="token-help-code">{{ flareSolverrDockerRun }}</pre>
+              </div>
+              <p>
+                If Fab uses an HTTP proxy, pass the same proxy to FlareSolverr via its
+                <code>proxy</code> request field (PRISM forwards your Fab proxy automatically).
+                Re-test with “Test search API” after saving.
+              </p>
+            </div>
+          </details>
+        </fieldset>
       </fieldset>
 
       <fieldset class="provider-block">
@@ -404,7 +492,7 @@ onMounted(() => { void refresh(); });
       <p>
         These settings apply on the next external-materials request.
         See also <code>infra/.env.example</code> (<code>FAB_EPIC_REFRESH_TOKEN</code>,
-        <code>FAB_HTTP_PROXY</code>) for container-level configuration.
+        <code>FAB_HTTP_PROXY</code>, <code>FAB_FLARESOLVERR_URL</code>) for container-level configuration.
       </p>
     </div>
   </template>
@@ -610,5 +698,39 @@ onMounted(() => { void refresh(); });
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--color-border);
+}
+.cloudflare-block {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 8px);
+  padding: 10px 12px 12px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cloudflare-block legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 6px;
+}
+.cf-intro { margin: 0; }
+.cf-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.link-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-elevated, var(--color-bg));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.link-btn:hover {
+  border-color: var(--color-accent, #6366f1);
 }
 </style>

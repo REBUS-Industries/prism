@@ -17,6 +17,12 @@
  * does not bypass Cloudflare on www.fab.com; use FAB_HTTP_PROXY when blocked.
  */
 import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import {
+  FlareSolverrError,
+  flareSolverrRequestGet,
+  hasCloudflareClearance,
+  injectFlareSolverrCookies,
+} from './flaresolverr.js';
 
 const EPIC_TOKEN_URL = 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token';
 const EPIC_CLIENT_ID = process.env.FAB_EPIC_CLIENT_ID ?? '34a02cf8f4414e29b15921876da36f9a';
@@ -59,7 +65,11 @@ interface TokenResponse {
 let cachedAccessToken: string | null = null;
 let cachedRefreshToken: string | null = process.env.FAB_EPIC_REFRESH_TOKEN?.trim() || null;
 let cachedHttpProxy: string | null = process.env.FAB_HTTP_PROXY?.trim() || null;
+let cachedFlareSolverrUrl: string | null = process.env.FAB_FLARESOLVERR_URL?.trim() || null;
 let tokenExpiresAt = 0;
+let flareSolverrPrimedAt = 0;
+const FLARESOLVERR_TTL_MS = 20 * 60 * 1000;
+const FAB_HOSTNAME = 'www.fab.com';
 
 /** In-memory cookie jar keyed by hostname. */
 const cookieJar = new Map<string, Map<string, string>>();
@@ -149,10 +159,15 @@ export function fabHttpProxyConfigured(): boolean {
   return !!cachedHttpProxy?.trim();
 }
 
+export function fabFlareSolverrConfigured(): boolean {
+  return !!cachedFlareSolverrUrl?.trim();
+}
+
 /** Apply Fab runtime config from DB settings (overrides env when loaded). */
 export function applyFabRuntimeConfig(config: {
   refreshToken?: string | null;
   httpProxy?: string | null;
+  flareSolverrUrl?: string | null;
 }): void {
   if (config.refreshToken !== undefined) {
     cachedRefreshToken = config.refreshToken?.trim() || null;
@@ -164,6 +179,10 @@ export function applyFabRuntimeConfig(config: {
     fabAgent = null;
     fabAgentProxy = undefined;
   }
+  if (config.flareSolverrUrl !== undefined) {
+    cachedFlareSolverrUrl = config.flareSolverrUrl?.trim() || null;
+    flareSolverrPrimedAt = 0;
+  }
 }
 
 export function setFabRefreshTokenForTests(token: string | null): void {
@@ -174,6 +193,12 @@ export function setFabRefreshTokenForTests(token: string | null): void {
 
 export function clearFabCookieJarForTests(): void {
   cookieJar.clear();
+  flareSolverrPrimedAt = 0;
+}
+
+export function setFabFlareSolverrUrlForTests(url: string | null): void {
+  cachedFlareSolverrUrl = url;
+  flareSolverrPrimedAt = 0;
 }
 
 async function exchangeToken(params: Record<string, string>): Promise<TokenResponse> {
@@ -242,8 +267,41 @@ export function fabBrowseAuthPath(): 'bearer' | 'public' {
   return fabAuthConfigured() ? 'bearer' : 'public';
 }
 
+/**
+ * Obtain Cloudflare clearance via FlareSolverr when configured.
+ * Re-runs when TTL expires or cf_clearance is missing from the jar.
+ */
+export async function ensureFabCloudflareAccess(force = false): Promise<void> {
+  const solverUrl = cachedFlareSolverrUrl?.trim();
+  if (!solverUrl) return;
+
+  const now = Date.now();
+  if (
+    !force
+    && flareSolverrPrimedAt
+    && now - flareSolverrPrimedAt < FLARESOLVERR_TTL_MS
+    && hasCloudflareClearance(cookieJar, FAB_HOSTNAME)
+  ) {
+    return;
+  }
+
+  const { cookies } = await flareSolverrRequestGet(solverUrl, 'https://www.fab.com/', {
+    proxy: cachedHttpProxy,
+  });
+  injectFlareSolverrCookies(cookies, FAB_HOSTNAME, cookieJar);
+  flareSolverrPrimedAt = now;
+}
+
 /** Prime Fab CSRF cookie jar — best-effort before Fab browse calls. */
 export async function ensureFabCsrf(): Promise<void> {
+  if (cachedFlareSolverrUrl?.trim()) {
+    try {
+      await ensureFabCloudflareAccess();
+    } catch (err) {
+      if (err instanceof FlareSolverrError) throw err;
+      throw new FlareSolverrError(err instanceof Error ? err.message : 'FlareSolverr failed');
+    }
+  }
   await fabBrowseFetch('https://www.fab.com/i/csrf');
 }
 

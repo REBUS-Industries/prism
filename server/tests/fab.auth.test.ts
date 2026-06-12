@@ -7,11 +7,15 @@ import {
   FabOAuthError,
   fabBrowseAuthPath,
   fabBrowseFetch,
+  fabFlareSolverrConfigured,
+  ensureFabCloudflareAccess,
   ensureFabCsrf,
+  setFabFlareSolverrUrlForTests,
   setFabRefreshTokenForTests,
 } from '../src/fab/auth.js';
 
 const undiciFetch = vi.fn();
+const flareSolverrRequestGet = vi.fn();
 
 vi.mock('undici', () => ({
   fetch: (...args: unknown[]) => undiciFetch(...args),
@@ -19,16 +23,28 @@ vi.mock('undici', () => ({
   ProxyAgent: vi.fn(),
 }));
 
+vi.mock('../src/fab/flaresolverr.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/fab/flaresolverr.js')>();
+  return {
+    ...actual,
+    flareSolverrRequestGet: (...args: unknown[]) => flareSolverrRequestGet(...args),
+  };
+});
+
 describe('fabBrowseFetch', () => {
   beforeEach(() => {
     undiciFetch.mockReset();
+    flareSolverrRequestGet.mockReset();
     clearFabCookieJarForTests();
     setFabRefreshTokenForTests(null);
+    setFabFlareSolverrUrlForTests(null);
     delete process.env.FAB_EPIC_REFRESH_TOKEN;
+    delete process.env.FAB_FLARESOLVERR_URL;
   });
 
   afterEach(() => {
     setFabRefreshTokenForTests(null);
+    setFabFlareSolverrUrlForTests(null);
   });
 
   it('reports public auth path when no token configured', () => {
@@ -88,5 +104,43 @@ describe('fabBrowseFetch', () => {
     const init = undiciFetch.mock.calls[0]![1] as { headers?: Headers };
     const headers = init.headers as Headers;
     expect(headers.get('Authorization')).toBeNull();
+  });
+
+  it('reports FlareSolverr configured when URL is set', () => {
+    setFabFlareSolverrUrlForTests('http://127.0.0.1:8191/v1');
+    expect(fabFlareSolverrConfigured()).toBe(true);
+  });
+
+  it('calls FlareSolverr before CSRF when solver URL is configured', async () => {
+    setFabFlareSolverrUrlForTests('http://127.0.0.1:8191/v1');
+    flareSolverrRequestGet.mockResolvedValueOnce({
+      cookies: [{ name: 'cf_clearance', value: 'solver-tok', domain: '.fab.com' }],
+    });
+    undiciFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'set-cookie': 'fab_csrftoken=csrf123; Path=/' }),
+    });
+
+    await ensureFabCsrf();
+    expect(flareSolverrRequestGet).toHaveBeenCalledWith(
+      'http://127.0.0.1:8191/v1',
+      'https://www.fab.com/',
+      expect.objectContaining({ proxy: null }),
+    );
+    expect(undiciFetch).toHaveBeenCalledTimes(1);
+    const init = undiciFetch.mock.calls[0]![1] as { headers?: Headers };
+    expect((init.headers as Headers).get('Cookie')).toContain('cf_clearance=solver-tok');
+  });
+
+  it('ensureFabCloudflareAccess skips repeat solve within TTL', async () => {
+    setFabFlareSolverrUrlForTests('http://127.0.0.1:8191/v1');
+    flareSolverrRequestGet.mockResolvedValueOnce({
+      cookies: [{ name: 'cf_clearance', value: 'solver-tok' }],
+    });
+
+    await ensureFabCloudflareAccess();
+    await ensureFabCloudflareAccess();
+    expect(flareSolverrRequestGet).toHaveBeenCalledTimes(1);
   });
 });

@@ -44,6 +44,7 @@ export type SettingKey =
   // External material providers (Fab / Poly Haven / ambientCG) — admin Settings UI.
   | 'fab_epic_refresh_token'
   | 'fab_http_proxy'
+  | 'fab_flaresolverr_url'
   | 'fab_enabled'
   | 'external_polyhaven_enabled'
   | 'external_ambientcg_enabled';
