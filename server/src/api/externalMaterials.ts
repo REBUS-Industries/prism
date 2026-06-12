@@ -23,7 +23,7 @@ import {
   listExternalMaterialProviders,
   providerLabels,
 } from '../external-materials/registry.js';
-import { fabBrowseAuthPath, fabHttpProxyConfigured } from '../fab/auth.js';
+import { fabBrowseAuthPath, fabFlareSolverrConfigured, fabHttpProxyConfigured } from '../fab/auth.js';
 import {
   applyExternalMaterialsSettings,
   loadExternalMaterialsSettingsPublic,
@@ -73,6 +73,7 @@ const plugin: FastifyPluginAsync = async (app) => {
           tokenSource: fabSettings.fab.tokenSource,
           authPath: fabBrowseAuthPath(),
           httpProxyConfigured: fabHttpProxyConfigured() || !!fabSettings.fab.httpProxy,
+          flareSolverrConfigured: fabFlareSolverrConfigured() || !!fabSettings.fab.flareSolverrUrl,
         },
       };
     } catch (err) {

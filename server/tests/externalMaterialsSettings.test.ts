@@ -23,6 +23,7 @@ describe('external materials settings', () => {
     setFabRefreshTokenForTests(null);
     delete process.env.FAB_EPIC_REFRESH_TOKEN;
     delete process.env.FAB_HTTP_PROXY;
+    delete process.env.FAB_FLARESOLVERR_URL;
     delete process.env.FAB_ENABLED;
     delete process.env.POLYHAVEN_ENABLED;
     delete process.env.AMBIENTCG_ENABLED;
@@ -66,7 +67,12 @@ describe('external materials settings', () => {
     const { patchExternalMaterialsSettings } = await import('../src/settings/externalMaterials.js');
 
     await patchExternalMaterialsSettings({
-      fab: { enabled: false, epicRefreshToken: '', httpProxy: 'http://proxy.local:8080' },
+      fab: {
+        enabled: false,
+        epicRefreshToken: '',
+        httpProxy: 'http://proxy.local:8080',
+        flareSolverrUrl: 'http://127.0.0.1:8191/v1',
+      },
       polyhaven: { enabled: false },
       ambientcg: { enabled: true },
     });
@@ -74,6 +80,7 @@ describe('external materials settings', () => {
     expect(setSetting).toHaveBeenCalledWith('fab_enabled', '0');
     expect(setSetting).toHaveBeenCalledWith('fab_epic_refresh_token', '');
     expect(setSetting).toHaveBeenCalledWith('fab_http_proxy', 'http://proxy.local:8080');
+    expect(setSetting).toHaveBeenCalledWith('fab_flaresolverr_url', 'http://127.0.0.1:8191/v1');
     expect(setSetting).toHaveBeenCalledWith('external_polyhaven_enabled', '0');
     expect(setSetting).toHaveBeenCalledWith('external_ambientcg_enabled', '1');
   });

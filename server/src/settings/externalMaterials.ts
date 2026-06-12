@@ -11,6 +11,7 @@ import { applyProviderEnabledFromSettings } from '../external-materials/registry
 
 const KEY_FAB_TOKEN = 'fab_epic_refresh_token';
 const KEY_FAB_PROXY = 'fab_http_proxy';
+const KEY_FAB_FLARESOLVERR = 'fab_flaresolverr_url';
 const KEY_FAB_ENABLED = 'fab_enabled';
 const KEY_POLYHAVEN_ENABLED = 'external_polyhaven_enabled';
 const KEY_AMBIENTCG_ENABLED = 'external_ambientcg_enabled';
@@ -19,6 +20,7 @@ export interface ExternalMaterialsSettingsPublic {
   fab: {
     enabled: boolean;
     httpProxy: string;
+    flareSolverrUrl: string;
     tokenConfigured: boolean;
     tokenPreview: string | null;
     tokenSource: 'db' | 'env' | 'none';
@@ -32,6 +34,7 @@ export interface ExternalMaterialsSettingsPatch {
     enabled?: boolean;
     epicRefreshToken?: string;
     httpProxy?: string;
+    flareSolverrUrl?: string;
   };
   polyhaven?: { enabled?: boolean };
   ambientcg?: { enabled?: boolean };
@@ -70,12 +73,20 @@ async function resolveFabHttpProxy(): Promise<string | null> {
   return envProxy || null;
 }
 
+async function resolveFabFlareSolverrUrl(): Promise<string | null> {
+  const dbUrl = (await getSetting(KEY_FAB_FLARESOLVERR))?.trim();
+  if (dbUrl !== undefined && dbUrl !== '') return dbUrl;
+  const envUrl = process.env.FAB_FLARESOLVERR_URL?.trim();
+  return envUrl || null;
+}
+
 export async function loadExternalMaterialsSettingsPublic(): Promise<ExternalMaterialsSettingsPublic> {
-  const [fabEnabledRaw, polyEnabledRaw, ambientEnabledRaw, fabProxy] = await Promise.all([
+  const [fabEnabledRaw, polyEnabledRaw, ambientEnabledRaw, fabProxy, fabFlareSolverr] = await Promise.all([
     getSetting(KEY_FAB_ENABLED),
     getSetting(KEY_POLYHAVEN_ENABLED),
     getSetting(KEY_AMBIENTCG_ENABLED),
     resolveFabHttpProxy(),
+    resolveFabFlareSolverrUrl(),
   ]);
   const { token, source } = await resolveFabRefreshToken();
 
@@ -83,6 +94,7 @@ export async function loadExternalMaterialsSettingsPublic(): Promise<ExternalMat
     fab: {
       enabled: parseBoolSetting(fabEnabledRaw, 'FAB_ENABLED'),
       httpProxy: fabProxy ?? '',
+      flareSolverrUrl: fabFlareSolverr ?? '',
       tokenConfigured: !!token,
       tokenPreview: token ? tokenPreview(token) : null,
       tokenSource: source,
@@ -105,6 +117,9 @@ export async function patchExternalMaterialsSettings(
   if (patch.fab?.httpProxy !== undefined) {
     await setSetting(KEY_FAB_PROXY, patch.fab.httpProxy.trim());
   }
+  if (patch.fab?.flareSolverrUrl !== undefined) {
+    await setSetting(KEY_FAB_FLARESOLVERR, patch.fab.flareSolverrUrl.trim());
+  }
   if (patch.fab?.epicRefreshToken !== undefined) {
     await setSetting(KEY_FAB_TOKEN, patch.fab.epicRefreshToken.trim());
   }
@@ -123,8 +138,9 @@ export async function applyExternalMaterialsSettings(): Promise<void> {
   const settings = await loadExternalMaterialsSettingsPublic();
   const { token } = await resolveFabRefreshToken();
   const proxy = await resolveFabHttpProxy();
+  const flareSolverrUrl = await resolveFabFlareSolverrUrl();
 
-  applyFabRuntimeConfig({ refreshToken: token, httpProxy: proxy });
+  applyFabRuntimeConfig({ refreshToken: token, httpProxy: proxy, flareSolverrUrl });
   applyProviderEnabledFromSettings({
     fab: settings.fab.enabled,
     polyhaven: settings.polyhaven.enabled,

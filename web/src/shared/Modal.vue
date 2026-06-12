@@ -10,12 +10,15 @@ import Icon from './Icon.vue';
 withDefaults(defineProps<{
   title?: string;
   subtitle?: string;
-  /** Max card width in px. */
+  /** Target card width in px (clamped to viewport). */
   maxWidth?: number;
+  /** Minimum card width in px (clamped to viewport). */
+  minWidth?: number;
 }>(), {
   title: '',
   subtitle: '',
   maxWidth: 560,
+  minWidth: 0,
 });
 
 const emit = defineEmits<{ close: [] }>();
@@ -42,7 +45,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey));
       class="modal-shell"
       role="dialog"
       aria-modal="true"
-      :style="{ maxWidth: `${maxWidth}px` }"
+      :style="{
+        width: `min(${maxWidth}px, 92vw)`,
+        maxWidth: '92vw',
+        minWidth: minWidth ? `min(${minWidth}px, 92vw)` : undefined,
+      }"
     >
       <header class="modal-head">
         <div class="head-text">
@@ -79,7 +86,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey));
 }
 .modal-shell {
   width: 100%;
-  max-height: 88vh;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   background: var(--color-bg-elevated);

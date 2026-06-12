@@ -4,6 +4,7 @@
  */
 import { fetch } from 'undici';
 import type {
+  ExternalImportOptions,
   ExternalImportPayload,
   ExternalMaterialDetail,
   ExternalMaterialProvider,
@@ -81,6 +82,44 @@ export function selectAmbientCgDownload(
   return ranked[0]?.d ?? downloads[0] ?? null;
 }
 
+/** Standard PBR maps bundled in ambientCG material ZIPs. */
+export const AMBIENTCG_STANDARD_MAPS = [
+  'Albedo',
+  'Normal',
+  'Roughness',
+  'Displacement',
+  'AO',
+  'Metallic',
+] as const;
+
+export function listAmbientCgDownloadOptions(downloads: AmbientCgDownload[]): string[] {
+  const seen = new Set<string>();
+  const options: string[] = [];
+  for (const download of downloads) {
+    if (!seen.has(download.attributes)) {
+      seen.add(download.attributes);
+      options.push(download.attributes);
+    }
+  }
+  return options.sort((a, b) => {
+    const pa = parseAttributes(a);
+    const pb = parseAttributes(b);
+    const ra = pa ? RESOLUTION_ORDER.indexOf(pa.resolution as typeof RESOLUTION_ORDER[number]) : -1;
+    const rb = pb ? RESOLUTION_ORDER.indexOf(pb.resolution as typeof RESOLUTION_ORDER[number]) : -1;
+    if (ra !== rb) return ra - rb;
+    const fa = pa ? FORMAT_PREF.indexOf(pa.format as typeof FORMAT_PREF[number]) : FORMAT_PREF.length;
+    const fb = pb ? FORMAT_PREF.indexOf(pb.format as typeof FORMAT_PREF[number]) : FORMAT_PREF.length;
+    return fa - fb;
+  });
+}
+
+export function defaultAmbientCgDownloadAttributes(
+  downloads: AmbientCgDownload[],
+  preferred = DOWNLOAD_ATTRIBUTES,
+): string | null {
+  return selectAmbientCgDownload(downloads, preferred)?.attributes ?? downloads[0]?.attributes ?? null;
+}
+
 export function pickAmbientCgThumbnail(thumbnails: Record<string, string> | undefined): string | null {
   if (!thumbnails) return null;
   return thumbnails[THUMBNAIL_KEY]
@@ -105,7 +144,12 @@ function normalizeAsset(asset: AmbientCgAsset, q: string): ExternalMaterialDetai
   const title = asset.title?.trim() || asset.id;
   const tags = asset.tags ?? [];
   const thumbnailUrl = pickAmbientCgThumbnail(asset.thumbnails);
-  const download = selectAmbientCgDownload(asset.downloads ?? [], DOWNLOAD_ATTRIBUTES);
+  const downloads = asset.downloads ?? [];
+  const resolutions = listAmbientCgDownloadOptions(downloads);
+  const defaultResolution = defaultAmbientCgDownloadAttributes(downloads, DOWNLOAD_ATTRIBUTES);
+  const download = defaultResolution
+    ? downloads.find((d) => d.attributes === defaultResolution) ?? selectAmbientCgDownload(downloads, DOWNLOAD_ATTRIBUTES)
+    : selectAmbientCgDownload(downloads, DOWNLOAD_ATTRIBUTES);
   const popularity = asset.downloadStatistics?.total ?? 0;
   const relevanceScore = scoreQueryMatch(q, { title, tags })
     + Math.min(popularity / 1000, 20);
@@ -121,7 +165,10 @@ function normalizeAsset(asset: AmbientCgAsset, q: string): ExternalMaterialDetai
     downloadSize: download?.size ?? null,
     relevanceScore,
     description: asset.longDescription?.trim() || asset.shortDescription?.trim() || null,
-    formats: [...new Set((asset.downloads ?? []).map((d) => d.extension))],
+    formats: [...new Set(downloads.map((d) => d.extension))],
+    maps: [...AMBIENTCG_STANDARD_MAPS],
+    resolutions,
+    defaultResolution,
     metadata: {
       downloadAttributes: DOWNLOAD_ATTRIBUTES,
       selectedDownload: download?.attributes ?? null,
@@ -188,12 +235,15 @@ export function createAmbientCgProvider(deps?: {
       return normalizeAsset(asset, '');
     },
 
-    async downloadForImport(sourceId: string): Promise<ExternalImportPayload> {
+    async downloadForImport(sourceId: string, options?: ExternalImportOptions): Promise<ExternalImportPayload> {
       const asset = await fetchAsset(sourceId);
       if (!asset) throw new Error('ambientCG material not found');
 
-      const download = selectAmbientCgDownload(asset.downloads ?? [], DOWNLOAD_ATTRIBUTES);
-      if (!download) throw new Error('No downloadable ZIP at configured resolution');
+      const downloads = asset.downloads ?? [];
+      const preferred = options?.resolution?.trim() || DOWNLOAD_ATTRIBUTES;
+      const download = downloads.find((d) => d.attributes === preferred)
+        ?? selectAmbientCgDownload(downloads, preferred);
+      if (!download) throw new Error(`No downloadable ZIP for ${preferred}`);
 
       const buffer = await fetchBuffer(download.url);
       const title = asset.title?.trim() || asset.id;

@@ -6,10 +6,16 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createAmbientCgProvider,
+  listAmbientCgDownloadOptions,
   selectAmbientCgDownload,
 } from '../src/external-materials/ambientcg.js';
 import { createPolyHavenProvider, resetPolyHavenCatalogCache } from '../src/external-materials/polyhaven.js';
-import { estimatePolyHavenDownloadSize, selectPolyHavenMaps } from '../src/external-materials/polyhavenMaps.js';
+import {
+  estimatePolyHavenDownloadSize,
+  listPolyHavenMapLabels,
+  listPolyHavenResolutions,
+  selectPolyHavenMaps,
+} from '../src/external-materials/polyhavenMaps.js';
 import { FabApiError } from '../src/fab/client.js';
 import { scoreQueryMatch, unifiedSearch } from '../src/external-materials/unifiedSearch.js';
 import { createFabProvider } from '../src/external-materials/fab.js';
@@ -40,6 +46,11 @@ describe('polyhavenMaps', () => {
   it('estimates total download size', () => {
     expect(estimatePolyHavenDownloadSize(files, '2k')).toBe(482906 + 512000 + 256000);
   });
+
+  it('lists resolutions and human-readable map labels', () => {
+    expect(listPolyHavenResolutions(files)).toEqual(['2k']);
+    expect(listPolyHavenMapLabels(files, '2k')).toEqual(['Albedo', 'Normal', 'Roughness']);
+  });
 });
 
 describe('polyhaven provider (mocked)', () => {
@@ -60,6 +71,19 @@ describe('polyhaven provider (mocked)', () => {
     expect(page1.nextCursor).toBeNull();
   });
 
+  it('exposes maps and resolutions on detail', async () => {
+    resetPolyHavenCatalogCache();
+    const provider = createPolyHavenProvider({
+      fetchCatalog: async () => catalog,
+      fetchFiles: async () => files,
+      fetchBuffer: async () => Buffer.from('jpeg-bytes'),
+    });
+    const detail = await provider.getDetail('concrete_floor_worn_001');
+    expect(detail?.maps).toEqual(['Albedo', 'Normal', 'Roughness']);
+    expect(detail?.resolutions).toEqual(['2k']);
+    expect(detail?.defaultResolution).toBe('2k');
+  });
+
   it('builds a virtual zip on download', async () => {
     resetPolyHavenCatalogCache();
     const provider = createPolyHavenProvider({
@@ -71,6 +95,17 @@ describe('polyhaven provider (mocked)', () => {
     expect(payload.filename).toContain('.zip');
     expect(payload.buffer.length).toBeGreaterThan(0);
   });
+
+  it('honours requested resolution on download', async () => {
+    resetPolyHavenCatalogCache();
+    const provider = createPolyHavenProvider({
+      fetchCatalog: async () => catalog,
+      fetchFiles: async () => files,
+      fetchBuffer: async () => Buffer.from('jpeg-bytes'),
+    });
+    const payload = await provider.downloadForImport('concrete_floor_worn_001', { resolution: '2k' });
+    expect(payload.filename).toBe('concrete_floor_worn_001_2k.zip');
+  });
 });
 
 describe('ambientcg downloads', () => {
@@ -78,6 +113,11 @@ describe('ambientcg downloads', () => {
     const downloads = ambientDetail.assets[0].downloads;
     const picked = selectAmbientCgDownload(downloads, '2K-JPG');
     expect(picked?.attributes).toBe('2K-JPG');
+  });
+
+  it('lists download attribute options', () => {
+    const downloads = ambientDetail.assets[0].downloads;
+    expect(listAmbientCgDownloadOptions(downloads)).toEqual(['1K-JPG', '2K-JPG', '2K-PNG', '4K-JPG']);
   });
 
   it('falls back to lower resolution when preferred is unavailable', () => {
@@ -103,6 +143,18 @@ describe('ambientcg provider (mocked)', () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  it('exposes maps and resolutions on detail', async () => {
+    const provider = createAmbientCgProvider({
+      searchAssets: async () => ambientSearch,
+      fetchAsset: async () => ambientDetail.assets[0],
+      fetchBuffer: async () => Buffer.from('zip-bytes'),
+    });
+    const detail = await provider.getDetail('Concrete048');
+    expect(detail?.maps).toContain('Albedo');
+    expect(detail?.resolutions).toContain('2K-JPG');
+    expect(detail?.defaultResolution).toBe('2K-JPG');
+  });
+
   it('downloads the configured ZIP package', async () => {
     const provider = createAmbientCgProvider({
       searchAssets: async () => ambientSearch,
@@ -113,6 +165,16 @@ describe('ambientcg provider (mocked)', () => {
     expect(payload.filename).toBe('Concrete048_2K-JPG.zip');
     expect(payload.name).toBe('Concrete 048');
     expect(payload.buffer.length).toBeGreaterThan(0);
+  });
+
+  it('honours requested resolution on download', async () => {
+    const provider = createAmbientCgProvider({
+      searchAssets: async () => ambientSearch,
+      fetchAsset: async () => ambientDetail.assets[0],
+      fetchBuffer: async () => Buffer.from('zip-bytes'),
+    });
+    const payload = await provider.downloadForImport('Concrete048', { resolution: '4K-JPG' });
+    expect(payload.filename).toBe('Concrete048_4K-JPG.zip');
   });
 });
 

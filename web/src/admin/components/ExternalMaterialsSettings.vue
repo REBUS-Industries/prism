@@ -28,54 +28,71 @@ function escapeForPowerShellDoubleQuote(value: string): string {
     .replace(/"/g, '`"');
 }
 
+function buildExchangeScript(codeLiteral: string): string {
+  return [
+    `$clientId  = "${EPIC_CLIENT_ID}"`,
+    `$clientSecret = "${EPIC_CLIENT_SECRET}"`,
+    `$code = "${codeLiteral}"`,
+    '',
+    '$basic = [Convert]::ToBase64String(',
+    '  [Text.Encoding]::ASCII.GetBytes("${clientId}:${clientSecret}")',
+    ')',
+    '$body = "grant_type=authorization_code&code=$([uri]::EscapeDataString($code))&token_type=eg1"',
+    '',
+    '$response = Invoke-RestMethod `',
+    '  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" `',
+    '  -Method POST `',
+    '  -Headers @{',
+    '    Authorization = "Basic $basic"',
+    '    "Content-Type" = "application/x-www-form-urlencoded"',
+    '  } `',
+    '  -Body $body',
+    '',
+    '$response.refresh_token',
+  ].join('\n');
+}
+
+function buildVerifyRefreshScript(): string {
+  return [
+    `$clientId  = "${EPIC_CLIENT_ID}"`,
+    `$clientSecret = "${EPIC_CLIENT_SECRET}"`,
+    '$refreshToken = "PASTE_REFRESH_TOKEN_HERE"',
+    '',
+    '$basic = [Convert]::ToBase64String(',
+    '  [Text.Encoding]::ASCII.GetBytes("${clientId}:${clientSecret}")',
+    ')',
+    '$body = "grant_type=refresh_token&refresh_token=$([uri]::EscapeDataString($refreshToken))&token_type=eg1"',
+    '',
+    '$response = Invoke-RestMethod `',
+    '  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" `',
+    '  -Method POST `',
+    '  -Headers @{',
+    '    Authorization = "Basic $basic"',
+    '    "Content-Type" = "application/x-www-form-urlencoded"',
+    '  } `',
+    '  -Body $body',
+    '',
+    '$response.access_token',
+  ].join('\n');
+}
+
+const legendaryCliScript = [
+  'pip install legendary-gl',
+  'legendary auth',
+].join('\n');
+
 const exchangeScript = computed(() => {
   const codeLiteral = authCodeInput.value.trim()
     ? escapeForPowerShellDoubleQuote(authCodeInput.value.trim())
     : 'PASTE_CODE_HERE';
-
-  return `$clientId  = "${EPIC_CLIENT_ID}"
-$clientSecret = "${EPIC_CLIENT_SECRET}"
-$code = "${codeLiteral}"
-
-$basic = [Convert]::ToBase64String(
-  [Text.Encoding]::ASCII.GetBytes("\${clientId}:\${clientSecret}")
-)
-$body = "grant_type=authorization_code&code=$([uri]::EscapeDataString($code))&token_type=eg1"
-
-$response = Invoke-RestMethod \`
-  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" \`
-  -Method POST \`
-  -Headers @{
-    Authorization = "Basic $basic"
-    "Content-Type" = "application/x-www-form-urlencoded"
-  } \`
-  -Body $body
-
-$response.refresh_token`;
+  return buildExchangeScript(codeLiteral);
 });
 
-const verifyRefreshScript = `$clientId  = "${EPIC_CLIENT_ID}"
-$clientSecret = "${EPIC_CLIENT_SECRET}"
-$refreshToken = "PASTE_REFRESH_TOKEN_HERE"
+const verifyRefreshScript = buildVerifyRefreshScript();
 
-$basic = [Convert]::ToBase64String(
-  [Text.Encoding]::ASCII.GetBytes("\${clientId}:\${clientSecret}")
-)
-$body = "grant_type=refresh_token&refresh_token=$([uri]::EscapeDataString($refreshToken))&token_type=eg1"
-
-$response = Invoke-RestMethod \`
-  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" \`
-  -Method POST \`
-  -Headers @{
-    Authorization = "Basic $basic"
-    "Content-Type" = "application/x-www-form-urlencoded"
-  } \`
-  -Body $body
-
-$response.access_token`;
-
-const legendaryCliScript = `pip install legendary-gl
-legendary auth`;
+function openEpicLoginUrl(): void {
+  window.open(epicLoginUrl, '_blank', 'noopener,noreferrer');
+}
 
 async function copyText(text: string, key: string): Promise<void> {
   try {
@@ -104,9 +121,27 @@ async function copyText(text: string, key: string): Promise<void> {
 const form = reactive({
   fabEnabled: true,
   fabHttpProxy: '',
+  fabFlareSolverrUrl: '',
   polyhavenEnabled: true,
   ambientcgEnabled: true,
 });
+
+const fabMarketplaceUrl = 'https://www.fab.com';
+const fabTestSearchUrl = computed(() => {
+  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${base}/api/external-materials/search?q=brick&sources=fab&limit=1`;
+});
+
+const flareSolverrDockerRun = [
+  'docker run -d --name flaresolverr --restart unless-stopped \\',
+  '  -p 8191:8191 \\',
+  '  -e LOG_LEVEL=info \\',
+  '  ghcr.io/flaresolverr/flaresolverr:latest',
+].join('\n');
+
+function openExternalUrl(url: string): void {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
 
 const fabStatusLine = computed(() => {
   if (!settings.value) return 'Loading…';
@@ -125,6 +160,7 @@ const isDirty = computed(() => {
   return (
     form.fabEnabled !== s.fab.enabled
     || form.fabHttpProxy !== s.fab.httpProxy
+    || form.fabFlareSolverrUrl !== s.fab.flareSolverrUrl
     || form.polyhavenEnabled !== s.polyhaven.enabled
     || form.ambientcgEnabled !== s.ambientcg.enabled
     || tokenDirty.value
@@ -139,6 +175,7 @@ async function refresh(): Promise<void> {
     settings.value = res.settings;
     form.fabEnabled = res.settings.fab.enabled;
     form.fabHttpProxy = res.settings.fab.httpProxy;
+    form.fabFlareSolverrUrl = res.settings.fab.flareSolverrUrl;
     form.polyhavenEnabled = res.settings.polyhaven.enabled;
     form.ambientcgEnabled = res.settings.ambientcg.enabled;
     tokenInput.value = '';
@@ -163,6 +200,7 @@ async function save(): Promise<void> {
       fab: {
         enabled: form.fabEnabled,
         httpProxy: form.fabHttpProxy,
+        flareSolverrUrl: form.fabFlareSolverrUrl,
       },
       polyhaven: { enabled: form.polyhavenEnabled },
       ambientcg: { enabled: form.ambientcgEnabled },
@@ -242,18 +280,21 @@ onMounted(() => { void refresh(); });
                   Open the Epic login redirect URL (UE Launcher public client):
                   <div class="token-help code-block">
                     <div class="code-block-toolbar">
-                      <a
-                        :href="epicLoginUrl"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="code-link"
-                      >{{ epicLoginUrl }}</a>
-                      <button
-                        type="button"
-                        class="copy-btn"
-                        @click="copyText(epicLoginUrl, 'url')"
-                      >{{ copiedKey === 'url' ? 'Copied' : 'Copy' }}</button>
+                      <span class="code-block-label">Epic login redirect</span>
+                      <div class="code-block-actions">
+                        <button
+                          type="button"
+                          class="copy-btn"
+                          @click="openEpicLoginUrl"
+                        >Open URL</button>
+                        <button
+                          type="button"
+                          class="copy-btn"
+                          @click="copyText(epicLoginUrl, 'url')"
+                        >{{ copiedKey === 'url' ? 'Copied' : 'Copy' }}</button>
+                      </div>
                     </div>
+                    <pre class="token-help-code">{{ epicLoginUrl }}</pre>
                   </div>
                 </li>
                 <li>
@@ -283,7 +324,7 @@ onMounted(() => { void refresh(); });
                         @click="copyText(exchangeScript, 'exchange')"
                       >{{ copiedKey === 'exchange' ? 'Copied' : 'Copy' }}</button>
                     </div>
-                    <pre class="token-help-pre">{{ exchangeScript }}</pre>
+                    <pre class="token-help-code">{{ exchangeScript }}</pre>
                   </div>
                 </li>
                 <li>Copy the printed <code>refresh_token</code> value and paste it above, then Save.</li>
@@ -304,7 +345,7 @@ onMounted(() => { void refresh(); });
                       @click="copyText(verifyRefreshScript, 'verify')"
                     >{{ copiedKey === 'verify' ? 'Copied' : 'Copy' }}</button>
                   </div>
-                  <pre class="token-help-pre">{{ verifyRefreshScript }}</pre>
+                  <pre class="token-help-code">{{ verifyRefreshScript }}</pre>
                 </div>
               </details>
 
@@ -318,7 +359,7 @@ onMounted(() => { void refresh(); });
                     @click="copyText(legendaryCliScript, 'legendary')"
                   >{{ copiedKey === 'legendary' ? 'Copied' : 'Copy' }}</button>
                 </div>
-                <pre class="token-help-pre">{{ legendaryCliScript }}</pre>
+                <pre class="token-help-code">{{ legendaryCliScript }}</pre>
               </div>
               <p>
                 After authenticating, read <code>refresh_token</code> from
@@ -361,6 +402,73 @@ onMounted(() => { void refresh(); });
             Overrides <code>FAB_HTTP_PROXY</code> when set here.
           </p>
         </div>
+
+        <fieldset class="cloudflare-block">
+          <legend>Cloudflare / Fab access</legend>
+          <p class="hint muted cf-intro">
+            Fab search runs on the PRISM server (e.g. VM 212), not in your browser.
+            Cloudflare <code>cf_clearance</code> cookies are bound to
+            <strong>egress IP + User-Agent + fingerprint</strong>. Solving a bot challenge
+            on your residential PC does <strong>not</strong> unblock server-side search unless
+            that browser uses the <strong>same HTTP proxy</strong> configured above.
+          </p>
+          <div class="cf-link-row">
+            <button type="button" class="link-btn" @click="openExternalUrl(fabMarketplaceUrl)">
+              Open Fab marketplace
+            </button>
+            <button type="button" class="link-btn" @click="openExternalUrl(fabTestSearchUrl)">
+              Test search API
+            </button>
+          </div>
+          <p class="hint muted">
+            “Open Fab marketplace” is for manual browsing only. “Test search API” hits
+            <code>/api/external-materials/search</code> through the server — use it to verify
+            proxy/FlareSolverr fixes, not to paste cookies from your PC.
+          </p>
+
+          <div class="field">
+            <label for="fab-flaresolverr">FlareSolverr URL <code class="muted">fab_flaresolverr_url</code></label>
+            <input
+              id="fab-flaresolverr"
+              v-model="form.fabFlareSolverrUrl"
+              type="text"
+              placeholder="http://127.0.0.1:8191/v1 (optional)"
+            />
+            <p class="hint muted">
+              When set, PRISM asks FlareSolverr to solve Cloudflare for
+              <code>www.fab.com</code> before Fab browse calls. FlareSolverr must egress
+              through the same IP as Fab HTTP (direct server IP or the proxy above).
+              Overrides <code>FAB_FLARESOLVERR_URL</code> when set here.
+            </p>
+          </div>
+
+          <details class="help-details">
+            <summary>Run FlareSolverr on the server (Docker)</summary>
+            <div class="help-body muted">
+              <p>
+                Deploy on the PRISM host or VM beside the materials service. From a machine
+                that can reach port 8191, set the URL above to
+                <code>http://&lt;host&gt;:8191/v1</code> and Save.
+              </p>
+              <div class="code-block">
+                <div class="code-block-toolbar">
+                  <span class="code-block-label">Docker run</span>
+                  <button
+                    type="button"
+                    class="copy-btn"
+                    @click="copyText(flareSolverrDockerRun, 'flaresolverr-docker')"
+                  >{{ copiedKey === 'flaresolverr-docker' ? 'Copied' : 'Copy' }}</button>
+                </div>
+                <pre class="token-help-code">{{ flareSolverrDockerRun }}</pre>
+              </div>
+              <p>
+                If Fab uses an HTTP proxy, pass the same proxy to FlareSolverr via its
+                <code>proxy</code> request field (PRISM forwards your Fab proxy automatically).
+                Re-test with “Test search API” after saving.
+              </p>
+            </div>
+          </details>
+        </fieldset>
       </fieldset>
 
       <fieldset class="provider-block">
@@ -384,7 +492,7 @@ onMounted(() => { void refresh(); });
       <p>
         These settings apply on the next external-materials request.
         See also <code>infra/.env.example</code> (<code>FAB_EPIC_REFRESH_TOKEN</code>,
-        <code>FAB_HTTP_PROXY</code>) for container-level configuration.
+        <code>FAB_HTTP_PROXY</code>, <code>FAB_FLARESOLVERR_URL</code>) for container-level configuration.
       </p>
     </div>
   </template>
@@ -397,7 +505,7 @@ onMounted(() => { void refresh(); });
 </template>
 
 <style scoped>
-.field-stack { display: flex; flex-direction: column; gap: 16px; }
+.field-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .provider-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 8px);
@@ -414,7 +522,7 @@ onMounted(() => { void refresh(); });
   text-transform: uppercase;
   padding: 0 6px;
 }
-.field { display: flex; flex-direction: column; gap: 6px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field label { font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
 .field label code { font-size: 11px; font-weight: 400; }
 .field input[type="text"],
@@ -426,7 +534,13 @@ onMounted(() => { void refresh(); });
   font-size: 13px;
   cursor: pointer;
 }
-.hint { font-size: 11px; line-height: 1.45; margin: 0; }
+.hint {
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .help-details {
   margin-top: 4px;
   border: 1px solid var(--color-border);
@@ -452,6 +566,9 @@ onMounted(() => { void refresh(); });
   padding: 0 12px 12px;
   font-size: 11px;
   line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .help-body h4 {
   margin: 12px 0 4px;
@@ -466,7 +583,7 @@ onMounted(() => { void refresh(); });
   margin: 4px 0 8px;
   padding-left: 18px;
 }
-.help-steps li { margin-bottom: 8px; }
+.help-steps li { margin-bottom: 8px; min-width: 0; }
 .help-steps li:last-child { margin-bottom: 0; }
 .token-help.code-block,
 .help-body .code-block {
@@ -474,7 +591,8 @@ onMounted(() => { void refresh(); });
   border-radius: var(--radius-sm, 6px);
   border: 1px solid var(--color-border);
   background: #1e1e2e;
-  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
 }
 .code-block-toolbar {
   display: flex;
@@ -492,17 +610,12 @@ onMounted(() => { void refresh(); });
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.55);
 }
-.code-link {
-  flex: 1;
-  min-width: 0;
-  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #89b4fa;
-  word-break: break-all;
-  text-decoration: none;
+.code-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
-.code-link:hover { text-decoration: underline; }
 .copy-btn {
   flex-shrink: 0;
   padding: 3px 10px;
@@ -519,15 +632,19 @@ onMounted(() => { void refresh(); });
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.25);
 }
-.token-help-pre {
+.token-help-code {
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px;
+  background: #1e1e1e;
   font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
   font-size: 12px;
   line-height: 1.6;
-  color: #cdd6f4;
+  color: #e8e8e8;
   white-space: pre;
   overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
   tab-size: 2;
 }
 .auth-code-field {
@@ -567,7 +684,13 @@ onMounted(() => { void refresh(); });
 }
 .verify-details[open] summary::before { transform: rotate(90deg); }
 .verify-details p { margin: 0 0 8px; font-size: 11px; }
-.help-copy { margin-top: 4px; font-size: 12px; line-height: 1.5; }
+.help-copy {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .help-copy p { margin: 0; }
 .footer-actions {
   display: flex;
@@ -575,5 +698,39 @@ onMounted(() => { void refresh(); });
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--color-border);
+}
+.cloudflare-block {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 8px);
+  padding: 10px 12px 12px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cloudflare-block legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 6px;
+}
+.cf-intro { margin: 0; }
+.cf-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.link-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-elevated, var(--color-bg));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.link-btn:hover {
+  border-color: var(--color-accent, #6366f1);
 }
 </style>
