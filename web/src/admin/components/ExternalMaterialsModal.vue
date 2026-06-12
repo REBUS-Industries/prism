@@ -68,9 +68,16 @@ const detailMaps = computed(() => detail.value?.maps ?? []);
 
 const resolutionOptions = computed(() => detail.value?.resolutions ?? []);
 
-const showResolutionPicker = computed(() =>
-  resolutionOptions.value.length > 1 && selected.value?.source !== 'fab',
+const showResolutionPicker = computed(() => resolutionOptions.value.length > 0);
+
+const providerUrl = computed(() =>
+  detail.value?.providerUrl ?? selected.value?.providerUrl ?? null,
 );
+
+const providerLinkLabel = computed(() => {
+  if (!selected.value) return 'Open on provider';
+  return `Open on ${sourceLabel(selected.value.source)}`;
+});
 
 const detailPreviewUrl = computed(() => {
   if (!detail.value) return null;
@@ -289,7 +296,16 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
           <aside v-if="selected" class="detail">
             <h3>{{ selected.title }}</h3>
-            <span class="source-badge lg">{{ sourceLabel(selected.source) }}</span>
+            <div class="detail-head-row">
+              <span class="source-badge lg">{{ sourceLabel(selected.source) }}</span>
+              <a
+                v-if="providerUrl"
+                class="provider-link"
+                :href="providerUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >{{ providerLinkLabel }}</a>
+            </div>
             <div v-if="detailLoading" class="muted small">Loading preview…</div>
             <template v-else-if="detail">
               <div v-if="detailPreviewUrl" class="preview preview-media">
@@ -319,7 +335,6 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
                   >{{ res }}</button>
                 </div>
               </div>
-              <p v-else-if="selected?.source === 'fab'" class="muted small">Resolution: provider default (Fab)</p>
               <p v-if="!fabImportConfigured" class="warn small">
                 Fab import is not configured.
                 Set an Epic refresh token under
@@ -454,7 +469,17 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   background: var(--color-bg-elevated);
   color: var(--color-text);
 }
-.desc { font-size: 12px; margin: 0; color: var(--color-text-muted); line-height: 1.45; }
+.detail-head-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.provider-link {
+  font-size: 11px;
+  color: var(--orbit-primary);
+  text-decoration: none;
+}
+.provider-link:hover { text-decoration: underline; }
+.desc {
+  font-size: 12px; margin: 0; color: var(--color-text-muted); line-height: 1.45;
+  white-space: pre-line;
+}
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag { font-size: 10px; text-transform: none; letter-spacing: normal; }
 .warn { color: var(--color-warning, #c90); margin: 0; line-height: 1.45; }

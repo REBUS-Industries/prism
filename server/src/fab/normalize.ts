@@ -77,6 +77,107 @@ export function normalizeSearchListing(listing: FabSearchListing): FabAssetSumma
   };
 }
 
+const FAB_MAP_LABELS = [
+  'albedo',
+  'base color',
+  'basecolor',
+  'diffuse',
+  'normal',
+  'roughness',
+  'displacement',
+  'height',
+  'ao',
+  'ambient occlusion',
+  'cavity',
+  'bump',
+  'specular',
+  'gloss',
+  'opacity',
+  'emissive',
+  'metalness',
+  'metallic',
+] as const;
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+}
+
+/** Strip Fab listing HTML to readable plain text (preserves line breaks). */
+export function stripFabDescriptionHtml(html: string): string {
+  let text = html.trim();
+  if (!text) return '';
+
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n');
+  text = text.replace(/<\/div>/gi, '\n');
+  text = text.replace(/<\/li>/gi, '\n');
+  text = text.replace(/<li[^>]*>/gi, '• ');
+  text = text.replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, '$1');
+  text = text.replace(/<[^>]+>/g, '');
+  text = decodeHtmlEntities(text);
+  text = text.replace(/[ \t]+/g, ' ');
+  text = text.replace(/ *\n */g, '\n');
+  text = text.replace(/\n{3,}/g, '\n\n');
+  return text.trim();
+}
+
+function titleCaseMapLabel(raw: string): string {
+  const lower = raw.trim().toLowerCase();
+  if (lower === 'ao' || lower === 'basecolor' || lower === 'base color') {
+    return lower === 'ao' ? 'AO' : 'Albedo';
+  }
+  return raw.trim().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Extract PBR map names mentioned in Fab HTML descriptions. */
+export function extractFabMapsFromDescription(html: string): string[] {
+  const found = new Set<string>();
+  const lower = html.toLowerCase();
+
+  for (const label of FAB_MAP_LABELS) {
+    if (lower.includes(label)) {
+      found.add(titleCaseMapLabel(label === 'base color' || label === 'basecolor' || label === 'diffuse'
+        ? 'Albedo'
+        : label));
+    }
+  }
+
+  const listMatch = html.match(/maps?\s*:?\s*<\/strong>\s*([^<]+)/i)
+    ?? html.match(/maps?\s*:?\s*([^<\n]+)/i);
+  if (listMatch?.[1]) {
+    for (const part of listMatch[1].split(/[,;•]/)) {
+      const cleaned = part.replace(/<[^>]+>/g, '').trim();
+      if (cleaned.length >= 2 && cleaned.length <= 32) {
+        found.add(titleCaseMapLabel(cleaned));
+      }
+    }
+  }
+
+  return [...found];
+}
+
+export function parseFabDescription(html: string | null | undefined): {
+  text: string | null;
+  maps: string[];
+} {
+  if (!html?.trim()) return { text: null, maps: [] };
+  return {
+    text: stripFabDescriptionHtml(html) || null,
+    maps: extractFabMapsFromDescription(html),
+  };
+}
+
+export function fabProviderUrl(listingId: string): string {
+  return `https://www.fab.com/listings/${encodeURIComponent(listingId)}`;
+}
+
 export function normalizeListingDetail(detail: FabListingDetail): FabAssetDetail {
   const base = normalizeSearchListing(detail);
   const ratings = detail.ratings as { averageRating?: number; total?: number } | undefined;

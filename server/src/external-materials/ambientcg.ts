@@ -180,6 +180,7 @@ function normalizeAsset(
     relevanceScore,
     description: asset.longDescription?.trim() || asset.shortDescription?.trim() || null,
     formats: [...new Set(downloads.map((d) => d.extension))],
+    providerUrl: `https://ambientcg.com/view?id=${encodeURIComponent(asset.id)}`,
     maps: [...AMBIENTCG_STANDARD_MAPS],
     resolutions,
     defaultResolution,

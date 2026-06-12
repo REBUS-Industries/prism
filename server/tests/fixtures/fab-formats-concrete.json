@@ -1,0 +1,11 @@
+[
+  {
+    "assetFormatType": { "code": "texture-set", "name": "Texture Set" },
+    "files": [
+      { "uid": "f-8k", "name": "concrete_floor_worn_001_8k.zip", "fileSize": 524288000 },
+      { "uid": "f-4k", "name": "concrete_floor_worn_001_4k.zip", "fileSize": 131072000 },
+      { "uid": "f-2k", "name": "concrete_floor_worn_001_2k.zip", "fileSize": 32768000 },
+      { "uid": "f-1k", "name": "concrete_floor_worn_001_1k.zip", "fileSize": 8192000 }
+    ]
+  }
+]
