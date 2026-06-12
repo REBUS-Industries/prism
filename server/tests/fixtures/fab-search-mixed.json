@@ -1,0 +1,52 @@
+{
+  "cursors": { "next": "page-2", "previous": null },
+  "results": [
+    {
+      "uid": "free-single-001",
+      "title": "Red Brick Wall",
+      "listingType": "material",
+      "isFree": true,
+      "startingPrice": { "price": 0 },
+      "tags": [{ "name": "Brick" }],
+      "assetFormats": [
+        { "assetFormatType": { "code": "texture-set", "name": "Texture Set" } },
+        { "assetFormatType": { "code": "gltf", "name": "GLTF" } }
+      ],
+      "thumbnails": []
+    },
+    {
+      "uid": "paid-single-002",
+      "title": "Paid Brick",
+      "listingType": "material",
+      "isFree": false,
+      "startingPrice": { "price": 0.99 },
+      "tags": [],
+      "assetFormats": [
+        { "assetFormatType": { "code": "texture-set", "name": "Texture Set" } }
+      ],
+      "thumbnails": []
+    },
+    {
+      "uid": "free-pack-003",
+      "title": "Tree Bark Material Pack",
+      "listingType": "material",
+      "isFree": true,
+      "tags": [],
+      "assetFormats": [
+        { "assetFormatType": { "code": "unreal-engine", "name": "Unreal Engine" } }
+      ],
+      "thumbnails": []
+    },
+    {
+      "uid": "free-single-004",
+      "title": "Concrete Floor",
+      "listingType": "material",
+      "isFree": true,
+      "tags": [{ "name": "concrete" }],
+      "assetFormats": [
+        { "assetFormatType": { "code": "megascans", "name": "Megascans" } }
+      ],
+      "thumbnails": []
+    }
+  ]
+}

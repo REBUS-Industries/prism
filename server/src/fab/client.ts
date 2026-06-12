@@ -12,9 +12,10 @@ import {
   ensureFabCsrf,
 } from './auth.js';
 import { assembleFileFromManifest, fetchManifestBytes } from './downloadManifest.js';
+import { isFreeSingleMaterialListing, isFreeSingleMaterialSummary } from './filter.js';
 import {
   normalizeListingDetail,
-  normalizeSearchPage,
+  normalizeSearchListing,
   type FabAssetDetail,
   type FabSearchPage,
 } from './normalize.js';
@@ -119,32 +120,73 @@ async function fabJson<T>(res: Response, retryOnCf = true): Promise<T> {
   }
 }
 
+const FAB_SEARCH_MAX_PAGES = 4;
+
+function fabSearchParams(q: string, pageSize: number, cursor: string | null): URLSearchParams {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set('q', q.trim());
+  params.set('listing_types', 'material');
+  params.set('is_free', '1');
+  params.set('formats', 'texture-set');
+  params.set('count', String(Math.min(Math.max(pageSize, 1), 48)));
+  params.set('sort_by', 'relevance');
+  if (cursor) params.set('cursor', cursor);
+  return params;
+}
+
+async function fabSearchRawPage(
+  q: string,
+  pageSize: number,
+  cursor: string | null,
+): Promise<FabSearchResponse> {
+  const url = `${FAB_BASE}/i/listings/search?${fabSearchParams(q, pageSize, cursor).toString()}`;
+  let res = await fabBrowseRequest(url);
+  try {
+    return await fabJson<FabSearchResponse>(res);
+  } catch (err) {
+    if (err instanceof FabApiError && err.code === 'fab_cloudflare_retry') {
+      res = await fabBrowseRequest(url);
+      return fabJson<FabSearchResponse>(res, false);
+    }
+    throw err;
+  }
+}
+
 export async function fabSearch(
   q: string,
   limit: number,
   cursor: string | null,
 ): Promise<FabSearchPage> {
   await ensureFabCsrf();
-  const params = new URLSearchParams();
-  if (q.trim()) params.set('q', q.trim());
-  params.set('listing_types', 'material');
-  params.set('count', String(Math.min(Math.max(limit, 1), 48)));
-  params.set('sort_by', 'relevance');
-  if (cursor) params.set('cursor', cursor);
+  const target = Math.min(Math.max(limit, 1), 48);
+  const pageSize = Math.min(Math.max(target, 12), 48);
 
-  const url = `${FAB_BASE}/i/listings/search?${params.toString()}`;
-  let res = await fabBrowseRequest(url);
-  try {
-    const raw = await fabJson<FabSearchResponse>(res);
-    return normalizeSearchPage(raw, limit, cursor);
-  } catch (err) {
-    if (err instanceof FabApiError && err.code === 'fab_cloudflare_retry') {
-      res = await fabBrowseRequest(url);
-      const raw = await fabJson<FabSearchResponse>(res, false);
-      return normalizeSearchPage(raw, limit, cursor);
+  const items: FabSearchPage['items'] = [];
+  let requestCursor = cursor;
+  let nextCursor: string | null = null;
+  let pagesFetched = 0;
+
+  while (items.length < target && pagesFetched < FAB_SEARCH_MAX_PAGES) {
+    const raw = await fabSearchRawPage(q, pageSize, requestCursor);
+    pagesFetched += 1;
+
+    for (const listing of raw.results ?? []) {
+      if (!isFreeSingleMaterialListing(listing)) continue;
+      items.push(normalizeSearchListing(listing));
+      if (items.length >= target) break;
     }
-    throw err;
+
+    nextCursor = raw.cursors?.next ?? null;
+    if (!nextCursor) break;
+    requestCursor = nextCursor;
   }
+
+  return {
+    items: items.slice(0, target),
+    limit: target,
+    cursor,
+    nextCursor: items.length >= target ? nextCursor : null,
+  };
 }
 
 export async function fabGetListing(uid: string): Promise<FabAssetDetail | null> {
@@ -210,6 +252,13 @@ export async function fabDownloadMaterialZip(
 
   const detail = await fabGetListing(listingId);
   if (!detail) throw new FabApiError('Fab listing not found', 404);
+  if (!isFreeSingleMaterialSummary(detail)) {
+    throw new FabApiError(
+      'Fab listing is not a free single downloadable material',
+      403,
+      'fab_listing_not_importable',
+    );
+  }
 
   await fabAddToLibrary(listingId).catch(() => { /* may already own */ });
 

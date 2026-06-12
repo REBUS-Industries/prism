@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  isFreeSingleMaterialListing,
+} from '../src/fab/filter.js';
+import {
   normalizeListingDetail,
   normalizeSearchListing,
   normalizeSearchPage,
@@ -43,6 +46,14 @@ describe('normalizeSearchPage', () => {
     expect(page.items).toHaveLength(2);
     expect(page.limit).toBe(2);
     expect(page.nextCursor).toBe('bz0y');
+  });
+
+  it('applies optional listing filter', () => {
+    const mixed = JSON.parse(
+      readFileSync(join(import.meta.dirname, 'fixtures', 'fab-search-mixed.json'), 'utf8'),
+    ) as FabSearchResponse;
+    const page = normalizeSearchPage(mixed, 10, null, isFreeSingleMaterialListing);
+    expect(page.items.map((i) => i.id)).toEqual(['free-single-001', 'free-single-004']);
   });
 });
 
