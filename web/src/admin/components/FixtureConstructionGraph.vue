@@ -202,12 +202,6 @@ const graph = computed<Built>(() => {
     if (!a.controlledPartId) continue;
     (motionByPart.get(a.controlledPartId) ?? motionByPart.set(a.controlledPartId, []).get(a.controlledPartId)!).push(a);
   }
-  const beamsByPart = new Map<string, FixtureBeam[]>();
-  for (const b of fBeams) {
-    if (!b.parentPartId) continue;
-    (beamsByPart.get(b.parentPartId) ?? beamsByPart.set(b.parentPartId, []).get(b.parentPartId)!).push(b);
-  }
-
   interface TNode { id: string; data: FixtureGraphNodeData; children: TNode[] }
 
   const modelChild = (m: FixtureModel, partId: string): TNode => ({
@@ -247,13 +241,14 @@ const graph = computed<Built>(() => {
     },
   });
 
-  const beamChild = (b: FixtureBeam): TNode => ({
+  const beamChild = (b: FixtureBeam, title?: string): TNode => ({
     id: `beam:${b.beamId}`,
     children: [],
     data: {
-      kind: 'beam', title: b.beamType || 'Beam', subtitle: 'REBUS beam', icon: 'wb_incandescent', accent: ACCENT.beams,
+      kind: 'beam', title: title ?? (b.beamType || 'Beam'), subtitle: 'REBUS beam', icon: 'wb_incandescent', accent: ACCENT.beams,
       params: [
         { label: 'Type', value: str(b.beamType) },
+        { label: 'Emitter part', value: partLabel(b.parentPartId) },
         { label: 'Beam angle', value: b.beamAngle !== undefined ? `${fmtNum(b.beamAngle)}°` : '—' },
         { label: 'Field angle', value: b.fieldAngle !== undefined ? `${fmtNum(b.fieldAngle)}°` : '—' },
         { label: 'Lum. flux', value: b.luminousFlux !== undefined ? `${fmtNum(b.luminousFlux)} lm` : '—' },
@@ -267,7 +262,6 @@ const graph = computed<Built>(() => {
     const children: TNode[] = [];
     if (p.modelId && modelById.has(p.modelId)) children.push(modelChild(modelById.get(p.modelId)!, p.partId));
     for (const a of motionByPart.get(p.partId) ?? []) children.push(motionChild(a));
-    for (const b of beamsByPart.get(p.partId) ?? []) children.push(beamChild(b));
     return {
       id: `part:${p.partId}`,
       children,
@@ -288,9 +282,27 @@ const graph = computed<Built>(() => {
   };
 
   // ---- tree: GDTF → Fixture → {Information, REBUS tags…, DMX Mapping} -------
+  // REBUS Beams hold all light information (no models). They live under the
+  // BEAM tag, grouped by beam type (e.g. "Beam Pixel") when there are several.
+  const beamTagChildren = (): TNode[] => {
+    const byType = new Map<string, FixtureBeam[]>();
+    for (const b of fBeams) {
+      const t = b.beamType || 'Beam';
+      (byType.get(t) ?? byType.set(t, []).get(t)!).push(b);
+    }
+    if (byType.size <= 1) return fBeams.map((b) => beamChild(b));
+    return [...byType.entries()].map(([t, list]) => ({
+      id: `beamgrp:${t}`,
+      children: list.map((b) => beamChild(b, partLabel(b.parentPartId))),
+      data: { kind: 'category', title: t, subtitle: 'beam type', icon: 'flare', accent: ACCENT.beams, badge: list.length },
+    }));
+  };
+
   const tagNodes: TNode[] = STANDARD_TAGS.map((tag) => {
     const ps = fParts.filter((p) => p.tag === tag);
     const children = ps.map(partNode);
+    // The BEAM tag carries the REBUS Beams (light info/IES), not part meshes.
+    if (tag === 'BEAM') children.push(...beamTagChildren());
     // The ORIGIN tag always carries an Origin node describing the fixture's
     // reference location (implicit fixture base when no ORIGIN geometry exists).
     if (tag === 'ORIGIN') {
