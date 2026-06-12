@@ -22,7 +22,11 @@ function assignSlotMap(m: THREE.MeshPhysicalMaterial, slot: MaterialSlot, tex: T
     case 'ao': m.aoMap = tex; break;
     case 'emissive': m.emissiveMap = tex; break;
     case 'opacity': m.alphaMap = tex; break;
-    case 'displacement': m.displacementMap = tex; break;
+    // NOTE: the 'displacement' slot is intentionally NOT applied. A
+    // displacementMap moves vertices along their normals (Three default
+    // displacementScale = 1 metre), which shatters fixture meshes that aren't
+    // subdivided/UV'd for it. Displacement stays a materials-editor preview-only
+    // feature.
   }
 }
 
@@ -50,6 +54,8 @@ export function buildFixturePbrMaterial(
   material.transparent = p.opacity < 1;
   material.aoMapIntensity = p.aoIntensity;
   material.normalScale.set(p.normalScale, (p.flipNormalY ? -1 : 1) * p.normalScale);
+  // Never displace fixture geometry (no displacementMap is assigned either).
+  material.displacementScale = 0;
   material.clearcoat = p.clearCoatFactor;
   material.clearcoatRoughness = p.clearCoatRoughness;
 
