@@ -385,13 +385,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
 .result-card {
-  display: flex; flex-direction: column; gap: 4px; padding: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px;
   border: 1px solid var(--color-border); border-radius: var(--radius);
-  background: var(--color-bg-input); text-align: left; cursor: pointer;
+  background: var(--color-bg-input); text-align: center; cursor: pointer;
+  min-width: 0; overflow: hidden;
 }
 .result-card:hover, .result-card.selected { border-color: var(--orbit-primary); }
 .thumb {
-  aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden;
+  width: 100%; aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden;
   background-color: var(--color-bg-input);
   background-image:
     linear-gradient(45deg, color-mix(in srgb, var(--color-border) 55%, transparent) 25%, transparent 25%),
@@ -405,11 +406,11 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .thumb img { width: 100%; height: 100%; object-fit: cover; }
 .thumb-empty { font-size: 11px; }
 .result-title {
-  font-size: 12px; font-weight: 600;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  width: 100%; font-size: 12px; font-weight: 600; line-height: 1.35;
+  overflow-wrap: anywhere; word-break: break-word; hyphens: auto;
 }
 .source-badge {
-  align-self: flex-start;
+  align-self: center;
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: 4px;
   background: var(--orbit-primary); color: #fff;
