@@ -120,6 +120,8 @@ Agents never run `gh pr merge` directly. Instead:
 3. In the Slack channel: `/prism-merge <PR-number>`
 4. Bot handles the merge, deploy, and unlock
 
+**Check without merging:** `/prism-merge check` (modal) or `/prism-merge check 85` — reports mergeability, head CI, and post-merge deploy workflow status (works on merged PRs too).
+
 That's it — the bot is the only thing that merges to main.
 
 ---

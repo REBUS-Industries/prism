@@ -2,6 +2,8 @@
  * PRISM Merge Bot
  *
  * /prism-merge          → opens modal with live repo dropdown + open PR list
+ * /prism-merge check    → opens modal to check PR status (no merge)
+ * /prism-merge check 42 → report mergeability + CI for a PR (open or merged)
  * /prism-merge 42       → direct merge (agent shorthand)
  * /prism-merge repo#42  → direct merge in another REBUS-Industries repo
  * /prism-merge pin      → post a pinned Merge button to the channel
@@ -334,6 +336,92 @@ async function getCommitCheckFailures(repo, sha) {
   return lines;
 }
 
+async function getDeployCiSnapshot(repo, afterIso) {
+  const config = repoCiConfig(repo);
+  const lines = [];
+  const watchList = config.workflows?.length ? config.workflows.join(', ') : 'none configured';
+
+  const primary = await getWorkflowBatch(repo, afterIso, config.workflows);
+  lines.push(`*${repo.replace('REBUS-Industries/', '')}* workflows (${watchList}): ${primary.detail || 'no runs yet'}`);
+
+  if (!primary.started) {
+    lines.push('_No matching workflow runs since merge._');
+  } else if (primary.pending) {
+    lines.push(':hourglass: Deploy CI still running.');
+  } else if (primary.failedRun) {
+    lines.push(':x: Deploy CI failed.');
+    const errors = await safeGetRunFailureSummary(repo, primary.failedRun);
+    if (errors) lines.push(formatErrorBlock(errors));
+    if (primary.failedRun.html_url) lines.push(`<${primary.failedRun.html_url}|View failed run>`);
+  } else {
+    lines.push(':white_check_mark: Deploy CI passed.');
+    if (primary.runs[0]?.html_url) lines.push(`<${primary.runs[0].html_url}|View CI run>`);
+  }
+
+  for (const cross of config.crossRepo ?? []) {
+    const crossBatch = await getWorkflowBatch(cross.repo, afterIso, cross.workflows);
+    const crossWatch = cross.workflows.join(', ');
+    lines.push(`${cross.repo.replace('REBUS-Industries/', '')} (${crossWatch}): ${crossBatch.detail || 'no runs yet'}`);
+    if (crossBatch.pending) lines.push(':hourglass: Cross-repo deploy still running.');
+    else if (crossBatch.failedRun) lines.push(':x: Cross-repo deploy failed.');
+    else if (crossBatch.started) lines.push(':white_check_mark: Cross-repo deploy passed.');
+  }
+
+  return lines.join('\n');
+}
+
+async function buildPrCheckReport(repo, prNumber) {
+  const pr = await getPRInfo(repo, prNumber);
+  if (!pr) {
+    return { ok: false, text: `:x: PR ${prLabel(repo, prNumber)} not found in ${repo}.` };
+  }
+
+  const label = prLabel(repo, prNumber);
+  const url = prUrl(repo, prNumber);
+  const lines = [
+    `*${label}* — _${pr.title}_`,
+    `@${pr.user?.login ?? '?'} · \`${pr.head?.ref ?? '?'}\` → \`${pr.base?.ref ?? 'main'}\``,
+    `State: *${pr.state}* · mergeable: \`${pr.mergeable}\` · \`${pr.mergeable_state}\``,
+    `<${url}|View PR>`,
+  ];
+
+  if (pr.state === 'open') {
+    if (MERGE_STATE_HELP[pr.mergeable_state]) lines.push(MERGE_STATE_HELP[pr.mergeable_state]);
+    const checkLines = await getCommitCheckFailures(repo, pr.head?.sha);
+    lines.push('', '*Checks on head:*');
+    if (checkLines.length) lines.push(...checkLines);
+    else lines.push('_No failing or pending checks on head._');
+    if (isReserved(repo, prNumber)) {
+      const slot = active?.repo === repo && active?.prNumber === prNumber ? 'merging' : 'queued';
+      lines.push('', `:information_source: This PR is currently ${slot} in the merge bot.`);
+    }
+  }
+
+  if (pr.merged_at) {
+    lines.push('', '*Post-merge deploy CI:*');
+    lines.push(await getDeployCiSnapshot(repo, pr.merged_at));
+  } else if (pr.state === 'closed') {
+    lines.push('', '_PR was closed without merging._');
+  }
+
+  return { ok: true, text: lines.join('\n') };
+}
+
+async function checkPR(repo, prNumber, userName, channelId, res, isModal = false) {
+  const label = prLabel(repo, prNumber);
+  const report = await buildPrCheckReport(repo, prNumber);
+  const text = report.ok
+    ? `:mag: *@${userName}* checked ${label}:\n${report.text}`
+    : report.text;
+
+  if (isModal) {
+    res.json({ response_action: 'clear' });
+    await postToSlack(channelId, text);
+  } else {
+    res.json({ response_type: 'in_channel', text });
+  }
+}
+
 async function pollDeploys(repo, afterIso, maxMinutes = CI_WATCH_MINUTES) {
   const config = repoCiConfig(repo);
   const elapsedMs = Date.now() - new Date(afterIso).getTime();
@@ -613,7 +701,8 @@ function buildPrPreviewBlock(pr) {
   };
 }
 
-function buildModalView(channelId, selectablePRs, selectedPr = null, totalOpen = 0) {
+function buildModalView(channelId, selectablePRs, selectedPr = null, totalOpen = 0, mode = 'merge') {
+  const isCheck = mode === 'check';
   const statusText = queueStatusText();
   const emptyText = totalOpen > 0 && selectablePRs.length === 0
     ? '_All open PRs are currently merging or queued._'
@@ -645,27 +734,37 @@ function buildModalView(channelId, selectablePRs, selectedPr = null, totalOpen =
 
   return {
     type: 'modal',
-    callback_id: 'merge_modal',
+    callback_id: isCheck ? 'check_modal' : 'merge_modal',
     private_metadata: channelId,
-    title: { type: 'plain_text', text: 'Merge a PR' },
-    submit: selectablePRs.length > 0 ? { type: 'plain_text', text: 'Merge' } : undefined,
+    title: { type: 'plain_text', text: isCheck ? 'Check a PR' : 'Merge a PR' },
+    submit: selectablePRs.length > 0
+      ? { type: 'plain_text', text: isCheck ? 'Check status' : 'Merge' }
+      : undefined,
     close: { type: 'plain_text', text: 'Cancel' },
     blocks: [
       prBlock,
       { type: 'divider' },
       buildPrPreviewBlock(selectedPr),
-      { type: 'context', elements: [{ type: 'mrkdwn', text: statusText }] },
+      {
+        type: 'context',
+        elements: [{
+          type: 'mrkdwn',
+          text: isCheck
+            ? `${statusText}\n_Checks mergeability, head CI, and post-merge deploy workflows. Use \`/prism-merge check 42\` for merged PRs._`
+            : statusText,
+        }],
+      },
     ],
   };
 }
 
-async function openMergeModal(triggerId, channelId) {
-  // Open immediately with a loading placeholder — trigger_id expires in 3s.
+async function openPrModal(triggerId, channelId, mode = 'merge') {
+  const isCheck = mode === 'check';
   const loadingView = {
     type: 'modal',
-    callback_id: 'merge_modal',
+    callback_id: isCheck ? 'check_modal' : 'merge_modal',
     private_metadata: channelId,
-    title: { type: 'plain_text', text: 'Merge a PR' },
+    title: { type: 'plain_text', text: isCheck ? 'Check a PR' : 'Merge a PR' },
     close: { type: 'plain_text', text: 'Cancel' },
     blocks: [
       { type: 'section', text: { type: 'mrkdwn', text: ':hourglass: Fetching open pull requests…' } },
@@ -674,15 +773,22 @@ async function openMergeModal(triggerId, channelId) {
   const opened = await slackApi('views.open', { trigger_id: triggerId, view: loadingView });
   if (!opened.ok) return;
 
-  // Fetch all PRs in parallel, then update the modal.
   const allPRs = await getAllOpenPRs();
   modalPrCache = allPRs;
   const selectable = filterSelectablePRs(allPRs);
   const defaultPr = selectable[0] ?? null;
   await slackApi('views.update', {
     view_id: opened.view.id,
-    view: buildModalView(channelId, selectable, defaultPr, allPRs.length),
+    view: buildModalView(channelId, selectable, defaultPr, allPRs.length, mode),
   });
+}
+
+async function openMergeModal(triggerId, channelId) {
+  return openPrModal(triggerId, channelId, 'merge');
+}
+
+async function openCheckModal(triggerId, channelId) {
+  return openPrModal(triggerId, channelId, 'check');
 }
 
 // ─── App Home ─────────────────────────────────────────────────────────────────
@@ -698,9 +804,12 @@ async function publishHome(userId) {
         { type: 'section', text: { type: 'mrkdwn', text: 'Merge a PR to `main` and deploy to prism-dev. Merges run one at a time; extra requests are queued.' } },
         { type: 'divider' },
         { type: 'section', text: { type: 'mrkdwn', text: statusText } },
-        { type: 'actions', elements: [{ type: 'button', action_id: 'open_merge_modal', style: 'primary', text: { type: 'plain_text', text: '🚀  Merge a PR', emoji: true } }] },
+        { type: 'actions', elements: [
+          { type: 'button', action_id: 'open_merge_modal', style: 'primary', text: { type: 'plain_text', text: '🚀  Merge a PR', emoji: true } },
+          { type: 'button', action_id: 'open_check_modal', text: { type: 'plain_text', text: '🔍  Check a PR', emoji: true } },
+        ] },
         { type: 'divider' },
-        { type: 'context', elements: [{ type: 'mrkdwn', text: 'Or: `/prism-merge 42` · `/prism-merge prism-fixtures-service#7`' }] },
+        { type: 'context', elements: [{ type: 'mrkdwn', text: 'Or: `/prism-merge 42` · `/prism-merge check 42` · `/prism-merge prism-fixtures-service#7`' }] },
       ],
     },
   });
@@ -717,6 +826,12 @@ async function postPinMessage(channelId) {
         type: 'section',
         text: { type: 'mrkdwn', text: '*PRISM Merge Bot* — merge a PR and deploy to prism-dev.' },
         accessory: { type: 'button', action_id: 'open_merge_modal', style: 'primary', text: { type: 'plain_text', text: '🚀  Merge a PR', emoji: true } },
+      },
+      {
+        type: 'actions',
+        elements: [
+          { type: 'button', action_id: 'open_check_modal', text: { type: 'plain_text', text: '🔍  Check a PR', emoji: true } },
+        ],
       },
       { type: 'context', elements: [{ type: 'mrkdwn', text: 'Merges run serially; queued PRs start automatically when the current deploy finishes.' }] },
     ],
@@ -982,6 +1097,22 @@ app.post('/merge', async (req, res) => {
     await postPinMessage(channelId);
     return res.json({ response_type: 'ephemeral', text: ':pushpin: Merge button posted and pinned.' });
   }
+  if (text === 'check' || text.startsWith('check ')) {
+    const rest = text === 'check' ? '' : text.slice(6).trim();
+    if (!rest) {
+      await openCheckModal(triggerId, channelId);
+      return res.json({ response_type: 'ephemeral', text: '' });
+    }
+    const parsed = parseArgs(rest);
+    if (!parsed) {
+      return res.json({
+        response_type: 'ephemeral',
+        text: 'Usage: `/prism-merge check` (opens form) or `/prism-merge check 42` or `/prism-merge check repo-name#42`',
+      });
+    }
+    await checkPR(parsed.repo, parsed.prNumber, userName, channelId, res, false);
+    return;
+  }
   if (!text) {
     await openMergeModal(triggerId, channelId);
     return res.json({ response_type: 'ephemeral', text: '' });
@@ -1017,17 +1148,24 @@ app.post('/interact', async (req, res) => {
       await openMergeModal(payload.trigger_id, channelId);
       return;
     }
-    if (action?.action_id === 'pr_select' && payload.view?.callback_id === 'merge_modal') {
+    if (action?.action_id === 'open_check_modal') {
+      res.json({});
+      const channelId = payload.channel?.id ?? payload.user.id;
+      await openCheckModal(payload.trigger_id, channelId);
+      return;
+    }
+    if (action?.action_id === 'pr_select' && (payload.view?.callback_id === 'merge_modal' || payload.view?.callback_id === 'check_modal')) {
       res.json({});
       const raw = action.selected_option?.value ?? '';
       const selectable = filterSelectablePRs(modalPrCache);
       const pr = selectable.find(p => `${p._repo}::${p.number}` === raw) ?? null;
       const channelId = payload.view.private_metadata;
-      console.log(`Modal PR preview update: ${raw}`);
+      const mode = payload.view.callback_id === 'check_modal' ? 'check' : 'merge';
+      console.log(`Modal PR preview update (${mode}): ${raw}`);
       const updated = await slackApi('views.update', {
         view_id: payload.view.id,
         hash: payload.view.hash,
-        view: buildModalView(channelId, selectable, pr, modalPrCache.length),
+        view: buildModalView(channelId, selectable, pr, modalPrCache.length, mode),
       });
       if (!updated.ok) console.error('views.update failed:', JSON.stringify(updated));
       return;
@@ -1048,6 +1186,20 @@ app.post('/interact', async (req, res) => {
       return res.json({ response_action: 'errors', errors: { pr_block: 'Select a pull request.' } });
     }
     await startMerge(repo, prNumber, userName, channelId, res, true);
+    return;
+  }
+
+  if (payload.type === 'view_submission' && payload.view?.callback_id === 'check_modal') {
+    const values    = payload.view.state.values;
+    const raw       = values.pr_block?.pr_select?.selected_option?.value ?? '';
+    const [repo, prStr] = raw.split('::');
+    const prNumber  = parseInt(prStr ?? '', 10);
+    const userName  = payload.user?.username || 'unknown';
+    const channelId = payload.view?.private_metadata || payload.user.id;
+    if (!repo || !prNumber || isNaN(prNumber)) {
+      return res.json({ response_action: 'errors', errors: { pr_block: 'Select a pull request.' } });
+    }
+    await checkPR(repo, prNumber, userName, channelId, res, true);
     return;
   }
 
