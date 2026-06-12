@@ -108,6 +108,42 @@ function partLabel(id: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
+// DMX mode filter — declutter multi-mode fixtures (one geometry tree per mode)
+// ---------------------------------------------------------------------------
+const modeOptions = computed(() =>
+  modes.value.map((m) => ({ id: String(m.modeId ?? m.name ?? ''), name: String(m.name ?? m.modeId ?? 'Mode') })),
+);
+const showModeFilter = computed(() => modeOptions.value.length > 1);
+const modeFilter = ref<string>('all');
+
+const selectedModeGeometry = computed<string | null>(() => {
+  if (modeFilter.value === 'all') return null;
+  const m = modes.value.find((mm) => String(mm.modeId ?? mm.name ?? '') === modeFilter.value);
+  return typeof m?.geometry === 'string' ? m.geometry : null;
+});
+
+/** Part ids reachable from the selected mode's root geometry (incl. references). */
+const visiblePartIds = computed<Set<string> | null>(() => {
+  const geo = selectedModeGeometry.value;
+  if (!geo) return null;
+  const byGeom = new Map<string, FixturePart>();
+  for (const p of parts.value) if (p.sourceGdtfGeometryId) byGeom.set(p.sourceGdtfGeometryId, p);
+  const out = new Set<string>();
+  const add = (partId: string): void => {
+    if (out.has(partId)) return;
+    out.add(partId);
+    const p = partById.value.get(partId);
+    if (!p) return;
+    for (const c of p.childPartIds) add(c);
+    const ref = (p.metadata as { referencedGeometryId?: unknown }).referencedGeometryId;
+    if (typeof ref === 'string') { const t = byGeom.get(ref); if (t) add(t.partId); }
+  };
+  const root = byGeom.get(geo);
+  if (root) add(root.partId);
+  return out.size ? out : null;
+});
+
+// ---------------------------------------------------------------------------
 // Node + edge construction
 // ---------------------------------------------------------------------------
 interface Built { nodes: Node[]; edges: Edge[] }
@@ -116,6 +152,20 @@ const graph = computed<Built>(() => {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const info = def.value.fixtureInformation;
+
+  // Apply the DMX mode filter (null = show everything).
+  const vis = visiblePartIds.value;
+  const fParts = vis ? parts.value.filter((p) => vis.has(p.partId)) : parts.value;
+  const visModelIds = new Set(fParts.map((p) => p.modelId).filter((id): id is string => !!id));
+  const fModels = vis
+    ? models.value.filter((m) => (m.assignedPartIds ?? []).some((id) => vis.has(id)) || visModelIds.has(m.modelId))
+    : models.value;
+  const fBeams = vis ? beams.value.filter((b) => !!b.parentPartId && vis.has(b.parentPartId)) : beams.value;
+  const fMotion = vis ? motion.value.filter((a) => !!a.controlledPartId && vis.has(a.controlledPartId)) : motion.value;
+  const fCells = vis ? cells.value.filter((p) => vis.has(p.partId)) : cells.value;
+  const fModes = modeFilter.value === 'all'
+    ? modes.value
+    : modes.value.filter((m) => String(m.modeId ?? m.name ?? '') === modeFilter.value);
 
   const node = (id: string, x: number, y: number, data: FixtureGraphNodeData): void => {
     // Explicit width (matches the node CSS) so Vue Flow can compute fit bounds
@@ -184,7 +234,7 @@ const graph = computed<Built>(() => {
     },
     {
       id: 'cat:parts', title: 'Parts', icon: 'account_tree', accent: ACCENT.parts,
-      items: parts.value.map((p) => ({
+      items: fParts.map((p) => ({
         id: `part:${p.partId}`,
         xrefs: p.modelId ? [`model:${p.modelId}`] : [],
         data: {
@@ -205,7 +255,7 @@ const graph = computed<Built>(() => {
     },
     {
       id: 'cat:models', title: 'Models', icon: 'view_in_ar', accent: ACCENT.models,
-      items: models.value.map((m) => ({
+      items: fModels.map((m) => ({
         id: `model:${m.modelId}`,
         data: {
           kind: 'model', title: m.modelId, subtitle: m.sourceFile, icon: 'deployed_code', accent: ACCENT.models,
@@ -225,7 +275,7 @@ const graph = computed<Built>(() => {
     },
     {
       id: 'cat:motion', title: 'MotionRig', icon: 'sync', accent: ACCENT.motion,
-      items: motion.value.map((a) => ({
+      items: fMotion.map((a) => ({
         id: `motion:${a.motionAxisId}`,
         xrefs: a.controlledPartId ? [`part:${a.controlledPartId}`] : [],
         data: {
@@ -244,7 +294,7 @@ const graph = computed<Built>(() => {
     },
     {
       id: 'cat:cells', title: 'Cells', icon: 'grid_on', accent: ACCENT.cells,
-      items: cells.value.map((p) => ({
+      items: fCells.map((p) => ({
         id: `cell:${p.partId}`,
         xrefs: [`part:${p.partId}`],
         data: {
@@ -256,11 +306,11 @@ const graph = computed<Built>(() => {
           ],
         },
       })),
-      selfNote: cells.value.length ? undefined : 'No cell geometries in this fixture.',
+      selfNote: fCells.length ? undefined : 'No cell geometries in this fixture.',
     },
     {
       id: 'cat:beams', title: 'Beams', icon: 'flare', accent: ACCENT.beams,
-      items: beams.value.map((b, i) => ({
+      items: fBeams.map((b, i) => ({
         id: `beam:${b.beamId}`,
         xrefs: b.parentPartId ? [`part:${b.parentPartId}`] : [],
         data: {
@@ -279,7 +329,7 @@ const graph = computed<Built>(() => {
     },
     {
       id: 'cat:dmx', title: 'DMX Mapping', icon: 'tune', accent: ACCENT.dmx,
-      items: modes.value.map((m, i) => {
+      items: fModes.map((m, i) => {
         const channels = Array.isArray(m.channels) ? (m.channels as unknown[]).length : 0;
         return {
           id: `mode:${i}`,
@@ -438,6 +488,13 @@ function onNodeClick(e: NodeMouseEvent): void {
 
         <Panel position="top-left" class="cg-legend">
           <span class="cg-legend-title"><Icon name="schema" :size="14" /> GDTF → REBUS</span>
+          <label v-if="showModeFilter" class="cg-mode">
+            <span>Mode</span>
+            <select v-model="modeFilter">
+              <option value="all">All modes</option>
+              <option v-for="m in modeOptions" :key="m.id" :value="m.id">{{ m.name }}</option>
+            </select>
+          </label>
           <button type="button" class="cg-reset" title="Re-fit view" @click="fitReset">
             <Icon name="fit_screen" :size="15" />
           </button>
@@ -612,6 +669,17 @@ function onNodeClick(e: NodeMouseEvent): void {
   color: var(--color-text);
 }
 .cg-legend-title { display: inline-flex; align-items: center; gap: 6px; }
+.cg-mode { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.cg-mode > span { color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.cg-mode select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  max-width: 200px;
+}
 .cg-reset {
   display: inline-flex;
   align-items: center;
