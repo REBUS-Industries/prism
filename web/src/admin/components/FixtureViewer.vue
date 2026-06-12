@@ -225,8 +225,17 @@ function syncMotion(): void {
       const rest = motionRest.get(partId);
       if (!g || !rest) continue;
       const rad = ((angles[ax.motionAxisId] ?? 0) * Math.PI) / 180;
-      const axis = new THREE.Vector3(ax.axisVector.x, ax.axisVector.y, ax.axisVector.z);
-      if (axis.lengthSq() < 1e-9) axis.set(0, 0, 1);
+      // Derive the rotation axis from the axis TYPE (matches the assembly's
+      // motion-node convention) — the parsed axisVector is unreliable because it
+      // keys off the geometry name (e.g. JDC's head isn't named "tilt").
+      //   PAN → GDTF Z (0,0,1 vertical) · TILT → GDTF X (1,0,0 horizontal)
+      let axis: THREE.Vector3;
+      if (ax.axisType === 'PAN') axis = new THREE.Vector3(0, 0, 1);
+      else if (ax.axisType === 'TILT') axis = new THREE.Vector3(1, 0, 0);
+      else {
+        axis = new THREE.Vector3(ax.axisVector.x, ax.axisVector.y, ax.axisVector.z);
+        if (axis.lengthSq() < 1e-9) axis.set(0, 0, 1);
+      }
       axis.normalize();
       g.quaternion.copy(rest).multiply(new THREE.Quaternion().setFromAxisAngle(axis, rad));
     }
