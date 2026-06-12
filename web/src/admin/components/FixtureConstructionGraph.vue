@@ -213,7 +213,7 @@ const graph = computed<Built>(() => {
   let y = 0;
 
   interface CatItem { id: string; data: FixtureGraphNodeData; xrefs?: string[] }
-  interface CatGroup { id: string; title: string; icon: string; accent: string; items: CatItem[] }
+  interface CatGroup { id: string; title: string; subtitle?: string; icon: string; accent: string; items: CatItem[] }
   interface Cat {
     id: string;
     title: string;
@@ -226,6 +226,35 @@ const graph = computed<Built>(() => {
     selfParams?: GraphParam[];
     selfNote?: string;
   }
+
+  const toBeamItem = (b: FixtureBeam, i: number): CatItem => ({
+    id: `beam:${b.beamId}`,
+    xrefs: b.parentPartId ? [`part:${b.parentPartId}`] : [],
+    data: {
+      kind: 'beam',
+      title: b.parentPartId ? partLabel(b.parentPartId) : `Beam ${i + 1}`,
+      subtitle: b.beamType || 'Beam',
+      icon: 'wb_incandescent', accent: ACCENT.beams,
+      params: [
+        { label: 'Type', value: str(b.beamType) },
+        { label: 'Parent', value: partLabel(b.parentPartId) },
+        { label: 'Beam angle', value: b.beamAngle !== undefined ? `${fmtNum(b.beamAngle)}°` : '—' },
+        { label: 'Field angle', value: b.fieldAngle !== undefined ? `${fmtNum(b.fieldAngle)}°` : '—' },
+        { label: 'Lum. flux', value: b.luminousFlux !== undefined ? `${fmtNum(b.luminousFlux)} lm` : '—' },
+        { label: 'Colour temp', value: b.colourTemperature !== undefined ? `${fmtNum(b.colourTemperature)} K` : '—' },
+        { label: 'IES', value: b.iesAssetId ? 'attached' : '—' },
+      ],
+    },
+  });
+
+  // Group beams by type (e.g. "Beam Pixel") with the individual pixels nested.
+  const beamGroups = new Map<string, CatItem[]>();
+  fBeams.forEach((b, i) => {
+    const type = b.beamType || 'Beam';
+    const list = beamGroups.get(type) ?? [];
+    list.push(toBeamItem(b, i));
+    beamGroups.set(type, list);
+  });
 
   const toPartItem = (p: FixturePart): CatItem => ({
     id: `part:${p.partId}`,
@@ -276,6 +305,7 @@ const graph = computed<Built>(() => {
       groups: STANDARD_TAGS.map((tag) => ({
         id: `tag:${tag}`,
         title: tag,
+        subtitle: 'REBUS part tag',
         icon: TAG_META[tag].icon,
         accent: TAG_META[tag].accent,
         items: fParts.filter((p) => p.tag === tag).map(toPartItem),
@@ -337,22 +367,15 @@ const graph = computed<Built>(() => {
       selfNote: fCells.length ? undefined : 'No cell geometries in this fixture.',
     },
     {
-      id: 'cat:beams', title: 'Beams', icon: 'flare', accent: ACCENT.beams,
-      items: fBeams.map((b, i) => ({
-        id: `beam:${b.beamId}`,
-        xrefs: b.parentPartId ? [`part:${b.parentPartId}`] : [],
-        data: {
-          kind: 'beam', title: b.beamType || `Beam ${i + 1}`, subtitle: partLabel(b.parentPartId), icon: 'wb_incandescent', accent: ACCENT.beams,
-          params: [
-            { label: 'Type', value: str(b.beamType) },
-            { label: 'Parent', value: partLabel(b.parentPartId) },
-            { label: 'Beam angle', value: b.beamAngle !== undefined ? `${fmtNum(b.beamAngle)}°` : '—' },
-            { label: 'Field angle', value: b.fieldAngle !== undefined ? `${fmtNum(b.fieldAngle)}°` : '—' },
-            { label: 'Lum. flux', value: b.luminousFlux !== undefined ? `${fmtNum(b.luminousFlux)} lm` : '—' },
-            { label: 'Colour temp', value: b.colourTemperature !== undefined ? `${fmtNum(b.colourTemperature)} K` : '—' },
-            { label: 'IES', value: b.iesAssetId ? 'attached' : '—' },
-          ],
-        },
+      id: 'cat:beams', title: 'Beams', icon: 'flare', accent: ACCENT.beams, items: [],
+      // Group by beam type (e.g. "Beam Pixel") → individual pixel beams.
+      groups: [...beamGroups.entries()].map(([type, items]) => ({
+        id: `beamgrp:${type}`,
+        title: type,
+        subtitle: 'beam type',
+        icon: 'flare',
+        accent: ACCENT.beams,
+        items,
       })),
     },
     {
@@ -403,7 +426,7 @@ const graph = computed<Built>(() => {
           y += ROW;
         }
         node(g.id, X.item, gMid, {
-          kind: 'category', title: g.title, subtitle: 'REBUS part tag', icon: g.icon, accent: g.accent, badge: g.items.length,
+          kind: 'category', title: g.title, subtitle: g.subtitle, icon: g.icon, accent: g.accent, badge: g.items.length,
         });
         edge(cat.id, g.id, arrow(g.accent));
         groupMids.push(gMid);
