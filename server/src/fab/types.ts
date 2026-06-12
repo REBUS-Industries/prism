@@ -102,3 +102,15 @@ export interface FabDownloadInfo {
   manifestHash?: string;
   type?: string;
 }
+
+/** Signed direct download URL from Fab browse API (`/i/listings/.../download-info`). */
+export interface FabBrowseDownloadEntry {
+  assetFormat?: string;
+  downloadUrl: string;
+  expires?: string;
+  type?: string;
+}
+
+export interface FabBrowseDownloadInfo {
+  downloadInfo?: FabBrowseDownloadEntry[];
+}

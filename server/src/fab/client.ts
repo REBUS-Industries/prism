@@ -1,5 +1,5 @@
-/**
- * Fab marketplace HTTP client — public search/detail + Epic-authenticated download.
+﻿/**
+ * Fab marketplace HTTP client â€” public search/detail + Epic-authenticated download.
  */
 import {
   FabOAuthError,
@@ -8,10 +8,10 @@ import {
   fabBrowseFetch,
   fabFlareSolverrConfigured,
   fabHttpProxyConfigured,
+  fabPublicFetch,
   ensureFabCloudflareAccess,
   ensureFabCsrf,
 } from './auth.js';
-import { assembleFileFromManifest, fetchManifestBytes } from './downloadManifest.js';
 import { FAB_DOWNLOADABLE_FORMATS, isFreeSingleMaterialListing, isFreeSingleMaterialSummary } from './filter.js';
 import {
   normalizeListingDetail,
@@ -20,7 +20,8 @@ import {
   type FabSearchPage,
 } from './normalize.js';
 import type {
-  FabDownloadInfo,
+  FabBrowseDownloadEntry,
+  FabBrowseDownloadInfo,
   FabListingDetail,
   FabListingFormat,
   FabSearchResponse,
@@ -61,18 +62,18 @@ export function isFabImportConfigured(): boolean {
 /** Exported for unit tests. */
 export function fabCloudflareBlockedMessage(): string {
   const solverHint = fabFlareSolverrConfigured()
-    ? ' FlareSolverr is configured — check it is reachable from the server and uses the same egress as Fab HTTP requests.'
-    : ' Configure FlareSolverr (Admin → Settings → External materials) or an HTTP proxy on the same egress.';
+    ? ' FlareSolverr is configured â€” check it is reachable from the server and uses the same egress as Fab HTTP requests.'
+    : ' Configure FlareSolverr (Admin â†’ Settings â†’ External materials) or an HTTP proxy on the same egress.';
   if (fabAuthConfigured()) {
     if (fabHttpProxyConfigured()) {
-      return `Fab is blocked by Cloudflare from this server even with Epic bearer token and HTTP proxy configured. Check proxy reachability or try a residential egress proxy (Admin → Settings → External materials).${solverHint}`;
+      return `Fab is blocked by Cloudflare from this server even with Epic bearer token and HTTP proxy configured. Check proxy reachability or try a residential egress proxy (Admin â†’ Settings â†’ External materials).${solverHint}`;
     }
-    return `Fab is blocked by Cloudflare from this server. Epic bearer token is configured but does not bypass Cloudflare — set an HTTP proxy or FlareSolverr under Admin → Settings → External materials (or FAB_HTTP_PROXY / FAB_FLARESOLVERR_URL).${solverHint}`;
+    return `Fab is blocked by Cloudflare from this server. Epic bearer token is configured but does not bypass Cloudflare â€” set an HTTP proxy or FlareSolverr under Admin â†’ Settings â†’ External materials (or FAB_HTTP_PROXY / FAB_FLARESOLVERR_URL).${solverHint}`;
   }
   if (fabHttpProxyConfigured()) {
-    return `Fab is blocked by Cloudflare from this server even with HTTP proxy configured. Check proxy reachability or try a residential egress proxy (Admin → Settings → External materials).${solverHint}`;
+    return `Fab is blocked by Cloudflare from this server even with HTTP proxy configured. Check proxy reachability or try a residential egress proxy (Admin â†’ Settings â†’ External materials).${solverHint}`;
   }
-  return `Fab is blocked by Cloudflare from this server. Set an HTTP proxy or FlareSolverr under Admin → Settings → External materials (or FAB_HTTP_PROXY / FAB_FLARESOLVERR_URL). An Epic refresh token enables import but does not bypass Cloudflare for search.${solverHint}`;
+  return `Fab is blocked by Cloudflare from this server. Set an HTTP proxy or FlareSolverr under Admin â†’ Settings â†’ External materials (or FAB_HTTP_PROXY / FAB_FLARESOLVERR_URL). An Epic refresh token enables import but does not bypass Cloudflare for search.${solverHint}`;
 }
 
 async function fabBrowseRequest(url: string, init: RequestInit = {}): Promise<Response> {
@@ -92,7 +93,7 @@ async function fabJson<T>(res: Response, retryOnCf = true): Promise<T> {
     if (isFabCloudflareResponse(body, res.status)) {
       if (retryOnCf && fabFlareSolverrConfigured()) {
         await ensureFabCloudflareAccess(true);
-        throw new FabApiError('Cloudflare challenge — retrying', res.status, 'fab_cloudflare_retry');
+        throw new FabApiError('Cloudflare challenge â€” retrying', res.status, 'fab_cloudflare_retry');
       }
       throw new FabApiError(
         fabCloudflareBlockedMessage(),
@@ -108,7 +109,7 @@ async function fabJson<T>(res: Response, retryOnCf = true): Promise<T> {
     if (isFabCloudflareResponse(body, res.status)) {
       if (retryOnCf && fabFlareSolverrConfigured()) {
         await ensureFabCloudflareAccess(true);
-        throw new FabApiError('Cloudflare challenge — retrying', res.status, 'fab_cloudflare_retry');
+        throw new FabApiError('Cloudflare challenge â€” retrying', res.status, 'fab_cloudflare_retry');
       }
       throw new FabApiError(
         fabCloudflareBlockedMessage(),
@@ -234,14 +235,39 @@ export async function fabListingFormats(listingId: string): Promise<FabListingFo
   return Array.isArray(raw) ? raw : raw.formats ?? [];
 }
 
-async function fabFileDownloadInfo(
+/** Exported for unit tests. */
+export function parseFabBrowseDownloadInfo(raw: unknown): FabBrowseDownloadEntry {
+  if (!raw || typeof raw !== 'object') {
+    throw new FabApiError('Fab download-info returned invalid response', 502, 'invalid_download_info');
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.detail === 'string' && obj.detail.trim()) {
+    throw new FabApiError(`Fab download-info rejected: ${obj.detail}`, 502, 'fab_download_info_failed');
+  }
+  const entry = (raw as FabBrowseDownloadInfo).downloadInfo?.find((item) => item.downloadUrl?.trim());
+  if (!entry?.downloadUrl) {
+    throw new FabApiError('Fab download URL unavailable', 502, 'no_download_url');
+  }
+  return entry;
+}
+
+async function fabBrowseFileDownloadInfo(
   listingId: string,
   formatId: string,
   fileId: string,
-): Promise<FabDownloadInfo> {
-  const url = `${FAB_BASE}/p/egl/listings/${encodeURIComponent(listingId)}/asset-formats/${encodeURIComponent(formatId)}/files/${encodeURIComponent(fileId)}/download-info`;
+): Promise<FabBrowseDownloadEntry> {
+  const url = `${FAB_BASE}/i/listings/${encodeURIComponent(listingId)}/asset-formats/${encodeURIComponent(formatId)}/files/${encodeURIComponent(fileId)}/download-info`;
   const res = await fabAuthorizedFetch(url);
-  return fabJson<FabDownloadInfo>(res);
+  return parseFabBrowseDownloadInfo(await fabJson<unknown>(res));
+}
+
+async function fabDownloadSignedZip(downloadUrl: string): Promise<Buffer> {
+  const res = await fabPublicFetch(downloadUrl);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new FabApiError(`Fab asset download failed (${res.status}): ${body.slice(0, 200)}`, res.status);
+  }
+  return Buffer.from(await res.arrayBuffer());
 }
 
 async function fabAddToLibrary(listingId: string): Promise<void> {
@@ -326,19 +352,12 @@ export async function fabDownloadMaterialZip(
 
   const formats = await fabListingFormats(listingId);
   const { formatId, fileId, filename } = pickDownloadTarget(formats, options?.resolution);
-  const info = await fabFileDownloadInfo(listingId, formatId, fileId);
-  const point = info.distributionPoints?.[0];
-  if (!point?.manifestUrl) {
-    throw new FabApiError('Fab download manifest unavailable', 502, 'no_manifest');
-  }
-
-  const baseUrl = info.distributionPointBaseUrls?.[0] ?? point.manifestUrl.replace(/\/[^/]+$/, '');
-  const manifestBytes = await fetchManifestBytes(point.manifestUrl);
-  const assembled = await assembleFileFromManifest(manifestBytes, baseUrl);
+  const downloadInfo = await fabBrowseFileDownloadInfo(listingId, formatId, fileId);
+  const buffer = await fabDownloadSignedZip(downloadInfo.downloadUrl);
 
   return {
-    buffer: assembled.data,
-    filename: assembled.filename || filename,
+    buffer,
+    filename,
     name: detail.title,
   };
 }

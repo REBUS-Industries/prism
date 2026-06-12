@@ -374,7 +374,7 @@ export async function getFabAccessToken(): Promise<string> {
 export async function fabAuthorizedFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const token = await getFabAccessToken();
   const headers = new Headers(init.headers);
-  headers.set('Authorization', `bearer ${token}`);
+  headers.set('Authorization', `Bearer ${token}`);
   return fabUndiciFetch(url, { ...init, headers });
 }
 
