@@ -289,12 +289,30 @@ const graph = computed<Built>(() => {
   // ---- tree: GDTF → Fixture → {Information, REBUS tags…, DMX Mapping} -------
   const tagNodes: TNode[] = STANDARD_TAGS.map((tag) => {
     const ps = fParts.filter((p) => p.tag === tag);
+    const children = ps.map(partNode);
+    // The ORIGIN tag always carries an Origin node describing the fixture's
+    // reference location (implicit fixture base when no ORIGIN geometry exists).
+    if (tag === 'ORIGIN') {
+      children.push({
+        id: 'origin:location',
+        children: [],
+        data: {
+          kind: 'origin', title: 'Origin', subtitle: 'fixture origin', icon: 'my_location', accent: TAG_META.ORIGIN.accent,
+          params: [
+            { label: 'Position', value: '0, 0, 0 m' },
+            { label: 'Rotation', value: '0, 0, 0°' },
+            { label: 'Reference', value: 'Fixture base (implicit)' },
+            { label: 'Up axis', value: 'Z (GDTF)' },
+          ],
+        },
+      });
+    }
     return {
       id: `tag:${tag}`,
-      children: ps.map(partNode),
+      children,
       data: {
         kind: 'category', title: tag, subtitle: 'REBUS part tag', icon: TAG_META[tag].icon,
-        accent: TAG_META[tag].accent, badge: ps.length,
+        accent: TAG_META[tag].accent, badge: children.length,
       },
     };
   });
