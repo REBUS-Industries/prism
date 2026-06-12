@@ -1132,9 +1132,11 @@ onMounted(() => {
 
 .tab-panel { flex: 1; }
 
-/* Definite height so the Vue Flow canvas (height:100%) resolves; min-height
-   only would collapse percentage-height children to 0 and render blank. */
-.construction-panel { height: calc(100vh - 230px); min-height: 520px; }
+/* `flex: none` (not the inherited .tab-panel `flex: 1`, which forces
+   flex-basis:0% and overrides height) + a definite height so the Vue Flow
+   canvas's height:100% resolves. Without a definite height the percentage
+   collapses to 0 and the graph renders blank. */
+.construction-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
 .construction-panel > * { height: 100%; }
 
 .overview-panel {
