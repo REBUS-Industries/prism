@@ -141,3 +141,23 @@ export function defaultPolyHavenResolution(
 ): string | null {
   return pickResolution(available, preferred) ?? available[0] ?? null;
 }
+
+/** Diffuse/albedo map URL at a resolution — used for detail preview when switching resolution. */
+export function polyHavenPreviewUrl(
+  files: PolyHavenFilesTree,
+  resolution: string,
+): string | null {
+  return pickMapFile(files.Diffuse, resolution)?.url ?? null;
+}
+
+export function buildPolyHavenPreviewUrlByResolution(
+  files: PolyHavenFilesTree,
+  resolutions: string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const resolution of resolutions) {
+    const url = polyHavenPreviewUrl(files, resolution);
+    if (url) out[resolution] = url;
+  }
+  return out;
+}

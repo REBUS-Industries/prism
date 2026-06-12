@@ -72,6 +72,15 @@ const showResolutionPicker = computed(() =>
   resolutionOptions.value.length > 1 && selected.value?.source !== 'fab',
 );
 
+const detailPreviewUrl = computed(() => {
+  if (!detail.value) return null;
+  const res = selectedResolution.value;
+  if (res && detail.value.previewUrlByResolution?.[res]) {
+    return detail.value.previewUrlByResolution[res];
+  }
+  return detail.value.previewUrl;
+});
+
 function applyDetailDefaults(d: ExternalMaterialDetail): void {
   selectedResolution.value = d.defaultResolution
     ?? d.resolutions?.[0]
@@ -110,21 +119,36 @@ async function load(reset = true): Promise<void> {
   }
 }
 
-async function selectItem(item: ExternalMaterialSummary): Promise<void> {
-  selected.value = item;
-  detail.value = null;
-  selectedResolution.value = null;
+async function loadDetail(
+  item: ExternalMaterialSummary,
+  resolution?: string | null,
+): Promise<void> {
   detailLoading.value = true;
   importError.value = null;
   try {
-    const loaded = await externalMaterialsApi.get(item.source, item.sourceId);
+    const loaded = await externalMaterialsApi.get(item.source, item.sourceId, {
+      resolution: resolution ?? undefined,
+    });
     detail.value = loaded;
-    applyDetailDefaults(loaded);
+    if (!resolution) applyDetailDefaults(loaded);
   } catch (err) {
     importError.value = (err as ApiError).message ?? 'failed to load detail';
   } finally {
     detailLoading.value = false;
   }
+}
+
+async function selectItem(item: ExternalMaterialSummary): Promise<void> {
+  selected.value = item;
+  detail.value = null;
+  selectedResolution.value = null;
+  await loadDetail(item);
+}
+
+async function onResolutionSelect(res: string): Promise<void> {
+  if (!selected.value || selectedResolution.value === res) return;
+  selectedResolution.value = res;
+  await loadDetail(selected.value, res);
 }
 
 async function importSelected(): Promise<void> {
@@ -268,8 +292,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             <span class="source-badge lg">{{ sourceLabel(selected.source) }}</span>
             <div v-if="detailLoading" class="muted small">Loading preview…</div>
             <template v-else-if="detail">
-              <div v-if="detail.previewUrl" class="preview preview-media">
-                <img :src="detail.previewUrl" :alt="detail.title" />
+              <div v-if="detailPreviewUrl" class="preview preview-media">
+                <img :key="detailPreviewUrl" :src="detailPreviewUrl" :alt="detail.title" />
               </div>
               <p v-if="detail.description" class="desc">{{ detail.description }}</p>
               <p v-if="detail.downloadSize" class="muted small">Download ~{{ formatBytes(detail.downloadSize) }}</p>
@@ -291,7 +315,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
                     class="res-pill"
                     :class="{ active: selectedResolution === res }"
                     type="button"
-                    @click="selectedResolution = res"
+                    @click="onResolutionSelect(res)"
                   >{{ res }}</button>
                 </div>
               </div>
@@ -388,7 +412,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   align-self: flex-start;
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: 4px;
-  background: var(--color-bg-hover); color: var(--color-text-muted);
+  background: var(--orbit-primary); color: #fff;
 }
 .source-badge.lg { font-size: 11px; margin-top: 4px; }
 .detail {

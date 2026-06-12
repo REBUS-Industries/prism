@@ -11,15 +11,18 @@ import {
 } from '../src/external-materials/ambientcg.js';
 import { createPolyHavenProvider, resetPolyHavenCatalogCache } from '../src/external-materials/polyhaven.js';
 import {
+  buildPolyHavenPreviewUrlByResolution,
   estimatePolyHavenDownloadSize,
   listPolyHavenMapLabels,
   listPolyHavenResolutions,
+  polyHavenPreviewUrl,
   selectPolyHavenMaps,
 } from '../src/external-materials/polyhavenMaps.js';
 import { FabApiError } from '../src/fab/client.js';
 import { scoreQueryMatch, unifiedSearch } from '../src/external-materials/unifiedSearch.js';
 import { createFabProvider } from '../src/external-materials/fab.js';
 import { encodeUnifiedCursor } from '../src/external-materials/types.js';
+import { externalImportResolutionTag } from '../src/api/externalMaterials.js';
 
 const fixturesDir = resolve(import.meta.dirname, 'fixtures');
 const catalog = JSON.parse(readFileSync(resolve(fixturesDir, 'polyhaven-catalog.json'), 'utf8'));
@@ -50,6 +53,13 @@ describe('polyhavenMaps', () => {
   it('lists resolutions and human-readable map labels', () => {
     expect(listPolyHavenResolutions(files)).toEqual(['2k']);
     expect(listPolyHavenMapLabels(files, '2k')).toEqual(['Albedo', 'Normal', 'Roughness']);
+  });
+
+  it('builds preview URLs from diffuse maps', () => {
+    expect(polyHavenPreviewUrl(files, '2k')).toBe('https://dl.example.com/concrete_floor_worn_001_diff_2k.jpg');
+    expect(buildPolyHavenPreviewUrlByResolution(files, ['2k'])).toEqual({
+      '2k': 'https://dl.example.com/concrete_floor_worn_001_diff_2k.jpg',
+    });
   });
 });
 
@@ -82,6 +92,29 @@ describe('polyhaven provider (mocked)', () => {
     expect(detail?.maps).toEqual(['Albedo', 'Normal', 'Roughness']);
     expect(detail?.resolutions).toEqual(['2k']);
     expect(detail?.defaultResolution).toBe('2k');
+    expect(detail?.previewUrl).toBe('https://dl.example.com/concrete_floor_worn_001_diff_2k.jpg');
+    expect(detail?.previewUrlByResolution).toEqual({
+      '2k': 'https://dl.example.com/concrete_floor_worn_001_diff_2k.jpg',
+    });
+  });
+
+  it('updates preview URL when resolution is requested on detail', async () => {
+    resetPolyHavenCatalogCache();
+    const multiResFiles = {
+      ...files,
+      Diffuse: {
+        '1k': { jpg: { url: 'https://dl.example.com/concrete_floor_worn_001_diff_1k.jpg', size: 120000 } },
+        '2k': files.Diffuse['2k'],
+      },
+    };
+    const provider = createPolyHavenProvider({
+      fetchCatalog: async () => catalog,
+      fetchFiles: async () => multiResFiles,
+      fetchBuffer: async () => Buffer.from('jpeg-bytes'),
+    });
+    const detail = await provider.getDetail('concrete_floor_worn_001', { resolution: '1k' });
+    expect(detail?.previewUrl).toBe('https://dl.example.com/concrete_floor_worn_001_diff_1k.jpg');
+    expect(detail?.downloadSize).toBeGreaterThan(0);
   });
 
   it('builds a virtual zip on download', async () => {
@@ -105,6 +138,14 @@ describe('polyhaven provider (mocked)', () => {
     });
     const payload = await provider.downloadForImport('concrete_floor_worn_001', { resolution: '2k' });
     expect(payload.filename).toBe('concrete_floor_worn_001_2k.zip');
+  });
+});
+
+describe('external import resolution tag', () => {
+  it('normalizes resolution into a material tag', () => {
+    expect(externalImportResolutionTag('2K-JPG')).toBe('resolution:2k-jpg');
+    expect(externalImportResolutionTag('  4k  ')).toBe('resolution:4k');
+    expect(externalImportResolutionTag(undefined)).toBeNull();
   });
 });
 

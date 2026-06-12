@@ -8,6 +8,7 @@ import {
   type ApiError,
   type FixtureDetail,
   type FixturePart,
+  type MotionAxis,
 } from '../../shared/api';
 import {
   buildDebugBundle,
@@ -89,7 +90,7 @@ const assembly = computed(() => {
     fixtureId: id,
     parts: def.parts,
     models: def.models ?? [],
-    motionAxes: def.motionRig ?? [],
+    motionAxes: correctedAxes.value,
     selectedModeGeometryId: selectedModeGeometry.value,
   };
 });
@@ -98,12 +99,32 @@ const partName = (id: string | null | undefined): string => {
   if (!id) return '';
   return fixture.value?.definition.parts.find((p) => p.partId === id)?.name ?? id;
 };
+const partTag = (id: string | null | undefined): string | undefined =>
+  id ? fixture.value?.definition.parts.find((p) => p.partId === id)?.tag : undefined;
+
+/**
+ * Effective axis type. Stored axisType can be OTHER (older imports / unnamed
+ * axes), so fall back to the controlled part's tag — YOKE→PAN, HEAD→TILT —
+ * matching the assembly's motion-node resolution. Used for labels and rotation.
+ */
+function effectiveAxisType(a: MotionAxis): MotionAxis['axisType'] {
+  if (a.axisType === 'PAN' || a.axisType === 'TILT') return a.axisType;
+  const tag = partTag(a.controlledPartId);
+  const name = (a.sourceGdtfGeometryId ?? '').toLowerCase();
+  if (tag === 'YOKE' || name.includes('pan')) return 'PAN';
+  if (tag === 'HEAD' || name.includes('tilt')) return 'TILT';
+  return a.axisType;
+}
+
+/** Motion rig with axis types normalised (so PAN/TILT drive the right axis). */
+const correctedAxes = computed<MotionAxis[]>(() =>
+  (fixture.value?.definition.motionRig ?? []).map((a) => ({ ...a, axisType: effectiveAxisType(a) })),
+);
 
 /** Motion axes to expose as sliders — scoped to the selected mode. */
 const motionControls = computed(() => {
-  const axes = fixture.value?.definition.motionRig ?? [];
   const vis = visiblePartIds.value;
-  return axes
+  return correctedAxes.value
     .filter((a) => !vis || (a.controlledPartId ? vis.has(a.controlledPartId) : true))
     .map((a) => ({
       axis: a,

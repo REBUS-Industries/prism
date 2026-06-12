@@ -136,7 +136,7 @@ function validateHttpUrlField(label: string, value: string): string | null {
   if (!trimmed) return null;
   let candidate = trimmed;
   if (!/^https?:\/\//i.test(candidate)) {
-    if (/^[\w.-]+:\d+(\/.*)?$/i.test(candidate)) {
+    if (/^[\w.-]+(:\d+)?(\/.*)?$/i.test(candidate)) {
       candidate = `http://${candidate}`;
     }
   }
@@ -294,6 +294,7 @@ onMounted(() => { void refresh(); });
 </script>
 
 <template>
+  <div class="ext-mat-settings">
   <div v-if="loading" class="muted">Loading provider settings…</div>
   <template v-else>
     <div v-if="error" class="error-box">{{ error }}</div>
@@ -594,15 +595,27 @@ onMounted(() => { void refresh(); });
       {{ saving ? 'Saving…' : 'Save' }}
     </button>
   </div>
+  </div>
 </template>
 
 <style scoped>
+.ext-mat-settings {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+.error-box,
+.success-box {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .field-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .provider-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 8px);
   padding: 12px 14px 14px;
   margin: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -641,6 +654,7 @@ onMounted(() => { void refresh(); });
 }
 .help-details {
   margin-top: 4px;
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 8px);
   background: var(--color-bg-elevated, var(--color-bg));
@@ -691,6 +705,7 @@ onMounted(() => { void refresh(); });
   background: #1e1e2e;
   max-width: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 .code-block-toolbar {
   display: flex;
@@ -802,6 +817,7 @@ onMounted(() => { void refresh(); });
   border-radius: var(--radius-sm, 8px);
   padding: 10px 12px 12px;
   margin: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;

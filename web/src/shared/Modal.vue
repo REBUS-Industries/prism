@@ -14,11 +14,14 @@ withDefaults(defineProps<{
   maxWidth?: number;
   /** Minimum card width in px (clamped to viewport). */
   minWidth?: number;
+  /** Viewport width fraction used when clamping (default 92). */
+  viewportWidth?: number;
 }>(), {
   title: '',
   subtitle: '',
   maxWidth: 560,
   minWidth: 0,
+  viewportWidth: 92,
 });
 
 const emit = defineEmits<{ close: [] }>();
@@ -46,9 +49,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKey));
       role="dialog"
       aria-modal="true"
       :style="{
-        width: `min(${maxWidth}px, 92vw)`,
-        maxWidth: '92vw',
-        minWidth: minWidth ? `min(${minWidth}px, 92vw)` : undefined,
+        width: `min(${maxWidth}px, ${viewportWidth}vw)`,
+        maxWidth: `${viewportWidth}vw`,
+        minWidth: minWidth ? `min(${minWidth}px, ${viewportWidth}vw)` : undefined,
       }"
     >
       <header class="modal-head">
@@ -86,9 +89,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey));
 }
 .modal-shell {
   width: 100%;
+  min-width: 0;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--color-bg-elevated);
   color: var(--color-text);
   border: 1px solid var(--color-border);
@@ -133,8 +138,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKey));
 .modal-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 20px;
+}
+.modal-body :deep(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+  box-sizing: border-box;
+}
+.modal-body :deep(code) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .modal-foot {
   display: flex;
