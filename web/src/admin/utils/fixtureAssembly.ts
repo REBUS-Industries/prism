@@ -129,7 +129,7 @@ function partMeta(part: FixturePart): { isGeometryReference?: boolean; reference
 }
 
 /** Apply the GDTF geometry Position matrix directly (Z-up, metres). */
-function applyPartTransform(group: THREE.Object3D, part: FixturePart): void {
+export function applyPartTransform(group: THREE.Object3D, part: FixturePart): void {
   const t = part.localTransform;
   const a = t?.matrix4x4;
   if (Array.isArray(a) && a.length === 16) {
@@ -156,66 +156,34 @@ function applyPartTransform(group: THREE.Object3D, part: FixturePart): void {
 }
 
 /**
- * Decide whether a (replaced) mesh is authored Z-up (CAD) rather than Y-up.
+ * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
+ * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
  *
- * The GDTF model declares the part's L×W×H. We try both up-axis conventions and
- * keep the one whose per-axis scale-to-fit is most uniform (i.e. the real
- * orientation — the mismatched one stretches one axis):
- *   Y-up: x→length, y→height, z→width
- *   Z-up: x→length, y→width,  z→height
- * When width≈height the two are indistinguishable and we keep Y-up (no change).
+ * After +90° X: mesh local Y → world Z, local Z → world −Y. Builder scale
+ * mapping (verified on Rivale Profile Base): x = length/bbox.x,
+ * y = height/bbox.y, z = width/bbox.z.
+ *
+ * The mesh is placed at its own authored origin — both GDTF model files and
+ * uploaded replacements are trusted to carry the correct geometry origin (we no
+ * longer derive a bounding-box centre, which random sticking-out geometry threw
+ * off; alignment is handled at import time / in the source 3D file instead).
  */
-function meshIsZUp(size: THREE.Vector3, dims: Required<Pick<ModelDims, 'length' | 'width' | 'height'>>): boolean {
-  const spread = (a: number, b: number, c: number): number => {
-    const hi = Math.max(a, b, c);
-    const lo = Math.min(a, b, c);
-    return lo > 1e-9 ? hi / lo : Number.POSITIVE_INFINITY;
-  };
-  const yUp = spread(dims.length / size.x, dims.height / size.y, dims.width / size.z);
-  const zUp = spread(dims.length / size.x, dims.width / size.y, dims.height / size.z);
-  return zUp < yUp;
-}
-
-/**
- * Wrap a glTF mesh like the builder's inner `Scene` group: a rotation to land in
- * the GDTF (Z-up) part frame, then per-axis scale so the bbox matches L×W×H.
- *
- * GDTF model files (and assimp-converted meshes) are Y-up. After +90° X:
- * local Y → world Z, local Z → world −Y. Builder scale mapping (verified on
- * Rivale Profile Base): x = length/bbox.x, y = height/bbox.y, z = width/bbox.z.
- *
- * `recenter` (replaced uploads only) shifts the mesh so its bbox centre sits on
- * the geometry origin, and additionally auto-detects a Z-up source (common for
- * CAD/STEP/OBJ exports) so the replacement drops in upright and correctly
- * proportioned first time instead of lying on its side with swapped Y/Z scale.
- */
-function wrapModelMesh(meshRoot: THREE.Object3D, dims: ModelDims, recenter = false): THREE.Group {
+function wrapModelMesh(meshRoot: THREE.Object3D, dims: ModelDims): THREE.Group {
   const wrapper = new THREE.Group();
   wrapper.name = 'Scene';
+  wrapper.rotation.x = Math.PI / 2;
 
   const bbox = new THREE.Box3().setFromObject(meshRoot);
-  if (recenter && !bbox.isEmpty()) {
-    const centre = bbox.getCenter(new THREE.Vector3());
-    meshRoot.position.sub(centre); // bbox centre → origin (size unchanged)
-  }
   const size = bbox.getSize(new THREE.Vector3());
-
-  const haveDims = dims.length != null && dims.width != null && dims.height != null
-    && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6;
-
   if (
-    haveDims && recenter
-    && meshIsZUp(size, { length: dims.length!, width: dims.width!, height: dims.height! })
+    dims.length != null && dims.width != null && dims.height != null
+    && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6
   ) {
-    // Source already Z-up → already aligned with the GDTF part frame; no X spin.
-    wrapper.rotation.x = 0;
-    wrapper.scale.set(dims.length! / size.x, dims.width! / size.y, dims.height! / size.z);
-  } else {
-    // Y-up glTF source (GDTF model files + assimp output): default builder path.
-    wrapper.rotation.x = Math.PI / 2;
-    if (haveDims) {
-      wrapper.scale.set(dims.length! / size.x, dims.height! / size.y, dims.width! / size.z);
-    }
+    wrapper.scale.set(
+      dims.length / size.x,
+      dims.height / size.y,
+      dims.width / size.z,
+    );
   }
 
   wrapper.add(meshRoot);
@@ -339,10 +307,7 @@ export async function buildFixtureAssembly(
     if (mediaId) {
       const obj = await loadGlb(mediaId);
       if (obj) {
-        // Uploaded replacement meshes are re-centred on the geometry origin so
-        // they align with the GDTF placement without manual nudging.
-        const recenter = (model?.metadata as { replaced?: unknown } | undefined)?.replaced === true;
-        const wrapped = wrapModelMesh(obj.clone(true), dims, recenter);
+        const wrapped = wrapModelMesh(obj.clone(true), dims);
         paintMaterial(wrapped, part);
         partGroup.add(wrapped);
         meshCount += 1;

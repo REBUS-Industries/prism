@@ -37,6 +37,12 @@ import {
 } from '../utils/fixtureModelQuality';
 
 import {
+  computeMeshOrigins,
+  meshOriginsToCsv,
+  downloadTextFile,
+} from '../utils/fixtureOrigins';
+
+import {
 
   fixturesApi,
 
@@ -270,6 +276,25 @@ async function applyModelQuality(): Promise<void> {
 // when the GDTF ships a single mesh and the quality picker is hidden.
 async function reloadModelMeshes(): Promise<void> {
   await runMeshReimport(modelQuality.value);
+}
+
+const meshOriginCount = computed(
+  () => computeMeshOrigins(
+    fixture.value?.definition.parts ?? [],
+    fixture.value?.definition.models ?? [],
+  ).length,
+);
+
+function downloadMeshOrigins(): void {
+  const def = fixture.value?.definition;
+  if (!def) return;
+  const origins = computeMeshOrigins(def.parts ?? [], def.models ?? []);
+  if (!origins.length) return;
+  const csv = meshOriginsToCsv(origins);
+  const info = def.fixtureInformation;
+  const slug = `${info.manufacturer ?? ''} ${info.fixtureName ?? 'fixture'}`
+    .trim().replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'fixture';
+  downloadTextFile(`${slug}-mesh-origins.csv`, csv);
 }
 
 const replacingModelId = ref<string | null>(null);
@@ -959,6 +984,18 @@ onMounted(() => {
               Re-converts the GDTF mesh (e.g. 3DS → glTF) with the current pipeline. Use if the fixture is showing placeholder boxes instead of its model.
             </p>
           </template>
+
+          <div v-if="meshOriginCount > 0" class="origin-export">
+            <h3 class="model-swap-title">Mesh origins</h3>
+            <p class="muted small">
+              Download the origin point + rotation of every mesh in GDTF coordinates
+              (Z-up, metres) to line the same meshes up in your 3D software.
+            </p>
+            <button class="mt-sm" @click="downloadMeshOrigins">
+              <Icon name="download" :size="14" />
+              Download mesh origins ({{ meshOriginCount }})
+            </button>
+          </div>
 
           <div v-if="fixture?.definition.models?.length" class="model-swap">
             <h3 class="model-swap-title">Swap a model</h3>
