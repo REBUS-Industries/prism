@@ -1545,6 +1545,10 @@ export interface MotionAxis {
   maxValue: number;
   defaultValue: number;
   dmxLinks?: string[];
+  /** GDTF RealFade — time (s) for a full move of this axis. */
+  realFade?: number;
+  /** GDTF RealAcceleration — acceleration time (s) for this axis. */
+  realAcceleration?: number;
 }
 
 export interface WheelSlot {

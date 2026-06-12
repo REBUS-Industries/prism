@@ -239,9 +239,10 @@ const graph = computed<Built>(() => {
         { label: 'Controls', value: partLabel(a.controlledPartId) },
         { label: 'Axis vector', value: vec(a.axisVector) },
         { label: 'Pivot', value: vec(a.pivot, ' m') },
-        { label: 'Min', value: fmtNum(a.minValue) },
-        { label: 'Max', value: fmtNum(a.maxValue) },
-        { label: 'Default', value: fmtNum(a.defaultValue) },
+        { label: 'Range', value: `${fmtNum(a.minValue)}° … ${fmtNum(a.maxValue)}°` },
+        { label: 'Default', value: `${fmtNum(a.defaultValue)}°` },
+        { label: 'Fade', value: a.realFade !== undefined ? `${fmtNum(a.realFade)} s` : '—' },
+        { label: 'Acceleration', value: a.realAcceleration !== undefined ? `${fmtNum(a.realAcceleration)} s` : '—' },
       ],
     },
   });
