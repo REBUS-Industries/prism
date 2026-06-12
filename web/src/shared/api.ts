@@ -1425,6 +1425,8 @@ export interface ExternalMaterialSummary {
   category: string | null;
   downloadSize: number | null;
   relevanceScore: number;
+  /** Public page on the provider site. */
+  providerUrl?: string | null;
 }
 
 export interface ExternalMaterialDetail extends ExternalMaterialSummary {

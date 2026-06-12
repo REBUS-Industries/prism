@@ -12,7 +12,7 @@ import {
   ensureFabCsrf,
 } from './auth.js';
 import { assembleFileFromManifest, fetchManifestBytes } from './downloadManifest.js';
-import { isFreeSingleMaterialListing, isFreeSingleMaterialSummary } from './filter.js';
+import { FAB_DOWNLOADABLE_FORMATS, isFreeSingleMaterialListing, isFreeSingleMaterialSummary } from './filter.js';
 import {
   normalizeListingDetail,
   normalizeSearchListing,
@@ -196,7 +196,38 @@ export async function fabGetListing(uid: string): Promise<FabAssetDetail | null>
   return normalizeListingDetail(raw);
 }
 
-async function fabListingFormats(listingId: string): Promise<FabListingFormat[]> {
+const FAB_RESOLUTION_ORDER = ['1k', '2k', '4k', '8k', '16k'] as const;
+
+export function parseFabZipResolution(filename: string): string | null {
+  const match = filename.match(/_(\d+k)\.zip$/i);
+  return match ? match[1]!.toLowerCase() : null;
+}
+
+export function listFabDownloadResolutions(formats: FabListingFormat[]): string[] {
+  const resolutions = new Set<string>();
+  for (const format of formats) {
+    for (const file of format.files ?? []) {
+      const name = file.name ?? '';
+      const res = parseFabZipResolution(name);
+      if (res) resolutions.add(res);
+    }
+  }
+  return [...resolutions].sort(
+    (a, b) => FAB_RESOLUTION_ORDER.indexOf(a as typeof FAB_RESOLUTION_ORDER[number])
+      - FAB_RESOLUTION_ORDER.indexOf(b as typeof FAB_RESOLUTION_ORDER[number]),
+  );
+}
+
+export function defaultFabResolution(resolutions: string[]): string | null {
+  if (!resolutions.length) return null;
+  const preferred = ['4k', '2k', '8k', '1k'];
+  for (const res of preferred) {
+    if (resolutions.includes(res)) return res;
+  }
+  return resolutions[0] ?? null;
+}
+
+export async function fabListingFormats(listingId: string): Promise<FabListingFormat[]> {
   await ensureFabCsrf();
   const res = await fabAuthorizedFetch(`${FAB_BASE}/i/listings/${encodeURIComponent(listingId)}/asset-formats`);
   const raw = await fabJson<{ formats?: FabListingFormat[] } | FabListingFormat[]>(res);
@@ -224,9 +255,12 @@ async function fabAddToLibrary(listingId: string): Promise<void> {
   throw new FabApiError(`Fab add-to-library ${res.status}: ${body.slice(0, 200)}`, res.status);
 }
 
-function pickDownloadTarget(formats: FabListingFormat[]): { formatId: string; fileId: string; filename: string } {
+export function pickDownloadTarget(
+  formats: FabListingFormat[],
+  resolution?: string | null,
+): { formatId: string; fileId: string; filename: string; fileSize: number | null } {
   const preferred = formats.find((f) =>
-    f.assetFormatType?.code === 'texture-set' || f.assetFormatType?.code === 'megascans',
+    FAB_DOWNLOADABLE_FORMATS.has(f.assetFormatType?.code ?? ''),
   ) ?? formats.find((f) =>
     (f.files ?? []).some((file) => file.name?.toLowerCase().endsWith('.zip')),
   ) ?? formats[0];
@@ -235,15 +269,44 @@ function pickDownloadTarget(formats: FabListingFormat[]): { formatId: string; fi
     throw new FabApiError('No downloadable Fab format on listing', 404, 'no_format');
   }
 
-  const file = preferred.files.find((f) => f.name?.toLowerCase().endsWith('.zip')) ?? preferred.files[0]!;
   const formatId = preferred.assetFormatType?.code ?? 'texture-set';
+  const zipFiles = preferred.files.filter((f) => f.name?.toLowerCase().endsWith('.zip'));
+  const files = zipFiles.length ? zipFiles : preferred.files;
+
+  const requested = resolution?.trim().toLowerCase();
+  if (requested) {
+    const match = files.find((f) => parseFabZipResolution(f.name ?? '') === requested);
+    if (match) {
+      return {
+        formatId,
+        fileId: match.uid ?? match.name ?? '0',
+        filename: match.name?.endsWith('.zip') ? match.name : `${formatId}.zip`,
+        fileSize: typeof match.fileSize === 'number' ? match.fileSize : null,
+      };
+    }
+  }
+
+  const ranked = [...files].sort((a, b) => {
+    const ra = parseFabZipResolution(a.name ?? '');
+    const rb = parseFabZipResolution(b.name ?? '');
+    const ia = ra ? FAB_RESOLUTION_ORDER.indexOf(ra as typeof FAB_RESOLUTION_ORDER[number]) : -1;
+    const ib = rb ? FAB_RESOLUTION_ORDER.indexOf(rb as typeof FAB_RESOLUTION_ORDER[number]) : -1;
+    return ib - ia;
+  });
+  const file = ranked[0] ?? files[0]!;
   const fileId = file.uid ?? file.name ?? '0';
   const filename = file.name?.endsWith('.zip') ? file.name : `${formatId}.zip`;
-  return { formatId, fileId, filename };
+  return {
+    formatId,
+    fileId,
+    filename,
+    fileSize: typeof file.fileSize === 'number' ? file.fileSize : null,
+  };
 }
 
 export async function fabDownloadMaterialZip(
   listingId: string,
+  options?: { resolution?: string },
 ): Promise<{ buffer: Buffer; filename: string; name: string }> {
   if (!fabAuthConfigured()) {
     throw new Error('Fab import requires FAB_EPIC_REFRESH_TOKEN on the server');
@@ -262,7 +325,7 @@ export async function fabDownloadMaterialZip(
   await fabAddToLibrary(listingId).catch(() => { /* may already own */ });
 
   const formats = await fabListingFormats(listingId);
-  const { formatId, fileId, filename } = pickDownloadTarget(formats);
+  const { formatId, fileId, filename } = pickDownloadTarget(formats, options?.resolution);
   const info = await fabFileDownloadInfo(listingId, formatId, fileId);
   const point = info.distributionPoints?.[0];
   if (!point?.manifestUrl) {

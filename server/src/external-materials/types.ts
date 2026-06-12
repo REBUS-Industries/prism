@@ -21,6 +21,8 @@ export interface ExternalMaterialSummary {
   downloadSize: number | null;
   /** Provider-local relevance score for unified merge sorting. */
   relevanceScore: number;
+  /** Public page on the provider site (Fab listing, Poly Haven asset, ambientCG view). */
+  providerUrl?: string | null;
 }
 
 export interface ExternalMaterialDetail extends ExternalMaterialSummary {

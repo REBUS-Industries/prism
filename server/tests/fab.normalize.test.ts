@@ -8,9 +8,12 @@ import {
   isFreeSingleMaterialListing,
 } from '../src/fab/filter.js';
 import {
+  fabProviderUrl,
   normalizeListingDetail,
   normalizeSearchListing,
   normalizeSearchPage,
+  parseFabDescription,
+  stripFabDescriptionHtml,
 } from '../src/fab/normalize.js';
 import type { FabListingDetail, FabSearchResponse } from '../src/fab/types.js';
 
@@ -85,5 +88,34 @@ describe('normalizeListingDetail', () => {
     expect(out.description).toBe('Weathered red brick surface material.');
     expect(out.ratingAverage).toBe(5);
     expect(out.ratingCount).toBe(1);
+  });
+});
+
+describe('stripFabDescriptionHtml', () => {
+  it('removes HTML tags and preserves readable structure', () => {
+    const html = '<p><strong>Texel density</strong>: 2048 px/m</p><p>Maps: Albedo, Normal, Roughness</p>';
+    expect(stripFabDescriptionHtml(html)).toBe(
+      'Texel density: 2048 px/m\nMaps: Albedo, Normal, Roughness',
+    );
+  });
+
+  it('strips anchor tags but keeps link text', () => {
+    const html = '<p>See <a href="https://quixel.com/megascans">Megascans</a> for details.</p>';
+    expect(stripFabDescriptionHtml(html)).toBe('See Megascans for details.');
+  });
+});
+
+describe('parseFabDescription', () => {
+  it('extracts map names from HTML descriptions', () => {
+    const html = '<p><strong>Maps</strong></p><ul><li>Albedo</li><li>Normal</li><li>Roughness</li></ul>';
+    const parsed = parseFabDescription(html);
+    expect(parsed.text).toContain('Albedo');
+    expect(parsed.maps).toEqual(expect.arrayContaining(['Albedo', 'Normal', 'Roughness']));
+  });
+});
+
+describe('fabProviderUrl', () => {
+  it('builds Fab listing URLs from listing uid', () => {
+    expect(fabProviderUrl('abc-123')).toBe('https://www.fab.com/listings/abc-123');
   });
 });

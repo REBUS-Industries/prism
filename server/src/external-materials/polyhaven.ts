@@ -89,6 +89,7 @@ function normalizeAsset(id: string, asset: PolyAsset, q: string): ExternalMateri
     relevanceScore,
     description: null,
     formats: ['jpg', 'png', 'exr'],
+    providerUrl: `https://polyhaven.com/a/${encodeURIComponent(id)}`,
     metadata: {
       categories: asset.categories ?? [],
       downloadCount: asset.download_count ?? 0,

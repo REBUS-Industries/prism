@@ -21,6 +21,13 @@ import {
 import { FabApiError } from '../src/fab/client.js';
 import { scoreQueryMatch, unifiedSearch } from '../src/external-materials/unifiedSearch.js';
 import { createFabProvider } from '../src/external-materials/fab.js';
+import {
+  defaultFabResolution,
+  listFabDownloadResolutions,
+  parseFabZipResolution,
+  pickDownloadTarget,
+} from '../src/fab/client.js';
+import type { FabListingFormat } from '../src/fab/types.js';
 import { encodeUnifiedCursor } from '../src/external-materials/types.js';
 import { externalImportResolutionTag } from '../src/api/externalMaterials.js';
 
@@ -28,6 +35,7 @@ const fixturesDir = resolve(import.meta.dirname, 'fixtures');
 const catalog = JSON.parse(readFileSync(resolve(fixturesDir, 'polyhaven-catalog.json'), 'utf8'));
 const files = JSON.parse(readFileSync(resolve(fixturesDir, 'polyhaven-files-concrete.json'), 'utf8'));
 const fabSearch = JSON.parse(readFileSync(resolve(fixturesDir, 'fab-search.json'), 'utf8'));
+const fabFormats = JSON.parse(readFileSync(resolve(fixturesDir, 'fab-formats-concrete.json'), 'utf8')) as FabListingFormat[];
 const ambientSearch = JSON.parse(readFileSync(resolve(fixturesDir, 'ambientcg-search-concrete.json'), 'utf8'));
 const ambientDetail = JSON.parse(readFileSync(resolve(fixturesDir, 'ambientcg-detail-concrete048.json'), 'utf8'));
 
@@ -96,6 +104,7 @@ describe('polyhaven provider (mocked)', () => {
     expect(detail?.previewUrlByResolution).toEqual({
       '2k': 'https://dl.example.com/concrete_floor_worn_001_diff_2k.jpg',
     });
+    expect(detail?.providerUrl).toBe('https://polyhaven.com/a/concrete_floor_worn_001');
   });
 
   it('updates preview URL when resolution is requested on detail', async () => {
@@ -194,6 +203,7 @@ describe('ambientcg provider (mocked)', () => {
     expect(detail?.maps).toContain('Albedo');
     expect(detail?.resolutions).toContain('2K-JPG');
     expect(detail?.defaultResolution).toBe('2K-JPG');
+    expect(detail?.providerUrl).toBe('https://ambientcg.com/view?id=Concrete048');
   });
 
   it('downloads the configured ZIP package', async () => {
@@ -216,6 +226,25 @@ describe('ambientcg provider (mocked)', () => {
     });
     const payload = await provider.downloadForImport('Concrete048', { resolution: '4K-JPG' });
     expect(payload.filename).toBe('Concrete048_4K-JPG.zip');
+  });
+});
+
+describe('fab download resolutions', () => {
+  it('parses resolution suffixes from Fab ZIP filenames', () => {
+    expect(parseFabZipResolution('concrete_floor_worn_001_8k.zip')).toBe('8k');
+    expect(parseFabZipResolution('concrete_floor_worn_001_4k.zip')).toBe('4k');
+    expect(parseFabZipResolution('material.zip')).toBeNull();
+  });
+
+  it('lists and defaults Fab resolutions', () => {
+    expect(listFabDownloadResolutions(fabFormats)).toEqual(['1k', '2k', '4k', '8k']);
+    expect(defaultFabResolution(['1k', '2k', '4k', '8k'])).toBe('4k');
+  });
+
+  it('picks the requested resolution file', () => {
+    const target = pickDownloadTarget(fabFormats, '2k');
+    expect(target.filename).toBe('concrete_floor_worn_001_2k.zip');
+    expect(target.fileSize).toBe(32768000);
   });
 });
 
@@ -247,6 +276,62 @@ describe('fab provider (mocked)', () => {
     const page = await provider.search({ q: 'concrete', cursor: null, limit: 2 });
     expect(page.items[0]?.source).toBe('fab');
     expect(page.items[0]?.title).toBe('Concrete Wall Surface');
+    expect(page.items[0]?.providerUrl).toContain('fab.com/listings/');
+  });
+
+  it('exposes resolutions, sanitized description, and provider URL on detail', async () => {
+    const provider = createFabProvider({
+      search: async () => ({ items: [], limit: 0, cursor: null, nextCursor: null }),
+      getListing: async () => ({
+        id: 'fab-concrete-001',
+        title: 'Concrete Floor',
+        listingType: 'material',
+        thumbnailUrl: 'https://cdn.example.com/t.jpg',
+        previewUrl: 'https://cdn.example.com/p.jpg',
+        tags: ['concrete'],
+        category: 'Surfaces',
+        seller: 'Quixel',
+        isFree: true,
+        price: null,
+        formats: ['texture-set'],
+        description: '<p><strong>Texel density</strong>: 2048 px/m</p><p>Maps: Albedo, Normal</p>',
+        publishedAt: null,
+        ratingAverage: null,
+        ratingCount: null,
+      }),
+      getFormats: async () => fabFormats,
+      download: async (_id, opts) => ({
+        buffer: Buffer.from('PK'),
+        filename: `concrete_floor_worn_001_${opts?.resolution ?? '4k'}.zip`,
+        name: 'Concrete Floor',
+      }),
+    });
+
+    const detail = await provider.getDetail('fab-concrete-001');
+    expect(detail?.providerUrl).toBe('https://www.fab.com/listings/fab-concrete-001');
+    expect(detail?.description).toBe('Texel density: 2048 px/m\nMaps: Albedo, Normal');
+    expect(detail?.resolutions).toEqual(['1k', '2k', '4k', '8k']);
+    expect(detail?.defaultResolution).toBe('4k');
+    expect(detail?.downloadSize).toBe(131072000);
+
+    const detail2k = await provider.getDetail('fab-concrete-001', { resolution: '2k' });
+    expect(detail2k?.downloadSize).toBe(32768000);
+  });
+
+  it('honours requested resolution on download', async () => {
+    const provider = createFabProvider({
+      search: async () => ({ items: [], limit: 0, cursor: null, nextCursor: null }),
+      getListing: async () => null,
+      getFormats: async () => fabFormats,
+      download: async (_id, opts) => ({
+        buffer: Buffer.from('PK'),
+        filename: `concrete_floor_worn_001_${opts?.resolution ?? '4k'}.zip`,
+        name: 'Concrete Floor',
+      }),
+    });
+
+    const payload = await provider.downloadForImport('fab-concrete-001', { resolution: '1k' });
+    expect(payload.filename).toBe('concrete_floor_worn_001_1k.zip');
   });
 });
 
