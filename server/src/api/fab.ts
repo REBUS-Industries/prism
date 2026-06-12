@@ -16,6 +16,7 @@ import {
 } from '../fab/client.js';
 import { importMaterialZipBuffer } from '../materials/importZip.js';
 import { loadMaterialDetail } from '../materials/loadDetail.js';
+import { applyExternalMaterialsSettings } from '../settings/externalMaterials.js';
 
 const idParam = z.object({ id: z.string().uuid() });
 
@@ -31,6 +32,10 @@ function provenance(principal: Principal | undefined) {
 }
 
 const plugin: FastifyPluginAsync = async (app) => {
+  app.addHook('preHandler', async () => {
+    await applyExternalMaterialsSettings();
+  });
+
   app.get<{ Querystring: { q?: string; cursor?: string; limit?: string } }>('/search', {
     preHandler: [requireAuth, requireScope('materials:read')],
   }, async (req, reply) => {

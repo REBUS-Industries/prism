@@ -84,7 +84,10 @@ services:
         max-file: "3"
 
   prism-materials:
-    image: ghcr.io/rebus-industries/prism-materials-service:${PRISM_MATERIALS_TAG:-latest}
+    # Monorepo materials-service entry — includes Fab/external-materials + DB token reload.
+    # prism-materials-service polyrepo lags (no fab routes); revert when polyrepo syncs.
+    image: ghcr.io/rebus-industries/prism-server:${PRISM_IMAGE_TAG:-latest}
+    command: ["node", "dist/server/src/materials-service.js"]
     container_name: prism-materials
     restart: unless-stopped
     depends_on:

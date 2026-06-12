@@ -23,7 +23,11 @@ import {
   listExternalMaterialProviders,
   providerLabels,
 } from '../external-materials/registry.js';
-import { applyExternalMaterialsSettings } from '../settings/externalMaterials.js';
+import { fabBrowseAuthPath } from '../fab/auth.js';
+import {
+  applyExternalMaterialsSettings,
+  loadExternalMaterialsSettingsPublic,
+} from '../settings/externalMaterials.js';
 
 const sourceParam = z.object({ source: z.string(), id: z.string().min(1) });
 
@@ -49,18 +53,26 @@ const plugin: FastifyPluginAsync = async (app) => {
     const cursor = decodeUnifiedCursor(cursorRaw);
 
     try {
-      const result = await unifiedSearch(listExternalMaterialProviders(), {
-        q,
-        sources,
-        cursor,
-        limit,
-      });
+      const [result, fabSettings] = await Promise.all([
+        unifiedSearch(listExternalMaterialProviders(), {
+          q,
+          sources,
+          cursor,
+          limit,
+        }),
+        loadExternalMaterialsSettingsPublic(),
+      ]);
 
       return {
         ...result,
         cursor: cursorRaw,
         providerLabels: providerLabels(),
         configuredSources: enabledExternalMaterialSources(),
+        fabDiagnostics: {
+          tokenConfigured: fabSettings.fab.tokenConfigured,
+          tokenSource: fabSettings.fab.tokenSource,
+          authPath: fabBrowseAuthPath(),
+        },
       };
     } catch (err) {
       req.log.warn({ err, q, sources }, 'external materials search failed');

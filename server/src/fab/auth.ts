@@ -203,16 +203,18 @@ export async function fabPublicFetch(url: string, init: RequestInit = {}): Promi
 
 /**
  * Fab search/detail — uses bearer when configured, otherwise cookie-primed public fetch.
+ * When a refresh token is configured, OAuth failures are surfaced (no silent public fallback).
  */
 export async function fabBrowseFetch(url: string, init: RequestInit = {}): Promise<Response> {
   if (fabAuthConfigured()) {
-    try {
-      return await fabAuthorizedFetch(url, init);
-    } catch {
-      // Fall back to public cookie session if token refresh fails.
-    }
+    return fabAuthorizedFetch(url, init);
   }
   return fabPublicFetch(url, init);
+}
+
+/** Whether Fab browse calls will use Epic bearer auth (for diagnostics). */
+export function fabBrowseAuthPath(): 'bearer' | 'public' {
+  return fabAuthConfigured() ? 'bearer' : 'public';
 }
 
 /** Prime Fab CSRF cookie jar — best-effort before Fab browse calls. */
