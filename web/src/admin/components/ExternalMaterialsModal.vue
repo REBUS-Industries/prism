@@ -42,6 +42,7 @@ const detail = ref<ExternalMaterialDetail | null>(null);
 const detailLoading = ref(false);
 const importing = ref(false);
 const importError = ref<string | null>(null);
+const selectedResolution = ref<string | null>(null);
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -62,6 +63,20 @@ const fabImportBlockedReason = computed(() => {
 const importDisabled = computed(() =>
   importing.value || detailLoading.value || !selected.value || !fabImportConfigured.value,
 );
+
+const detailMaps = computed(() => detail.value?.maps ?? []);
+
+const resolutionOptions = computed(() => detail.value?.resolutions ?? []);
+
+const showResolutionPicker = computed(() =>
+  resolutionOptions.value.length > 1 && selected.value?.source !== 'fab',
+);
+
+function applyDetailDefaults(d: ExternalMaterialDetail): void {
+  selectedResolution.value = d.defaultResolution
+    ?? d.resolutions?.[0]
+    ?? null;
+}
 
 function sourceLabel(source: ExternalMaterialSource): string {
   return providerLabels.value[source] ?? source;
@@ -98,10 +113,13 @@ async function load(reset = true): Promise<void> {
 async function selectItem(item: ExternalMaterialSummary): Promise<void> {
   selected.value = item;
   detail.value = null;
+  selectedResolution.value = null;
   detailLoading.value = true;
   importError.value = null;
   try {
-    detail.value = await externalMaterialsApi.get(item.source, item.sourceId);
+    const loaded = await externalMaterialsApi.get(item.source, item.sourceId);
+    detail.value = loaded;
+    applyDetailDefaults(loaded);
   } catch (err) {
     importError.value = (err as ApiError).message ?? 'failed to load detail';
   } finally {
@@ -114,7 +132,9 @@ async function importSelected(): Promise<void> {
   importing.value = true;
   importError.value = null;
   try {
-    const res = await externalMaterialsApi.import(selected.value.source, selected.value.sourceId);
+    const res = await externalMaterialsApi.import(selected.value.source, selected.value.sourceId, {
+      resolution: selectedResolution.value ?? undefined,
+    });
     emit('imported', res.id);
     emit('close');
   } catch (err) {
@@ -142,6 +162,7 @@ watch(() => props.open, (o) => {
   sourceFilter.value = 'all';
   selected.value = null;
   detail.value = null;
+  selectedResolution.value = null;
   nextCursor.value = null;
   importError.value = null;
   void load(true);
@@ -200,6 +221,11 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             <template v-else-if="fabDiagnostics.authPath === 'bearer' && providerErrors.fab.toLowerCase().includes('oauth')">
               Token refresh failed — re-save a valid Epic refresh token in Settings.
             </template>
+            <template v-else-if="fabDiagnostics.authPath === 'bearer' && providerErrors.fab.toLowerCase().includes('cloudflare')">
+              Bearer auth does not bypass Cloudflare —
+              <template v-if="!fabDiagnostics.httpProxyConfigured">set an HTTP proxy in Admin → Settings → External materials.</template>
+              <template v-else>check the configured HTTP proxy is reachable from the server.</template>
+            </template>
           </p>
         </div>
 
@@ -236,7 +262,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             <span class="source-badge lg">{{ sourceLabel(selected.source) }}</span>
             <div v-if="detailLoading" class="muted small">Loading preview…</div>
             <template v-else-if="detail">
-              <div v-if="detail.previewUrl" class="preview">
+              <div v-if="detail.previewUrl" class="preview preview-media">
                 <img :src="detail.previewUrl" :alt="detail.title" />
               </div>
               <p v-if="detail.description" class="desc">{{ detail.description }}</p>
@@ -244,6 +270,26 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
               <div v-if="detail.tags.length" class="tags">
                 <span v-for="tag in detail.tags.slice(0, 12)" :key="tag" class="pill tag">{{ tag }}</span>
               </div>
+              <div v-if="detailMaps.length" class="maps-row">
+                <span class="maps-label muted small">Includes</span>
+                <div class="maps-list">
+                  <span v-for="map in detailMaps" :key="map" class="pill map-pill">{{ map }}</span>
+                </div>
+              </div>
+              <div v-if="showResolutionPicker" class="resolution-row">
+                <span class="maps-label muted small">Resolution</span>
+                <div class="resolution-options">
+                  <button
+                    v-for="res in resolutionOptions"
+                    :key="res"
+                    class="res-pill"
+                    :class="{ active: selectedResolution === res }"
+                    type="button"
+                    @click="selectedResolution = res"
+                  >{{ res }}</button>
+                </div>
+              </div>
+              <p v-else-if="selected?.source === 'fab'" class="muted small">Resolution: provider default (Fab)</p>
               <p v-if="!fabImportConfigured" class="warn small">
                 Fab import is not configured.
                 Set an Epic refresh token under
@@ -316,7 +362,15 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 .result-card:hover, .result-card.selected { border-color: var(--orbit-primary); }
 .thumb {
   aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden;
-  background: var(--color-bg-hover); display: flex; align-items: center; justify-content: center;
+  background-color: var(--color-bg-input);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--color-border) 55%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--color-border) 55%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--color-border) 55%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--color-border) 55%, transparent) 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0;
+  display: flex; align-items: center; justify-content: center;
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; }
 .thumb-empty { font-size: 11px; }
@@ -338,8 +392,37 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 }
 .detail-empty { justify-content: center; text-align: center; font-size: 13px; }
 .detail h3 { margin: 0; font-size: 16px; }
-.preview { border-radius: var(--radius-sm); overflow: hidden; background: var(--color-bg-hover); }
+.preview { border-radius: var(--radius-sm); overflow: hidden; }
+.preview-media {
+  background-color: var(--color-bg-input);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--color-border) 55%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--color-border) 55%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--color-border) 55%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--color-border) 55%, transparent) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+}
 .preview img { width: 100%; display: block; max-height: 42vh; object-fit: contain; }
+.maps-row, .resolution-row { display: flex; flex-direction: column; gap: 6px; }
+.maps-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.maps-list, .resolution-options { display: flex; flex-wrap: wrap; gap: 4px; }
+.pill.map-pill {
+  font-size: 10px; text-transform: none; letter-spacing: normal;
+  background: var(--color-bg-input); color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+.res-pill {
+  padding: 3px 10px; font-size: 11px; border-radius: 999px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-input); color: var(--color-text-muted);
+  cursor: pointer;
+}
+.res-pill.active {
+  border-color: var(--color-text-muted);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
 .desc { font-size: 12px; margin: 0; color: var(--color-text-muted); line-height: 1.45; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag { font-size: 10px; text-transform: none; letter-spacing: normal; }

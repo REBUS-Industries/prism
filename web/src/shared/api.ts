@@ -1428,6 +1428,12 @@ export interface ExternalMaterialSummary {
 export interface ExternalMaterialDetail extends ExternalMaterialSummary {
   description: string | null;
   formats: string[];
+  /** Map/texture channels included in the download package. */
+  maps?: string[];
+  /** Available download resolutions (provider-specific, e.g. 2k or 2K-JPG). */
+  resolutions?: string[];
+  /** Suggested default resolution for import. */
+  defaultResolution?: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -1435,6 +1441,7 @@ export interface FabSearchDiagnostics {
   tokenConfigured: boolean;
   tokenSource: 'db' | 'env' | 'none';
   authPath: 'bearer' | 'public';
+  httpProxyConfigured?: boolean;
 }
 
 export interface ExternalMaterialsSearchPage {
@@ -1472,7 +1479,7 @@ export const externalMaterialsApi = {
   },
   get: (source: ExternalMaterialSource, id: string) =>
     api.get<ExternalMaterialDetail>(`/api/external-materials/${source}/${encodeURIComponent(id)}`),
-  import: (source: ExternalMaterialSource, id: string, body?: { name?: string }) =>
+  import: (source: ExternalMaterialSource, id: string, body?: { name?: string; resolution?: string }) =>
     api.post<ExternalMaterialImportResult>(
       `/api/external-materials/${source}/${encodeURIComponent(id)}/import`,
       body ?? {},

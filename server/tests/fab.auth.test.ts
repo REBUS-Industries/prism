@@ -4,8 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearFabCookieJarForTests,
+  FabOAuthError,
   fabBrowseAuthPath,
   fabBrowseFetch,
+  ensureFabCsrf,
   setFabRefreshTokenForTests,
 } from '../src/fab/auth.js';
 
@@ -47,10 +49,31 @@ describe('fabBrowseFetch', () => {
       headers: new Headers(),
     });
 
-    await expect(fabBrowseFetch('https://www.fab.com/i/listings/search?q=brick')).rejects.toThrow(
-      /Refresh token expired|invalid_grant/i,
+    await expect(fabBrowseFetch('https://www.fab.com/i/listings/search?q=brick')).rejects.toBeInstanceOf(
+      FabOAuthError,
     );
     expect(undiciFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('primes CSRF with bearer when token is configured', async () => {
+    setFabRefreshTokenForTests('test-refresh-token-value');
+    undiciFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'access-abc', expires_in: 3600 }),
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'set-cookie': 'fab_csrftoken=csrf123; Path=/' }),
+      });
+
+    await ensureFabCsrf();
+    expect(undiciFetch).toHaveBeenCalledTimes(2);
+    const csrfInit = undiciFetch.mock.calls[1]![1] as { headers?: Headers };
+    expect((csrfInit.headers as Headers).get('Authorization')).toBe('bearer access-abc');
   });
 
   it('uses public fetch when no token is configured', async () => {

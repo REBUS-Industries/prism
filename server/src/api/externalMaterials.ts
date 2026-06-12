@@ -23,7 +23,7 @@ import {
   listExternalMaterialProviders,
   providerLabels,
 } from '../external-materials/registry.js';
-import { fabBrowseAuthPath } from '../fab/auth.js';
+import { fabBrowseAuthPath, fabHttpProxyConfigured } from '../fab/auth.js';
 import {
   applyExternalMaterialsSettings,
   loadExternalMaterialsSettingsPublic,
@@ -72,6 +72,7 @@ const plugin: FastifyPluginAsync = async (app) => {
           tokenConfigured: fabSettings.fab.tokenConfigured,
           tokenSource: fabSettings.fab.tokenSource,
           authPath: fabBrowseAuthPath(),
+          httpProxyConfigured: fabHttpProxyConfigured() || !!fabSettings.fab.httpProxy,
         },
       };
     } catch (err) {
@@ -97,7 +98,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     return reply.send(detail);
   });
 
-  app.post<{ Params: { source: string; id: string }; Body: { name?: string } | unknown }>('/:source/:id/import', {
+  app.post<{ Params: { source: string; id: string }; Body: { name?: string; resolution?: string } | unknown }>('/:source/:id/import', {
     preHandler: [requireAuth, requireScope('materials:write')],
   }, async (req, reply) => {
     const parsed = sourceParam.safeParse(req.params);
@@ -109,11 +110,16 @@ const plugin: FastifyPluginAsync = async (app) => {
       return reply.code(503).send({ error: 'provider disabled', source: parsed.data.source });
     }
 
-    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as { name?: string };
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as {
+      name?: string;
+      resolution?: string;
+    };
     const { adminId, apiKeyId } = provenance(req.principal);
 
     try {
-      const payload = await provider.downloadForImport(parsed.data.id);
+      const payload = await provider.downloadForImport(parsed.data.id, {
+        resolution: body.resolution?.trim() || undefined,
+      });
       const { materialId, skipped } = await importMaterialZipBuffer(payload.buffer, {
         name: body.name?.trim() || payload.name,
         zipFilename: payload.filename,
