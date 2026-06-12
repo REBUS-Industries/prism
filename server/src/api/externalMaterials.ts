@@ -28,6 +28,7 @@ import {
   applyExternalMaterialsSettings,
   loadExternalMaterialsSettingsPublic,
 } from '../settings/externalMaterials.js';
+import { loadExternalMaterialIndexPublic } from '../external-materials/indexCache.js';
 
 const sourceParam = z.object({ source: z.string(), id: z.string().min(1) });
 
@@ -60,7 +61,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     const cursor = decodeUnifiedCursor(cursorRaw);
 
     try {
-      const [result, fabSettings] = await Promise.all([
+      const [result, fabSettings, indexStatus] = await Promise.all([
         unifiedSearch(listExternalMaterialProviders(), {
           q,
           sources,
@@ -68,6 +69,7 @@ const plugin: FastifyPluginAsync = async (app) => {
           limit,
         }),
         loadExternalMaterialsSettingsPublic(),
+        loadExternalMaterialIndexPublic(),
       ]);
 
       return {
@@ -75,6 +77,12 @@ const plugin: FastifyPluginAsync = async (app) => {
         cursor: cursorRaw,
         providerLabels: providerLabels(),
         configuredSources: enabledExternalMaterialSources(),
+        index: {
+          useIndex: indexStatus.useIndex,
+          updatedAt: indexStatus.updatedAt,
+          stale: indexStatus.stale,
+          counts: indexStatus.counts,
+        },
         fabDiagnostics: {
           tokenConfigured: fabSettings.fab.tokenConfigured,
           tokenSource: fabSettings.fab.tokenSource,

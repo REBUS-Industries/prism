@@ -59,7 +59,8 @@ async function phFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function loadTextureCatalog(): Promise<AssetCatalog> {
+/** Full texture catalog — used by search and persistent index build. */
+export async function loadTextureCatalog(): Promise<AssetCatalog> {
   const now = Date.now();
   if (catalogCache && now - catalogCache.fetchedAt < CACHE_TTL_MS) {
     return catalogCache.assets;

@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import {
   externalMaterialsSettingsApi,
   type ApiError,
+  type ExternalMaterialIndexStatus,
   type ExternalMaterialsSettings,
 } from '../../shared/api';
 
 const loading = ref(true);
 const saving = ref(false);
+const reindexing = ref(false);
 const error = ref<string | null>(null);
 const status = ref<string | null>(null);
+let indexPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const settings = ref<ExternalMaterialsSettings | null>(null);
 const tokenInput = ref('');
@@ -124,6 +127,10 @@ const form = reactive({
   fabFlareSolverrUrl: '',
   polyhavenEnabled: true,
   ambientcgEnabled: true,
+  indexUse: true,
+  indexFab: true,
+  indexPolyhaven: true,
+  indexAmbientcg: true,
 });
 
 const fieldErrors = reactive({
@@ -215,15 +222,83 @@ const fabStatusLine = computed(() => {
 const isDirty = computed(() => {
   if (!settings.value) return false;
   const s = settings.value;
+  const idx = s.index;
   return (
     form.fabEnabled !== s.fab.enabled
     || form.fabHttpProxy !== s.fab.httpProxy
     || form.fabFlareSolverrUrl !== s.fab.flareSolverrUrl
     || form.polyhavenEnabled !== s.polyhaven.enabled
     || form.ambientcgEnabled !== s.ambientcg.enabled
+    || form.indexUse !== idx.useIndex
+    || form.indexFab !== idx.indexProviders.fab
+    || form.indexPolyhaven !== idx.indexProviders.polyhaven
+    || form.indexAmbientcg !== idx.indexProviders.ambientcg
     || tokenDirty.value
   );
 });
+
+const indexStatus = computed((): ExternalMaterialIndexStatus | null => settings.value?.index ?? null);
+
+const indexStatusLabel = computed(() => {
+  const idx = indexStatus.value;
+  if (!idx) return 'Unknown';
+  if (idx.status === 'running') {
+    const p = idx.progress;
+    if (p) return `Indexing ${p.provider}… (${p.fetched}${p.total != null ? ` / ${p.total}` : ''})`;
+    return 'Indexing…';
+  }
+  if (idx.status === 'error') return `Error: ${idx.error ?? 'failed'}`;
+  if (idx.status === 'complete' && idx.updatedAt) return 'Complete';
+  if (idx.updatedAt) return idx.stale ? 'Stale — refresh recommended' : 'Ready';
+  return 'Not built yet';
+});
+
+const indexCountsLine = computed(() => {
+  const idx = indexStatus.value;
+  if (!idx?.counts || !Object.keys(idx.counts).length) return null;
+  const parts: string[] = [];
+  if (idx.counts.fab != null) parts.push(`Fab ${idx.counts.fab.toLocaleString()}`);
+  if (idx.counts.polyhaven != null) parts.push(`Poly Haven ${idx.counts.polyhaven.toLocaleString()}`);
+  if (idx.counts.ambientcg != null) parts.push(`ambientCG ${idx.counts.ambientcg.toLocaleString()}`);
+  return parts.join(' · ');
+});
+
+const indexUpdatedLine = computed(() => {
+  const at = indexStatus.value?.updatedAt;
+  if (!at) return null;
+  try {
+    return new Date(at).toLocaleString();
+  } catch {
+    return at;
+  }
+});
+
+function stopIndexPolling(): void {
+  if (indexPollTimer) {
+    clearInterval(indexPollTimer);
+    indexPollTimer = null;
+  }
+}
+
+function startIndexPolling(): void {
+  stopIndexPolling();
+  indexPollTimer = setInterval(() => { void pollIndexStatus(); }, 2500);
+}
+
+async function pollIndexStatus(): Promise<void> {
+  try {
+    const res = await externalMaterialsSettingsApi.indexStatus();
+    if (settings.value) {
+      settings.value = { ...settings.value, index: res.index };
+    }
+    if (res.index.status !== 'running') {
+      stopIndexPolling();
+      reindexing.value = false;
+    }
+  } catch {
+    /* keep polling until user leaves */
+  }
+}
 
 async function refresh(): Promise<void> {
   loading.value = true;
@@ -236,6 +311,14 @@ async function refresh(): Promise<void> {
     form.fabFlareSolverrUrl = res.settings.fab.flareSolverrUrl;
     form.polyhavenEnabled = res.settings.polyhaven.enabled;
     form.ambientcgEnabled = res.settings.ambientcg.enabled;
+    form.indexUse = res.settings.index.useIndex;
+    form.indexFab = res.settings.index.indexProviders.fab;
+    form.indexPolyhaven = res.settings.index.indexProviders.polyhaven;
+    form.indexAmbientcg = res.settings.index.indexProviders.ambientcg;
+    if (res.settings.index.status === 'running') {
+      reindexing.value = true;
+      startIndexPolling();
+    }
     tokenInput.value = '';
     tokenDirty.value = false;
   } catch (err) {
@@ -266,6 +349,14 @@ async function save(): Promise<void> {
       },
       polyhaven: { enabled: form.polyhavenEnabled },
       ambientcg: { enabled: form.ambientcgEnabled },
+      index: {
+        useIndex: form.indexUse,
+        indexProviders: {
+          fab: form.indexFab,
+          polyhaven: form.indexPolyhaven,
+          ambientcg: form.indexAmbientcg,
+        },
+      },
     };
     if (tokenDirty.value) {
       patch.fab!.epicRefreshToken = tokenInput.value;
@@ -290,7 +381,38 @@ async function save(): Promise<void> {
   }
 }
 
+async function refreshIndex(): Promise<void> {
+  if (reindexing.value) return;
+  error.value = null;
+  reindexing.value = true;
+  try {
+    const res = await externalMaterialsSettingsApi.reindex({
+      providers: {
+        fab: form.indexFab,
+        polyhaven: form.indexPolyhaven,
+        ambientcg: form.indexAmbientcg,
+      },
+    });
+    if (settings.value) {
+      settings.value = { ...settings.value, index: res.index };
+    }
+    status.value = 'Texture index build started — this may take several minutes for Fab';
+    setTimeout(() => (status.value = null), 4000);
+    startIndexPolling();
+  } catch (err) {
+    const apiErr = err as ApiError;
+    if (apiErr.status === 409) {
+      status.value = 'Index build already in progress';
+      startIndexPolling();
+    } else {
+      error.value = apiErr.message ?? 'failed to start index build';
+      reindexing.value = false;
+    }
+  }
+}
+
 onMounted(() => { void refresh(); });
+onUnmounted(() => { stopIndexPolling(); });
 </script>
 
 <template>
@@ -579,6 +701,56 @@ onMounted(() => { void refresh(); });
           <span>Enable ambientCG (CC0 PBR materials, no auth)</span>
         </label>
       </fieldset>
+
+      <fieldset class="provider-block index-block">
+        <legend>Texture search index</legend>
+        <p class="hint muted">
+          Build a local catalog on the PRISM server so material search runs against
+          cached metadata instead of live provider APIs. Especially helpful for Fab
+          (FlareSolverr / Cloudflare). Detail and import still use live APIs.
+        </p>
+        <label class="switch-row">
+          <input v-model="form.indexUse" type="checkbox" />
+          <span>Use local index for search when available</span>
+        </label>
+        <div class="index-provider-toggles">
+          <span class="index-provider-label">Index providers:</span>
+          <label class="switch-row compact">
+            <input v-model="form.indexFab" type="checkbox" :disabled="reindexing" />
+            <span>Fab</span>
+          </label>
+          <label class="switch-row compact">
+            <input v-model="form.indexPolyhaven" type="checkbox" :disabled="reindexing" />
+            <span>Poly Haven</span>
+          </label>
+          <label class="switch-row compact">
+            <input v-model="form.indexAmbientcg" type="checkbox" :disabled="reindexing" />
+            <span>ambientCG</span>
+          </label>
+        </div>
+        <div class="index-status">
+          <p class="hint muted">
+            Status: <strong>{{ indexStatusLabel }}</strong>
+            <template v-if="indexUpdatedLine"> · Last indexed {{ indexUpdatedLine }}</template>
+          </p>
+          <p v-if="indexCountsLine" class="hint muted">{{ indexCountsLine }}</p>
+        </div>
+        <div class="index-actions">
+          <button
+            type="button"
+            class="secondary"
+            :disabled="reindexing || (!form.indexFab && !form.indexPolyhaven && !form.indexAmbientcg)"
+            @click="refreshIndex"
+          >
+            {{ reindexing ? 'Updating index…' : 'Update texture index' }}
+          </button>
+        </div>
+        <p class="hint muted">
+          Fab indexing paginates the free-materials catalog via FlareSolverr and can take
+          10–30+ minutes. Poly Haven and ambientCG are usually faster. Save provider
+          toggles above before starting a build.
+        </p>
+      </fieldset>
     </div>
 
     <div class="help-copy muted">
@@ -638,6 +810,42 @@ onMounted(() => { void refresh(); });
   gap: 8px;
   font-size: 13px;
   cursor: pointer;
+}
+.switch-row.compact {
+  font-size: 12px;
+}
+.index-block { gap: 10px; }
+.index-provider-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+.index-provider-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.index-status { margin: 0; }
+.index-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.secondary {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-elevated, var(--color-bg));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.secondary:hover:not(:disabled) {
+  border-color: var(--color-accent, #6366f1);
+}
+.secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .hint {
   font-size: 11px;

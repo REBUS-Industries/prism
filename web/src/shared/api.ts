@@ -490,7 +490,20 @@ export interface ExternalMaterialsSettings {
   };
   polyhaven: { enabled: boolean };
   ambientcg: { enabled: boolean };
+  index: ExternalMaterialIndexStatus;
 }
+
+export type ExternalMaterialIndexStatus = {
+  updatedAt: string | null;
+  version: number;
+  status: 'idle' | 'running' | 'complete' | 'error';
+  counts: Partial<Record<'fab' | 'polyhaven' | 'ambientcg', number>>;
+  indexProviders: Record<'fab' | 'polyhaven' | 'ambientcg', boolean>;
+  useIndex: boolean;
+  error: string | null;
+  progress: { provider: string; fetched: number; total?: number } | null;
+  stale: boolean;
+};
 
 export interface ExternalMaterialsSettingsPatch {
   fab?: {
@@ -501,12 +514,20 @@ export interface ExternalMaterialsSettingsPatch {
   };
   polyhaven?: { enabled?: boolean };
   ambientcg?: { enabled?: boolean };
+  index?: {
+    useIndex?: boolean;
+    indexProviders?: Partial<Record<'fab' | 'polyhaven' | 'ambientcg', boolean>>;
+  };
 }
 
 export const externalMaterialsSettingsApi = {
   get: () => api.get<{ settings: ExternalMaterialsSettings }>('/api/settings/external-materials'),
   patch: (body: ExternalMaterialsSettingsPatch) =>
     api.patch<{ ok: true; settings: ExternalMaterialsSettings }>('/api/settings/external-materials', body),
+  reindex: (body?: { providers?: Partial<Record<'fab' | 'polyhaven' | 'ambientcg', boolean>> }) =>
+    api.post<{ ok: true; index: ExternalMaterialIndexStatus }>('/api/settings/external-materials/reindex', body ?? {}),
+  indexStatus: () =>
+    api.get<{ index: ExternalMaterialIndexStatus }>('/api/settings/external-materials/index-status'),
 };
 
 export interface ServerHealth {
