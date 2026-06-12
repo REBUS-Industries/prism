@@ -417,7 +417,7 @@ onMounted(() => { void refresh(); });
 </template>
 
 <style scoped>
-.field-stack { display: flex; flex-direction: column; gap: 16px; }
+.field-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .provider-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 8px);
@@ -434,7 +434,7 @@ onMounted(() => { void refresh(); });
   text-transform: uppercase;
   padding: 0 6px;
 }
-.field { display: flex; flex-direction: column; gap: 6px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field label { font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
 .field label code { font-size: 11px; font-weight: 400; }
 .field input[type="text"],
@@ -446,7 +446,13 @@ onMounted(() => { void refresh(); });
   font-size: 13px;
   cursor: pointer;
 }
-.hint { font-size: 11px; line-height: 1.45; margin: 0; }
+.hint {
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .help-details {
   margin-top: 4px;
   border: 1px solid var(--color-border);
@@ -472,6 +478,9 @@ onMounted(() => { void refresh(); });
   padding: 0 12px 12px;
   font-size: 11px;
   line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .help-body h4 {
   margin: 12px 0 4px;
@@ -486,7 +495,7 @@ onMounted(() => { void refresh(); });
   margin: 4px 0 8px;
   padding-left: 18px;
 }
-.help-steps li { margin-bottom: 8px; }
+.help-steps li { margin-bottom: 8px; min-width: 0; }
 .help-steps li:last-child { margin-bottom: 0; }
 .token-help.code-block,
 .help-body .code-block {
@@ -494,7 +503,8 @@ onMounted(() => { void refresh(); });
   border-radius: var(--radius-sm, 6px);
   border: 1px solid var(--color-border);
   background: #1e1e2e;
-  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
 }
 .code-block-toolbar {
   display: flex;
@@ -544,6 +554,9 @@ onMounted(() => { void refresh(); });
   color: #e8e8e8;
   white-space: pre;
   overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
   tab-size: 2;
 }
 .auth-code-field {
@@ -583,7 +596,13 @@ onMounted(() => { void refresh(); });
 }
 .verify-details[open] summary::before { transform: rotate(90deg); }
 .verify-details p { margin: 0 0 8px; font-size: 11px; }
-.help-copy { margin-top: 4px; font-size: 12px; line-height: 1.5; }
+.help-copy {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .help-copy p { margin: 0; }
 .footer-actions {
   display: flex;
