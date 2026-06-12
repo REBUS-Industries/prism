@@ -14,7 +14,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 import { buildFixtureAssembly, disposeAssembly, type MotionNode } from '../utils/fixtureAssembly';
-import { fixturesApi, type FixturePart, type FixtureModel, type MotionAxis, type Vec3 } from '../../shared/api';
+import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
+import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type MotionAxis, type Vec3 } from '../../shared/api';
 
 /** Gizmo edit emitted to the parent (GDTF local space: position metres, rotation degrees). */
 export interface PartTransformEdit {
@@ -120,11 +121,23 @@ let lastCssW = 0;
 let lastCssH = 0;
 let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
+const texLoader = new THREE.TextureLoader();
+/** REBUS materials built for the current assembly — disposed on reload. */
+let builtMaterials: BuiltMaterial[] = [];
+
+function disposeBuiltMaterials(): void {
+  for (const bm of builtMaterials) {
+    bm.material.dispose();
+    for (const t of bm.textures) t.dispose();
+  }
+  builtMaterials = [];
+}
 
 function clearLoaded(): void {
   // Detach the gizmo before disposing the groups it may be attached to.
   transformControls?.detach();
   partGroups = new Map();
+  disposeBuiltMaterials();
   // Detach beam before disposing assembly nodes it may be parented to.
   beamMesh?.removeFromParent();
   // removeFromParent() works whether the root was added to scene or tiltGroup.
@@ -353,18 +366,39 @@ async function loadGlb(url: string): Promise<boolean> {
 
 async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   if (!scene || !a.parts?.length) return false;
+
+  // Build the REBUS materials assigned to parts (by resolved materialId) so the
+  // assembly can paint each part's mesh with its material.
+  const newBuilt: BuiltMaterial[] = [];
+  const materialsById = new Map<string, THREE.Material>();
+  const matIds = [...new Set(a.parts.map((p) => p.materialId).filter((id): id is string => !!id))];
+  const maxAniso = renderer?.capabilities.getMaxAnisotropy() ?? 1;
+  await Promise.all(matIds.map(async (id) => {
+    try {
+      const detail = await materialsApi.get(id);
+      const bm = buildFixturePbrMaterial(detail, texLoader, maxAniso);
+      newBuilt.push(bm);
+      materialsById.set(id, bm.material);
+    } catch {
+      // Material may have been deleted; skip — the mesh keeps its GLB material.
+    }
+  }));
+
   const { root, meshCount, box, panNode: pn, tiltNode: tn, beamPart, partGroups: pg } = await buildFixtureAssembly({
     parts: a.parts,
     models: a.models ?? [],
     motionAxes: a.motionAxes ?? [],
     selectedModeGeometryId: a.selectedModeGeometryId ?? null,
+    materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
   if (meshCount === 0) {
     disposeAssembly(root);
+    for (const bm of newBuilt) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
     return false;
   }
   clearLoaded();
+  builtMaterials = newBuilt;
   loadedRoot = root;
   panNode = pn ?? null;
   tiltNode = tn ?? null;
@@ -517,7 +551,8 @@ onMounted(() => {
 const assemblyKey = (): string => {
   const a = props.assembly;
   if (!a) return '';
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}`;
+  const mats = a.parts?.map((p) => `${p.partId}=${p.materialId ?? ''}`).join('|') ?? '';
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${mats}`;
 };
 
 watch(() => [props.url, assemblyKey(), props.assemblyRevision], () => { void loadContent(); });
