@@ -131,3 +131,15 @@ sync — wired into CI as the `schemas` job.
 - `infra/Caddyfile.snippet`      — proxy config for the LXC proxy pair
 
 See `DEPLOY.md` and `AGENT_INSTALL.md` for runbook detail.
+
+## External materials (Fab + Cloudflare)
+
+Materials editor browse/import calls Fab from the **server** (VM 211/212). Cloudflare blocks
+typical datacenter IPs; PRISM uses **FlareSolverr** on the same VM to obtain `cf_clearance`
+cookies before Fab API requests (`FAB_FLARESOLVERR_URL`, default
+`http://127.0.0.1:8191/v1`). Epic OAuth (`FAB_EPIC_REFRESH_TOKEN`) is for asset **import**
+only — it does not bypass Cloudflare for search. Browser challenges on a workstation PC do
+not replace FlareSolverr for server egress.
+
+Ops detail: `docs/EXTERNAL_MATERIALS.md`, Admin → Settings → External materials,
+`infra/.env.example`.
