@@ -1,0 +1,59 @@
+{
+  "cursors": { "next": "page-2", "previous": null },
+  "results": [
+    {
+      "uid": "pack-001",
+      "title": "Simple Concrete Forms Material Pack",
+      "listingType": "material",
+      "isFree": false,
+      "startingPrice": { "price": 0 },
+      "tags": [],
+      "assetFormats": [
+        { "assetFormatType": { "code": "unreal-engine", "name": "Unreal Engine" } },
+        { "assetFormatType": { "code": "additional-files", "name": "Additional Files" } }
+      ],
+      "thumbnails": []
+    },
+    {
+      "uid": "68db59f6-f151-473b-aa47-48e64f47d8c3",
+      "title": "Smooth Concrete",
+      "listingType": "material",
+      "isFree": false,
+      "startingPrice": { "price": 0 },
+      "tags": [{ "name": "Concrete" }],
+      "category": { "name": "Concrete", "path": "building-human-made/concrete" },
+      "user": { "sellerName": "Quixel Megascans" },
+      "assetFormats": [
+        { "assetFormatType": { "code": "texture-set", "name": "Texture Set" } },
+        { "assetFormatType": { "code": "gltf", "name": "GLTF" } }
+      ],
+      "thumbnails": []
+    },
+    {
+      "uid": "paid-brick-002",
+      "title": "Red Brick Wall",
+      "listingType": "material",
+      "isFree": false,
+      "startingPrice": { "price": 0.99 },
+      "tags": [{ "name": "Brick" }],
+      "assetFormats": [
+        { "assetFormatType": { "code": "texture-set", "name": "Texture Set" } }
+      ],
+      "thumbnails": []
+    },
+    {
+      "uid": "rough-concrete-003",
+      "title": "Rough Concrete",
+      "listingType": "material",
+      "isFree": false,
+      "startingPrice": { "price": 0 },
+      "tags": [{ "name": "Concrete" }],
+      "user": { "sellerName": "Quixel Megascans" },
+      "assetFormats": [
+        { "assetFormatType": { "code": "texture-set", "name": "Texture Set" } },
+        { "assetFormatType": { "code": "gltf", "name": "GLTF" } }
+      ],
+      "thumbnails": []
+    }
+  ]
+}

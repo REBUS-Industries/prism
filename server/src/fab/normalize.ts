@@ -1,6 +1,7 @@
 /**
  * Normalize Fab API responses into stable PRISM-facing DTOs.
  */
+import { isPaidListing } from './filter.js';
 import type {
   FabListingDetail,
   FabSearchListing,
@@ -70,7 +71,7 @@ export function normalizeSearchListing(listing: FabSearchListing): FabAssetSumma
     tags: normalizeTags(listing.tags),
     category: listing.category?.name ?? listing.category?.path ?? null,
     seller: listing.user?.sellerName ?? null,
-    isFree: listing.isFree === true,
+    isFree: !isPaidListing(listing),
     price: typeof listing.startingPrice?.price === 'number' ? listing.startingPrice.price : null,
     formats: normalizeFormats(listing),
   };

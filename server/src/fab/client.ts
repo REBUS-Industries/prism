@@ -127,7 +127,6 @@ function fabSearchParams(q: string, pageSize: number, cursor: string | null): UR
   if (q.trim()) params.set('q', q.trim());
   params.set('listing_types', 'material');
   params.set('is_free', '1');
-  params.set('formats', 'texture-set');
   params.set('count', String(Math.min(Math.max(pageSize, 1), 48)));
   params.set('sort_by', 'relevance');
   if (cursor) params.set('cursor', cursor);

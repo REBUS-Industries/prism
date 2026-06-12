@@ -18,6 +18,10 @@ const FIXTURE = JSON.parse(
   readFileSync(join(import.meta.dirname, 'fixtures', 'fab-search-brick.json'), 'utf8'),
 ) as FabSearchResponse;
 
+const CONCRETE_FIXTURE = JSON.parse(
+  readFileSync(join(import.meta.dirname, 'fixtures', 'fab-search-concrete.json'), 'utf8'),
+) as FabSearchResponse;
+
 describe('normalizeSearchListing', () => {
   it('maps Fab search listing to PRISM summary fields', () => {
     const listing = FIXTURE.results[0]!;
@@ -38,6 +42,13 @@ describe('normalizeSearchListing', () => {
     expect(out.tags).toEqual([]);
     expect(out.thumbnailUrl).toBeNull();
   });
+  it('treats Megascans zero-price listings as free', () => {
+    const listing = CONCRETE_FIXTURE.results[1]!;
+    const out = normalizeSearchListing(listing);
+    expect(out.isFree).toBe(true);
+    expect(out.price).toBe(0);
+    expect(out.formats).toEqual(expect.arrayContaining(['texture-set']));
+  });
 });
 
 describe('normalizeSearchPage', () => {
@@ -54,6 +65,11 @@ describe('normalizeSearchPage', () => {
     ) as FabSearchResponse;
     const page = normalizeSearchPage(mixed, 10, null, isFreeSingleMaterialListing);
     expect(page.items.map((i) => i.id)).toEqual(['free-single-001', 'free-single-004']);
+  });
+
+  it('returns Megascans concrete from real-shaped search fixture', () => {
+    const page = normalizeSearchPage(CONCRETE_FIXTURE, 10, null, isFreeSingleMaterialListing);
+    expect(page.items.map((i) => i.title)).toEqual(['Smooth Concrete', 'Rough Concrete']);
   });
 });
 
