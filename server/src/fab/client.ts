@@ -2,9 +2,11 @@
  * Fab marketplace HTTP client — public search/detail + Epic-authenticated download.
  */
 import {
+  FabOAuthError,
   fabAuthConfigured,
   fabAuthorizedFetch,
   fabBrowseFetch,
+  fabHttpProxyConfigured,
   ensureFabCsrf,
 } from './auth.js';
 import { assembleFileFromManifest, fetchManifestBytes } from './downloadManifest.js';
@@ -53,12 +55,37 @@ export function isFabImportConfigured(): boolean {
   return fabAuthConfigured();
 }
 
+/** Exported for unit tests. */
+export function fabCloudflareBlockedMessage(): string {
+  if (fabAuthConfigured()) {
+    if (fabHttpProxyConfigured()) {
+      return 'Fab is blocked by Cloudflare from this server even with Epic bearer token and HTTP proxy configured. Check proxy reachability or try a residential egress proxy (Admin → Settings → External materials).';
+    }
+    return 'Fab is blocked by Cloudflare from this server. Epic bearer token is configured but does not bypass Cloudflare — set an HTTP proxy under Admin → Settings → External materials (or FAB_HTTP_PROXY).';
+  }
+  if (fabHttpProxyConfigured()) {
+    return 'Fab is blocked by Cloudflare from this server even with HTTP proxy configured. Check proxy reachability or try a residential egress proxy (Admin → Settings → External materials).';
+  }
+  return 'Fab is blocked by Cloudflare from this server. Set an HTTP proxy under Admin → Settings → External materials (or FAB_HTTP_PROXY). An Epic refresh token enables import but does not bypass Cloudflare for search.';
+}
+
+async function fabBrowseRequest(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fabBrowseFetch(url, init);
+  } catch (err) {
+    if (err instanceof FabOAuthError) {
+      throw new FabApiError(err.message, 401, 'fab_oauth_failed');
+    }
+    throw err;
+  }
+}
+
 async function fabJson<T>(res: Response): Promise<T> {
   const body = await res.text().catch(() => '');
   if (!res.ok) {
     if (isFabCloudflareResponse(body, res.status)) {
       throw new FabApiError(
-        'Fab is blocked by Cloudflare from this server. Set FAB_EPIC_REFRESH_TOKEN and/or FAB_HTTP_PROXY (see infra/.env.example).',
+        fabCloudflareBlockedMessage(),
         res.status,
         'fab_cloudflare_blocked',
       );
@@ -70,7 +97,7 @@ async function fabJson<T>(res: Response): Promise<T> {
   } catch {
     if (isFabCloudflareResponse(body, res.status)) {
       throw new FabApiError(
-        'Fab returned a non-JSON Cloudflare challenge page.',
+        fabCloudflareBlockedMessage(),
         res.status,
         'fab_cloudflare_blocked',
       );
@@ -92,14 +119,14 @@ export async function fabSearch(
   params.set('sort_by', 'relevance');
   if (cursor) params.set('cursor', cursor);
 
-  const res = await fabBrowseFetch(`${FAB_BASE}/i/listings/search?${params.toString()}`);
+  const res = await fabBrowseRequest(`${FAB_BASE}/i/listings/search?${params.toString()}`);
   const raw = await fabJson<FabSearchResponse>(res);
   return normalizeSearchPage(raw, limit, cursor);
 }
 
 export async function fabGetListing(uid: string): Promise<FabAssetDetail | null> {
   await ensureFabCsrf();
-  const res = await fabBrowseFetch(`${FAB_BASE}/i/listings/${encodeURIComponent(uid)}`);
+  const res = await fabBrowseRequest(`${FAB_BASE}/i/listings/${encodeURIComponent(uid)}`);
   if (res.status === 404) return null;
   const raw = await fabJson<FabListingDetail>(res);
   return normalizeListingDetail(raw);

@@ -1,8 +1,16 @@
 /**
  * Fab HTTP client — Cloudflare block detection.
  */
-import { describe, expect, it } from 'vitest';
-import { FabApiError, isFabCloudflareResponse } from '../src/fab/client.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  FabApiError,
+  fabCloudflareBlockedMessage,
+  isFabCloudflareResponse,
+} from '../src/fab/client.js';
+import {
+  applyFabRuntimeConfig,
+  setFabRefreshTokenForTests,
+} from '../src/fab/auth.js';
 
 describe('isFabCloudflareResponse', () => {
   it('detects Cloudflare HTML on 403', () => {
@@ -24,5 +32,35 @@ describe('FabApiError', () => {
     const err = new FabApiError('blocked', 403, 'fab_cloudflare_blocked');
     expect(err.code).toBe('fab_cloudflare_blocked');
     expect(err.status).toBe(403);
+  });
+});
+
+describe('fabCloudflareBlockedMessage', () => {
+  beforeEach(() => {
+    setFabRefreshTokenForTests(null);
+    applyFabRuntimeConfig({ refreshToken: null, httpProxy: null });
+    delete process.env.FAB_EPIC_REFRESH_TOKEN;
+    delete process.env.FAB_HTTP_PROXY;
+  });
+
+  it('mentions proxy when bearer token is configured', () => {
+    setFabRefreshTokenForTests('refresh-token');
+    const msg = fabCloudflareBlockedMessage();
+    expect(msg).toContain('HTTP proxy');
+    expect(msg).toContain('does not bypass Cloudflare');
+    expect(msg).not.toContain('FAB_EPIC_REFRESH_TOKEN');
+  });
+
+  it('mentions proxy for unauthenticated requests', () => {
+    const msg = fabCloudflareBlockedMessage();
+    expect(msg).toContain('HTTP proxy');
+    expect(msg).toContain('does not bypass Cloudflare');
+  });
+
+  it('notes proxy already configured when bearer and proxy are set', () => {
+    setFabRefreshTokenForTests('refresh-token');
+    applyFabRuntimeConfig({ httpProxy: 'http://proxy.local:8080' });
+    const msg = fabCloudflareBlockedMessage();
+    expect(msg).toContain('HTTP proxy configured');
   });
 });
