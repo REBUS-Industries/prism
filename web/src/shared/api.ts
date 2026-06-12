@@ -1436,6 +1436,8 @@ export interface ExternalMaterialDetail extends ExternalMaterialSummary {
   resolutions?: string[];
   /** Suggested default resolution for import. */
   defaultResolution?: string | null;
+  /** Preview image URL keyed by resolution option (when provider exposes per-resolution previews). */
+  previewUrlByResolution?: Record<string, string>;
   metadata: Record<string, unknown>;
 }
 
@@ -1479,8 +1481,14 @@ export const externalMaterialsApi = {
     const tail = qs.toString();
     return api.get<ExternalMaterialsSearchPage>(`/api/external-materials/search${tail ? `?${tail}` : ''}`);
   },
-  get: (source: ExternalMaterialSource, id: string) =>
-    api.get<ExternalMaterialDetail>(`/api/external-materials/${source}/${encodeURIComponent(id)}`),
+  get: (source: ExternalMaterialSource, id: string, params?: { resolution?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.resolution) qs.set('resolution', params.resolution);
+    const tail = qs.toString();
+    return api.get<ExternalMaterialDetail>(
+      `/api/external-materials/${source}/${encodeURIComponent(id)}${tail ? `?${tail}` : ''}`,
+    );
+  },
   import: (source: ExternalMaterialSource, id: string, body?: { name?: string; resolution?: string }) =>
     api.post<ExternalMaterialImportResult>(
       `/api/external-materials/${source}/${encodeURIComponent(id)}/import`,

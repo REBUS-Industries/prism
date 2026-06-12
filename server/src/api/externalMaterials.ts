@@ -31,6 +31,13 @@ import {
 
 const sourceParam = z.object({ source: z.string(), id: z.string().min(1) });
 
+/** Tag stored on imported materials — parsed by the web UI for resolution badges. */
+export function externalImportResolutionTag(resolution: string | undefined): string | null {
+  const trimmed = resolution?.trim();
+  if (!trimmed) return null;
+  return `resolution:${trimmed.toLowerCase()}`;
+}
+
 function provenance(principal: Principal | undefined) {
   return {
     adminId: principal?.kind === 'adminSession' ? principal.adminUserId : null,
@@ -83,7 +90,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     }
   });
 
-  app.get<{ Params: { source: string; id: string } }>('/:source/:id', {
+  app.get<{ Params: { source: string; id: string }; Querystring: { resolution?: string } }>('/:source/:id', {
     preHandler: [requireAuth, requireScope('materials:read')],
   }, async (req, reply) => {
     const parsed = sourceParam.safeParse(req.params);
@@ -94,7 +101,8 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (!provider?.enabled) {
       return reply.code(503).send({ error: 'provider disabled', source: parsed.data.source });
     }
-    const detail = await provider.getDetail(parsed.data.id);
+    const resolution = req.query.resolution?.trim() || undefined;
+    const detail = await provider.getDetail(parsed.data.id, { resolution });
     if (!detail) return reply.code(404).send({ error: 'not found' });
     return reply.send(detail);
   });
@@ -121,10 +129,15 @@ const plugin: FastifyPluginAsync = async (app) => {
       const payload = await provider.downloadForImport(parsed.data.id, {
         resolution: body.resolution?.trim() || undefined,
       });
+      const resolutionTag = externalImportResolutionTag(body.resolution);
       const { materialId, skipped } = await importMaterialZipBuffer(payload.buffer, {
         name: body.name?.trim() || payload.name,
         zipFilename: payload.filename,
-        tags: [parsed.data.source, 'external-import'],
+        tags: [
+          parsed.data.source,
+          'external-import',
+          ...(resolutionTag ? [resolutionTag] : []),
+        ],
         adminId,
         apiKeyId,
       });
