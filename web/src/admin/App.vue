@@ -52,6 +52,7 @@ async function logout() {
         <RouterLink :to="{ name: 'fixtures'     }"><Icon name="travel_explore" :size="18" />GDTF Share Library</RouterLink>
         <RouterLink :to="{ name: 'prism-library' }"><Icon name="lightbulb" :size="18" />PRISM Library</RouterLink>
         <RouterLink :to="{ name: 'fixture-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import GDTF</RouterLink>
+        <RouterLink :to="{ name: 'fixture-materials' }" class="nav-sub"><Icon name="palette" :size="16" />Fixture materials</RouterLink>
         <RouterLink :to="{ name: 'settings'     }"><Icon name="settings" :size="18" />Settings</RouterLink>
         <RouterLink :to="{ name: 'analytics'    }"><Icon name="analytics" :size="18" />Analytics</RouterLink>
         <RouterLink :to="{ name: 'logs'         }"><Icon name="receipt_long" :size="18" />Logs</RouterLink>
