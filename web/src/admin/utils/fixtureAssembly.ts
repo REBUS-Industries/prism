@@ -367,7 +367,9 @@ export async function buildFixtureAssembly(
     return undefined;
   };
 
-  const beamTagged = parts.find((p) => p.tag === 'BEAM');
+  // GDTF Beam geometry now maps to the LENS part (its model is the lens); keep
+  // accepting legacy BEAM-tagged parts so the beam viz attaches either way.
+  const beamTagged = parts.find((p) => p.tag === 'BEAM' || p.tag === 'LENS');
   const beamPart = beamTagged ? partGroups.get(beamTagged.partId) : undefined;
 
   return {
