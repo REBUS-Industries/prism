@@ -499,6 +499,10 @@ onMounted(() => {
   if (!el) return;
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(threePixelRatio());
+  // ACES tone mapping so PBR roughness/metallic + IBL highlights read correctly
+  // (matches the materials editor preview); without it metallic looks flat.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
   renderer.domElement.style.display = 'block';
   renderer.domElement.style.width = '100%';
   renderer.domElement.style.height = '100%';
