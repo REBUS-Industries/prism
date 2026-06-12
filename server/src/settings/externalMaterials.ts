@@ -10,6 +10,15 @@ import { applyFabRuntimeConfig } from '../fab/auth.js';
 import { InvalidHttpUrlError, normalizeOptionalHttpUrl } from '../fab/urlValidation.js';
 import { applyProviderEnabledFromSettings } from '../external-materials/registry.js';
 import { ExternalMaterialsSettingsError } from './externalMaterialsErrors.js';
+import {
+  loadExternalMaterialIndexPublic,
+  parseIndexProvidersSetting,
+  setIndexProvidersSetting,
+  setIndexUseSetting,
+  startExternalMaterialReindex,
+  type ExternalMaterialIndexPublic,
+} from '../external-materials/indexCache.js';
+import type { ExternalMaterialSource } from '../external-materials/types.js';
 
 const KEY_FAB_TOKEN = 'fab_epic_refresh_token';
 const KEY_FAB_PROXY = 'fab_http_proxy';
@@ -29,6 +38,7 @@ export interface ExternalMaterialsSettingsPublic {
   };
   polyhaven: { enabled: boolean };
   ambientcg: { enabled: boolean };
+  index: ExternalMaterialIndexPublic;
 }
 
 export interface ExternalMaterialsSettingsPatch {
@@ -40,6 +50,10 @@ export interface ExternalMaterialsSettingsPatch {
   };
   polyhaven?: { enabled?: boolean };
   ambientcg?: { enabled?: boolean };
+  index?: {
+    useIndex?: boolean;
+    indexProviders?: Partial<Record<ExternalMaterialSource, boolean>>;
+  };
 }
 
 function envTruthy(name: string, defaultTrue = true): boolean {
@@ -105,6 +119,7 @@ export async function loadExternalMaterialsSettingsPublic(): Promise<ExternalMat
     resolveFabFlareSolverrUrl(),
   ]);
   const { token, source } = await resolveFabRefreshToken();
+  const index = await loadExternalMaterialIndexPublic();
 
   return {
     fab: {
@@ -121,6 +136,7 @@ export async function loadExternalMaterialsSettingsPublic(): Promise<ExternalMat
     ambientcg: {
       enabled: parseBoolSetting(ambientEnabledRaw, 'AMBIENTCG_ENABLED'),
     },
+    index,
   };
 }
 
@@ -151,6 +167,12 @@ export async function patchExternalMaterialsSettings(
   if (patch.ambientcg?.enabled !== undefined) {
     await setSetting(KEY_AMBIENTCG_ENABLED, patch.ambientcg.enabled ? '1' : '0');
   }
+  if (patch.index?.useIndex !== undefined) {
+    await setIndexUseSetting(patch.index.useIndex);
+  }
+  if (patch.index?.indexProviders) {
+    await setIndexProvidersSetting(patch.index.indexProviders);
+  }
 
   await applyExternalMaterialsSettings();
   return loadExternalMaterialsSettingsPublic();
@@ -168,4 +190,12 @@ export async function applyExternalMaterialsSettings(): Promise<void> {
     polyhaven: settings.polyhaven.enabled,
     ambientcg: settings.ambientcg.enabled,
   });
+}
+
+export async function triggerExternalMaterialsReindex(
+  providers?: Partial<Record<ExternalMaterialSource, boolean>>,
+): Promise<{ started: boolean; index: ExternalMaterialIndexPublic }> {
+  const indexProviders = providers ?? await parseIndexProvidersSetting();
+  const started = startExternalMaterialReindex({ providers: indexProviders });
+  return { started, index: await loadExternalMaterialIndexPublic() };
 }

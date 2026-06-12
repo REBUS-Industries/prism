@@ -3,6 +3,7 @@
  */
 import { FlareSolverrError } from '../fab/flaresolverr.js';
 import { FabApiError } from '../fab/client.js';
+import { searchExternalMaterialIndex } from './indexCache.js';
 import type {
   ExternalMaterialProvider,
   ExternalMaterialSource,
@@ -60,6 +61,14 @@ export async function unifiedSearch(
 
   const settled = await Promise.allSettled(
     active.map(async (provider) => {
+      const indexed = await searchExternalMaterialIndex(provider.id, {
+        q: params.q,
+        cursor: perProviderCursors[provider.id] ?? null,
+        limit: params.limit,
+      });
+      if (indexed) {
+        return { provider, page: indexed };
+      }
       const page = await provider.search({
         q: params.q,
         cursor: perProviderCursors[provider.id] ?? null,

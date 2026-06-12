@@ -7,7 +7,9 @@ import { getAllSettings, getSetting, setSetting, type SettingKey } from '../db/s
 import {
   loadExternalMaterialsSettingsPublic,
   patchExternalMaterialsSettings,
+  triggerExternalMaterialsReindex,
 } from '../settings/externalMaterials.js';
+import { loadExternalMaterialIndexPublic } from '../external-materials/indexCache.js';
 import { ExternalMaterialsSettingsError } from '../settings/externalMaterialsErrors.js';
 import { requireAdmin } from '../auth/middleware.js';
 
@@ -40,6 +42,14 @@ const plugin: FastifyPluginAsync = async (app) => {
     }).optional(),
     polyhaven: z.object({ enabled: z.boolean().optional() }).optional(),
     ambientcg: z.object({ enabled: z.boolean().optional() }).optional(),
+    index: z.object({
+      useIndex: z.boolean().optional(),
+      indexProviders: z.object({
+        fab: z.boolean().optional(),
+        polyhaven: z.boolean().optional(),
+        ambientcg: z.boolean().optional(),
+      }).optional(),
+    }).optional(),
   });
 
   // GET /api/settings/external-materials — structured provider config (secrets masked)
@@ -60,6 +70,30 @@ const plugin: FastifyPluginAsync = async (app) => {
       }
       throw err;
     }
+  });
+
+  const reindexBodySchema = z.object({
+    providers: z.object({
+      fab: z.boolean().optional(),
+      polyhaven: z.boolean().optional(),
+      ambientcg: z.boolean().optional(),
+    }).optional(),
+  });
+
+  // POST /api/settings/external-materials/reindex — background index build
+  app.post('/external-materials/reindex', async (req, reply) => {
+    const body = reindexBodySchema.safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: 'invalid body', details: body.error.flatten() });
+    const result = await triggerExternalMaterialsReindex(body.data.providers);
+    if (!result.started) {
+      return reply.code(409).send({ error: 'reindex already running', index: result.index });
+    }
+    return reply.code(202).send({ ok: true, index: result.index });
+  });
+
+  // GET /api/settings/external-materials/index-status
+  app.get('/external-materials/index-status', async () => {
+    return { index: await loadExternalMaterialIndexPublic() };
   });
 
   // GET /api/settings/:key

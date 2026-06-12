@@ -48,6 +48,8 @@ interface AmbientCgSearchResponse {
   assets: AmbientCgAsset[];
 }
 
+export type { AmbientCgSearchResponse };
+
 function parseAttributes(raw: string): { resolution: string; format: string } | null {
   const dash = raw.indexOf('-');
   if (dash <= 0) return null;

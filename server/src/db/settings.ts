@@ -47,7 +47,11 @@ export type SettingKey =
   | 'fab_flaresolverr_url'
   | 'fab_enabled'
   | 'external_polyhaven_enabled'
-  | 'external_ambientcg_enabled';
+  | 'external_ambientcg_enabled'
+  | 'external_materials_index_use'
+  | 'external_materials_index_providers'
+  | 'external_materials_index_updated_at'
+  | 'external_materials_index_version';
 
 /**
  * Legacy keys that are still read from the DB as a fallback by older code

@@ -3,7 +3,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import {
   createAmbientCgProvider,
   listAmbientCgDownloadOptions,
@@ -336,6 +336,16 @@ describe('fab provider (mocked)', () => {
 });
 
 describe('unifiedSearch', () => {
+  beforeEach(async () => {
+    process.env.EXTERNAL_MATERIALS_INDEX_USE = 'false';
+    const { clearIndexMemoryCacheForTests } = await import('../src/external-materials/indexCache.js');
+    clearIndexMemoryCacheForTests();
+  });
+
+  afterEach(() => {
+    delete process.env.EXTERNAL_MATERIALS_INDEX_USE;
+  });
+
   it('merges providers and encodes multi-source cursors', async () => {
     resetPolyHavenCatalogCache();
     const poly = createPolyHavenProvider({ fetchCatalog: async () => catalog, fetchFiles: async () => files });

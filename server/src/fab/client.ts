@@ -17,6 +17,7 @@ import {
   normalizeListingDetail,
   normalizeSearchListing,
   type FabAssetDetail,
+  type FabAssetSummary,
   type FabSearchPage,
 } from './normalize.js';
 import type {
@@ -227,6 +228,43 @@ export async function fabSearch(
   };
   setCachedFabSearch(cacheKey, page);
   return page;
+}
+
+const FAB_INDEX_PAGE_DELAY_MS = Number(process.env.FAB_INDEX_PAGE_DELAY_MS ?? 600);
+
+/** Paginate all free material listings for persistent local index build. */
+export async function fabBrowseAllFreeMaterials(options?: {
+  onProgress?: (count: number) => void;
+  pageDelayMs?: number;
+  maxPages?: number;
+}): Promise<FabAssetSummary[]> {
+  await ensureFabCsrf();
+  const items: FabAssetSummary[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  let pages = 0;
+  const maxPages = options?.maxPages ?? 500;
+  const delayMs = options?.pageDelayMs ?? FAB_INDEX_PAGE_DELAY_MS;
+
+  while (pages < maxPages) {
+    const raw = await fabSearchRawPage('', 48, cursor);
+    pages += 1;
+
+    for (const listing of raw.results ?? []) {
+      if (!isFreeSingleMaterialListing(listing)) continue;
+      const summary = normalizeSearchListing(listing);
+      if (seen.has(summary.id)) continue;
+      seen.add(summary.id);
+      items.push(summary);
+    }
+
+    options?.onProgress?.(items.length);
+    cursor = raw.cursors?.next ?? null;
+    if (!cursor) break;
+    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+  }
+
+  return items;
 }
 
 export async function fabGetListing(uid: string): Promise<FabAssetDetail | null> {
