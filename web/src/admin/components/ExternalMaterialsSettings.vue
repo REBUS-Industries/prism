@@ -14,6 +14,92 @@ const status = ref<string | null>(null);
 const settings = ref<ExternalMaterialsSettings | null>(null);
 const tokenInput = ref('');
 const tokenDirty = ref(false);
+const authCodeInput = ref('');
+const copiedKey = ref<string | null>(null);
+
+const EPIC_CLIENT_ID = '34a02cf8f4414e29b15921876da36f9a';
+const EPIC_CLIENT_SECRET = 'daafbccc737745039dffe53d94fc76cf';
+const epicLoginUrl = `https://www.epicgames.com/id/api/redirect?clientId=${EPIC_CLIENT_ID}&responseType=code`;
+
+function escapeForPowerShellDoubleQuote(value: string): string {
+  return value
+    .replace(/`/g, '``')
+    .replace(/\$/g, '`$')
+    .replace(/"/g, '`"');
+}
+
+const exchangeScript = computed(() => {
+  const codeLiteral = authCodeInput.value.trim()
+    ? escapeForPowerShellDoubleQuote(authCodeInput.value.trim())
+    : 'PASTE_CODE_HERE';
+
+  return `$clientId  = "${EPIC_CLIENT_ID}"
+$clientSecret = "${EPIC_CLIENT_SECRET}"
+$code = "${codeLiteral}"
+
+$basic = [Convert]::ToBase64String(
+  [Text.Encoding]::ASCII.GetBytes("\${clientId}:\${clientSecret}")
+)
+$body = "grant_type=authorization_code&code=$([uri]::EscapeDataString($code))&token_type=eg1"
+
+$response = Invoke-RestMethod \`
+  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" \`
+  -Method POST \`
+  -Headers @{
+    Authorization = "Basic $basic"
+    "Content-Type" = "application/x-www-form-urlencoded"
+  } \`
+  -Body $body
+
+$response.refresh_token`;
+});
+
+const verifyRefreshScript = `$clientId  = "${EPIC_CLIENT_ID}"
+$clientSecret = "${EPIC_CLIENT_SECRET}"
+$refreshToken = "PASTE_REFRESH_TOKEN_HERE"
+
+$basic = [Convert]::ToBase64String(
+  [Text.Encoding]::ASCII.GetBytes("\${clientId}:\${clientSecret}")
+)
+$body = "grant_type=refresh_token&refresh_token=$([uri]::EscapeDataString($refreshToken))&token_type=eg1"
+
+$response = Invoke-RestMethod \`
+  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" \`
+  -Method POST \`
+  -Headers @{
+    Authorization = "Basic $basic"
+    "Content-Type" = "application/x-www-form-urlencoded"
+  } \`
+  -Body $body
+
+$response.access_token`;
+
+const legendaryCliScript = `pip install legendary-gl
+legendary auth`;
+
+async function copyText(text: string, key: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    copiedKey.value = key;
+    setTimeout(() => {
+      if (copiedKey.value === key) copiedKey.value = null;
+    }, 2000);
+  } catch {
+    // Fallback for older browsers / non-secure contexts
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    copiedKey.value = key;
+    setTimeout(() => {
+      if (copiedKey.value === key) copiedKey.value = null;
+    }, 2000);
+  }
+}
 
 const form = reactive({
   fabEnabled: true,
@@ -154,41 +240,86 @@ onMounted(() => { void refresh(); });
                 </li>
                 <li>
                   Open the Epic login redirect URL (UE Launcher public client):
-                  <pre class="help-code">https://www.epicgames.com/id/api/redirect?clientId=34a02cf8f4414e29b15921876da36f9a&amp;responseType=code</pre>
+                  <div class="token-help code-block">
+                    <div class="code-block-toolbar">
+                      <a
+                        :href="epicLoginUrl"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="code-link"
+                      >{{ epicLoginUrl }}</a>
+                      <button
+                        type="button"
+                        class="copy-btn"
+                        @click="copyText(epicLoginUrl, 'url')"
+                      >{{ copiedKey === 'url' ? 'Copied' : 'Copy' }}</button>
+                    </div>
+                  </div>
                 </li>
                 <li>
                   Sign in. The page shows JSON — copy the <code>authorizationCode</code> value
                   (not <code>exchangeCode</code>).
                 </li>
                 <li>
-                  In PowerShell, exchange the code for tokens (code expires in ~5 minutes and is
-                  single-use):
-                  <pre class="help-code">$clientId  = "34a02cf8f4414e29b15921876da36f9a"
-$clientSecret = "daafbccc737745039dffe53d94fc76cf"
-$code = "PASTE_authorizationCode_HERE"
-
-$basic = [Convert]::ToBase64String(
-  [Text.Encoding]::ASCII.GetBytes("${clientId}:${clientSecret}")
-)
-$body = "grant_type=authorization_code&amp;code=$([uri]::EscapeDataString($code))&amp;token_type=eg1"
-
-$response = Invoke-RestMethod `
-  -Uri "https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token" `
-  -Method POST `
-  -Headers @{
-    Authorization = "Basic $basic"
-    "Content-Type" = "application/x-www-form-urlencoded"
-  } `
-  -Body $body
-
-$response.refresh_token</pre>
+                  Paste the code below — the PowerShell snippet updates automatically (code expires
+                  in ~5 minutes and is single-use):
+                  <div class="token-help auth-code-field">
+                    <label for="fab-auth-code">Authorization code (from browser JSON)</label>
+                    <input
+                      id="fab-auth-code"
+                      v-model="authCodeInput"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder="Paste authorizationCode from Epic JSON response"
+                    />
+                  </div>
+                  <div class="token-help code-block">
+                    <div class="code-block-toolbar">
+                      <span class="code-block-label">Exchange script (PowerShell)</span>
+                      <button
+                        type="button"
+                        class="copy-btn"
+                        @click="copyText(exchangeScript, 'exchange')"
+                      >{{ copiedKey === 'exchange' ? 'Copied' : 'Copy' }}</button>
+                    </div>
+                    <pre class="token-help-pre">{{ exchangeScript }}</pre>
+                  </div>
                 </li>
                 <li>Copy the printed <code>refresh_token</code> value and paste it above, then Save.</li>
               </ol>
 
+              <details class="token-help verify-details">
+                <summary>Optional — verify a refresh token</summary>
+                <p class="muted">
+                  Run this in PowerShell to confirm a refresh token still works before saving it
+                  in PRISM.
+                </p>
+                <div class="code-block">
+                  <div class="code-block-toolbar">
+                    <span class="code-block-label">Verify script (PowerShell)</span>
+                    <button
+                      type="button"
+                      class="copy-btn"
+                      @click="copyText(verifyRefreshScript, 'verify')"
+                    >{{ copiedKey === 'verify' ? 'Copied' : 'Copy' }}</button>
+                  </div>
+                  <pre class="token-help-pre">{{ verifyRefreshScript }}</pre>
+                </div>
+              </details>
+
               <h4>Method B — Legendary CLI</h4>
-              <pre class="help-code">pip install legendary-gl
-legendary auth</pre>
+              <div class="token-help code-block">
+                <div class="code-block-toolbar">
+                  <span class="code-block-label">Legendary CLI</span>
+                  <button
+                    type="button"
+                    class="copy-btn"
+                    @click="copyText(legendaryCliScript, 'legendary')"
+                  >{{ copiedKey === 'legendary' ? 'Copied' : 'Copy' }}</button>
+                </div>
+                <pre class="token-help-pre">{{ legendaryCliScript }}</pre>
+              </div>
               <p>
                 After authenticating, read <code>refresh_token</code> from
                 <code>%USERPROFILE%\.config\legendary\user.json</code> (Windows) or
@@ -337,19 +468,105 @@ legendary auth</pre>
 }
 .help-steps li { margin-bottom: 8px; }
 .help-steps li:last-child { margin-bottom: 0; }
-.help-code {
-  margin: 6px 0 0;
-  padding: 8px 10px;
+.token-help.code-block,
+.help-body .code-block {
+  margin: 8px 0 0;
   border-radius: var(--radius-sm, 6px);
-  background: var(--color-bg-hover, rgba(0, 0, 0, 0.06));
   border: 1px solid var(--color-border);
-  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
-  font-size: 10px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-all;
-  overflow-x: auto;
+  background: #1e1e2e;
+  overflow: hidden;
 }
+.code-block-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.code-block-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+.code-link {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #89b4fa;
+  word-break: break-all;
+  text-decoration: none;
+}
+.code-link:hover { text-decoration: underline; }
+.copy-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.token-help-pre {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #cdd6f4;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.auth-code-field {
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.auth-code-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.auth-code-field input {
+  width: 100%;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12px;
+}
+.verify-details {
+  margin: 12px 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 0 10px 10px;
+}
+.verify-details summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-size: 11px;
+  font-weight: 600;
+  list-style: none;
+}
+.verify-details summary::-webkit-details-marker { display: none; }
+.verify-details summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.verify-details[open] summary::before { transform: rotate(90deg); }
+.verify-details p { margin: 0 0 8px; font-size: 11px; }
 .help-copy { margin-top: 4px; font-size: 12px; line-height: 1.5; }
 .help-copy p { margin: 0; }
 .footer-actions {
