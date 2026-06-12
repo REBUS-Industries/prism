@@ -47,10 +47,24 @@ const props = defineProps<{
 // ---------------------------------------------------------------------------
 // Layout + formatting helpers
 // ---------------------------------------------------------------------------
-const X = { gdtf: 0, fixture: 300, category: 600, item: 920 } as const;
+const X = { gdtf: 0, fixture: 300, category: 600, item: 920, sub: 1240 } as const;
 const ROW = 70;
 const CAT_GAP = 30;
+const GROUP_GAP = 16;
 const NODE_H = 44;
+
+/** The standard REBUS fixture part tags every GDTF geometry is normalised into. */
+const STANDARD_TAGS = ['ORIGIN', 'CLAMP', 'BASE', 'YOKE', 'HEAD', 'LENS', 'BEAM', 'CELL'] as const;
+const TAG_META: Record<(typeof STANDARD_TAGS)[number], { icon: string; accent: string }> = {
+  ORIGIN: { icon: 'my_location', accent: '#14b8a6' },
+  CLAMP: { icon: 'precision_manufacturing', accent: '#64748b' },
+  BASE: { icon: 'deployed_code', accent: '#22c55e' },
+  YOKE: { icon: 'sync', accent: '#3b82f6' },
+  HEAD: { icon: 'visibility', accent: '#a855f7' },
+  LENS: { icon: 'lens_blur', accent: '#f59e0b' },
+  BEAM: { icon: 'flare', accent: '#eab308' },
+  CELL: { icon: 'grid_on', accent: '#8b5cf6' },
+};
 
 function fmtNum(n: number | undefined | null, digits = 3): string {
   if (n === undefined || n === null || Number.isNaN(n)) return '—';
@@ -198,16 +212,39 @@ const graph = computed<Built>(() => {
   // ---- column 3: items, grouped by category, single vertical cursor --------
   let y = 0;
 
+  interface CatItem { id: string; data: FixtureGraphNodeData; xrefs?: string[] }
+  interface CatGroup { id: string; title: string; icon: string; accent: string; items: CatItem[] }
   interface Cat {
     id: string;
     title: string;
     icon: string;
     accent: string;
-    items: Array<{ id: string; data: FixtureGraphNodeData; xrefs?: string[] }>;
+    items: CatItem[];
+    /** Sub-groups (e.g. Parts split by REBUS tag); rendered as an extra column. */
+    groups?: CatGroup[];
     /** Category-level params when it carries data directly (Info/Origin). */
     selfParams?: GraphParam[];
     selfNote?: string;
   }
+
+  const toPartItem = (p: FixturePart): CatItem => ({
+    id: `part:${p.partId}`,
+    xrefs: p.modelId ? [`model:${p.modelId}`] : [],
+    data: {
+      kind: 'part', title: p.name, subtitle: p.tag, icon: 'category', accent: ACCENT.parts,
+      params: [
+        { label: 'Tag', value: str(p.tag) },
+        { label: 'GDTF geom', value: str(p.sourceGdtfGeometryId) },
+        { label: 'Parent', value: partLabel(p.parentPartId) },
+        { label: 'Model', value: p.modelId ? str(p.modelId) : '—' },
+        { label: 'Children', value: String(p.childPartIds?.length ?? 0) },
+        { label: 'Motion axis', value: str(p.motionAxisId) },
+        { label: 'Position', value: vec({ x: p.localTransform.position.x, y: p.localTransform.position.y, z: p.localTransform.position.z }, ' m') },
+        { label: 'Rotation', value: vec(p.localTransform.rotation, '°') },
+        { label: 'Pivot', value: vec(p.pivot, ' m') },
+      ],
+    },
+  });
 
   const cats: Cat[] = [
     {
@@ -233,24 +270,15 @@ const graph = computed<Built>(() => {
       ],
     },
     {
-      id: 'cat:parts', title: 'Parts', icon: 'account_tree', accent: ACCENT.parts,
-      items: fParts.map((p) => ({
-        id: `part:${p.partId}`,
-        xrefs: p.modelId ? [`model:${p.modelId}`] : [],
-        data: {
-          kind: 'part', title: p.name, subtitle: p.tag, icon: 'category', accent: ACCENT.parts,
-          params: [
-            { label: 'Tag', value: str(p.tag) },
-            { label: 'GDTF geom', value: str(p.sourceGdtfGeometryId) },
-            { label: 'Parent', value: partLabel(p.parentPartId) },
-            { label: 'Model', value: p.modelId ? str(p.modelId) : '—' },
-            { label: 'Children', value: String(p.childPartIds?.length ?? 0) },
-            { label: 'Motion axis', value: str(p.motionAxisId) },
-            { label: 'Position', value: vec({ x: p.localTransform.position.x, y: p.localTransform.position.y, z: p.localTransform.position.z }, ' m') },
-            { label: 'Rotation', value: vec(p.localTransform.rotation, '°') },
-            { label: 'Pivot', value: vec(p.pivot, ' m') },
-          ],
-        },
+      id: 'cat:parts', title: 'Parts', icon: 'account_tree', accent: ACCENT.parts, items: [],
+      // Split into the standard REBUS part tags so it's clear which GDTF
+      // geometries normalise to each tag.
+      groups: STANDARD_TAGS.map((tag) => ({
+        id: `tag:${tag}`,
+        title: tag,
+        icon: TAG_META[tag].icon,
+        accent: TAG_META[tag].accent,
+        items: fParts.filter((p) => p.tag === tag).map(toPartItem),
       })),
     },
     {
@@ -348,9 +376,45 @@ const graph = computed<Built>(() => {
   ];
 
   // ---- place categories + their items --------------------------------------
+  const arrow = (accent: string): Partial<Edge> => ({
+    style: { stroke: accent, strokeWidth: 1.5 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: accent },
+  });
+
   for (const cat of cats) {
     const startY = y;
-    if (cat.items.length === 0) {
+    if (cat.groups) {
+      // Three-level branch: category → tag groups (col3) → part items (col4).
+      const groupMids: number[] = [];
+      let total = 0;
+      for (const g of cat.groups) {
+        const gStart = y;
+        let gMid: number;
+        if (g.items.length) {
+          for (const it of g.items) {
+            node(it.id, X.sub, y, it.data);
+            edge(g.id, it.id, arrow(g.accent));
+            for (const target of it.xrefs ?? []) xref(it.id, target);
+            y += ROW;
+          }
+          gMid = gStart + ((g.items.length - 1) * ROW) / 2;
+        } else {
+          gMid = y;
+          y += ROW;
+        }
+        node(g.id, X.item, gMid, {
+          kind: 'category', title: g.title, subtitle: 'REBUS part tag', icon: g.icon, accent: g.accent, badge: g.items.length,
+        });
+        edge(cat.id, g.id, arrow(g.accent));
+        groupMids.push(gMid);
+        total += g.items.length;
+        y += GROUP_GAP;
+      }
+      const catMid = (groupMids[0]! + groupMids[groupMids.length - 1]!) / 2;
+      node(cat.id, X.category, catMid, {
+        kind: 'category', title: cat.title, icon: cat.icon, accent: cat.accent, badge: total,
+      });
+    } else if (cat.items.length === 0) {
       // Leaf category: it carries its own params/note and reserves one row.
       const params = cat.selfParams ?? (cat.selfNote ? [{ label: 'Status', value: cat.selfNote }] : []);
       node(cat.id, X.category, y, {
@@ -362,7 +426,7 @@ const graph = computed<Built>(() => {
     } else {
       for (const it of cat.items) {
         node(it.id, X.item, y, it.data);
-        edge(cat.id, it.id, { style: { stroke: cat.accent, strokeWidth: 1.5 }, markerEnd: { type: MarkerType.ArrowClosed, color: cat.accent } });
+        edge(cat.id, it.id, arrow(cat.accent));
         for (const target of it.xrefs ?? []) xref(it.id, target);
         y += ROW;
       }
@@ -371,7 +435,7 @@ const graph = computed<Built>(() => {
         kind: 'category', title: cat.title, icon: cat.icon, accent: cat.accent, badge: cat.items.length,
       });
     }
-    edge('fixture', cat.id, { style: { stroke: cat.accent, strokeWidth: 1.5 }, markerEnd: { type: MarkerType.ArrowClosed, color: cat.accent } });
+    edge('fixture', cat.id, arrow(cat.accent));
     y += CAT_GAP;
   }
 
