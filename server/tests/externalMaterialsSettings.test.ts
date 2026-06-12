@@ -71,7 +71,7 @@ describe('external materials settings', () => {
         enabled: false,
         epicRefreshToken: '',
         httpProxy: 'http://proxy.local:8080',
-        flareSolverrUrl: 'http://127.0.0.1:8191/v1',
+        flareSolverrUrl: '127.0.0.1:8191/v1',
       },
       polyhaven: { enabled: false },
       ambientcg: { enabled: true },
@@ -83,6 +83,41 @@ describe('external materials settings', () => {
     expect(setSetting).toHaveBeenCalledWith('fab_flaresolverr_url', 'http://127.0.0.1:8191/v1');
     expect(setSetting).toHaveBeenCalledWith('external_polyhaven_enabled', '0');
     expect(setSetting).toHaveBeenCalledWith('external_ambientcg_enabled', '1');
+  });
+
+  it('rejects invalid Fab HTTP proxy URL on patch', async () => {
+    const { patchExternalMaterialsSettings } = await import('../src/settings/externalMaterials.js');
+    const { ExternalMaterialsSettingsError } = await import('../src/settings/externalMaterialsErrors.js');
+
+    await expect(
+      patchExternalMaterialsSettings({ fab: { httpProxy: 'not-a-url' } }),
+    ).rejects.toBeInstanceOf(ExternalMaterialsSettingsError);
+
+    await expect(
+      patchExternalMaterialsSettings({ fab: { httpProxy: 'not-a-url' } }),
+    ).rejects.toMatchObject({ field: 'fab.httpProxy' });
+
+    expect(setSetting).not.toHaveBeenCalledWith('fab_http_proxy', 'not-a-url');
+  });
+
+  it('rejects invalid FlareSolverr URL on patch', async () => {
+    const { patchExternalMaterialsSettings } = await import('../src/settings/externalMaterials.js');
+    const { ExternalMaterialsSettingsError } = await import('../src/settings/externalMaterialsErrors.js');
+
+    await expect(
+      patchExternalMaterialsSettings({ fab: { flareSolverrUrl: ':::bad:::' } }),
+    ).rejects.toMatchObject({ field: 'fab.flareSolverrUrl' });
+  });
+
+  it('clears URL settings when patch sends empty string', async () => {
+    const { patchExternalMaterialsSettings } = await import('../src/settings/externalMaterials.js');
+
+    await patchExternalMaterialsSettings({
+      fab: { httpProxy: '   ', flareSolverrUrl: '' },
+    });
+
+    expect(setSetting).toHaveBeenCalledWith('fab_http_proxy', '');
+    expect(setSetting).toHaveBeenCalledWith('fab_flaresolverr_url', '');
   });
 
   it('falls back to env enabled flags when DB unset', async () => {

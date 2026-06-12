@@ -23,6 +23,13 @@ import {
   hasCloudflareClearance,
   injectFlareSolverrCookies,
 } from './flaresolverr.js';
+import {
+  InvalidHttpUrlError,
+  isInvalidUrlError,
+  isUnreachableNetworkError,
+  normalizeHttpUrl,
+  normalizeOptionalHttpUrl,
+} from './urlValidation.js';
 
 const EPIC_TOKEN_URL = 'https://account-public-service-prod03.ol.epicgames.com/account/api/oauth/token';
 const EPIC_CLIENT_ID = process.env.FAB_EPIC_CLIENT_ID ?? '34a02cf8f4414e29b15921876da36f9a';
@@ -81,8 +88,31 @@ function fabDispatcher(): Dispatcher {
   const proxy = cachedHttpProxy?.trim() || null;
   if (fabAgent && fabAgentProxy === proxy) return fabAgent;
   fabAgentProxy = proxy;
-  fabAgent = proxy ? new ProxyAgent(proxy) : new Agent({ connect: { timeout: 30_000 } });
+  if (proxy) {
+    try {
+      normalizeHttpUrl(proxy);
+      fabAgent = new ProxyAgent(proxy);
+    } catch (err) {
+      const detail = err instanceof InvalidHttpUrlError ? err.message : 'Invalid URL';
+      throw new Error(`Fab HTTP proxy URL invalid: ${detail}`);
+    }
+  } else {
+    fabAgent = new Agent({ connect: { timeout: 30_000 } });
+  }
   return fabAgent;
+}
+
+function mapFabHttpError(err: unknown): Error {
+  const proxy = cachedHttpProxy?.trim();
+  if (proxy) {
+    if (isInvalidUrlError(err)) {
+      return new Error(`Fab HTTP proxy URL invalid: ${proxy}`);
+    }
+    if (isUnreachableNetworkError(err)) {
+      return new Error(`Fab HTTP proxy unreachable: ${proxy}`);
+    }
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 function hostnameFromUrl(url: string): string {
@@ -141,11 +171,16 @@ async function fabUndiciFetch(url: string, init: RequestInit = {}): Promise<Resp
   const csrf = csrfTokenFor(url);
   if (csrf && !headers.has('X-CSRFToken')) headers.set('X-CSRFToken', csrf);
 
-  const res = await undiciFetch(url, {
-    ...init,
-    headers,
-    dispatcher: fabDispatcher(),
-  });
+  let res: Awaited<ReturnType<typeof undiciFetch>>;
+  try {
+    res = await undiciFetch(url, {
+      ...init,
+      headers,
+      dispatcher: fabDispatcher(),
+    });
+  } catch (err) {
+    throw mapFabHttpError(err);
+  }
 
   storeResponseCookies(url, res.headers);
   return res as unknown as Response;
@@ -175,12 +210,12 @@ export function applyFabRuntimeConfig(config: {
     tokenExpiresAt = 0;
   }
   if (config.httpProxy !== undefined) {
-    cachedHttpProxy = config.httpProxy?.trim() || null;
+    cachedHttpProxy = normalizeOptionalHttpUrl(config.httpProxy);
     fabAgent = null;
     fabAgentProxy = undefined;
   }
   if (config.flareSolverrUrl !== undefined) {
-    cachedFlareSolverrUrl = config.flareSolverrUrl?.trim() || null;
+    cachedFlareSolverrUrl = normalizeOptionalHttpUrl(config.flareSolverrUrl);
     flareSolverrPrimedAt = 0;
   }
 }

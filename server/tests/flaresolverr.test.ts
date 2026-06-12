@@ -77,6 +77,22 @@ describe('flaresolverr', () => {
     ).rejects.toBeInstanceOf(FlareSolverrError);
   });
 
+  it('throws FlareSolverrError for invalid solver URL', async () => {
+    await expect(
+      flareSolverrRequestGet(':::bad:::', 'https://www.fab.com/'),
+    ).rejects.toMatchObject({ message: expect.stringContaining('FlareSolverr URL invalid') });
+  });
+
+  it('reports FlareSolverr unreachable on connection failure', async () => {
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), {
+      cause: { code: 'ECONNREFUSED' },
+    }));
+
+    await expect(
+      flareSolverrRequestGet('http://127.0.0.1:8191/v1', 'https://www.fab.com/'),
+    ).rejects.toMatchObject({ message: expect.stringContaining('FlareSolverr unreachable') });
+  });
+
   it('injects cookies into hostname jar', () => {
     const jar = new Map<string, Map<string, string>>();
     injectFlareSolverrCookies(

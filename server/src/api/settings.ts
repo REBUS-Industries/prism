@@ -8,6 +8,7 @@ import {
   loadExternalMaterialsSettingsPublic,
   patchExternalMaterialsSettings,
 } from '../settings/externalMaterials.js';
+import { ExternalMaterialsSettingsError } from '../settings/externalMaterialsErrors.js';
 import { requireAdmin } from '../auth/middleware.js';
 
 const SECRET_KEYS = new Set<SettingKey>([
@@ -50,8 +51,15 @@ const plugin: FastifyPluginAsync = async (app) => {
   app.patch('/external-materials', async (req, reply) => {
     const body = externalMaterialsPatchSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid body', details: body.error.flatten() });
-    const settings = await patchExternalMaterialsSettings(body.data);
-    return { ok: true, settings };
+    try {
+      const settings = await patchExternalMaterialsSettings(body.data);
+      return { ok: true, settings };
+    } catch (err) {
+      if (err instanceof ExternalMaterialsSettingsError) {
+        return reply.code(400).send({ error: err.message, field: err.field });
+      }
+      throw err;
+    }
   });
 
   // GET /api/settings/:key
