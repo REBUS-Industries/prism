@@ -11,7 +11,7 @@
  * small 3D preview. Dashed edges show cross-references (a Part uses a Model, a
  * Beam/Motion axis attaches to a Part).
  */
-import { computed, ref } from 'vue';
+import { computed, onMounted } from 'vue';
 import {
   VueFlow,
   Panel,
@@ -116,8 +116,10 @@ const graph = computed<Built>(() => {
   const info = def.value.fixtureInformation;
 
   const node = (id: string, x: number, y: number, data: FixtureGraphNodeData): void => {
+    // Explicit width (matches the node CSS) so Vue Flow can compute fit bounds
+    // before the DOM measures the custom nodes — avoids an empty/NaN fit.
     nodes.push({ id, type: 'fixtureNode', position: { x, y }, data, draggable: true,
-      sourcePosition: Position.Right, targetPosition: Position.Left });
+      width: 252, sourcePosition: Position.Right, targetPosition: Position.Left });
   };
   const edge = (source: string, target: string, opts: Partial<Edge> = {}): void => {
     edges.push({
@@ -380,15 +382,20 @@ function previewPart(m: FixtureModel): FixturePart {
 
 const { fitView } = useVueFlow();
 
-// Custom nodes have no measured size at init, so `fit-view-on-init` fits to an
-// empty bound and the canvas looks blank. Re-fit once nodes are measured.
-function onNodesInitialized(): void {
-  void Promise.resolve().then(() => fitView({ padding: 0.2 }));
+function doFit(): void {
+  // Defer so the DOM/measure pass has run; guard against transient errors.
+  requestAnimationFrame(() => {
+    try { fitView({ padding: 0.2 }); } catch { /* viewport not ready */ }
+  });
 }
 
-function fitReset(): void {
-  fitView({ padding: 0.2 });
-}
+// Custom nodes have no measured size at init, so fitting too early produces an
+// empty bound and a blank canvas. Fit once nodes are measured, plus a fallback.
+function onNodesInitialized(): void { doFit(); }
+
+onMounted(() => { setTimeout(doFit, 60); });
+
+function fitReset(): void { doFit(); }
 </script>
 
 <template>
@@ -396,7 +403,6 @@ function fitReset(): void {
     <VueFlow
       :nodes="graph.nodes"
       :edges="graph.edges"
-      :fit-view-on-init="true"
       :nodes-draggable="true"
       drag-handle=".node-drag-handle"
       :nodes-connectable="false"
