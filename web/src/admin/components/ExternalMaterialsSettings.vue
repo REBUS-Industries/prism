@@ -126,6 +126,41 @@ const form = reactive({
   ambientcgEnabled: true,
 });
 
+const fieldErrors = reactive({
+  fabHttpProxy: null as string | null,
+  fabFlareSolverrUrl: null as string | null,
+});
+
+function validateHttpUrlField(label: string, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  let candidate = trimmed;
+  if (!/^https?:\/\//i.test(candidate)) {
+    if (/^[\w.-]+(:\d+)?(\/.*)?$/i.test(candidate)) {
+      candidate = `http://${candidate}`;
+    }
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return `${label} must use http:// or https://`;
+    }
+  } catch {
+    return `${label} is not a valid URL`;
+  }
+  return null;
+}
+
+function validateFabUrlFields(): boolean {
+  fieldErrors.fabHttpProxy = validateHttpUrlField('Fab HTTP proxy URL', form.fabHttpProxy);
+  fieldErrors.fabFlareSolverrUrl = validateHttpUrlField('FlareSolverr URL', form.fabFlareSolverrUrl);
+  return !fieldErrors.fabHttpProxy && !fieldErrors.fabFlareSolverrUrl;
+}
+
+function clearFieldError(field: 'fabHttpProxy' | 'fabFlareSolverrUrl'): void {
+  fieldErrors[field] = null;
+}
+
 const DEFAULT_FLARESOLVERR_URL = 'http://127.0.0.1:8191/v1';
 const FLARESOLVERR_IMAGE = 'https://ghcr.io/flaresolverr/flaresolverr';
 
@@ -196,6 +231,10 @@ function onTokenInput(): void {
 
 async function save(): Promise<void> {
   if (!settings.value) return;
+  if (!validateFabUrlFields()) {
+    error.value = 'Fix invalid URL fields before saving';
+    return;
+  }
   saving.value = true;
   error.value = null;
   try {
@@ -218,7 +257,14 @@ async function save(): Promise<void> {
     status.value = 'Saved external materials settings';
     setTimeout(() => (status.value = null), 2000);
   } catch (err) {
-    error.value = (err as ApiError).message ?? 'save failed';
+    const apiErr = err as ApiError;
+    const body = apiErr.body as { field?: string; error?: string } | undefined;
+    if (body?.field === 'fab.httpProxy') {
+      fieldErrors.fabHttpProxy = body.error ?? apiErr.message;
+    } else if (body?.field === 'fab.flareSolverrUrl') {
+      fieldErrors.fabFlareSolverrUrl = body.error ?? apiErr.message;
+    }
+    error.value = apiErr.message ?? 'save failed';
   } finally {
     saving.value = false;
   }
@@ -228,6 +274,7 @@ onMounted(() => { void refresh(); });
 </script>
 
 <template>
+  <div class="ext-mat-settings">
   <div v-if="loading" class="muted">Loading provider settings…</div>
   <template v-else>
     <div v-if="error" class="error-box">{{ error }}</div>
@@ -406,7 +453,9 @@ onMounted(() => { void refresh(); });
             v-model="form.fabHttpProxy"
             type="text"
             placeholder="http://user:pass@host:port (optional)"
+            @input="clearFieldError('fabHttpProxy')"
           />
+          <p v-if="fieldErrors.fabHttpProxy" class="field-error">{{ fieldErrors.fabHttpProxy }}</p>
           <p class="hint muted">
             Optional outbound proxy for Fab requests when Cloudflare blocks the server IP.
             Overrides <code>FAB_HTTP_PROXY</code> when set here.
@@ -446,7 +495,9 @@ onMounted(() => { void refresh(); });
               v-model="form.fabFlareSolverrUrl"
               type="text"
               :placeholder="DEFAULT_FLARESOLVERR_URL"
+              @input="clearFieldError('fabFlareSolverrUrl')"
             />
+            <p v-if="fieldErrors.fabFlareSolverrUrl" class="field-error">{{ fieldErrors.fabFlareSolverrUrl }}</p>
             <p class="hint muted">
               PRISM calls this FlareSolverr <code>/v1</code> API before Fab browse requests to
               obtain Cloudflare clearance cookies. Default when FlareSolverr runs on the same
@@ -522,15 +573,27 @@ onMounted(() => { void refresh(); });
       {{ saving ? 'Saving…' : 'Save' }}
     </button>
   </div>
+  </div>
 </template>
 
 <style scoped>
+.ext-mat-settings {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+.error-box,
+.success-box {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .field-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .provider-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 8px);
   padding: 12px 14px 14px;
   margin: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -561,8 +624,15 @@ onMounted(() => { void refresh(); });
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.field-error {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-danger, #dc2626);
+}
 .help-details {
   margin-top: 4px;
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 8px);
   background: var(--color-bg-elevated, var(--color-bg));
@@ -613,6 +683,7 @@ onMounted(() => { void refresh(); });
   background: #1e1e2e;
   max-width: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 .code-block-toolbar {
   display: flex;
@@ -724,6 +795,7 @@ onMounted(() => { void refresh(); });
   border-radius: var(--radius-sm, 8px);
   padding: 10px 12px 12px;
   margin: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;

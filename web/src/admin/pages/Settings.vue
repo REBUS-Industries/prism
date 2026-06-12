@@ -284,8 +284,9 @@ onMounted(() => {
     v-if="activeTile"
     :title="activeTile.title"
     :subtitle="activeTile.description"
-    :max-width="activeTile.custom === 'fixture-types' ? 600 : activeTile.custom === 'external-materials' ? 720 : 560"
-    :min-width="activeTile.custom === 'external-materials' ? 640 : 0"
+    :max-width="activeTile.custom === 'fixture-types' ? 600 : activeTile.custom === 'external-materials' ? 960 : 560"
+    :min-width="activeTile.custom === 'external-materials' ? 720 : 0"
+    :viewport-width="activeTile.custom === 'external-materials' ? 94 : undefined"
     @close="closeTile"
   >
     <!-- Fixture Types manager -->
