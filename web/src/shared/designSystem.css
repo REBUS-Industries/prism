@@ -436,3 +436,19 @@ code, .mono { font-family: var(--font-mono); font-size: 0.75rem; }
 /* Icon buttons hold either a Material Symbol span or (legacy) an inline svg. */
 button.icon-btn .material-symbols-outlined,
 .btn.icon-btn .material-symbols-outlined { font-size: 20px; }
+
+/* Material / texture tag pills — orange badges with white text in dark mode */
+html.dark .pill.tag,
+html[class*="dark"] .pill.tag,
+[data-theme="dark"] .pill.tag {
+  background: var(--orbit-primary);
+  color: #fff;
+  border-color: transparent;
+}
+html.dark .tag-pill.active,
+html[class*="dark"] .tag-pill.active,
+[data-theme="dark"] .tag-pill.active {
+  background: var(--orbit-primary);
+  border-color: var(--orbit-primary);
+  color: #fff;
+}
