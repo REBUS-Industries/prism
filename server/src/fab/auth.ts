@@ -12,8 +12,9 @@
  * browser.
  *
  * Fab search/detail use a cookie-aware undici client with browser-like headers
- * to avoid Cloudflare bot challenges. When FAB_EPIC_REFRESH_TOKEN is set, those
- * calls also send the Epic bearer token.
+ * to avoid Cloudflare bot challenges. When FAB_EPIC_REFRESH_TOKEN is set, browse
+ * calls also send the Epic bearer token and CSRF cookies together — bearer alone
+ * does not bypass Cloudflare on www.fab.com; use FAB_HTTP_PROXY when blocked.
  */
 import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
@@ -28,6 +29,8 @@ const FAB_BROWSER_HEADERS: Record<string, string> = {
   Accept: 'application/json, text/plain, */*',
   'Accept-Language': 'en-US,en;q=0.9',
   'Accept-Encoding': 'gzip, deflate, br',
+  Origin: 'https://www.fab.com',
+  Referer: 'https://www.fab.com/',
   'Sec-Fetch-Dest': 'empty',
   'Sec-Fetch-Mode': 'cors',
   'Sec-Fetch-Site': 'same-origin',
@@ -35,6 +38,14 @@ const FAB_BROWSER_HEADERS: Record<string, string> = {
   'Sec-Ch-Ua-Mobile': '?0',
   'Sec-Ch-Ua-Platform': '"Windows"',
 };
+
+/** Thrown when Epic OAuth refresh fails — distinct from Cloudflare blocks. */
+export class FabOAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FabOAuthError';
+  }
+}
 
 interface TokenResponse {
   access_token?: string;
@@ -83,10 +94,18 @@ function parseSetCookie(header: string, hostname: string): void {
   jar.set(name, value);
 }
 
+function cookieJarFor(url: string): Map<string, string> | undefined {
+  return cookieJar.get(hostnameFromUrl(url));
+}
+
 function cookieHeaderFor(url: string): string | undefined {
-  const jar = cookieJar.get(hostnameFromUrl(url));
+  const jar = cookieJarFor(url);
   if (!jar?.size) return undefined;
   return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+function csrfTokenFor(url: string): string | undefined {
+  return cookieJarFor(url)?.get('fab_csrftoken');
 }
 
 function storeResponseCookies(url: string, headers: Headers): void {
@@ -109,6 +128,8 @@ async function fabUndiciFetch(url: string, init: RequestInit = {}): Promise<Resp
   }
   const cookies = cookieHeaderFor(url);
   if (cookies) headers.set('Cookie', cookies);
+  const csrf = csrfTokenFor(url);
+  if (csrf && !headers.has('X-CSRFToken')) headers.set('X-CSRFToken', csrf);
 
   const res = await undiciFetch(url, {
     ...init,
@@ -122,6 +143,10 @@ async function fabUndiciFetch(url: string, init: RequestInit = {}): Promise<Resp
 
 export function fabAuthConfigured(): boolean {
   return !!cachedRefreshToken;
+}
+
+export function fabHttpProxyConfigured(): boolean {
+  return !!cachedHttpProxy?.trim();
 }
 
 /** Apply Fab runtime config from DB settings (overrides env when loaded). */
@@ -165,14 +190,14 @@ async function exchangeToken(params: Record<string, string>): Promise<TokenRespo
   });
   const json = await res.json() as TokenResponse;
   if (!res.ok || json.error) {
-    throw new Error(json.error_description ?? json.error ?? `Epic OAuth failed (${res.status})`);
+    throw new FabOAuthError(json.error_description ?? json.error ?? `Epic OAuth failed (${res.status})`);
   }
   return json;
 }
 
 export async function getFabAccessToken(): Promise<string> {
   if (!cachedRefreshToken) {
-    throw new Error('Fab import not configured — set FAB_EPIC_REFRESH_TOKEN on the server');
+    throw new FabOAuthError('Fab import not configured — set FAB_EPIC_REFRESH_TOKEN on the server');
   }
   const now = Date.now();
   if (cachedAccessToken && now < tokenExpiresAt - 60_000) {
@@ -183,7 +208,7 @@ export async function getFabAccessToken(): Promise<string> {
     grant_type: 'refresh_token',
     refresh_token: cachedRefreshToken,
   });
-  if (!json.access_token) throw new Error('Epic OAuth returned no access_token');
+  if (!json.access_token) throw new FabOAuthError('Epic OAuth returned no access_token');
   cachedAccessToken = json.access_token;
   if (json.refresh_token) cachedRefreshToken = json.refresh_token;
   tokenExpiresAt = now + (json.expires_in ?? 3600) * 1000;
@@ -219,7 +244,7 @@ export function fabBrowseAuthPath(): 'bearer' | 'public' {
 
 /** Prime Fab CSRF cookie jar — best-effort before Fab browse calls. */
 export async function ensureFabCsrf(): Promise<void> {
-  await fabPublicFetch('https://www.fab.com/i/csrf');
+  await fabBrowseFetch('https://www.fab.com/i/csrf');
 }
 
 export { USER_AGENT };
