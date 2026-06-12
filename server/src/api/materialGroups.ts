@@ -50,10 +50,10 @@ const plugin: FastifyPluginAsync = async (app) => {
     const parsed = createBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body', issues: parsed.error.issues });
 
-    const [{ maxOrder }] = await db
+    const [row] = await db
       .select({ maxOrder: sql<number>`coalesce(max(${materialGroups.sortOrder}), -1)` })
       .from(materialGroups);
-    const sortOrder = Number(maxOrder ?? -1) + 1;
+    const sortOrder = Number(row?.maxOrder ?? -1) + 1;
 
     const inserted = await db
       .insert(materialGroups)
