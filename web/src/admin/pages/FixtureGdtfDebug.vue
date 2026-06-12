@@ -120,9 +120,44 @@ function effectiveAxisType(a: MotionAxis): MotionAxis['axisType'] {
   return a.axisType;
 }
 
-/** Motion rig with axis types normalised (so PAN/TILT drive the right axis). */
+/**
+ * Pan/Tilt angular range (degrees) from the stored DMX mapping — the Pan/Tilt
+ * channel functions' physical range. This is captured at import for every
+ * fixture, so it gives the real range without re-importing (the motionRig's own
+ * min/max may still be the ±270 parser default on older imports).
+ */
+function dmxRangeFor(type: 'PAN' | 'TILT'): { min: number; max: number } | null {
+  const attr = type === 'PAN' ? 'pan' : 'tilt';
+  const modes = (fixture.value?.definition.dmxMapping as { modes?: unknown })?.modes;
+  if (!Array.isArray(modes)) return null;
+  for (const mode of modes as Array<Record<string, unknown>>) {
+    const channels = Array.isArray(mode.channels) ? mode.channels as Array<Record<string, unknown>> : [];
+    for (const ch of channels) {
+      const lcs = Array.isArray(ch.logicalChannels) ? ch.logicalChannels as Array<Record<string, unknown>> : [];
+      for (const lc of lcs) {
+        const fns = Array.isArray(lc.functions) ? lc.functions as Array<Record<string, unknown>> : [];
+        for (const fn of fns) {
+          const a = String(fn.attribute ?? lc.attribute ?? '').toLowerCase();
+          if (a !== attr) continue;
+          const pf = parseFloat(String(fn.physicalFrom ?? ''));
+          const pt = parseFloat(String(fn.physicalTo ?? ''));
+          if (!Number.isNaN(pf) && !Number.isNaN(pt) && Math.abs(pt - pf) > 1) {
+            return { min: Math.min(pf, pt), max: Math.max(pf, pt) };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Motion rig with axis types normalised + real range from the DMX mapping. */
 const correctedAxes = computed<MotionAxis[]>(() =>
-  (fixture.value?.definition.motionRig ?? []).map((a) => ({ ...a, axisType: effectiveAxisType(a) })),
+  (fixture.value?.definition.motionRig ?? []).map((a) => {
+    const axisType = effectiveAxisType(a);
+    const range = (axisType === 'PAN' || axisType === 'TILT') ? dmxRangeFor(axisType) : null;
+    return { ...a, axisType, ...(range ? { minValue: range.min, maxValue: range.max } : {}) };
+  }),
 );
 
 /** Motion axes to expose as sliders — scoped to the selected mode. */
@@ -136,23 +171,27 @@ const motionControls = computed(() => {
     }));
 });
 
-/** Beam-sim cone: lens diameter (start) + beam angle / zoom range. */
-const beamSpec = computed(() => {
+/** Beam-sim cones — one per beam (multi-beam fixtures array across the fixture). */
+const beamSpecs = computed(() => {
   const def = fixture.value?.definition;
-  const beam = def?.beams?.[0];
-  if (!def || !beam) return null;
-  const parent = def.parts.find((p) => p.partId === beam.parentPartId);
-  const model = parent?.modelId ? def.models.find((m) => m.modelId === parent.modelId) : undefined;
-  const meta = (model?.metadata ?? {}) as Record<string, unknown>;
-  const len = typeof meta.length === 'number' ? meta.length : 0;
-  const wid = typeof meta.width === 'number' ? meta.width : 0;
-  const lensDiameter = Math.max(len, wid) || 0.08;
-  return {
-    lensDiameter,
-    beamAngle: beam.beamAngle ?? beam.fieldAngle ?? 20,
-    zoomMin: beam.zoomMinAngle,
-    zoomMax: beam.zoomMaxAngle,
-  };
+  if (!def?.beams?.length) return [];
+  const vis = visiblePartIds.value;
+  return def.beams
+    .filter((b) => !vis || (b.parentPartId ? vis.has(b.parentPartId) : true))
+    .map((b) => {
+      const parent = def.parts.find((p) => p.partId === b.parentPartId);
+      const model = parent?.modelId ? def.models.find((m) => m.modelId === parent.modelId) : undefined;
+      const meta = (model?.metadata ?? {}) as Record<string, unknown>;
+      const len = typeof meta.length === 'number' ? meta.length : 0;
+      const wid = typeof meta.width === 'number' ? meta.width : 0;
+      return {
+        parentPartId: b.parentPartId ?? null,
+        lensDiameter: Math.max(len, wid) || 0.08,
+        beamAngle: b.beamAngle ?? b.fieldAngle ?? 20,
+        zoomMin: b.zoomMinAngle,
+        zoomMax: b.zoomMaxAngle,
+      };
+    });
 });
 
 const meshRecords = computed(() => {
@@ -475,7 +514,7 @@ onMounted(() => void load());
               :motion-angles="appliedAngles"
               :dimmer="dimmer"
               :show-beam="showBeam"
-              :beam-spec="beamSpec"
+              :beams="beamSpecs"
               fill
               light-background
             />
@@ -500,7 +539,7 @@ onMounted(() => void load());
             :motion-angles="appliedAngles"
             :dimmer="dimmer"
             :show-beam="showBeam"
-            :beam-spec="beamSpec"
+            :beams="beamSpecs"
             fill
             light-background
           />
