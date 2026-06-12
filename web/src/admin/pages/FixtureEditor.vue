@@ -272,6 +272,27 @@ async function reloadModelMeshes(): Promise<void> {
   await runMeshReimport(modelQuality.value);
 }
 
+const replacingModelId = ref<string | null>(null);
+
+async function replaceModel(modelId: string, ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  replacingModelId.value = modelId;
+  error.value = null;
+  try {
+    const res = await fixturesApi.replaceModel(props.id, modelId, file);
+    fixture.value = res.fixture;
+    assemblyRevision.value += 1;
+    await reload();
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'model replace failed';
+  } finally {
+    replacingModelId.value = null;
+    input.value = '';
+  }
+}
+
 async function onSwitchStoredVersion(versionId: string): Promise<void> {
   switchingVersion.value = true;
   carryReport.value = [];
@@ -938,6 +959,31 @@ onMounted(() => {
               Re-converts the GDTF mesh (e.g. 3DS → glTF) with the current pipeline. Use if the fixture is showing placeholder boxes instead of its model.
             </p>
           </template>
+
+          <div v-if="fixture?.definition.models?.length" class="model-swap">
+            <h3 class="model-swap-title">Swap a model</h3>
+            <p class="muted small">
+              Upload a 3D file to replace a model's mesh (glTF, GLB, OBJ, FBX, 3DS, STL, DAE, PLY). Part transforms are kept.
+            </p>
+            <ul class="model-swap-list">
+              <li v-for="m in fixture.definition.models" :key="m.modelId" class="model-swap-row">
+                <span class="model-swap-meta">
+                  <span class="model-swap-name">{{ m.modelId }}</span>
+                  <span class="model-swap-tag">{{ m.partTag }}</span>
+                </span>
+                <label class="model-swap-btn" :class="{ busy: replacingModelId === m.modelId }">
+                  <Icon name="upload_file" :size="14" />
+                  {{ replacingModelId === m.modelId ? 'Converting…' : 'Replace' }}
+                  <input
+                    type="file"
+                    accept=".gltf,.glb,.obj,.fbx,.3ds,.stl,.dae,.ply"
+                    :disabled="!!replacingModelId"
+                    @change="replaceModel(m.modelId, $event)"
+                  />
+                </label>
+              </li>
+            </ul>
+          </div>
         </section>
 
       </div>
@@ -1138,6 +1184,23 @@ onMounted(() => {
    collapses to 0 and the graph renders blank. */
 .construction-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
 .construction-panel > * { height: 100%; }
+
+.model-swap { margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 12px; }
+.model-swap-title { margin: 0 0 4px; font-size: 13px; font-weight: 700; }
+.model-swap-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.model-swap-row { display: flex; align-items: center; gap: 10px; }
+.model-swap-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.model-swap-name { font-size: 13px; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-swap-tag { font-size: 11px; color: var(--color-text-muted); }
+.model-swap-btn {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 6px 12px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  background: var(--color-bg-input); color: var(--color-text);
+}
+.model-swap-btn:hover { border-color: var(--orbit-primary); color: var(--orbit-primary); }
+.model-swap-btn.busy { opacity: 0.6; cursor: progress; }
+.model-swap-btn input { display: none; }
 
 .overview-panel {
 

@@ -1873,6 +1873,15 @@ export const fixturesApi = {
     }),
   reimportMeshes: (id: string, modelQuality: GdtfModelQuality) =>
     api.post<{ fixture: FixtureDetail }>(`/api/fixtures/${id}/reimport-meshes`, { modelQuality }),
+  /** Swap one model's mesh with an uploaded 3D file (glTF/GLB/OBJ/FBX/3DS/STL/DAE/PLY). */
+  replaceModel: (id: string, modelId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.postForm<{ fixture: FixtureDetail }>(
+      `/api/fixtures/${id}/models/${encodeURIComponent(modelId)}/replace`,
+      fd,
+    );
+  },
   listVersions: (id: string) =>
     api.get<{ versions: FixtureVersionSummary[] }>(`/api/fixtures/${id}/versions`),
   checkUpdates: (id: string) =>
