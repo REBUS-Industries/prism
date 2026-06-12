@@ -11,7 +11,7 @@
  * small 3D preview. Dashed edges show cross-references (a Part uses a Model, a
  * Beam/Motion axis attaches to a Part).
  */
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import {
   VueFlow,
   Panel,
@@ -20,6 +20,7 @@ import {
   useVueFlow,
   type Edge,
   type Node,
+  type NodeMouseEvent,
 } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -27,6 +28,7 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import Icon from '../../shared/Icon.vue';
+import FixtureViewer from './FixtureViewer.vue';
 import FixtureGraphNode, { type FixtureGraphNodeData, type GraphParam } from './FixtureGraphNode.vue';
 import type {
   FixtureDefinition,
@@ -305,7 +307,6 @@ const graph = computed<Built>(() => {
         kind: 'category', title: cat.title, icon: cat.icon, accent: cat.accent,
         badge: cat.selfParams ? undefined : 0,
         params,
-        defaultExpanded: !!cat.selfParams,
       });
       y += ROW;
     } else {
@@ -330,7 +331,7 @@ const graph = computed<Built>(() => {
   // ---- column 1: Fixture root ----------------------------------------------
   node('fixture', X.fixture, centreY, {
     kind: 'fixture', title: info.fixtureName || 'Fixture', subtitle: info.manufacturer, icon: 'lightbulb',
-    accent: ACCENT.fixture, defaultExpanded: false,
+    accent: ACCENT.fixture,
     params: [
       { label: 'Parts', value: String(parts.value.length) },
       { label: 'Models', value: String(models.value.length) },
@@ -343,7 +344,7 @@ const graph = computed<Built>(() => {
   // ---- column 0: GDTF source -----------------------------------------------
   node('gdtf', X.gdtf, centreY, {
     kind: 'gdtf', title: 'GDTF Source', subtitle: info.fixtureTypeId, icon: 'folder_zip',
-    accent: ACCENT.gdtf, noTarget: true, defaultExpanded: false,
+    accent: ACCENT.gdtf, noTarget: true,
     params: [
       { label: 'Manufacturer', value: str(info.manufacturer) },
       { label: 'Fixture', value: str(info.fixtureName) },
@@ -396,50 +397,206 @@ function onNodesInitialized(): void { doFit(); }
 onMounted(() => { setTimeout(doFit, 60); });
 
 function fitReset(): void { doFit(); }
+
+// ---------------------------------------------------------------------------
+// Selection → inspector panel
+// ---------------------------------------------------------------------------
+const selectedId = ref<string | null>(null);
+const selected = computed<FixtureGraphNodeData | null>(() => {
+  if (!selectedId.value) return null;
+  const n = graph.value.nodes.find((nn) => nn.id === selectedId.value);
+  return (n?.data as FixtureGraphNodeData) ?? null;
+});
+
+function onNodeClick(e: NodeMouseEvent): void {
+  selectedId.value = e.node.id;
+}
 </script>
 
 <template>
-  <div class="cg-wrap">
-    <VueFlow
-      :nodes="graph.nodes"
-      :edges="graph.edges"
-      :nodes-draggable="true"
-      drag-handle=".node-drag-handle"
-      :nodes-connectable="false"
-      :elements-selectable="true"
-      :zoom-on-double-click="false"
-      :min-zoom="0.1"
-      :max-zoom="2"
-      @nodes-initialized="onNodesInitialized"
-    >
-      <template #node-fixtureNode="nodeProps">
-        <FixtureGraphNode :data="nodeProps.data" />
+  <div class="cg-layout">
+    <div class="cg-wrap">
+      <VueFlow
+        :nodes="graph.nodes"
+        :edges="graph.edges"
+        :nodes-draggable="true"
+        drag-handle=".node-drag-handle"
+        :nodes-connectable="false"
+        :elements-selectable="true"
+        :zoom-on-double-click="false"
+        :min-zoom="0.1"
+        :max-zoom="2"
+        @nodes-initialized="onNodesInitialized"
+        @node-click="onNodeClick"
+      >
+        <template #node-fixtureNode="nodeProps">
+          <FixtureGraphNode :data="nodeProps.data" />
+        </template>
+
+        <Background pattern-color="var(--color-border)" :gap="22" />
+        <Controls :show-interactive="false" />
+
+        <Panel position="top-left" class="cg-legend">
+          <span class="cg-legend-title"><Icon name="schema" :size="14" /> GDTF → REBUS</span>
+          <button type="button" class="cg-reset" title="Re-fit view" @click="fitReset">
+            <Icon name="fit_screen" :size="15" />
+          </button>
+        </Panel>
+      </VueFlow>
+    </div>
+
+    <aside class="cg-inspector">
+      <div v-if="!selected" class="cg-empty">
+        <Icon name="ads_click" :size="22" />
+        <p>Select a node to see its properties.</p>
+      </div>
+
+      <template v-else>
+        <header class="cg-insp-head" :style="{ '--accent': selected.accent ?? 'var(--orbit-primary)' }">
+          <span class="cg-insp-icon"><Icon :name="selected.icon" :size="18" /></span>
+          <div class="cg-insp-titles">
+            <h3>{{ selected.title }}</h3>
+            <span v-if="selected.subtitle" class="cg-insp-sub">{{ selected.subtitle }}</span>
+          </div>
+          <span class="cg-insp-kind">{{ selected.kind }}</span>
+        </header>
+
+        <div v-if="selected.modelPreview" class="cg-insp-preview">
+          <FixtureViewer
+            :assembly="{ fixtureId: selected.modelPreview.fixtureId, parts: selected.modelPreview.parts, models: selected.modelPreview.models }"
+            :interactive="true"
+            light-background
+            fill
+          />
+        </div>
+
+        <dl v-if="selected.params?.length" class="cg-insp-params">
+          <div v-for="(p, i) in selected.params" :key="i" class="cg-insp-row">
+            <dt :title="p.label">{{ p.label }}</dt>
+            <dd :title="p.value">{{ p.value }}</dd>
+          </div>
+        </dl>
+        <p v-else-if="!selected.modelPreview" class="cg-empty-small">No parameters.</p>
       </template>
-
-      <Background pattern-color="var(--color-border)" :gap="22" />
-      <Controls :show-interactive="false" />
-
-      <Panel position="top-left" class="cg-legend">
-        <span class="cg-legend-title"><Icon name="schema" :size="14" /> GDTF → REBUS</span>
-        <button type="button" class="cg-reset" title="Re-fit view" @click="fitReset">
-          <Icon name="fit_screen" :size="15" />
-        </button>
-      </Panel>
-    </VueFlow>
+    </aside>
   </div>
 </template>
 
 <style scoped>
-.cg-wrap {
+.cg-layout {
+  display: flex;
+  gap: 12px;
   width: 100%;
   height: 100%;
   min-height: 480px;
+}
+.cg-wrap {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg);
   overflow: hidden;
 }
 .cg-wrap :deep(.vue-flow__node) { pointer-events: all !important; }
+.cg-wrap :deep(.vue-flow__node.selected) .fg-node {
+  border-color: var(--accent, var(--orbit-primary));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--orbit-primary) 45%, transparent);
+}
+
+.cg-inspector {
+  flex: 0 0 320px;
+  width: 320px;
+  height: 100%;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+}
+.cg-empty,
+.cg-empty-small {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+.cg-empty { height: 100%; justify-content: center; padding: 24px; }
+.cg-empty-small { padding: 14px; font-size: 12px; }
+
+.cg-insp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid var(--color-border);
+  border-left: 3px solid var(--accent);
+}
+.cg-insp-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+.cg-insp-titles { min-width: 0; flex: 1; }
+.cg-insp-titles h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+  word-break: break-word;
+}
+.cg-insp-sub { font-size: 12px; color: var(--color-text-muted); }
+.cg-insp-kind {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  padding: 2px 7px;
+  border-radius: 9px;
+}
+
+.cg-insp-preview {
+  height: 200px;
+  margin: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.cg-insp-params { margin: 0; padding: 8px 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.cg-insp-row {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+.cg-insp-row:last-child { border-bottom: none; }
+.cg-insp-row dt { margin: 0; color: var(--color-text-muted); font-size: 12px; }
+.cg-insp-row dd {
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+@media (max-width: 1100px) {
+  .cg-layout { flex-direction: column; }
+  .cg-inspector { flex: 0 0 auto; width: 100%; height: 280px; }
+}
 
 .cg-legend {
   display: flex;
