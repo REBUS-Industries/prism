@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import FixtureViewer from '../components/FixtureViewer.vue';
 import Icon from '../../shared/Icon.vue';
@@ -29,8 +29,12 @@ const rawJson = ref('');
 const dimmer = ref(0.5);
 const showBeam = ref(true);
 const selectedPartId = ref<string | null>(null);
-/** Per-motion-axis angle (motionAxisId → degrees) — supports multiple pan/tilt. */
+/** Per-motion-axis TARGET angle (slider value, motionAxisId → degrees). */
 const motionAngles = ref<Record<string, number>>({});
+/** Animated angle actually sent to the viewer — eases to the target over RealFade. */
+const appliedAngles = ref<Record<string, number>>({});
+/** Animate moves over the GDTF fade/acceleration time (vs. snapping instantly). */
+const liveFade = ref(true);
 
 const previewUrl = computed(() =>
   fixture.value?.hasPreview ? fixturesApi.previewUrl(fixture.value.id) : null,
@@ -218,7 +222,53 @@ watch(motionControls, (controls) => {
   const next: Record<string, number> = {};
   for (const c of controls) next[c.axis.motionAxisId] = motionAngles.value[c.axis.motionAxisId] ?? c.axis.defaultValue ?? 0;
   motionAngles.value = next;
+  appliedAngles.value = { ...next };
 }, { immediate: true });
+
+// ---- Pan/Tilt fade animation: ease applied angle to target over RealFade ----
+const axisById = computed(() => new Map(correctedAxes.value.map((a) => [a.motionAxisId, a])));
+interface Tween { from: number; to: number; t0: number; dur: number }
+const tweens = new Map<string, Tween>();
+let motionRaf: number | null = null;
+
+const easeInOut = (t: number): number => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+
+function motionTick(): void {
+  const now = performance.now();
+  let active = false;
+  const next = { ...appliedAngles.value };
+  for (const [id, tw] of [...tweens.entries()]) {
+    const p = tw.dur > 0 ? Math.min((now - tw.t0) / tw.dur, 1) : 1;
+    next[id] = tw.from + (tw.to - tw.from) * easeInOut(p);
+    if (p >= 1) { next[id] = tw.to; tweens.delete(id); } else active = true;
+  }
+  appliedAngles.value = next;
+  motionRaf = active ? requestAnimationFrame(motionTick) : null;
+}
+
+function startTween(id: string, to: number): void {
+  const from = appliedAngles.value[id] ?? to;
+  if (!liveFade.value) { appliedAngles.value = { ...appliedAngles.value, [id]: to }; return; }
+  const a = axisById.value.get(id);
+  const range = a ? Math.max(Math.abs((a.maxValue ?? 270) - (a.minValue ?? -270)), 1) : 360;
+  // RealFade is the seconds for a full-range move; scale by the move's fraction.
+  const fadeSec = typeof a?.realFade === 'number' && a.realFade > 0 ? a.realFade : 0.6;
+  const dur = Math.max((fadeSec * Math.abs(to - from)) / range * 1000, 60);
+  tweens.set(id, { from, to, t0: performance.now(), dur });
+  if (motionRaf == null) motionRaf = requestAnimationFrame(motionTick);
+}
+
+watch(motionAngles, (target) => {
+  for (const [id, v] of Object.entries(target)) {
+    if (appliedAngles.value[id] === undefined) {
+      appliedAngles.value = { ...appliedAngles.value, [id]: v };
+    } else if (v !== (tweens.get(id)?.to ?? appliedAngles.value[id])) {
+      startTween(id, v);
+    }
+  }
+}, { deep: true });
+
+onBeforeUnmount(() => { if (motionRaf != null) cancelAnimationFrame(motionRaf); });
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -382,6 +432,10 @@ onMounted(() => void load());
             <input v-model="showBeam" type="checkbox" />
             Light beam origin + direction
           </label>
+          <label v-if="motionControls.length" class="check-row">
+            <input v-model="liveFade" type="checkbox" />
+            Animate movement (speed/fade)
+          </label>
           <div class="slider-row">
             <span>Dimmer</span>
             <input v-model.number="dimmer" type="range" min="0" max="1" step="0.01" class="range-orange" />
@@ -418,7 +472,7 @@ onMounted(() => void load());
               v-if="previewUrl || assembly"
               :url="previewUrl"
               :assembly="assembly"
-              :motion-angles="motionAngles"
+              :motion-angles="appliedAngles"
               :dimmer="dimmer"
               :show-beam="showBeam"
               :beam-spec="beamSpec"
@@ -443,7 +497,7 @@ onMounted(() => void load());
             v-if="previewUrl || assembly"
             :url="previewUrl"
             :assembly="assembly"
-            :motion-angles="motionAngles"
+            :motion-angles="appliedAngles"
             :dimmer="dimmer"
             :show-beam="showBeam"
             :beam-spec="beamSpec"
