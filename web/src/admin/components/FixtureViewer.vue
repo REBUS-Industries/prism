@@ -54,6 +54,12 @@ const props = withDefaults(defineProps<{
   motionAngles?: Record<string, number>;
   dimmer?: number;
   showBeam?: boolean;
+  /**
+   * Beam-sim geometry: a cone that starts at the lens diameter and opens to the
+   * beam angle. When a zoom range is present, the min + max zoom cones are shown.
+   * lensDiameter is metres; angles are degrees.
+   */
+  beamSpec?: { lensDiameter?: number; beamAngle?: number; zoomMin?: number; zoomMax?: number } | null;
   /** When false, orbit controls are disabled (quad ortho views). */
   interactive?: boolean;
   lightBackground?: boolean;
@@ -120,7 +126,18 @@ const motionRest = new Map<string, THREE.Quaternion>();
 let beamPartGroup: THREE.Object3D | null = null;
 let loadedRoot: THREE.Object3D | null = null;
 let dirLight: THREE.DirectionalLight | null = null;
-let beamMesh: THREE.Mesh | null = null;
+let beamGroup: THREE.Group | null = null;
+
+function disposeBeam(): void {
+  if (!beamGroup) return;
+  beamGroup.removeFromParent();
+  beamGroup.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) (m.material as THREE.Material).dispose();
+  });
+  beamGroup = null;
+}
 /** Cone height — tip translated to local origin in syncBeam(). */
 const BEAM_CONE_HEIGHT = 0.6;
 let modelCenter = new THREE.Vector3();
@@ -147,7 +164,7 @@ function clearLoaded(): void {
   partGroups = new Map();
   disposeBuiltMaterials();
   // Detach beam before disposing assembly nodes it may be parented to.
-  beamMesh?.removeFromParent();
+  beamGroup?.removeFromParent();
   // removeFromParent() works whether the root was added to scene or tiltGroup.
   loadedRoot?.removeFromParent();
   if (loadedRoot) disposeAssembly(loadedRoot);
@@ -179,12 +196,7 @@ function dispose(): void {
     transformHelper = null;
   }
   clearLoaded();
-  if (beamMesh) {
-    beamMesh.removeFromParent();
-    beamMesh.geometry.dispose();
-    (beamMesh.material as THREE.Material).dispose();
-    beamMesh = null;
-  }
+  disposeBeam();
   for (const m of datumMeshes.values()) {
     m.geometry.dispose();
     (m.material as THREE.Material).dispose();
@@ -304,45 +316,49 @@ function onGizmoObjectChange(): void {
   });
 }
 
+/** Open frustum (truncated cone) wireframe: top radius at the lens, opening to
+ *  bottom radius over BEAM_CONE_HEIGHT. Top sits on the attach origin. */
+function makeBeamFrustum(topR: number, bottomR: number, opacity: number): THREE.Mesh {
+  const geo = new THREE.CylinderGeometry(topR, bottomR, BEAM_CONE_HEIGHT, 24, 1, true);
+  geo.translate(0, -BEAM_CONE_HEIGHT / 2, 0);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xff6600, transparent: true, opacity, wireframe: true, side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(geo, mat);
+}
+
 function syncBeam(): void {
   if (!scene) return;
   const parent = beamParent();
-  if (!props.showBeam || !parent) {
-    if (beamMesh) {
-      beamMesh.removeFromParent();
-      beamMesh.geometry.dispose();
-      (beamMesh.material as THREE.Material).dispose();
-      beamMesh = null;
-    }
-    return;
+  if (!props.showBeam || !parent) { disposeBeam(); return; }
+
+  // Rebuild the cone(s) from the beam spec each time so angle/lens edits show.
+  disposeBeam();
+  beamGroup = new THREE.Group();
+
+  const spec = props.beamSpec ?? {};
+  const lensR = Math.max((spec.lensDiameter ?? 0) / 2, 0.01);
+  const bottomFor = (deg: number): number =>
+    lensR + BEAM_CONE_HEIGHT * Math.tan((Math.max(deg, 1) / 2) * Math.PI / 180);
+
+  // Min/max zoom range when present, else the single beam angle.
+  const angles = (spec.zoomMin != null && spec.zoomMax != null)
+    ? [spec.zoomMin, spec.zoomMax]
+    : [spec.beamAngle ?? 20];
+  for (let i = 0; i < angles.length; i++) {
+    beamGroup.add(makeBeamFrustum(lensR, bottomFor(angles[i]!), angles.length > 1 && i === 0 ? 0.5 : 0.32));
   }
-  if (!beamMesh) {
-    const geo = new THREE.ConeGeometry(0.08, BEAM_CONE_HEIGHT, 16, 1, true);
-    // ConeGeometry: tip at +Y, base at −Y. Shift so tip sits on the attach origin.
-    geo.translate(0, -BEAM_CONE_HEIGHT / 2, 0);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xff6600,
-      transparent: true,
-      opacity: 0.35,
-      wireframe: true,
-      side: THREE.DoubleSide,
-    });
-    beamMesh = new THREE.Mesh(geo, mat);
-  }
-  if (beamMesh.parent !== parent) {
-    beamMesh.removeFromParent();
-    parent.add(beamMesh);
-  }
-  // Local origin at head/beam pivot; pan+tilt inherited from parent hierarchy.
-  beamMesh.position.set(0, 0, 0);
+
+  parent.add(beamGroup);
+  beamGroup.position.set(0, 0, 0);
   if (tiltNode || beamPartGroup) {
-    // GDTF Z-up: beam axis is −Z; tip at origin, wide end opens along −Z.
-    beamMesh.rotation.set(Math.PI / 2, 0, 0);
-    beamMesh.scale.setScalar(1);
+    // GDTF Z-up: beam opens along −Z; top (lens) at origin.
+    beamGroup.rotation.set(Math.PI / 2, 0, 0);
+    beamGroup.scale.setScalar(1);
   } else {
-    // Single-GLB fallback (Y-up tiltGroup): tip at origin, beam extends −Y.
-    beamMesh.rotation.set(0, 0, 0);
-    beamMesh.scale.setScalar(Math.max(modelSize * 0.5, 0.3));
+    // Single-GLB fallback (Y-up tiltGroup).
+    beamGroup.rotation.set(0, 0, 0);
+    beamGroup.scale.setScalar(Math.max(modelSize * 0.5, 0.3));
   }
 }
 
@@ -611,6 +627,7 @@ watch(() => [props.panDeg, props.tiltDeg], syncMotion);
 watch(() => props.motionAngles, syncMotion, { deep: true });
 watch(() => props.dimmer, syncDimmer);
 watch(() => props.showBeam, syncBeam);
+watch(() => props.beamSpec, syncBeam, { deep: true });
 watch(() => props.interactive, (v) => { if (controls) controls.enabled = v; });
 watch(() => [props.editable, props.selectedPartId, props.gizmoMode, props.gizmoSpace], syncGizmo);
 watch(() => props.lightBackground, (v) => {

@@ -1530,6 +1530,9 @@ export interface FixtureBeam {
   luminousFlux?: number;
   colourTemperature?: number;
   iesAssetId?: string | null;
+  /** Min/max beam angle (°) across the zoom range, from the GDTF Zoom channel. */
+  zoomMinAngle?: number;
+  zoomMaxAngle?: number;
   metadata: Record<string, unknown>;
 }
 
