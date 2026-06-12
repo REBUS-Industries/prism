@@ -12,6 +12,8 @@ import FixturePartProperties from '../components/FixturePartProperties.vue';
 
 import FixtureViewer, { type PartTransformEdit } from '../components/FixtureViewer.vue';
 
+import FixtureConstructionGraph from '../components/FixtureConstructionGraph.vue';
+
 import { buildTransform4x4 } from '../utils/fixtureTransform';
 
 import DmxModePanel from '../components/DmxModePanel.vue';
@@ -78,7 +80,7 @@ const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 
 const gizmoSpace = ref<'world' | 'local'>('local');
 
-const activeTab = ref<'overview' | 'dmx' | 'parts' | 'ies' | 'settings'>('overview');
+const activeTab = ref<'overview' | 'dmx' | 'parts' | 'construction' | 'ies' | 'settings'>('overview');
 
 
 
@@ -630,6 +632,8 @@ onMounted(() => {
 
             ['parts', 'Parts'],
 
+            ['construction', 'Construction'],
+
             ['ies', 'IES'],
 
             ['settings', 'Settings'],
@@ -825,6 +829,18 @@ onMounted(() => {
           </details>
 
         </aside>
+
+      </div>
+
+
+
+      <div v-else-if="activeTab === 'construction'" class="tab-panel construction-panel">
+
+        <FixtureConstructionGraph
+          v-if="fixture?.definition"
+          :fixture-id="fixture.id"
+          :definition="fixture.definition"
+        />
 
       </div>
 
@@ -1115,6 +1131,9 @@ onMounted(() => {
 
 
 .tab-panel { flex: 1; }
+
+.construction-panel { display: flex; min-height: 560px; }
+.construction-panel > * { flex: 1; }
 
 .overview-panel {
 
