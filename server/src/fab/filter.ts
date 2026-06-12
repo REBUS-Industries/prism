@@ -1,9 +1,12 @@
 /**
  * Fab search filters — free, individually downloadable materials only.
  *
- * API params (`is_free`, `listing_types=material`, `formats=texture-set`) reduce
- * noise but Fab still returns paid listings and UE material packs, so we post-filter
- * on normalized listing fields.
+ * API params (`is_free`, `listing_types=material`) reduce noise but Fab still
+ * returns paid listings and UE material packs, so we post-filter on price,
+ * listingType, and texture-set/megascans formats.
+ *
+ * Megascans free materials often arrive with `isFree: false` and
+ * `startingPrice.price: 0` — treat zero price as free, not the boolean flag.
  */
 import type { FabAssetSummary } from './normalize.js';
 import type { FabSearchListing } from './types.js';
@@ -32,10 +35,16 @@ function isPackListingType(listingType: string | undefined | null): boolean {
   return false;
 }
 
-function isPaidListing(listing: FabSearchListing): boolean {
-  if (listing.isFree !== true) return true;
+/** Fab search rows use price, not isFree, for Megascans $0 materials. */
+export function isPaidListing(listing: FabSearchListing): boolean {
   const price = listing.startingPrice?.price;
-  return typeof price === 'number' && price > 0;
+  if (typeof price === 'number') return price > 0;
+  return listing.isFree !== true;
+}
+
+function isPaidSummary(item: FabAssetSummary): boolean {
+  if (item.price != null) return item.price > 0;
+  return !item.isFree;
 }
 
 /** Raw Fab search row — used before normalization. */
@@ -50,8 +59,7 @@ export function isFreeSingleMaterialListing(listing: FabSearchListing): boolean 
 
 /** Normalized summary — used after normalizeSearchListing. */
 export function isFreeSingleMaterialSummary(item: FabAssetSummary): boolean {
-  if (!item.isFree) return false;
-  if (item.price != null && item.price > 0) return false;
+  if (isPaidSummary(item)) return false;
   if (isPackListingType(item.listingType)) return false;
   if (item.listingType && item.listingType !== 'material' && item.listingType !== 'surface') {
     return false;
