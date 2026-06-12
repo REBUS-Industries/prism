@@ -30,6 +30,21 @@ export interface FixtureAssemblyInput {
    * the legacy whole-assembly panGroup/tiltGroup wrappers.
    */
   motionAxes?: MotionAxisRef[];
+  /**
+   * GDTF geometry name of the DMX mode root to render. Multi-mode fixtures ship
+   * one top-level geometry per mode (e.g. "Base Yoke M1".."M6"); rendering all
+   * of them stacks every mode at once. When set, only the matching top-level
+   * geometry subtree is rendered — sibling mode roots and shared library
+   * geometries stay built so GeometryReferences still resolve, but they are not
+   * placed in the scene standalone. Falls back to rendering all top-level
+   * geometries when null or when no top-level part matches the id.
+   */
+  selectedModeGeometryId?: string | null;
+  /**
+   * REBUS materials (built Three.js materials) keyed by material id. When a part
+   * has a resolved `materialId`, its own mesh is painted with this material.
+   */
+  materialsById?: Map<string, THREE.Material>;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -248,13 +263,35 @@ export async function buildFixtureAssembly(
 
   const contentRoot = new THREE.Group();
   contentRoot.name = 'Fixture';
+  // When a DMX mode root is selected, only that top-level geometry subtree is
+  // placed in the scene. Other top-level geometries (sibling mode roots, shared
+  // library geometries) remain in partGroups so GeometryReferences inside the
+  // selected subtree still clone correctly — they just don't render standalone.
+  const selectedRoot = input.selectedModeGeometryId ?? null;
+  const hasSelectedRoot = selectedRoot != null
+    && parts.some((p) => !p.parentPartId && p.sourceGdtfGeometryId === selectedRoot);
   for (const part of parts) {
     const g = partGroups.get(part.partId)!;
     const parent = part.parentPartId ? partGroups.get(part.parentPartId) : null;
-    (parent ?? contentRoot).add(g);
+    if (parent) {
+      parent.add(g);
+      continue;
+    }
+    if (hasSelectedRoot && part.sourceGdtfGeometryId !== selectedRoot) continue;
+    contentRoot.add(g);
   }
 
   let meshCount = 0;
+
+  // Paint a part's own mesh with its assigned REBUS material (by tag/materialId).
+  const paintMaterial = (obj: THREE.Object3D, part: FixturePart): void => {
+    const mat = part.materialId ? input.materialsById?.get(part.materialId) : undefined;
+    if (!mat) return;
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = mat;
+    });
+  };
 
   await Promise.all(parts.map(async (part) => {
     if (partMeta(part).isGeometryReference) return;
@@ -267,7 +304,9 @@ export async function buildFixtureAssembly(
     if (mediaId) {
       const obj = await loadGlb(mediaId);
       if (obj) {
-        partGroup.add(wrapModelMesh(obj.clone(true), dims));
+        const wrapped = wrapModelMesh(obj.clone(true), dims);
+        paintMaterial(wrapped, part);
+        partGroup.add(wrapped);
         meshCount += 1;
         return;
       }
@@ -277,6 +316,7 @@ export async function buildFixtureAssembly(
     if (model || dims.length || dims.width || dims.height) {
       const prim = buildPrimitive(dims, part);
       if (prim) {
+        paintMaterial(prim, part);
         partGroup.add(prim);
         meshCount += 1;
       }
@@ -345,7 +385,9 @@ export async function buildFixtureAssembly(
     return undefined;
   };
 
-  const beamTagged = parts.find((p) => p.tag === 'BEAM');
+  // GDTF Beam geometry now maps to the LENS part (its model is the lens); keep
+  // accepting legacy BEAM-tagged parts so the beam viz attaches either way.
+  const beamTagged = parts.find((p) => p.tag === 'BEAM' || p.tag === 'LENS');
   const beamPart = beamTagged ? partGroups.get(beamTagged.partId) : undefined;
 
   return {

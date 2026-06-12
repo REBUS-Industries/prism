@@ -1519,6 +1519,8 @@ export interface DmxModeRef {
   modeId: string;
   name: string;
   footprint: number;
+  /** GDTF root geometry this mode renders (DMXMode@Geometry). */
+  geometry?: string;
 }
 
 export interface FixturePart {
@@ -1560,6 +1562,10 @@ export interface MotionAxis {
   maxValue: number;
   defaultValue: number;
   dmxLinks?: string[];
+  /** GDTF RealFade — time (s) for a full move of this axis. */
+  realFade?: number;
+  /** GDTF RealAcceleration — acceleration time (s) for this axis. */
+  realAcceleration?: number;
 }
 
 export interface WheelSlot {
@@ -1884,6 +1890,15 @@ export const fixturesApi = {
     }),
   reimportMeshes: (id: string, modelQuality: GdtfModelQuality) =>
     api.post<{ fixture: FixtureDetail }>(`/api/fixtures/${id}/reimport-meshes`, { modelQuality }),
+  /** Swap one model's mesh with an uploaded 3D file (glTF/GLB/OBJ/FBX/3DS/STL/DAE/PLY). */
+  replaceModel: (id: string, modelId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.postForm<{ fixture: FixtureDetail }>(
+      `/api/fixtures/${id}/models/${encodeURIComponent(modelId)}/replace`,
+      fd,
+    );
+  },
   listVersions: (id: string) =>
     api.get<{ versions: FixtureVersionSummary[] }>(`/api/fixtures/${id}/versions`),
   checkUpdates: (id: string) =>
@@ -1924,6 +1939,11 @@ export const fixturesApi = {
     api.get<GdtfModelInspection>(
       `/api/gdtf-share/model-qualities?rid=${rid}`,
     ),
+  /** Global REBUS-tag → material id map, applied across all fixtures. */
+  getTagMaterials: () =>
+    api.get<{ map: Record<string, string | null> }>('/api/fixtures/tag-materials'),
+  setTagMaterials: (map: Record<string, string | null>) =>
+    api.put<{ map: Record<string, string> }>('/api/fixtures/tag-materials', { map }),
   // Connector / ORBIT export — the PRISM Library is the authoritative source.
   exportList: (params: { q?: string; origin?: FixtureOrigin | FixtureOrigin[]; status?: 'draft' | 'published'; limit?: number } = {}) => {
     const qs = new URLSearchParams();

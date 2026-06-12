@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import { RouterLink, useRouter } from 'vue-router';
 
@@ -11,6 +11,8 @@ import FixturePartTree from '../components/FixturePartTree.vue';
 import FixturePartProperties from '../components/FixturePartProperties.vue';
 
 import FixtureViewer, { type PartTransformEdit } from '../components/FixtureViewer.vue';
+
+import FixtureConstructionGraph from '../components/FixtureConstructionGraph.vue';
 
 import { buildTransform4x4 } from '../utils/fixtureTransform';
 
@@ -78,7 +80,7 @@ const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 
 const gizmoSpace = ref<'world' | 'local'>('local');
 
-const activeTab = ref<'overview' | 'dmx' | 'parts' | 'ies' | 'settings'>('overview');
+const activeTab = ref<'overview' | 'dmx' | 'parts' | 'construction' | 'ies' | 'settings'>('overview');
 
 
 
@@ -121,11 +123,49 @@ const previewUrl = computed(() =>
 
 );
 
+interface EditorDmxMode { modeId: string; name: string; geometry?: string }
+
+const dmxModes = computed<EditorDmxMode[]>(() => {
+  const raw = (fixture.value?.definition?.dmxMapping as { modes?: unknown })?.modes;
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<Record<string, unknown>>).map((m) => ({
+    modeId: String(m.modeId ?? m.name ?? ''),
+    name: String(m.name ?? m.modeId ?? 'Mode'),
+    geometry: typeof m.geometry === 'string' ? m.geometry : undefined,
+  }));
+});
+
+// Top-level geometries referenced by the modes — only filter when modes
+// actually map to distinct root geometries (multi-mode fixtures like JDC1).
+const hasModeGeometries = computed(() =>
+  new Set(dmxModes.value.map((m) => m.geometry).filter(Boolean)).size > 1,
+);
+
+const selectedModeId = ref<string | null>(null);
+
+const selectedModeGeometryId = computed<string | null>(() => {
+  if (!hasModeGeometries.value) return null;
+  const mode = dmxModes.value.find((m) => m.modeId === selectedModeId.value) ?? dmxModes.value[0];
+  return mode?.geometry ?? null;
+});
+
+watch(dmxModes, (modes) => {
+  if (!modes.some((m) => m.modeId === selectedModeId.value)) {
+    selectedModeId.value = modes[0]?.modeId ?? null;
+  }
+}, { immediate: true });
+
 const assembly = computed(() => {
   const def = fixture.value?.definition;
   const id = fixture.value?.id;
   if (!def || !id || !def.parts?.length) return null;
-  return { fixtureId: id, parts: def.parts, models: def.models ?? [], motionAxes: def.motionRig ?? [] };
+  return {
+    fixtureId: id,
+    parts: def.parts,
+    models: def.models ?? [],
+    motionAxes: def.motionRig ?? [],
+    selectedModeGeometryId: selectedModeGeometryId.value,
+  };
 });
 
 
@@ -230,6 +270,27 @@ async function applyModelQuality(): Promise<void> {
 // when the GDTF ships a single mesh and the quality picker is hidden.
 async function reloadModelMeshes(): Promise<void> {
   await runMeshReimport(modelQuality.value);
+}
+
+const replacingModelId = ref<string | null>(null);
+
+async function replaceModel(modelId: string, ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  replacingModelId.value = modelId;
+  error.value = null;
+  try {
+    const res = await fixturesApi.replaceModel(props.id, modelId, file);
+    fixture.value = res.fixture;
+    assemblyRevision.value += 1;
+    await reload();
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'model replace failed';
+  } finally {
+    replacingModelId.value = null;
+    input.value = '';
+  }
 }
 
 async function onSwitchStoredVersion(versionId: string): Promise<void> {
@@ -592,6 +653,8 @@ onMounted(() => {
 
             ['parts', 'Parts'],
 
+            ['construction', 'Construction'],
+
             ['ies', 'IES'],
 
             ['settings', 'Settings'],
@@ -714,6 +777,16 @@ onMounted(() => {
 
               <button type="button" class="gizmo-btn space" :title="`Gizmo space: ${gizmoSpace}`" @click="gizmoSpace = gizmoSpace === 'local' ? 'world' : 'local'">{{ gizmoSpace === 'local' ? 'LOCAL' : 'WORLD' }}</button>
 
+              <template v-if="hasModeGeometries">
+                <span class="gizmo-sep" aria-hidden="true" />
+                <label class="gizmo-mode-select" title="DMX mode — shows only this mode's 3D model">
+                  <span>Mode</span>
+                  <select v-model="selectedModeId">
+                    <option v-for="m in dmxModes" :key="m.modeId" :value="m.modeId">{{ m.name }}</option>
+                  </select>
+                </label>
+              </template>
+
             </div>
 
             <FixtureViewer
@@ -777,6 +850,18 @@ onMounted(() => {
           </details>
 
         </aside>
+
+      </div>
+
+
+
+      <div v-else-if="activeTab === 'construction'" class="tab-panel construction-panel">
+
+        <FixtureConstructionGraph
+          v-if="fixture?.definition"
+          :fixture-id="fixture.id"
+          :definition="fixture.definition"
+        />
 
       </div>
 
@@ -874,6 +959,31 @@ onMounted(() => {
               Re-converts the GDTF mesh (e.g. 3DS → glTF) with the current pipeline. Use if the fixture is showing placeholder boxes instead of its model.
             </p>
           </template>
+
+          <div v-if="fixture?.definition.models?.length" class="model-swap">
+            <h3 class="model-swap-title">Swap a model</h3>
+            <p class="muted small">
+              Upload a 3D file to replace a model's mesh (glTF, GLB, OBJ, FBX, 3DS, STL, DAE, PLY). Part transforms are kept.
+            </p>
+            <ul class="model-swap-list">
+              <li v-for="m in fixture.definition.models" :key="m.modelId" class="model-swap-row">
+                <span class="model-swap-meta">
+                  <span class="model-swap-name">{{ m.modelId }}</span>
+                  <span class="model-swap-tag">{{ m.partTag }}</span>
+                </span>
+                <label class="model-swap-btn" :class="{ busy: replacingModelId === m.modelId }">
+                  <Icon name="upload_file" :size="14" />
+                  {{ replacingModelId === m.modelId ? 'Converting…' : 'Replace' }}
+                  <input
+                    type="file"
+                    accept=".gltf,.glb,.obj,.fbx,.3ds,.stl,.dae,.ply"
+                    :disabled="!!replacingModelId"
+                    @change="replaceModel(m.modelId, $event)"
+                  />
+                </label>
+              </li>
+            </ul>
+          </div>
         </section>
 
       </div>
@@ -1067,6 +1177,30 @@ onMounted(() => {
 
 
 .tab-panel { flex: 1; }
+
+/* `flex: none` (not the inherited .tab-panel `flex: 1`, which forces
+   flex-basis:0% and overrides height) + a definite height so the Vue Flow
+   canvas's height:100% resolves. Without a definite height the percentage
+   collapses to 0 and the graph renders blank. */
+.construction-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
+.construction-panel > * { height: 100%; }
+
+.model-swap { margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 12px; }
+.model-swap-title { margin: 0 0 4px; font-size: 13px; font-weight: 700; }
+.model-swap-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.model-swap-row { display: flex; align-items: center; gap: 10px; }
+.model-swap-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.model-swap-name { font-size: 13px; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-swap-tag { font-size: 11px; color: var(--color-text-muted); }
+.model-swap-btn {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 6px 12px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  background: var(--color-bg-input); color: var(--color-text);
+}
+.model-swap-btn:hover { border-color: var(--orbit-primary); color: var(--orbit-primary); }
+.model-swap-btn.busy { opacity: 0.6; cursor: progress; }
+.model-swap-btn input { display: none; }
 
 .overview-panel {
 
@@ -1273,6 +1407,20 @@ onMounted(() => {
 .gizmo-btn.space { font-family: var(--font-mono, monospace); min-width: 52px; }
 
 .gizmo-sep { width: 1px; height: 18px; background: var(--color-border); margin: 0 2px; }
+
+.gizmo-mode-select { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+
+.gizmo-mode-select > span { color: var(--color-text-muted, #9aa0a6); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.gizmo-mode-select select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  max-width: 220px;
+}
 
 .gizmo-hint { margin: 8px 0 0; }
 

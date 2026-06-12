@@ -25,6 +25,7 @@ import FixtureEditor from './pages/FixtureEditor.vue';
 import FixtureGdtfDebug from './pages/FixtureGdtfDebug.vue';
 import FixtureDmxCharts from './pages/FixtureDmxCharts.vue';
 import FixtureImport from './pages/FixtureImport.vue';
+import FixtureMaterials from './pages/FixtureMaterials.vue';
 
 import '../shared/designSystem.css';
 
@@ -46,6 +47,7 @@ const router = createRouter({
     { path: '/fixtures',               component: Fixtures,       name: 'fixtures' },
     { path: '/fixtures/library',       component: PrismLibrary,   name: 'prism-library' },
     { path: '/fixtures/import',        component: FixtureImport,  name: 'fixture-import' },
+    { path: '/fixtures/materials',     component: FixtureMaterials, name: 'fixture-materials' },
     { path: '/fixtures/:id/debug',     component: FixtureGdtfDebug, name: 'fixture-debug', props: true },
     { path: '/fixtures/:id/dmx',       component: FixtureDmxCharts, name: 'fixture-dmx-charts', props: true },
     { path: '/fixtures/:id',           component: FixtureEditor,    name: 'fixture-editor', props: true },

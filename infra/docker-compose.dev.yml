@@ -273,7 +273,11 @@ services:
 
 
   prism-assimp:
-    image: ghcr.io/rebus-industries/prism-assimp:${PRISM_ASSIMP_TAG:-latest}
+    # Dev tracks latest like prism-web/prism-fixtures. Hardcoded (not
+    # ${PRISM_ASSIMP_TAG}) because a stale PRISM_ASSIMP_TAG=v0.3.9 pin in the
+    # VM .env kept dev on an old image missing /v1/convert-glb (3DS→GLB),
+    # silently falling back to primitive boxes. Prod pins via docker-compose.yml.
+    image: ghcr.io/rebus-industries/prism-assimp:latest
     container_name: prism-assimp
     restart: unless-stopped
     environment:
