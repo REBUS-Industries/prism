@@ -103,6 +103,7 @@ export async function duplicateMaterial(
         parameters: source.parameters,
         thumbnailTextureId: null,
         branchedFromId: branch ? sourceId : null,
+        groupId: source.groupId,
         createdByAdminId: adminId,
         createdByApiKeyId: apiKeyId,
       });

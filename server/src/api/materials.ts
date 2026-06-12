@@ -20,7 +20,7 @@
  *   GET    /api/materials                     list (q / tags / cursor / limit)
  *   POST   /api/materials                     create blank material      (write)
  *   GET    /api/materials/:id                 full detail (slots + textures + parameters)
- *   PUT    /api/materials/:id                 rename / retag / set params (write)
+ *   PUT    /api/materials/:id                 rename / retag / set params / groupId (write)
  *   PUT    /api/materials/:id/parameters      merge PBR parameters       (write)
  *   DELETE /api/materials/:id                 soft-delete                (delete)
  *   PUT    /api/materials/:id/slots/:slot     assign a texture to a slot (write)
@@ -40,7 +40,7 @@ import { z } from 'zod';
 import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { ZipArchive } from 'archiver';
 import { db } from '../db/client.js';
-import { materials, materialTextures, textures } from '../db/schema.js';
+import { materials, materialGroups, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
 import { ALLOWED_SLOTS, isMaterialSlot } from '../materials/slots.js';
@@ -74,6 +74,7 @@ const updateBody = z.object({
   description: z.string().max(8192).nullable().optional(),
   tags: tagsSchema.optional(),
   parameters: materialParametersSchema.optional(),
+  groupId: z.string().uuid().nullable().optional(),
 });
 
 const assignBody = z.object({ textureId: z.string().uuid() });
@@ -161,6 +162,7 @@ const plugin: FastifyPluginAsync = async (app) => {
         tags: materials.tags,
         thumbnailTextureId: materials.thumbnailTextureId,
         branchedFromId: materials.branchedFromId,
+        groupId: materials.groupId,
         createdAt: materials.createdAt,
         updatedAt: materials.updatedAt,
         slotsFilled: slotsFilledSql,
@@ -178,6 +180,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       tags: Array.isArray(r.tags) ? r.tags : [],
       thumbnailTextureId: r.thumbnailTextureId,
       branchedFromId: r.branchedFromId ?? null,
+      groupId: r.groupId ?? null,
       slotsFilled: Number(r.slotsFilled ?? 0),
       slotsTotal: SLOTS_TOTAL,
       createdAt: r.createdAt.toISOString(),
@@ -235,6 +238,17 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     if (parsed.data.tags !== undefined) patch.tags = parsed.data.tags;
     if (parsed.data.parameters !== undefined) patch.parameters = parametersMergeSql(parsed.data.parameters);
+    if (parsed.data.groupId !== undefined) {
+      if (parsed.data.groupId === null) {
+        patch.groupId = null;
+      } else {
+        const group = await db.query.materialGroups.findFirst({
+          where: eq(materialGroups.id, parsed.data.groupId),
+        });
+        if (!group) return reply.code(400).send({ error: 'group not found' });
+        patch.groupId = parsed.data.groupId;
+      }
+    }
 
     const updated = await db
       .update(materials)

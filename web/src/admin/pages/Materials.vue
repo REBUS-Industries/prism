@@ -11,8 +11,10 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   materialsApi,
+  materialGroupsApi,
   texturesApi,
   type ApiError,
+  type MaterialGroup as ApiMaterialGroup,
   type MaterialListItem,
 } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
@@ -21,9 +23,12 @@ import ExternalMaterialsModal from '../components/ExternalMaterialsModal.vue';
 const router = useRouter();
 const PAGE = 36;
 
-type GroupBy = 'none' | 'source' | 'tag' | 'resolution';
+type GroupBy = 'none' | 'source' | 'tag' | 'resolution' | 'custom';
+
+const UNGROUPED_KEY = '__ungrouped__';
 
 const materials = ref<MaterialListItem[]>([]);
+const groups = ref<ApiMaterialGroup[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const nextCursor = ref<string | null>(null);
@@ -34,10 +39,19 @@ const groupBy = ref<GroupBy>('source');
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showCreate = ref(false);
+const showCreateGroup = ref(false);
 const showExternal = ref(false);
 const newName = ref('');
+const newGroupName = ref('');
 const creating = ref(false);
+const creatingGroup = ref(false);
 const copyingId = ref<string | null>(null);
+const renameGroupId = ref<string | null>(null);
+const renameGroupName = ref('');
+const renamingGroup = ref(false);
+
+const draggingMaterialId = ref<string | null>(null);
+const dragOverGroupKey = ref<string | null>(null);
 
 const importing = ref(false);
 const importProgress = ref(0);
@@ -56,6 +70,7 @@ const GROUP_BY_OPTIONS: Array<{ value: GroupBy; label: string }> = [
   { value: 'source', label: 'Source' },
   { value: 'tag', label: 'Tag' },
   { value: 'resolution', label: 'Resolution' },
+  { value: 'custom', label: 'Custom groups' },
 ];
 
 function importResolution(m: MaterialListItem): string | null {
@@ -87,14 +102,31 @@ function materialGroupKey(m: MaterialListItem): string {
   return tags[0] ?? 'Untagged';
 }
 
-interface MaterialGroup {
+interface DisplayGroup {
   key: string;
+  label?: string;
   items: MaterialListItem[];
 }
 
-const groupedMaterials = computed<MaterialGroup[]>(() => {
+const groupedMaterials = computed<DisplayGroup[]>(() => {
   if (groupBy.value === 'none') {
     return [{ key: '', items: materials.value }];
+  }
+  if (groupBy.value === 'custom') {
+    const map = new Map<string, MaterialListItem[]>();
+    for (const g of groups.value) map.set(g.id, []);
+    map.set(UNGROUPED_KEY, []);
+    for (const m of materials.value) {
+      const key = m.groupId && map.has(m.groupId) ? m.groupId : UNGROUPED_KEY;
+      map.get(key)!.push(m);
+    }
+    const result: DisplayGroup[] = groups.value.map((g) => ({
+      key: g.id,
+      label: g.name,
+      items: map.get(g.id) ?? [],
+    }));
+    result.push({ key: UNGROUPED_KEY, label: 'Ungrouped', items: map.get(UNGROUPED_KEY) ?? [] });
+    return result;
   }
   const map = new Map<string, MaterialListItem[]>();
   for (const m of materials.value) {
@@ -113,6 +145,15 @@ const availableTags = computed<string[]>(() => {
   for (const m of materials.value) for (const tag of m.tags) set.add(tag);
   return [...set].sort((a, b) => a.localeCompare(b));
 });
+
+async function loadGroups(): Promise<void> {
+  try {
+    const res = await materialGroupsApi.list();
+    groups.value = res.groups;
+  } catch {
+    /* groups are optional until custom mode is used */
+  }
+}
 
 async function load(reset = true): Promise<void> {
   loading.value = true;
@@ -256,7 +297,110 @@ function onExternalImported(id: string): void {
   void load(true);
 }
 
-onMounted(() => void load(true));
+async function createGroup(): Promise<void> {
+  const name = newGroupName.value.trim();
+  if (!name) return;
+  creatingGroup.value = true;
+  error.value = null;
+  try {
+    const created = await materialGroupsApi.create({ name });
+    groups.value = [...groups.value, created];
+    showCreateGroup.value = false;
+    newGroupName.value = '';
+    groupBy.value = 'custom';
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'create group failed';
+  } finally {
+    creatingGroup.value = false;
+  }
+}
+
+function startRenameGroup(groupId: string): void {
+  const g = groups.value.find((x) => x.id === groupId);
+  if (!g) return;
+  renameGroupId.value = groupId;
+  renameGroupName.value = g.name;
+}
+
+async function confirmRenameGroup(): Promise<void> {
+  const id = renameGroupId.value;
+  const name = renameGroupName.value.trim();
+  if (!id || !name) return;
+  renamingGroup.value = true;
+  error.value = null;
+  try {
+    const updated = await materialGroupsApi.update(id, { name });
+    groups.value = groups.value.map((g) => (g.id === id ? updated : g));
+    renameGroupId.value = null;
+    renameGroupName.value = '';
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'rename failed';
+  } finally {
+    renamingGroup.value = false;
+  }
+}
+
+async function deleteGroup(groupId: string): Promise<void> {
+  const g = groups.value.find((x) => x.id === groupId);
+  if (!g || !confirm(`Delete group "${g.name}"? Materials in it will become ungrouped.`)) return;
+  error.value = null;
+  try {
+    await materialGroupsApi.remove(groupId);
+    groups.value = groups.value.filter((x) => x.id !== groupId);
+    for (const m of materials.value) {
+      if (m.groupId === groupId) m.groupId = null;
+    }
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'delete group failed';
+  }
+}
+
+function onMaterialDragStart(ev: DragEvent, materialId: string): void {
+  if (groupBy.value !== 'custom') return;
+  draggingMaterialId.value = materialId;
+  ev.dataTransfer?.setData('text/plain', materialId);
+  if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
+}
+
+function onMaterialDragEnd(): void {
+  draggingMaterialId.value = null;
+  dragOverGroupKey.value = null;
+}
+
+function onGroupDragOver(ev: DragEvent, groupKey: string): void {
+  if (groupBy.value !== 'custom' || !draggingMaterialId.value) return;
+  ev.preventDefault();
+  dragOverGroupKey.value = groupKey;
+}
+
+function onGroupDragLeave(groupKey: string): void {
+  if (dragOverGroupKey.value === groupKey) dragOverGroupKey.value = null;
+}
+
+async function onGroupDrop(ev: DragEvent, groupKey: string): Promise<void> {
+  ev.preventDefault();
+  dragOverGroupKey.value = null;
+  const materialId = ev.dataTransfer?.getData('text/plain') || draggingMaterialId.value;
+  draggingMaterialId.value = null;
+  if (!materialId || groupBy.value !== 'custom') return;
+
+  const targetGroupId = groupKey === UNGROUPED_KEY ? null : groupKey;
+  const material = materials.value.find((m) => m.id === materialId);
+  if (!material || material.groupId === targetGroupId) return;
+
+  error.value = null;
+  try {
+    await materialsApi.update(materialId, { groupId: targetGroupId });
+    material.groupId = targetGroupId;
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'failed to move material';
+  }
+}
+
+onMounted(() => {
+  void load(true);
+  void loadGroups();
+});
 onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 </script>
 
@@ -306,6 +450,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
         <option v-for="opt in GROUP_BY_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
     </label>
+    <button @click="showCreateGroup = true"><Icon name="create_new_folder" :size="16" />Create group</button>
   </div>
   <div v-if="availableTags.length" class="tag-row mt-sm">
     <button
@@ -328,10 +473,43 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
       v-for="group in groupedMaterials"
       :key="group.key || 'all'"
       class="group-section mt"
+      :class="{
+        'drop-target': groupBy === 'custom' && group.key && dragOverGroupKey === group.key,
+        'custom-group': groupBy === 'custom' && group.key,
+      }"
+      @dragover="groupBy === 'custom' && group.key ? onGroupDragOver($event, group.key) : undefined"
+      @dragleave="groupBy === 'custom' && group.key ? onGroupDragLeave(group.key) : undefined"
+      @drop="groupBy === 'custom' && group.key ? onGroupDrop($event, group.key) : undefined"
     >
-      <h2 v-if="group.key" class="group-heading">{{ group.key }}</h2>
+      <div v-if="group.key" class="group-heading-row">
+        <h2 class="group-heading">{{ group.label ?? group.key }}</h2>
+        <div
+          v-if="groupBy === 'custom' && group.key !== UNGROUPED_KEY"
+          class="group-actions"
+          @click.stop
+        >
+          <button class="icon-action" title="Rename group" @click="startRenameGroup(group.key)">
+            <Icon name="edit" :size="14" />
+          </button>
+          <button class="icon-action danger" title="Delete group" @click="deleteGroup(group.key)">
+            <Icon name="delete" :size="14" />
+          </button>
+        </div>
+      </div>
+      <div v-if="groupBy === 'custom' && group.key && !group.items.length" class="empty-drop subtle small">
+        Drop materials here
+      </div>
       <div class="grid" :class="{ 'mt-sm': group.key }">
-        <div v-for="m in group.items" :key="m.id" class="card mat-card" @click="openEditor(m.id)">
+        <div
+          v-for="m in group.items"
+          :key="m.id"
+          class="card mat-card"
+          :class="{ dragging: draggingMaterialId === m.id }"
+          :draggable="groupBy === 'custom'"
+          @dragstart="onMaterialDragStart($event, m.id)"
+          @dragend="onMaterialDragEnd"
+          @click="openEditor(m.id)"
+        >
           <span class="thumb">
             <img v-if="thumbUrl(m)" :src="thumbUrl(m)!" :alt="m.name" loading="lazy" />
             <span v-else class="thumb-empty subtle">No preview</span>
@@ -389,6 +567,42 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
         <button :disabled="creating" @click="showCreate = false">Cancel</button>
         <button class="primary" :disabled="!newName.trim() || creating" @click="createBlank">
           {{ creating ? 'Creating…' : 'Create' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create group -->
+  <div v-if="showCreateGroup" class="modal-backdrop" @click.self="showCreateGroup = false">
+    <div class="card modal">
+      <h2>New group</h2>
+      <input
+        v-model="newGroupName"
+        placeholder="Group name"
+        @keyup.enter="createGroup"
+      />
+      <div class="h-row" style="justify-content: flex-end;">
+        <button :disabled="creatingGroup" @click="showCreateGroup = false">Cancel</button>
+        <button class="primary" :disabled="!newGroupName.trim() || creatingGroup" @click="createGroup">
+          {{ creatingGroup ? 'Creating…' : 'Create' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename group -->
+  <div v-if="renameGroupId" class="modal-backdrop" @click.self="renameGroupId = null">
+    <div class="card modal">
+      <h2>Rename group</h2>
+      <input
+        v-model="renameGroupName"
+        placeholder="Group name"
+        @keyup.enter="confirmRenameGroup"
+      />
+      <div class="h-row" style="justify-content: flex-end;">
+        <button :disabled="renamingGroup" @click="renameGroupId = null">Cancel</button>
+        <button class="primary" :disabled="!renameGroupName.trim() || renamingGroup" @click="confirmRenameGroup">
+          {{ renamingGroup ? 'Saving…' : 'Save' }}
         </button>
       </div>
     </div>
@@ -456,6 +670,33 @@ h1 { font-size: 22px; margin: 0; }
   color: var(--color-text-muted);
   letter-spacing: 0.02em;
 }
+.group-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.group-actions { display: flex; align-items: center; gap: 4px; }
+.group-section.custom-group {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px;
+  transition: border-color 80ms, background 80ms;
+}
+.group-section.custom-group.drop-target {
+  border-color: var(--orbit-primary);
+  background: var(--orbit-primary-fade);
+}
+.empty-drop {
+  padding: 12px;
+  text-align: center;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+}
+.mat-card.dragging { opacity: 0.45; }
+.mat-card[draggable='true'] { cursor: grab; }
+.mat-card[draggable='true']:active { cursor: grabbing; }
 .group-section + .group-section { margin-top: 20px; }
 
 .grid {
