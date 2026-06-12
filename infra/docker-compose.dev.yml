@@ -93,6 +93,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      flaresolverr:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 8766
@@ -108,6 +110,9 @@ services:
       FAB_EPIC_CLIENT_ID: "${FAB_EPIC_CLIENT_ID:-}"
       FAB_EPIC_CLIENT_SECRET: "${FAB_EPIC_CLIENT_SECRET:-}"
       FAB_ENABLED: "${FAB_ENABLED:-true}"
+      # Default: in-compose FlareSolverr service. Override in .env when FlareSolverr runs on the VM host.
+      FAB_FLARESOLVERR_URL: "${FAB_FLARESOLVERR_URL:-http://flaresolverr:8191/v1}"
+      FAB_HTTP_PROXY: "${FAB_HTTP_PROXY:-}"
       POLYHAVEN_ENABLED: "${POLYHAVEN_ENABLED:-true}"
       POLYHAVEN_USER_AGENT: "${POLYHAVEN_USER_AGENT:-PRISM/0.3.0 (REBUS Industries; materials-import)}"
       POLYHAVEN_TEXTURE_RESOLUTION: "${POLYHAVEN_TEXTURE_RESOLUTION:-2k}"
@@ -292,6 +297,27 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  flaresolverr:
+    # Cloudflare solver for Fab browse — same Docker network as prism-materials.
+    # prism-materials defaults FAB_FLARESOLVERR_URL to http://flaresolverr:8191/v1.
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info
+      CAPTCHA_SOLVER: none
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8191/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     logging:
       driver: json-file
       options:

@@ -247,8 +247,14 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             </template>
             <template v-else-if="fabDiagnostics.authPath === 'bearer' && providerErrors.fab.toLowerCase().includes('cloudflare')">
               Bearer auth does not bypass Cloudflare —
-              <template v-if="!fabDiagnostics.httpProxyConfigured">set an HTTP proxy in Admin → Settings → External materials.</template>
+              <template v-if="!fabDiagnostics.flareSolverrConfigured && !fabDiagnostics.httpProxyConfigured">
+                configure FlareSolverr in Admin → Settings → External materials.
+              </template>
+              <template v-else-if="!fabDiagnostics.httpProxyConfigured">check FlareSolverr is reachable from prism-materials (not 127.0.0.1 inside Docker).</template>
               <template v-else>check the configured HTTP proxy is reachable from the server.</template>
+            </template>
+            <template v-else-if="providerErrors.fab.toLowerCase().includes('flaresolverr unreachable')">
+              Update FlareSolverr URL in Settings — use <code>http://flaresolverr:8191/v1</code> on the dev compose stack.
             </template>
           </p>
         </div>

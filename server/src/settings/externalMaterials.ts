@@ -7,7 +7,9 @@
  */
 import { getSetting, setSetting } from '../db/settings.js';
 import { applyFabRuntimeConfig } from '../fab/auth.js';
+import { InvalidHttpUrlError, normalizeOptionalHttpUrl } from '../fab/urlValidation.js';
 import { applyProviderEnabledFromSettings } from '../external-materials/registry.js';
+import { ExternalMaterialsSettingsError } from './externalMaterialsErrors.js';
 
 const KEY_FAB_TOKEN = 'fab_epic_refresh_token';
 const KEY_FAB_PROXY = 'fab_http_proxy';
@@ -67,17 +69,31 @@ async function resolveFabRefreshToken(): Promise<{ token: string | null; source:
 }
 
 async function resolveFabHttpProxy(): Promise<string | null> {
-  const dbProxy = (await getSetting(KEY_FAB_PROXY))?.trim();
-  if (dbProxy !== undefined && dbProxy !== '') return dbProxy;
-  const envProxy = process.env.FAB_HTTP_PROXY?.trim();
-  return envProxy || null;
+  const dbProxy = normalizeOptionalHttpUrl(await getSetting(KEY_FAB_PROXY));
+  if (dbProxy) return dbProxy;
+  return normalizeOptionalHttpUrl(process.env.FAB_HTTP_PROXY);
 }
 
 async function resolveFabFlareSolverrUrl(): Promise<string | null> {
-  const dbUrl = (await getSetting(KEY_FAB_FLARESOLVERR))?.trim();
-  if (dbUrl !== undefined && dbUrl !== '') return dbUrl;
-  const envUrl = process.env.FAB_FLARESOLVERR_URL?.trim();
-  return envUrl || null;
+  const dbUrl = normalizeOptionalHttpUrl(await getSetting(KEY_FAB_FLARESOLVERR));
+  if (dbUrl) return dbUrl;
+  return normalizeOptionalHttpUrl(process.env.FAB_FLARESOLVERR_URL);
+}
+
+function validateFabUrlField(
+  raw: string | undefined,
+  field: 'fab.httpProxy' | 'fab.flareSolverrUrl',
+  label: string,
+): string | null {
+  if (raw === undefined) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    return normalizeOptionalHttpUrl(trimmed);
+  } catch (err) {
+    const detail = err instanceof InvalidHttpUrlError ? err.message : 'Invalid URL';
+    throw new ExternalMaterialsSettingsError(`${label} ${detail}`, field);
+  }
 }
 
 export async function loadExternalMaterialsSettingsPublic(): Promise<ExternalMaterialsSettingsPublic> {
@@ -115,10 +131,16 @@ export async function patchExternalMaterialsSettings(
     await setSetting(KEY_FAB_ENABLED, patch.fab.enabled ? '1' : '0');
   }
   if (patch.fab?.httpProxy !== undefined) {
-    await setSetting(KEY_FAB_PROXY, patch.fab.httpProxy.trim());
+    const proxy = validateFabUrlField(patch.fab.httpProxy, 'fab.httpProxy', 'Fab HTTP proxy URL');
+    await setSetting(KEY_FAB_PROXY, proxy ?? '');
   }
   if (patch.fab?.flareSolverrUrl !== undefined) {
-    await setSetting(KEY_FAB_FLARESOLVERR, patch.fab.flareSolverrUrl.trim());
+    const flareSolverrUrl = validateFabUrlField(
+      patch.fab.flareSolverrUrl,
+      'fab.flareSolverrUrl',
+      'FlareSolverr URL',
+    );
+    await setSetting(KEY_FAB_FLARESOLVERR, flareSolverrUrl ?? '');
   }
   if (patch.fab?.epicRefreshToken !== undefined) {
     await setSetting(KEY_FAB_TOKEN, patch.fab.epicRefreshToken.trim());
