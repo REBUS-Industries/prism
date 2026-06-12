@@ -126,6 +126,9 @@ const form = reactive({
   ambientcgEnabled: true,
 });
 
+const DEFAULT_FLARESOLVERR_URL = 'http://127.0.0.1:8191/v1';
+const FLARESOLVERR_IMAGE = 'https://ghcr.io/flaresolverr/flaresolverr';
+
 const fabMarketplaceUrl = 'https://www.fab.com';
 const fabTestSearchUrl = computed(() => {
   const base = typeof window !== 'undefined' ? window.location.origin : '';
@@ -382,9 +385,16 @@ onMounted(() => { void refresh(); });
 
               <h4>If Cloudflare still blocks search</h4>
               <p>
-                Set an outbound HTTP proxy in the field above or via
-                <code>FAB_HTTP_PROXY</code> in <code>infra/.env.example</code> — useful when
-                bearer auth alone is not enough from your server's IP.
+                Fab search runs on the PRISM server (VM 211/212), not in your browser.
+                Configure <strong>FlareSolverr</strong> in the Cloudflare section below —
+                PRISM calls it to obtain <code>cf_clearance</code> cookies for server-side Fab
+                API requests. Solving a Cloudflare challenge on your PC does
+                <strong>not</strong> replace FlareSolverr for server egress.
+              </p>
+              <p>
+                Optionally set an outbound HTTP proxy via <code>FAB_HTTP_PROXY</code> in
+                <code>infra/.env.example</code> when Fab and FlareSolverr must share a
+                residential egress IP.
               </p>
             </div>
           </details>
@@ -406,11 +416,14 @@ onMounted(() => { void refresh(); });
         <fieldset class="cloudflare-block">
           <legend>Cloudflare / Fab access</legend>
           <p class="hint muted cf-intro">
-            Fab search runs on the PRISM server (e.g. VM 212), not in your browser.
-            Cloudflare <code>cf_clearance</code> cookies are bound to
-            <strong>egress IP + User-Agent + fingerprint</strong>. Solving a bot challenge
-            on your residential PC does <strong>not</strong> unblock server-side search unless
-            that browser uses the <strong>same HTTP proxy</strong> configured above.
+            Fab search runs on the PRISM server (VM 211 prod / VM 212 dev), not in your
+            browser. Cloudflare blocks datacenter IPs; PRISM uses
+            <strong>FlareSolverr</strong> to obtain <code>cf_clearance</code> cookies for
+            server-side Fab API calls. Run a FlareSolverr container on the same VM as PRISM
+            (default API: <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>) and set the URL below.
+            Solving a bot challenge on your residential PC does <strong>not</strong> replace
+            FlareSolverr — cookies are bound to egress IP and cannot be pasted from a browser
+            session on another machine.
           </p>
           <div class="cf-link-row">
             <button type="button" class="link-btn" @click="openExternalUrl(fabMarketplaceUrl)">
@@ -432,13 +445,15 @@ onMounted(() => { void refresh(); });
               id="fab-flaresolverr"
               v-model="form.fabFlareSolverrUrl"
               type="text"
-              placeholder="http://127.0.0.1:8191/v1 (optional)"
+              :placeholder="DEFAULT_FLARESOLVERR_URL"
             />
             <p class="hint muted">
-              When set, PRISM asks FlareSolverr to solve Cloudflare for
-              <code>www.fab.com</code> before Fab browse calls. FlareSolverr must egress
-              through the same IP as Fab HTTP (direct server IP or the proxy above).
-              Overrides <code>FAB_FLARESOLVERR_URL</code> when set here.
+              PRISM calls this FlareSolverr <code>/v1</code> API before Fab browse requests to
+              obtain Cloudflare clearance cookies. Default when FlareSolverr runs on the same
+              host: <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>. FlareSolverr must egress
+              through the same IP as Fab HTTP (direct server IP or the proxy above). Overrides
+              <code>FAB_FLARESOLVERR_URL</code> when set here; see
+              <code>infra/.env.example</code>.
             </p>
           </div>
 
@@ -446,9 +461,14 @@ onMounted(() => { void refresh(); });
             <summary>Run FlareSolverr on the server (Docker)</summary>
             <div class="help-body muted">
               <p>
-                Deploy on the PRISM host or VM beside the materials service. From a machine
-                that can reach port 8191, set the URL above to
-                <code>http://&lt;host&gt;:8191/v1</code> and Save.
+                Run FlareSolverr on the PRISM VM (211 prod / 212 dev) beside
+                <code>prism-server</code> or <code>prism-materials</code>. Image:
+                <button type="button" class="link-btn inline-link" @click="openExternalUrl(FLARESOLVERR_IMAGE)">
+                  ghcr.io/flaresolverr/flaresolverr
+                </button>.
+                When co-located, use <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>; otherwise
+                <code>http://&lt;host&gt;:8191/v1</code>. Save the URL above, then re-test with
+                “Test search API”.
               </p>
               <div class="code-block">
                 <div class="code-block-toolbar">
@@ -732,5 +752,12 @@ onMounted(() => { void refresh(); });
 }
 .link-btn:hover {
   border-color: var(--color-accent, #6366f1);
+}
+.inline-link {
+  display: inline;
+  padding: 0 2px;
+  font-size: inherit;
+  font-weight: inherit;
+  vertical-align: baseline;
 }
 </style>

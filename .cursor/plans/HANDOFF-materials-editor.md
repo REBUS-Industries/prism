@@ -70,8 +70,9 @@ Do NOT edit fixture viewer / assembly files; those belong to the fixture-builder
 ### Fab marketplace import (2026-06)
 - Admin **Materials** page: **Import from Fab** opens search → preview → import modal.
 - Server routes: `GET /api/fab/search`, `GET /api/fab/assets/:id`, `POST /api/fab/assets/:id/import`.
-- Search/preview use Fab public API (no credentials). Import needs `FAB_EPIC_REFRESH_TOKEN` in server env (Epic OAuth refresh token for an account that owns the material).
-- See `infra/.env.example` and `server/src/fab/`.
+- Search/preview use Fab public API on the **server** (VM 211/212). Cloudflare blocks datacenter IPs — run **FlareSolverr** on the VM (`FAB_FLARESOLVERR_URL=http://127.0.0.1:8191/v1` or Admin → External materials). Browser challenges on a PC do not replace FlareSolverr.
+- Import needs `FAB_EPIC_REFRESH_TOKEN` (Epic OAuth refresh token for an account that owns the material); bearer auth does not bypass Cloudflare for search.
+- See `docs/EXTERNAL_MATERIALS.md`, `infra/.env.example`, and `server/src/fab/`.
 - Material presets / template library (save/load a parameter set)
 - Batch-apply material to multiple fixtures at once
 - Texture tiling preview toggle (show grid lines in GlbViewer at current tiling)
