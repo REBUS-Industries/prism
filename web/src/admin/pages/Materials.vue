@@ -5,7 +5,7 @@
  * created either blank (name prompt -> POST) or by importing a Megascans-
  * style or glTF packaged ZIP (drag-drop / picker -> POST with upload progress); a successful
  * import surfaces any skipped files before jumping into the editor. Cards
- * link to the editor; the delete action soft-deletes.
+ * link to the editor; duplicate/branch create editable copies; delete soft-deletes.
  */
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -21,6 +21,8 @@ import ExternalMaterialsModal from '../components/ExternalMaterialsModal.vue';
 const router = useRouter();
 const PAGE = 36;
 
+type GroupBy = 'none' | 'source' | 'tag' | 'resolution';
+
 const materials = ref<MaterialListItem[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -28,12 +30,14 @@ const nextCursor = ref<string | null>(null);
 
 const search = ref('');
 const activeTags = ref<string[]>([]);
+const groupBy = ref<GroupBy>('source');
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showCreate = ref(false);
 const showExternal = ref(false);
 const newName = ref('');
 const creating = ref(false);
+const copyingId = ref<string | null>(null);
 
 const importing = ref(false);
 const importProgress = ref(0);
@@ -46,6 +50,13 @@ const skippedDialog = ref<{ id: string; name: string; skipped: string[] } | null
 const RESOLUTION_TAG_PREFIX = 'resolution:';
 const HIDDEN_MATERIAL_TAGS = new Set(['external-import']);
 const SOURCE_TAGS = new Set(['fab', 'polyhaven', 'ambientcg']);
+
+const GROUP_BY_OPTIONS: Array<{ value: GroupBy; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'source', label: 'Source' },
+  { value: 'tag', label: 'Tag' },
+  { value: 'resolution', label: 'Resolution' },
+];
 
 function importResolution(m: MaterialListItem): string | null {
   const tag = m.tags.find((t) => t.startsWith(RESOLUTION_TAG_PREFIX));
@@ -62,6 +73,40 @@ function displayMaterialTags(m: MaterialListItem): string[] {
 function isSourceTag(tag: string): boolean {
   return SOURCE_TAGS.has(tag);
 }
+
+function materialGroupKey(m: MaterialListItem): string {
+  if (groupBy.value === 'none') return '';
+  if (groupBy.value === 'source') {
+    const source = m.tags.find((t) => SOURCE_TAGS.has(t));
+    return source ?? 'Local / other';
+  }
+  if (groupBy.value === 'resolution') {
+    return importResolution(m) ?? 'Unknown resolution';
+  }
+  const tags = displayMaterialTags(m);
+  return tags[0] ?? 'Untagged';
+}
+
+interface MaterialGroup {
+  key: string;
+  items: MaterialListItem[];
+}
+
+const groupedMaterials = computed<MaterialGroup[]>(() => {
+  if (groupBy.value === 'none') {
+    return [{ key: '', items: materials.value }];
+  }
+  const map = new Map<string, MaterialListItem[]>();
+  for (const m of materials.value) {
+    const key = materialGroupKey(m);
+    const bucket = map.get(key);
+    if (bucket) bucket.push(m);
+    else map.set(key, [m]);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, items]) => ({ key, items }));
+});
 
 const availableTags = computed<string[]>(() => {
   const set = new Set<string>();
@@ -167,6 +212,34 @@ function onDragOver(ev: DragEvent): void {
   if (!importing.value) dragOver.value = true;
 }
 
+async function duplicateMaterial(m: MaterialListItem): Promise<void> {
+  copyingId.value = m.id;
+  error.value = null;
+  try {
+    const created = await materialsApi.duplicate(m.id);
+    materials.value = [created, ...materials.value];
+    openEditor(created.id);
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'duplicate failed';
+  } finally {
+    copyingId.value = null;
+  }
+}
+
+async function branchMaterial(m: MaterialListItem): Promise<void> {
+  copyingId.value = m.id;
+  error.value = null;
+  try {
+    const created = await materialsApi.branch(m.id);
+    materials.value = [created, ...materials.value];
+    openEditor(created.id);
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'branch failed';
+  } finally {
+    copyingId.value = null;
+  }
+}
+
 async function removeMaterial(m: MaterialListItem): Promise<void> {
   if (!confirm(`Delete material "${m.name}"? This soft-deletes it; textures are kept.`)) return;
   try {
@@ -227,6 +300,12 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
   <div class="toolbar mt">
     <input v-model="search" class="flex-1" type="search" placeholder="Search materials…" @input="onSearchInput" />
+    <label class="group-by">
+      <span class="muted small">Group by</span>
+      <select v-model="groupBy">
+        <option v-for="opt in GROUP_BY_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+      </select>
+    </label>
   </div>
   <div v-if="availableTags.length" class="tag-row mt-sm">
     <button
@@ -244,30 +323,54 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   <div v-if="loading && !materials.length" class="muted mt-lg">Loading…</div>
   <div v-else-if="!materials.length" class="muted mt-lg">No materials yet. Create a blank one or import a ZIP above.</div>
 
-  <div v-else class="grid mt">
-    <div v-for="m in materials" :key="m.id" class="card mat-card" @click="openEditor(m.id)">
-      <span class="thumb">
-        <img v-if="thumbUrl(m)" :src="thumbUrl(m)!" :alt="m.name" loading="lazy" />
-        <span v-else class="thumb-empty subtle">No preview</span>
-      </span>
-      <div class="mat-name" :title="m.name">{{ m.name }}</div>
-      <div v-if="importResolution(m) || displayMaterialTags(m).length" class="tags">
-        <span v-if="importResolution(m)" class="pill resolution-badge">{{ importResolution(m) }}</span>
-        <span
-          v-for="tag in displayMaterialTags(m)"
-          :key="tag"
-          class="pill tag"
-          :class="{ 'source-tag': isSourceTag(tag) }"
-        >{{ tag }}</span>
+  <template v-else>
+    <section
+      v-for="group in groupedMaterials"
+      :key="group.key || 'all'"
+      class="group-section mt"
+    >
+      <h2 v-if="group.key" class="group-heading">{{ group.key }}</h2>
+      <div class="grid" :class="{ 'mt-sm': group.key }">
+        <div v-for="m in group.items" :key="m.id" class="card mat-card" @click="openEditor(m.id)">
+          <span class="thumb">
+            <img v-if="thumbUrl(m)" :src="thumbUrl(m)!" :alt="m.name" loading="lazy" />
+            <span v-else class="thumb-empty subtle">No preview</span>
+          </span>
+          <div class="mat-name" :title="m.name">{{ m.name }}</div>
+          <div v-if="m.branchedFromId" class="branch-hint subtle small">Branched copy</div>
+          <div v-if="importResolution(m) || displayMaterialTags(m).length" class="tags">
+            <span v-if="importResolution(m)" class="pill resolution-badge">{{ importResolution(m) }}</span>
+            <span
+              v-for="tag in displayMaterialTags(m)"
+              :key="tag"
+              class="pill tag"
+              :class="{ 'source-tag': isSourceTag(tag) }"
+            >{{ tag }}</span>
+          </div>
+          <div class="mat-foot">
+            <span class="pill" :class="m.slotsFilled === m.slotsTotal ? 'online' : ''">
+              {{ m.slotsFilled }}/{{ m.slotsTotal }} slots
+            </span>
+            <div class="mat-actions" @click.stop>
+              <button
+                class="icon-action"
+                :disabled="copyingId === m.id"
+                title="Duplicate"
+                @click="duplicateMaterial(m)"
+              ><Icon name="content_copy" :size="14" /></button>
+              <button
+                class="icon-action"
+                :disabled="copyingId === m.id"
+                title="Branch (editable copy with lineage)"
+                @click="branchMaterial(m)"
+              ><Icon name="fork_right" :size="14" /></button>
+              <button class="danger" @click="removeMaterial(m)"><Icon name="delete" :size="14" />Delete</button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="mat-foot">
-        <span class="pill" :class="m.slotsFilled === m.slotsTotal ? 'online' : ''">
-          {{ m.slotsFilled }}/{{ m.slotsTotal }} slots
-        </span>
-        <button class="danger" @click.stop="removeMaterial(m)"><Icon name="delete" :size="14" />Delete</button>
-      </div>
-    </div>
-  </div>
+    </section>
+  </template>
 
   <div v-if="nextCursor" class="load-more mt">
     <button :disabled="loading" @click="load(false)">{{ loading ? 'Loading…' : 'Load more' }}</button>
@@ -320,7 +423,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 <style scoped>
 h1 { font-size: 22px; margin: 0; }
 .small { font-size: 12px; }
-.toolbar { display: flex; gap: 8px; }
+.toolbar { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.group-by { display: flex; flex-direction: column; gap: 2px; }
+.group-by select { min-width: 120px; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag-pill {
   padding: 2px 10px; font-size: 11px; border-radius: 999px;
@@ -343,6 +448,16 @@ h1 { font-size: 22px; margin: 0; }
 .dropzone p { margin: 4px 0 0; }
 .import-status { max-width: 100%; }
 
+.group-heading {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: capitalize;
+  margin: 0;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+}
+.group-section + .group-section { margin-top: 20px; }
+
 .grid {
   display: grid; gap: 12px;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
@@ -357,6 +472,7 @@ h1 { font-size: 22px; margin: 0; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb-empty { font-size: 12px; }
 .mat-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-hint { font-style: italic; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pill.tag {
   text-transform: none; letter-spacing: normal; font-weight: 500;
@@ -370,9 +486,15 @@ h1 { font-size: 22px; margin: 0; }
   background: var(--color-bg-input); color: var(--color-text);
   border: 1px solid var(--color-border-strong);
 }
-.mat-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.mat-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
 .mat-foot .pill { text-transform: none; letter-spacing: normal; }
-.mat-foot button { padding: 3px 8px; font-size: 12px; }
+.mat-actions { display: flex; align-items: center; gap: 4px; }
+.mat-actions button { padding: 3px 8px; font-size: 12px; }
+button.icon-action {
+  padding: 3px 6px;
+  color: var(--color-text-muted);
+}
+button.icon-action:hover:not(:disabled) { color: var(--orbit-primary); border-color: var(--orbit-primary); }
 button.danger { color: var(--color-error); }
 button.danger:hover { border-color: var(--color-error); }
 .load-more { display: flex; justify-content: center; }

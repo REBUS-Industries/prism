@@ -1116,6 +1116,8 @@ export interface MaterialListItem {
   description: string | null;
   tags: string[];
   thumbnailTextureId: string | null;
+  /** Parent material id when this row was created via Branch. */
+  branchedFromId: string | null;
   slotsFilled: number;
   slotsTotal: number;
   createdAt: string;
@@ -1306,6 +1308,7 @@ export interface MaterialDetail {
   description: string | null;
   tags: string[];
   thumbnailTextureId: string | null;
+  branchedFromId: string | null;
   createdByAdminId: string | null;
   createdByApiKeyId: string | null;
   createdAt: string;
@@ -1356,6 +1359,12 @@ export const materialsApi = {
   updateParameters: (id: string, partial: Partial<MaterialParameters>) =>
     api.put<MaterialDetail>(`/api/materials/${id}/parameters`, partial),
   remove: (id: string) => api.delete<void>(`/api/materials/${id}`),
+  /** Deep-copy a material and its texture files; optional custom name. */
+  duplicate: (id: string, body?: { name?: string }) =>
+    api.post<MaterialDetail>(`/api/materials/${id}/duplicate`, body ?? {}),
+  /** Branch: editable copy that records lineage via branchedFromId. */
+  branch: (id: string, body?: { name?: string }) =>
+    api.post<MaterialDetail>(`/api/materials/${id}/branch`, body ?? {}),
   /** Assign an existing texture to a slot; returns the refreshed detail. */
   assignSlot: (id: string, slot: MaterialSlot, textureId: string) =>
     api.put<MaterialDetail>(`/api/materials/${id}/slots/${slot}`, { textureId }),

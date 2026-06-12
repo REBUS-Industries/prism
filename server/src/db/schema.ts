@@ -432,6 +432,8 @@ export const materials = pgTable('materials', {
   parameters:  jsonb('parameters').notNull().default(sql`'{}'::jsonb`),
   // Auto-set to the albedo texture when that slot is assigned.
   thumbnailTextureId: uuid('thumbnail_texture_id').references((): any => textures.id, { onDelete: 'set null' }),
+  // Set when this material was branched from another (editable copy with lineage).
+  branchedFromId: uuid('branched_from_id').references((): any => materials.id, { onDelete: 'set null' }),
   createdByAdminId:   uuid('created_by_admin_id').references(() => adminUsers.id, { onDelete: 'set null' }),
   createdByApiKeyId:  uuid('created_by_api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
   createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

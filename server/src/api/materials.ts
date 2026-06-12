@@ -27,6 +27,8 @@
  *   DELETE /api/materials/:id/slots/:slot     clear a slot               (write)
  *   GET    /api/materials/:id/download        stream a ZIP of the material
  *   POST   /api/materials/import              ZIP -> material (Megascans or glTF) (write)
+ *   POST   /api/materials/:id/duplicate       deep-copy material + textures     (write)
+ *   POST   /api/materials/:id/branch          branch (copy with lineage)        (write)
  *
  * Reads require `materials:read`; admin sessions and ORBIT bearers bypass
  * scope checks as usual (see auth/middleware.ts requireScope).
@@ -43,6 +45,7 @@ import { requireAuth, requireScope } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
 import { ALLOWED_SLOTS, isMaterialSlot } from '../materials/slots.js';
 import { importMaterialZipBuffer, MAX_MATERIAL_ZIP_BYTES } from '../materials/importZip.js';
+import { duplicateMaterial } from '../materials/duplicate.js';
 import { loadMaterialDetail, SLOTS_TOTAL } from '../materials/loadDetail.js';
 import {
   type MaterialParametersPatch,
@@ -74,6 +77,10 @@ const updateBody = z.object({
 });
 
 const assignBody = z.object({ textureId: z.string().uuid() });
+
+const copyBody = z.object({
+  name: z.string().min(1).max(256).optional(),
+});
 
 /** A read-modify-write-free shallow jsonb merge of a validated parameters
  * partial onto whatever is already stored — mirrors the `jobs.outputs`
@@ -153,6 +160,7 @@ const plugin: FastifyPluginAsync = async (app) => {
         description: materials.description,
         tags: materials.tags,
         thumbnailTextureId: materials.thumbnailTextureId,
+        branchedFromId: materials.branchedFromId,
         createdAt: materials.createdAt,
         updatedAt: materials.updatedAt,
         slotsFilled: slotsFilledSql,
@@ -169,6 +177,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       description: r.description,
       tags: Array.isArray(r.tags) ? r.tags : [],
       thumbnailTextureId: r.thumbnailTextureId,
+      branchedFromId: r.branchedFromId ?? null,
       slotsFilled: Number(r.slotsFilled ?? 0),
       slotsTotal: SLOTS_TOTAL,
       createdAt: r.createdAt.toISOString(),
@@ -342,6 +351,60 @@ const plugin: FastifyPluginAsync = async (app) => {
 
     await maybeMarkExternalEdited(parsedId.data.id);
     return reply.send(await loadMaterialDetail(parsedId.data.id));
+  });
+
+  /* ---------- POST /api/materials/:id/duplicate ---------- */
+  app.post<{ Params: { id: string }; Body: unknown }>('/:id/duplicate', {
+    preHandler: [requireAuth, requireScope('materials:write')],
+  }, async (req, reply) => {
+    const parsedId = idParam.safeParse(req.params);
+    if (!parsedId.success) return reply.code(400).send({ error: 'invalid id' });
+    const parsed = copyBody.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid body', issues: parsed.error.issues });
+
+    const { adminId, apiKeyId } = provenance(req.principal);
+    try {
+      const newId = await duplicateMaterial(parsedId.data.id, {
+        name: parsed.data.name,
+        branch: false,
+        adminId,
+        apiKeyId,
+      });
+      return reply.code(201).send(await loadMaterialDetail(newId));
+    } catch (err) {
+      if (err instanceof Error && err.message === 'not found') {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      req.log.error({ err }, 'material duplicate failed');
+      return reply.code(500).send({ error: 'duplicate failed' });
+    }
+  });
+
+  /* ---------- POST /api/materials/:id/branch ---------- */
+  app.post<{ Params: { id: string }; Body: unknown }>('/:id/branch', {
+    preHandler: [requireAuth, requireScope('materials:write')],
+  }, async (req, reply) => {
+    const parsedId = idParam.safeParse(req.params);
+    if (!parsedId.success) return reply.code(400).send({ error: 'invalid id' });
+    const parsed = copyBody.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid body', issues: parsed.error.issues });
+
+    const { adminId, apiKeyId } = provenance(req.principal);
+    try {
+      const newId = await duplicateMaterial(parsedId.data.id, {
+        name: parsed.data.name,
+        branch: true,
+        adminId,
+        apiKeyId,
+      });
+      return reply.code(201).send(await loadMaterialDetail(newId));
+    } catch (err) {
+      if (err instanceof Error && err.message === 'not found') {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      req.log.error({ err }, 'material branch failed');
+      return reply.code(500).send({ error: 'branch failed' });
+    }
   });
 
   /* ---------- GET /api/materials/:id/download ---------- */
