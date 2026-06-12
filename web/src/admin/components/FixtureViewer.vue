@@ -48,6 +48,10 @@ const props = withDefaults(defineProps<{
   viewPreset?: 'top' | 'front' | 'side' | 'iso';
   panDeg?: number;
   tiltDeg?: number;
+  /** Per-axis motion angles (motionAxisId → degrees). When set, drives every
+   *  motion axis individually (supports fixtures with multiple pan/tilt axes)
+   *  and takes precedence over panDeg/tiltDeg. */
+  motionAngles?: Record<string, number>;
   dimmer?: number;
   showBeam?: boolean;
   /** When false, orbit controls are disabled (quad ortho views). */
@@ -108,6 +112,10 @@ let tiltGroup: THREE.Group | null = null;
 let panNode: MotionNode | null = null;
 /** Tilt node from the assembly motion rig (Head). Overrides tiltGroup when set. */
 let tiltNode: MotionNode | null = null;
+/** All motion axes from the current assembly (for per-axis motion control). */
+let assemblyMotionAxes: MotionAxis[] = [];
+/** Rest quaternion per controlled part group, captured at load for per-axis motion. */
+const motionRest = new Map<string, THREE.Quaternion>();
 /** BEAM part group from assembly — preferred parent for beam wireframe. */
 let beamPartGroup: THREE.Object3D | null = null;
 let loadedRoot: THREE.Object3D | null = null;
@@ -146,6 +154,8 @@ function clearLoaded(): void {
   loadedRoot = null;
   panNode = null;
   tiltNode = null;
+  assemblyMotionAxes = [];
+  motionRest.clear();
   beamPartGroup = null;
 }
 
@@ -205,6 +215,24 @@ function applyCameraPreset(): void {
 }
 
 function syncMotion(): void {
+  // Per-axis mode: drive every motion axis individually (multiple pan/tilt).
+  const angles = props.motionAngles;
+  if (angles && assemblyMotionAxes.length) {
+    for (const ax of assemblyMotionAxes) {
+      const partId = ax.controlledPartId;
+      if (!partId) continue;
+      const g = partGroups.get(partId);
+      const rest = motionRest.get(partId);
+      if (!g || !rest) continue;
+      const rad = ((angles[ax.motionAxisId] ?? 0) * Math.PI) / 180;
+      const axis = new THREE.Vector3(ax.axisVector.x, ax.axisVector.y, ax.axisVector.z);
+      if (axis.lengthSq() < 1e-9) axis.set(0, 0, 1);
+      axis.normalize();
+      g.quaternion.copy(rest).multiply(new THREE.Quaternion().setFromAxisAngle(axis, rad));
+    }
+    return;
+  }
+
   const panRad = (props.panDeg * Math.PI) / 180;
   const tiltRad = (props.tiltDeg * Math.PI) / 180;
 
@@ -404,6 +432,14 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   tiltNode = tn ?? null;
   beamPartGroup = beamPart ?? null;
   partGroups = pg;
+  // Capture rest quaternions for per-axis motion control.
+  assemblyMotionAxes = a.motionAxes ?? [];
+  motionRest.clear();
+  for (const ax of assemblyMotionAxes) {
+    if (!ax.controlledPartId) continue;
+    const g = partGroups.get(ax.controlledPartId);
+    if (g) motionRest.set(ax.controlledPartId, g.quaternion.clone());
+  }
   // Add directly to scene so Base stays static and only Yoke / Head rotate.
   // The legacy panGroup/tiltGroup remain for single-GLB mode.
   scene.add(root);
@@ -563,6 +599,7 @@ watch(() => [props.url, assemblyKey(), props.assemblyRevision], () => { void loa
 watch(() => props.datums, syncDatums, { deep: true });
 watch(() => props.viewPreset, applyCameraPreset);
 watch(() => [props.panDeg, props.tiltDeg], syncMotion);
+watch(() => props.motionAngles, syncMotion, { deep: true });
 watch(() => props.dimmer, syncDimmer);
 watch(() => props.showBeam, syncBeam);
 watch(() => props.interactive, (v) => { if (controls) controls.enabled = v; });

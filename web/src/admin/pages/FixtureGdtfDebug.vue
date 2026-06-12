@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import FixtureViewer from '../components/FixtureViewer.vue';
 import Icon from '../../shared/Icon.vue';
@@ -25,40 +25,103 @@ const error = ref<string | null>(null);
 const activeTab = ref<'preview' | 'raw'>('preview');
 const rawJson = ref('');
 
-const panDeg = ref(0);
-const tiltDeg = ref(0);
 const dimmer = ref(0.5);
 const showBeam = ref(true);
 const selectedPartId = ref<string | null>(null);
+/** Per-motion-axis angle (motionAxisId → degrees) — supports multiple pan/tilt. */
+const motionAngles = ref<Record<string, number>>({});
 
 const previewUrl = computed(() =>
   fixture.value?.hasPreview ? fixturesApi.previewUrl(fixture.value.id) : null,
 );
 
+const info = computed(() => fixture.value?.definition.fixtureInformation);
+
+// ---- DMX mode selection ---------------------------------------------------
+interface DebugMode { modeId: string; name: string; geometry?: string }
+const modes = computed<DebugMode[]>(() => {
+  const raw = (fixture.value?.definition?.dmxMapping as { modes?: unknown })?.modes;
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<Record<string, unknown>>).map((m) => ({
+    modeId: String(m.modeId ?? m.name ?? ''),
+    name: String(m.name ?? m.modeId ?? 'Mode'),
+    geometry: typeof m.geometry === 'string' ? m.geometry : undefined,
+  }));
+});
+const hasModeGeometries = computed(() =>
+  new Set(modes.value.map((m) => m.geometry).filter(Boolean)).size > 1,
+);
+const selectedModeId = ref<string | null>(null);
+const selectedModeGeometry = computed<string | null>(() => {
+  if (!hasModeGeometries.value) return null;
+  const mode = modes.value.find((m) => m.modeId === selectedModeId.value) ?? modes.value[0];
+  return mode?.geometry ?? null;
+});
+
+/** Part ids reachable from the selected mode's root geometry (incl. references). */
+const visiblePartIds = computed<Set<string> | null>(() => {
+  const geo = selectedModeGeometry.value;
+  const def = fixture.value?.definition;
+  if (!geo || !def) return null;
+  const byId = new Map(def.parts.map((p) => [p.partId, p]));
+  const byGeom = new Map<string, FixturePart>();
+  for (const p of def.parts) if (p.sourceGdtfGeometryId) byGeom.set(p.sourceGdtfGeometryId, p);
+  const out = new Set<string>();
+  const add = (partId: string): void => {
+    if (out.has(partId)) return;
+    out.add(partId);
+    const p = byId.get(partId);
+    if (!p) return;
+    for (const c of p.childPartIds) add(c);
+    const ref = (p.metadata as { referencedGeometryId?: unknown }).referencedGeometryId;
+    if (typeof ref === 'string') { const t = byGeom.get(ref); if (t) add(t.partId); }
+  };
+  const root = byGeom.get(geo);
+  if (root) add(root.partId);
+  return out.size ? out : null;
+});
+
 const assembly = computed(() => {
   const def = fixture.value?.definition;
   const id = fixture.value?.id;
   if (!def || !id || !def.parts?.length) return null;
-  return { fixtureId: id, parts: def.parts, models: def.models ?? [], motionAxes: def.motionRig ?? [] };
+  return {
+    fixtureId: id,
+    parts: def.parts,
+    models: def.models ?? [],
+    motionAxes: def.motionRig ?? [],
+    selectedModeGeometryId: selectedModeGeometry.value,
+  };
 });
 
-const info = computed(() => fixture.value?.definition.fixtureInformation);
+const partName = (id: string | null | undefined): string => {
+  if (!id) return '';
+  return fixture.value?.definition.parts.find((p) => p.partId === id)?.name ?? id;
+};
 
-const panAxis = computed(() =>
-  fixture.value?.definition.motionRig.find((a) => a.axisType === 'PAN') ?? null,
-);
-const tiltAxis = computed(() =>
-  fixture.value?.definition.motionRig.find((a) => a.axisType === 'TILT') ?? null,
-);
+/** Motion axes to expose as sliders — scoped to the selected mode. */
+const motionControls = computed(() => {
+  const axes = fixture.value?.definition.motionRig ?? [];
+  const vis = visiblePartIds.value;
+  return axes
+    .filter((a) => !vis || (a.controlledPartId ? vis.has(a.controlledPartId) : true))
+    .map((a) => ({
+      axis: a,
+      label: `${a.axisType}${a.controlledPartId ? ` · ${partName(a.controlledPartId)}` : ''}`,
+    }));
+});
 
 const meshRecords = computed(() => {
   if (!fixture.value) return [];
   const def = fixture.value.definition;
-  return def.parts.map((part, idx) => {
-    const model = def.models.find((m) => m.modelId === part.modelId);
-    const vtx = meshVertexCount(part.metadata) ?? (model ? meshVertexCount(model.metadata) : null);
-    return { idx, part, model, vtx };
-  });
+  const vis = visiblePartIds.value;
+  return def.parts
+    .map((part, idx) => {
+      const model = def.models.find((m) => m.modelId === part.modelId);
+      const vtx = meshVertexCount(part.metadata) ?? (model ? meshVertexCount(model.metadata) : null);
+      return { idx, part, model, vtx };
+    })
+    .filter((r) => !vis || vis.has(r.part.partId));
 });
 
 const totalVtx = computed(() =>
@@ -105,6 +168,17 @@ function refreshRawJson(): void {
   if (!fixture.value) return;
   rawJson.value = JSON.stringify(buildDebugBundle(fixture.value), null, 2);
 }
+
+// Default the selected mode, and (re)seed motion-axis angles to their defaults.
+watch(modes, (m) => {
+  if (!m.some((x) => x.modeId === selectedModeId.value)) selectedModeId.value = m[0]?.modeId ?? null;
+}, { immediate: true });
+
+watch(motionControls, (controls) => {
+  const next: Record<string, number> = {};
+  for (const c of controls) next[c.axis.motionAxisId] = motionAngles.value[c.axis.motionAxisId] ?? c.axis.defaultValue ?? 0;
+  motionAngles.value = next;
+}, { immediate: true });
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -258,6 +332,12 @@ onMounted(() => void load());
       <main class="debug-center">
         <section class="motion-card">
           <h3>Fixture motion</h3>
+          <div v-if="modes.length" class="slider-row mode-row">
+            <span>Mode</span>
+            <select v-model="selectedModeId" class="mode-select">
+              <option v-for="m in modes" :key="m.modeId" :value="m.modeId">{{ m.name }}</option>
+            </select>
+          </div>
           <label class="check-row">
             <input v-model="showBeam" type="checkbox" />
             Light beam origin + direction
@@ -267,30 +347,19 @@ onMounted(() => void load());
             <input v-model.number="dimmer" type="range" min="0" max="1" step="0.01" class="range-orange" />
             <span class="mono">{{ Math.round(dimmer * 100) }}%</span>
           </div>
-          <div class="slider-row">
-            <span>Pan{{ panAxis ? `: ${panAxis.controlledPartId ? 'Yoke' : ''}` : '' }}</span>
+          <div v-for="c in motionControls" :key="c.axis.motionAxisId" class="slider-row">
+            <span :title="c.label">{{ c.label }}</span>
             <input
-              v-model.number="panDeg"
+              v-model.number="motionAngles[c.axis.motionAxisId]"
               type="range"
-              :min="panAxis?.minValue ?? -270"
-              :max="panAxis?.maxValue ?? 270"
+              :min="c.axis.minValue ?? -270"
+              :max="c.axis.maxValue ?? 270"
               step="1"
               class="range-orange"
             />
-            <span class="mono">{{ panDeg }}°</span>
+            <span class="mono">{{ motionAngles[c.axis.motionAxisId] ?? 0 }}°</span>
           </div>
-          <div class="slider-row">
-            <span>Tilt{{ tiltAxis ? `: Head` : '' }}</span>
-            <input
-              v-model.number="tiltDeg"
-              type="range"
-              :min="tiltAxis?.minValue ?? -135"
-              :max="tiltAxis?.maxValue ?? 135"
-              step="1"
-              class="range-orange"
-            />
-            <span class="mono">{{ tiltDeg }}°</span>
-          </div>
+          <p v-if="!motionControls.length" class="muted small">No motion axes in this mode.</p>
           <p v-if="fixture.definition.beams.length" class="muted small ies-note">
             IES photometric profile: {{ fixture.definition.beams[0].beamType ?? 'beam' }}
             <span v-if="fixture.definition.beams[0].luminousFlux">
@@ -309,8 +378,7 @@ onMounted(() => void load());
               v-if="previewUrl || assembly"
               :url="previewUrl"
               :assembly="assembly"
-              :pan-deg="panDeg"
-              :tilt-deg="tiltDeg"
+              :motion-angles="motionAngles"
               :dimmer="dimmer"
               :show-beam="showBeam"
               fill
@@ -334,8 +402,7 @@ onMounted(() => void load());
             v-if="previewUrl || assembly"
             :url="previewUrl"
             :assembly="assembly"
-            :pan-deg="panDeg"
-            :tilt-deg="tiltDeg"
+            :motion-angles="motionAngles"
             :dimmer="dimmer"
             :show-beam="showBeam"
             fill
@@ -552,6 +619,17 @@ onMounted(() => void load());
 .range-orange {
   accent-color: var(--orbit-primary);
   width: 100%;
+}
+.mode-row { margin-bottom: 10px; }
+.mode-select {
+  grid-column: 2 / 4;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text);
 }
 .ies-note { margin: 8px 0 0; }
 
