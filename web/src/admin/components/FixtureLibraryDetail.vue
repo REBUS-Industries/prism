@@ -335,7 +335,7 @@ watch(
       ><Icon name="edit" :size="16" /></button>
       <RouterLink
         v-if="localFixture"
-        :to="{ name: 'fixture-debug', params: { id: localFixture.id } }"
+        :to="{ name: 'fixture-editor', params: { id: localFixture.id }, query: { tab: 'debug' } }"
         class="icon-action debug-link"
         title="Debug GDTF 3D"
       ><Icon name="view_in_ar" :size="16" /></RouterLink>
@@ -560,7 +560,7 @@ watch(
         </div>
         <RouterLink
           v-if="localFixture"
-          :to="{ name: 'fixture-debug', params: { id: localFixture.id } }"
+          :to="{ name: 'fixture-editor', params: { id: localFixture.id }, query: { tab: 'debug' } }"
           class="debug-link-btn"
         >Developer: open mesh debug</RouterLink>
       </div>

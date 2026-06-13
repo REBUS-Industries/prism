@@ -2,7 +2,7 @@
 
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { RouterLink, useRouter } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 
 import FixtureQuadPreview from '../components/FixtureQuadPreview.vue';
 
@@ -13,6 +13,8 @@ import FixturePartProperties from '../components/FixturePartProperties.vue';
 import FixtureViewer, { type PartTransformEdit } from '../components/FixtureViewer.vue';
 
 import FixtureConstructionGraph from '../components/FixtureConstructionGraph.vue';
+
+import FixtureGdtfDebugPanel from '../components/FixtureGdtfDebugPanel.vue';
 
 import { buildTransform4x4 } from '../utils/fixtureTransform';
 
@@ -67,6 +69,7 @@ import {
 const props = defineProps<{ id: string }>();
 
 const router = useRouter();
+const route = useRoute();
 
 
 
@@ -86,7 +89,23 @@ const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 
 const gizmoSpace = ref<'world' | 'local'>('local');
 
-const activeTab = ref<'overview' | 'dmx' | 'parts' | 'construction' | 'ies' | 'settings'>('overview');
+type EditorTab = 'overview' | 'dmx' | 'parts' | 'construction' | 'debug' | 'ies' | 'settings';
+
+const activeTab = ref<EditorTab>('overview');
+
+function selectTab(tab: EditorTab): void {
+  activeTab.value = tab;
+  if (tab === 'debug') {
+    router.replace({ query: { ...route.query, tab: 'debug' } });
+  } else if (route.query.tab === 'debug') {
+    const { tab: _tab, ...rest } = route.query;
+    router.replace({ query: rest });
+  }
+}
+
+watch(() => route.query.tab, (tab) => {
+  if (tab === 'debug') activeTab.value = 'debug';
+}, { immediate: true });
 
 
 
@@ -631,11 +650,6 @@ onMounted(() => {
 
           <div class="head-actions">
 
-            <RouterLink
-              :to="{ name: 'fixture-debug', params: { id: fixture.id } }"
-              class="btn-debug"
-            >Debug GDTF 3D</RouterLink>
-
             <button :disabled="saving" class="primary" @click="save"><Icon name="save" :size="16" />{{ saving ? 'Saving…' : 'Save' }}</button>
 
             <button class="danger" @click="removeFixture"><Icon name="delete" :size="16" />Delete</button>
@@ -680,6 +694,8 @@ onMounted(() => {
 
             ['construction', 'Construction'],
 
+            ['debug', 'Debug 3D'],
+
             ['ies', 'IES'],
 
             ['settings', 'Settings'],
@@ -694,7 +710,7 @@ onMounted(() => {
 
           :class="{ active: activeTab === tab[0] }"
 
-          @click="activeTab = tab[0]"
+          @click="selectTab(tab[0])"
 
         >{{ tab[1] }}</button>
 
@@ -887,6 +903,14 @@ onMounted(() => {
           :fixture-id="fixture.id"
           :definition="fixture.definition"
         />
+
+      </div>
+
+
+
+      <div v-else-if="activeTab === 'debug'" class="tab-panel debug-panel">
+
+        <FixtureGdtfDebugPanel v-if="fixture" :fixture="fixture" />
 
       </div>
 
@@ -1122,25 +1146,6 @@ onMounted(() => {
 
 .head-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
 
-.btn-debug {
-  padding: 8px 14px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.btn-debug:hover {
-  border-color: var(--orbit-primary);
-  background: var(--orbit-primary-fade);
-  color: var(--orbit-primary);
-}
-
 
 
 .badge-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -1221,6 +1226,8 @@ onMounted(() => {
    collapses to 0 and the graph renders blank. */
 .construction-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
 .construction-panel > * { height: 100%; }
+.debug-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
+.debug-panel > * { height: 100%; }
 
 .model-swap { margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 12px; }
 .model-swap-title { margin: 0 0 4px; font-size: 13px; font-weight: 700; }
