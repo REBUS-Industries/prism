@@ -50,7 +50,11 @@ const round = (n: number): number => Math.round(n * 1e6) / 1e6;
  * Build per-mesh origins for a fixture in GDTF Z-up metres. Only parts that
  * carry a real model (mesh) are emitted; GDTF primitives are skipped.
  */
-export function computeMeshOrigins(parts: FixturePart[], models: FixtureModel[]): MeshOrigin[] {
+export function computeMeshOrigins(
+  parts: FixturePart[],
+  models: FixtureModel[],
+  fixtureZOffsetM = 0,
+): MeshOrigin[] {
   const partById = new Map(parts.map((p) => [p.partId, p]));
   const modelById = new Map(models.map((m) => [m.modelId, m]));
   const byGeometryId = new Map<string, FixturePart>();
@@ -67,10 +71,19 @@ export function computeMeshOrigins(parts: FixturePart[], models: FixtureModel[])
   // GDTF Z-up root (no presentation flip → raw GDTF coordinates). Every part —
   // including GeometryReference hosts — is placed by its parent transform.
   const root = new THREE.Group();
+  const hangsAtOrigin = (tag: string): boolean => tag === 'CLAMP' || tag === 'ORIGIN';
+  const bodyRoot = new THREE.Group();
+  if (fixtureZOffsetM > 0) bodyRoot.position.z = -fixtureZOffsetM;
+  root.add(bodyRoot);
+
   for (const part of parts) {
     const g = groups.get(part.partId)!;
     const parent = part.parentPartId ? groups.get(part.parentPartId) : null;
-    (parent ?? root).add(g);
+    if (parent) {
+      parent.add(g);
+      continue;
+    }
+    (hangsAtOrigin(part.tag) ? root : bodyRoot).add(g);
   }
 
   // Expand GeometryReferences: clone the referenced subtree under each reference

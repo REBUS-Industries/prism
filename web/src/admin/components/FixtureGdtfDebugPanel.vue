@@ -7,6 +7,7 @@ import {
   type FixturePart,
   type MotionAxis,
 } from '../../shared/api';
+import { fixtureZOffsetM } from '../utils/fixturePlacement';
 import {
   buildDebugBundle,
   buildFullMeshesJson,
@@ -83,6 +84,7 @@ const assembly = computed(() => {
     models: def.models ?? [],
     motionAxes: correctedAxes.value,
     selectedModeGeometryId: selectedModeGeometry.value,
+    fixtureZOffsetM: fixtureZOffsetM(def.metadata),
   };
 });
 
@@ -311,113 +313,36 @@ function exportBundle(): void {
 </script>
 
 <template>
-  <div class="debug-panel">
-    <div class="debug-toolbar">
-      <nav class="debug-tabs">
+  <div class="fg-debug">
+    <header class="fg-debug-toolbar">
+      <nav class="fg-debug-tabs">
         <button
           type="button"
-          class="debug-tab"
+          class="fg-debug-tab"
           :class="{ active: viewTab === 'preview' }"
           @click="viewTab = 'preview'"
         >3D preview</button>
         <button
           type="button"
-          class="debug-tab"
+          class="fg-debug-tab"
           :class="{ active: viewTab === 'raw' }"
           @click="viewTab = 'raw'; refreshRawJson()"
         >Raw JSON</button>
       </nav>
-      <div class="export-row">
+      <div class="fg-debug-exports">
         <button type="button" class="btn-outline" @click="exportSummary">Summary JSON</button>
         <button type="button" class="btn-outline" @click="exportMeshes">Full Meshes JSON</button>
         <button type="button" class="btn-primary" @click="exportBundle">Full Debug Bundle</button>
       </div>
+    </header>
+
+    <div v-if="viewTab === 'raw'" class="fg-debug-raw">
+      <pre class="fg-debug-raw-text mono">{{ rawJson }}</pre>
     </div>
 
-    <div v-if="viewTab === 'raw'" class="raw-panel">
-      <pre class="raw-json mono">{{ rawJson }}</pre>
-    </div>
-
-    <div v-else class="debug-grid">
-      <aside class="debug-sidebar">
-        <section class="side-block">
-          <h3>Assembly</h3>
-          <p class="side-meta muted">{{ meshRecords.length }} mesh records</p>
-        </section>
-
-        <section class="side-block">
-          <h3>GDTF models</h3>
-          <ul class="side-list">
-            <li
-              v-for="m in fixture.definition.models"
-              :key="m.modelId"
-              class="side-item"
-            >
-              <span class="tag-pill">{{ m.partTag }}</span>
-              <span>{{ m.modelId }}</span>
-              <span class="muted small">{{ m.assignedPartIds.length }} part(s)</span>
-            </li>
-          </ul>
-        </section>
-
-        <section v-if="sourceFiles.length" class="side-block">
-          <h3>Source files</h3>
-          <ul class="side-list mono small">
-            <li v-for="f in sourceFiles" :key="f">{{ f }}</li>
-          </ul>
-        </section>
-
-        <section class="side-block">
-          <h3>Mesh records</h3>
-          <ul class="side-list selectable">
-            <li
-              v-for="rec in meshRecords"
-              :key="rec.part.partId"
-              class="side-item clickable"
-              :class="{ selected: selectedPartId === rec.part.partId }"
-              @click="selectedPartId = rec.part.partId"
-            >
-              <span class="mono">#{{ rec.idx }}</span>
-              <span>{{ rec.part.name }}</span>
-              <span class="tag-pill">{{ rec.part.tag }}</span>
-              <span v-if="rec.vtx" class="muted">{{ rec.vtx }} vtx</span>
-            </li>
-          </ul>
-        </section>
-
-        <details class="side-block collapsible">
-          <summary>Geometry hierarchy</summary>
-          <ul class="hier-list">
-            <li
-              v-for="row in geometryHierarchy"
-              :key="row.part.partId"
-              :style="{ paddingLeft: `${8 + row.depth * 12}px` }"
-              class="hier-item"
-            >
-              {{ row.part.name }} <span class="muted">({{ row.part.tag }})</span>
-            </li>
-          </ul>
-        </details>
-
-        <details class="side-block collapsible">
-          <summary>Flat geometry refs</summary>
-          <ul class="side-list mono small">
-            <li v-for="p in fixture.definition.parts" :key="p.partId">
-              {{ p.sourceGdtfGeometryId ?? p.name }}
-            </li>
-          </ul>
-        </details>
-
-        <details class="side-block collapsible">
-          <summary>Model bounds vs mesh union</summary>
-          <p class="muted small side-meta">
-            {{ fixture.definition.models.length }} models · {{ totalVtx || '—' }} total vtx (where reported)
-          </p>
-        </details>
-      </aside>
-
-      <main class="debug-main">
-        <section class="motion-card">
+    <div v-else class="fg-debug-split">
+      <aside class="fg-debug-controls">
+        <section class="ctrl-block">
           <h3>Fixture motion</h3>
           <div v-if="modes.length" class="slider-row mode-row">
             <span>Mode</span>
@@ -452,65 +377,133 @@ function exportBundle(): void {
           </div>
           <p v-if="!motionControls.length" class="muted small">No motion axes in this mode.</p>
           <p v-if="fixture.definition.beams.length" class="muted small ies-note">
-            IES photometric profile: {{ fixture.definition.beams[0].beamType ?? 'beam' }}
+            IES: {{ fixture.definition.beams[0].beamType ?? 'beam' }}
             <span v-if="fixture.definition.beams[0].luminousFlux">
               · {{ fixture.definition.beams[0].luminousFlux }} lm
             </span>
           </p>
         </section>
 
-        <section class="debug-assembly">
-          <div class="assembly-head">
-            <h3>3D assembly</h3>
-            <span class="muted small">
-              <template v-if="selectedPart">{{ selectedPart.name }} ({{ selectedPart.tag }}) · </template>
-              {{ meshRecords.length }} records
-              <span v-if="totalVtx"> · {{ totalVtx }} vtx</span>
-            </span>
-          </div>
-          <div class="assembly-viewport">
-            <FixtureViewer
-              v-if="previewUrl || assembly"
-              :url="previewUrl"
-              :assembly="assembly"
-              :motion-angles="appliedAngles"
-              :dimmer="dimmer"
-              :show-beam="showBeam"
-              :beams="beamSpecs"
-              fill
-              light-background
-            />
-            <p v-else class="muted no-preview">No GLB preview available.</p>
-          </div>
+        <section class="ctrl-block">
+          <h3>Assembly</h3>
+          <p class="ctrl-meta muted">{{ meshRecords.length }} mesh records<span v-if="totalVtx"> · {{ totalVtx }} vtx</span></p>
         </section>
-      </main>
+
+        <section class="ctrl-block">
+          <h3>Mesh records</h3>
+          <ul class="ctrl-list selectable">
+            <li
+              v-for="rec in meshRecords"
+              :key="rec.part.partId"
+              class="ctrl-item clickable"
+              :class="{ selected: selectedPartId === rec.part.partId }"
+              @click="selectedPartId = rec.part.partId"
+            >
+              <span class="mono">#{{ rec.idx }}</span>
+              <span>{{ rec.part.name }}</span>
+              <span class="tag-pill">{{ rec.part.tag }}</span>
+              <span v-if="rec.vtx" class="muted">{{ rec.vtx }} vtx</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="ctrl-block">
+          <h3>GDTF models</h3>
+          <ul class="ctrl-list">
+            <li v-for="m in fixture.definition.models" :key="m.modelId" class="ctrl-item">
+              <span class="tag-pill">{{ m.partTag }}</span>
+              <span>{{ m.modelId }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <details v-if="sourceFiles.length" class="ctrl-block collapsible">
+          <summary>Source files</summary>
+          <ul class="ctrl-list mono small">
+            <li v-for="f in sourceFiles" :key="f">{{ f }}</li>
+          </ul>
+        </details>
+
+        <details class="ctrl-block collapsible">
+          <summary>Geometry hierarchy</summary>
+          <ul class="hier-list">
+            <li
+              v-for="row in geometryHierarchy"
+              :key="row.part.partId"
+              :style="{ paddingLeft: `${8 + row.depth * 12}px` }"
+              class="hier-item"
+            >
+              {{ row.part.name }} <span class="muted">({{ row.part.tag }})</span>
+            </li>
+          </ul>
+        </details>
+      </aside>
+
+      <section class="fg-debug-viewer">
+        <div class="fg-debug-viewer-head">
+          <h3>3D assembly</h3>
+          <span v-if="selectedPart" class="muted small">{{ selectedPart.name }} ({{ selectedPart.tag }})</span>
+        </div>
+        <div class="fg-debug-viewer-canvas">
+          <FixtureViewer
+            v-if="previewUrl || assembly"
+            :url="previewUrl"
+            :assembly="assembly"
+            :motion-angles="appliedAngles"
+            :dimmer="dimmer"
+            :show-beam="showBeam"
+            :beams="beamSpecs"
+            fill
+            light-background
+          />
+          <p v-else class="muted no-preview">No GLB preview available.</p>
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.debug-panel {
+/* Full-height shell inside the editor tab — controls left, viewer right. */
+.fg-debug {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
-.debug-toolbar {
+.fg-debug-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   flex-shrink: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.export-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.fg-debug-tabs { display: flex; gap: 6px; }
+.fg-debug-tab {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
 }
+.fg-debug-tab.active {
+  color: var(--orbit-primary);
+  border-color: var(--orbit-primary);
+  background: var(--orbit-primary-fade);
+}
+
+.fg-debug-exports { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn-outline {
   padding: 6px 12px;
   border: 1px solid var(--color-border-strong);
@@ -538,70 +531,99 @@ function exportBundle(): void {
 }
 .btn-primary:hover { background: var(--orbit-primary-hover); }
 
-.debug-tabs {
-  display: flex;
-  gap: 4px;
-}
-.debug-tab {
-  padding: 6px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-}
-.debug-tab.active {
-  color: var(--orbit-primary);
-  border-color: var(--orbit-primary);
-  background: var(--orbit-primary-fade);
-}
-
-.debug-grid {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 12px;
+/* Main split: left controls | right viewer — fills all space below toolbar. */
+.fg-debug-split {
   flex: 1;
   min-height: 0;
-}
-@media (max-width: 900px) {
-  .debug-grid { grid-template-columns: 1fr; }
+  display: grid;
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
 }
 
-.debug-sidebar,
-.debug-main {
+.fg-debug-controls {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 12px 10px 0;
+  border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 0;
-}
-.debug-sidebar {
-  overflow-y: auto;
-  padding-right: 4px;
-}
-.debug-main {
-  flex: 1;
 }
 
-.side-block {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 10px;
-  background: var(--color-bg-elevated);
+.fg-debug-viewer {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 0 0 12px;
 }
-.side-block h3 {
-  margin: 0 0 6px;
+
+.fg-debug-viewer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+
+.fg-debug-viewer-head h3 {
+  margin: 0;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
-.side-meta { margin: 0; font-size: 11px; }
-.side-list {
+
+.fg-debug-viewer-canvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #e8eaed;
+}
+
+.fg-debug-raw {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-elevated);
+}
+.fg-debug-raw-text {
+  margin: 0;
+  padding: 16px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ctrl-block {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--color-bg-elevated);
+  flex-shrink: 0;
+}
+.ctrl-block h3 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.ctrl-meta { margin: 0; font-size: 11px; }
+
+.ctrl-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -609,23 +631,24 @@ function exportBundle(): void {
   flex-direction: column;
   gap: 4px;
 }
-.side-item {
+.ctrl-item {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   font-size: 11px;
 }
-.side-item.clickable {
+.ctrl-item.clickable {
   padding: 4px 6px;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.side-item.clickable:hover { background: var(--color-bg-hover); }
-.side-item.selected {
+.ctrl-item.clickable:hover { background: var(--color-bg-hover); }
+.ctrl-item.selected {
   background: var(--orbit-primary-fade);
   outline: 1px solid var(--orbit-primary);
 }
+
 .tag-pill {
   padding: 1px 6px;
   border-radius: 999px;
@@ -634,6 +657,7 @@ function exportBundle(): void {
   font-weight: 700;
   text-transform: uppercase;
 }
+
 .collapsible summary {
   cursor: pointer;
   font-size: 10px;
@@ -650,37 +674,12 @@ function exportBundle(): void {
 }
 .hier-item { padding: 2px 0; }
 
-.motion-card,
-.debug-assembly {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-bg-elevated);
-  padding: 12px;
-}
-.motion-card {
-  flex-shrink: 0;
-}
-.debug-assembly {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.motion-card h3,
-.assembly-head h3 {
-  margin: 0 0 10px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
 .check-row {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .slider-row {
   display: grid;
@@ -690,11 +689,8 @@ function exportBundle(): void {
   margin-bottom: 8px;
   font-size: 11px;
 }
-.range-orange {
-  accent-color: var(--orbit-primary);
-  width: 100%;
-}
-.mode-row { margin-bottom: 10px; }
+.range-orange { accent-color: var(--orbit-primary); width: 100%; }
+.mode-row { margin-bottom: 8px; }
 .mode-select {
   grid-column: 2 / 4;
   width: 100%;
@@ -705,46 +701,29 @@ function exportBundle(): void {
   background: var(--color-bg-input);
   color: var(--color-text);
 }
-.ies-note { margin: 8px 0 0; }
+.ies-note { margin: 4px 0 0; }
 
-.assembly-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-shrink: 0;
-}
-.assembly-viewport {
-  flex: 1;
-  min-height: 280px;
-  min-width: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  contain: strict;
-}
-
-.raw-panel {
-  flex: 1;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  overflow: auto;
-  min-height: 0;
-  background: var(--color-bg-elevated);
-}
-.raw-json {
-  margin: 0;
-  padding: 16px;
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 .no-preview {
-  padding: 24px;
-  text-align: center;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
 .mono { font-family: var(--font-mono); }
 .small { font-size: 11px; }
+
+@media (max-width: 900px) {
+  .fg-debug-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(200px, 35%) minmax(0, 1fr);
+  }
+  .fg-debug-controls {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    padding: 10px 0;
+  }
+  .fg-debug-viewer { padding: 10px 0 0; }
+}
 </style>

@@ -38,6 +38,8 @@ import type {
   MotionAxis,
   Vec3,
 } from '../../shared/api';
+import { fixtureZOffsetM } from '../utils/fixturePlacement';
+import { fixtureInformationParams } from '../utils/fixtureInformation';
 
 const props = defineProps<{
   fixtureId: string;
@@ -306,6 +308,7 @@ const graph = computed<Built>(() => {
     // The ORIGIN tag always carries an Origin node describing the fixture's
     // reference location (implicit fixture base when no ORIGIN geometry exists).
     if (tag === 'ORIGIN') {
+      const zDrop = fixtureZOffsetM(def.value.metadata);
       children.push({
         id: 'origin:location',
         children: [],
@@ -314,7 +317,8 @@ const graph = computed<Built>(() => {
           params: [
             { label: 'Position', value: '0, 0, 0 m' },
             { label: 'Rotation', value: '0, 0, 0°' },
-            { label: 'Reference', value: 'Fixture base (implicit)' },
+            { label: 'Reference', value: 'Hang point / clamp' },
+            { label: 'Body Z drop', value: zDrop > 0 ? `${fmtNum(zDrop * 1000, 1)} mm` : '—' },
             { label: 'Up axis', value: 'Z (GDTF)' },
           ],
         },
@@ -334,14 +338,7 @@ const graph = computed<Built>(() => {
     id: 'cat:info', children: [],
     data: {
       kind: 'info', title: 'Fixture Information', icon: 'info', accent: ACCENT.info,
-      params: [
-        { label: 'Manufacturer', value: str(info.manufacturer) },
-        { label: 'Name', value: str(info.fixtureName) },
-        { label: 'Revision', value: str(info.revision) },
-        { label: 'Long name', value: str(info.longName) },
-        { label: 'GDTF type id', value: str(info.fixtureTypeId) },
-        { label: 'Description', value: str(info.description) },
-      ],
+      params: fixtureInformationParams(info, parts.value, models.value),
     },
   };
 
@@ -376,6 +373,10 @@ const graph = computed<Built>(() => {
         { label: 'Beams', value: String(beams.value.length) },
         { label: 'Motion axes', value: String(motion.value.length) },
         { label: 'DMX modes', value: String(modes.value.length) },
+        { label: 'Body Z drop', value: (() => {
+          const z = fixtureZOffsetM(def.value.metadata);
+          return z > 0 ? `${fmtNum(z * 1000, 1)} mm` : '—';
+        })() },
       ],
     },
   };
