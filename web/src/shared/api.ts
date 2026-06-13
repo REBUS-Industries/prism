@@ -1409,6 +1409,12 @@ export const materialsApi = {
     fd.append('file', file);
     return api.postFormWithProgress<MaterialImportResult>('/api/materials/import', fd, onProgress);
   },
+  /** Upload a client-rendered sphere preview PNG (GlbViewer capture). */
+  uploadThumbnail: (id: string, file: File, onProgress?: (fraction: number) => void) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.postFormWithProgress<MaterialDetail>(`/api/materials/${id}/thumbnail`, fd, onProgress);
+  },
 };
 
 // ---------------------------------------------------------------------------

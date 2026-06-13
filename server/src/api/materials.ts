@@ -47,6 +47,7 @@ import { ALLOWED_SLOTS, isMaterialSlot } from '../materials/slots.js';
 import { importMaterialZipBuffer, MAX_MATERIAL_ZIP_BYTES } from '../materials/importZip.js';
 import { duplicateMaterial } from '../materials/duplicate.js';
 import { loadMaterialDetail, SLOTS_TOTAL } from '../materials/loadDetail.js';
+import { saveMaterialThumbnail, MAX_MATERIAL_THUMBNAIL_BYTES } from '../materials/saveThumbnail.js';
 import {
   type MaterialParametersPatch,
   materialParametersSchema,
@@ -418,6 +419,58 @@ const plugin: FastifyPluginAsync = async (app) => {
       }
       req.log.error({ err }, 'material branch failed');
       return reply.code(500).send({ error: 'branch failed' });
+    }
+  });
+
+  /* ---------- POST /api/materials/:id/thumbnail ---------- */
+  // Client-captured GlbViewer sphere PNG — stored as a tagged texture and set
+  // as thumbnailTextureId so the materials grid can show a static preview.
+  app.post<{ Params: { id: string } }>('/:id/thumbnail', {
+    preHandler: [requireAuth, requireScope('materials:write')],
+  }, async (req, reply) => {
+    const parsedId = idParam.safeParse(req.params);
+    if (!parsedId.success) return reply.code(400).send({ error: 'invalid id' });
+    if (!req.isMultipart()) return reply.code(415).send({ error: 'multipart/form-data required' });
+
+    const part = await req.file({ limits: { fileSize: MAX_MATERIAL_THUMBNAIL_BYTES + 1 } });
+    if (!part) return reply.code(400).send({ error: 'file part missing' });
+
+    const chunks: Buffer[] = [];
+    let bytesSoFar = 0;
+    for await (const chunk of part.file) {
+      const buf = chunk as Buffer;
+      bytesSoFar += buf.length;
+      if (bytesSoFar > MAX_MATERIAL_THUMBNAIL_BYTES || part.file.truncated) {
+        return reply.code(413).send({ error: 'thumbnail too large', maxBytes: MAX_MATERIAL_THUMBNAIL_BYTES });
+      }
+      chunks.push(buf);
+    }
+    if (part.file.truncated) {
+      return reply.code(413).send({ error: 'thumbnail too large', maxBytes: MAX_MATERIAL_THUMBNAIL_BYTES });
+    }
+
+    const { adminId, apiKeyId } = provenance(req.principal);
+    try {
+      await saveMaterialThumbnail({
+        materialId: parsedId.data.id,
+        body: Buffer.concat(chunks, bytesSoFar),
+        filename: part.filename || 'preview.png',
+        mime: (part.mimetype || 'image/png').toLowerCase().split(';')[0]!.trim(),
+        adminId,
+        apiKeyId,
+      });
+      await maybeMarkExternalEdited(parsedId.data.id);
+      return reply.send(await loadMaterialDetail(parsedId.data.id));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'thumbnail upload failed';
+      if (message === 'not found') return reply.code(404).send({ error: 'not found' });
+      if (message === 'thumbnail is empty') return reply.code(400).send({ error: message });
+      if (message === 'thumbnail too large') {
+        return reply.code(413).send({ error: message, maxBytes: MAX_MATERIAL_THUMBNAIL_BYTES });
+      }
+      if (message === 'unsupported image format') return reply.code(415).send({ error: message });
+      req.log.error({ err }, 'material thumbnail upload failed');
+      return reply.code(500).send({ error: 'thumbnail upload failed' });
     }
   });
 

@@ -28,7 +28,11 @@ import PbrNodeGraph from '../components/PbrNodeGraph.vue';
 
 import GlbViewer from '../components/GlbViewer.vue';
 
+import MaterialPreviewSphere from '../components/MaterialPreviewSphere.vue';
+
 import Icon from '../../shared/Icon.vue';
+
+import { uploadMaterialPreviewThumbnail } from '../utils/materialThumbnail';
 
 import {
 
@@ -104,9 +108,15 @@ const pendingPatch: Partial<MaterialParameters> = {};
 
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+let thumbTimer: ReturnType<typeof setTimeout> | null = null;
+
+let thumbUploadInFlight = false;
+
 
 
 const bodyRef = ref<HTMLDivElement | null>(null);
+
+const viewerRef = ref<InstanceType<typeof MaterialPreviewSphere> | null>(null);
 
 const sidePaneWidth = ref(400);
 
@@ -324,6 +334,50 @@ function tagsArray(): string[] {
 
 
 
+function scheduleThumbnailCapture(): void {
+
+  if (thumbTimer) clearTimeout(thumbTimer);
+
+  thumbTimer = setTimeout(() => void captureAndUploadThumbnail(), 1400);
+
+}
+
+
+
+async function captureAndUploadThumbnail(): Promise<void> {
+
+  thumbTimer = null;
+
+  const m = material.value;
+
+  if (!m || thumbUploadInFlight) return;
+
+  thumbUploadInFlight = true;
+
+  try {
+
+    const textureId = await uploadMaterialPreviewThumbnail(m.id, m.name, viewerRef.value);
+
+    if (textureId && material.value?.id === m.id) {
+
+      material.value = { ...material.value, thumbnailTextureId: textureId };
+
+    }
+
+  } catch (err) {
+
+    console.warn('material preview thumbnail upload failed', err);
+
+  } finally {
+
+    thumbUploadInFlight = false;
+
+  }
+
+}
+
+
+
 async function reload(): Promise<void> {
 
   loading.value = true;
@@ -353,6 +407,8 @@ async function reload(): Promise<void> {
   } finally {
 
     loading.value = false;
+
+    if (material.value) scheduleThumbnailCapture();
 
   }
 
@@ -424,6 +480,8 @@ async function onAssign(slot: MaterialSlot, texture: Texture): Promise<void> {
 
     material.value = await materialsApi.assignSlot(id, slot, texture.id);
 
+    scheduleThumbnailCapture();
+
   } catch (err) {
 
     slotError.value = (err as ApiError).message ?? 'failed to assign texture';
@@ -449,6 +507,8 @@ async function onUnassign(slot: MaterialSlot): Promise<void> {
   try {
 
     material.value = await materialsApi.unassignSlot(id, slot);
+
+    scheduleThumbnailCapture();
 
   } catch (err) {
 
@@ -576,6 +636,8 @@ async function flushParams(id: string): Promise<void> {
 
     await materialsApi.updateParameters(id, patch);
 
+    scheduleThumbnailCapture();
+
   } catch (err) {
 
     paramError.value = (err as ApiError).message ?? 'failed to save parameters';
@@ -667,6 +729,14 @@ onBeforeUnmount(() => {
     flushTimer = null;
 
     if (material.value) void flushParams(material.value.id);
+
+  }
+
+  if (thumbTimer) {
+
+    clearTimeout(thumbTimer);
+
+    thumbTimer = null;
 
   }
 
@@ -773,6 +843,14 @@ onBeforeUnmount(() => {
           <div class="viewer-pane">
 
             <GlbViewer :sources="sources" :parameters="parameters" />
+
+            <MaterialPreviewSphere
+              ref="viewerRef"
+              class="thumb-capture"
+              :sources="sources"
+              :parameters="parameters"
+              aria-hidden="true"
+            />
 
           </div>
 
@@ -952,6 +1030,8 @@ button.danger:hover { border-color: var(--color-error); }
 
   flex-direction: column;
 
+  position: relative;
+
 }
 
 .viewer-pane :deep(.glb-viewer) {
@@ -959,6 +1039,24 @@ button.danger:hover { border-color: var(--color-error); }
   flex: 1;
 
   min-height: 0;
+
+}
+
+.thumb-capture {
+
+  position: absolute;
+
+  width: 512px;
+
+  height: 512px;
+
+  left: -9999px;
+
+  top: 0;
+
+  visibility: hidden;
+
+  pointer-events: none;
 
 }
 
