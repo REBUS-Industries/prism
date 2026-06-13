@@ -7,8 +7,8 @@
  *   - if `settings.session_secret` is missing, copies from SESSION_SECRET env
  */
 import { count } from 'drizzle-orm';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { db } from './db/client.js';
+import { runMigrations } from './db/runMigrations.js';
 import { adminUsers } from './db/schema.js';
 import { hashPassword } from './auth/adminSession.js';
 import { getSetting, setSetting } from './db/settings.js';
@@ -16,9 +16,8 @@ import { applyExternalMaterialsSettings } from './settings/externalMaterials.js'
 import type { FastifyBaseLogger } from 'fastify';
 
 export async function runBootstrap(log: FastifyBaseLogger): Promise<void> {
-  const migrationsFolder = process.env.MIGRATIONS_DIR ?? './src/db/migrations';
-  log.info({ migrationsFolder }, 'bootstrap: applying pending migrations');
-  await migrate(db, { migrationsFolder });
+  log.info('bootstrap: applying pending migrations');
+  await runMigrations({ log });
 
   const countRows = await db.select({ value: count() }).from(adminUsers);
   const adminCount = countRows[0]?.value ?? 0;
