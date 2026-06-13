@@ -1,12 +1,10 @@
 <script setup lang="ts">
 /**
  * Materials library. Cards show a persisted preview image when available, or a
- * lazy-loaded GlbViewer sphere (same as the editor) for custom materials without
- * an albedo thumbnail. Name, tag pills and slot-fill indicator follow.
- * created either blank (name prompt -> POST) or by importing a Megascans-
- * style or glTF packaged ZIP (drag-drop / picker -> POST with upload progress); a successful
- * import surfaces any skipped files before jumping into the editor. Cards
- * link to the editor; duplicate/branch create editable copies; delete soft-deletes.
+ * lazy-loaded PBR sphere (same as the editor) for custom materials without an
+ * albedo thumbnail. Materials are created blank, imported from ZIP, or browsed
+ * from external providers. Cards link to the editor; duplicate/branch create
+ * editable copies; delete soft-deletes.
  */
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { useRouter } from 'vue-router';
