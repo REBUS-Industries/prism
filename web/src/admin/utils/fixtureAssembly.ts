@@ -45,6 +45,11 @@ export interface FixtureAssemblyInput {
    * has a resolved `materialId`, its own mesh is painted with this material.
    */
   materialsById?: Map<string, THREE.Material>;
+  /**
+   * Metres to lower the fixture body (GDTF Z-up) while keeping CLAMP and ORIGIN
+   * at the hanging point. Positive values shift base/yoke/head/motion downward.
+   */
+  fixtureZOffsetM?: number;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -266,6 +271,14 @@ export async function buildFixtureAssembly(
 
   const contentRoot = new THREE.Group();
   contentRoot.name = 'Fixture';
+  const zDrop = input.fixtureZOffsetM ?? 0;
+  const bodyRoot = new THREE.Group();
+  bodyRoot.name = 'BodyOffset';
+  if (zDrop > 0) bodyRoot.position.z = -zDrop;
+  contentRoot.add(bodyRoot);
+
+  const hangsAtOrigin = (tag: string): boolean => tag === 'CLAMP' || tag === 'ORIGIN';
+
   // When a DMX mode root is selected, only that top-level geometry subtree is
   // placed in the scene. Other top-level geometries (sibling mode roots, shared
   // library geometries) remain in partGroups so GeometryReferences inside the
@@ -280,8 +293,8 @@ export async function buildFixtureAssembly(
       parent.add(g);
       continue;
     }
-    if (hasSelectedRoot && part.sourceGdtfGeometryId !== selectedRoot) continue;
-    contentRoot.add(g);
+    if (hasSelectedRoot && !hangsAtOrigin(part.tag) && part.sourceGdtfGeometryId !== selectedRoot) continue;
+    (hangsAtOrigin(part.tag) ? contentRoot : bodyRoot).add(g);
   }
 
   let meshCount = 0;

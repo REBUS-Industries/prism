@@ -1671,8 +1671,23 @@ export interface FixtureDefinition {
     revision?: string;
     fixtureTypeId?: string;
     longName?: string;
+    shortName?: string;
     description?: string;
     thumbnail?: string;
+    /** GDTF PhysicalDescriptions/Properties — kilograms. */
+    weightKg?: number;
+    /** Distance from floor to bottom base plate — metres. */
+    legHeightM?: number;
+    operatingTempLowC?: number;
+    operatingTempHighC?: number;
+    /** Nameplate power draw — watts. */
+    powerConsumptionW?: number;
+    /** Human-readable power string (may include voltage). */
+    powerDetails?: string;
+    /** Union bounding box of all placed models — metres (GDTF axes). */
+    overallLengthM?: number;
+    overallWidthM?: number;
+    overallHeightM?: number;
   };
   parts: FixturePart[];
   models: FixtureModel[];

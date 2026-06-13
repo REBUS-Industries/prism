@@ -44,6 +44,10 @@ import {
   downloadTextFile,
 } from '../utils/fixtureOrigins';
 
+import { fixtureZOffsetM, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
+
+import { fixtureInformationParams } from '../utils/fixtureInformation';
+
 import {
 
   fixturesApi,
@@ -190,12 +194,19 @@ const assembly = computed(() => {
     models: def.models ?? [],
     motionAxes: def.motionRig ?? [],
     selectedModeGeometryId: selectedModeGeometryId.value,
+    fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
   };
 });
 
 
 
 const info = computed(() => fixture.value?.definition.fixtureInformation);
+
+const fixtureInfoRows = computed(() => {
+  const def = fixture.value?.definition;
+  if (!def) return [];
+  return fixtureInformationParams(def.fixtureInformation, def.parts, def.models);
+});
 
 const storedVersions = computed(() => fixture.value?.versions ?? []);
 
@@ -301,13 +312,14 @@ const meshOriginCount = computed(
   () => computeMeshOrigins(
     fixture.value?.definition.parts ?? [],
     fixture.value?.definition.models ?? [],
+    fixtureZOffsetMm.value / 1000,
   ).length,
 );
 
 function downloadMeshOrigins(): void {
   const def = fixture.value?.definition;
   if (!def) return;
-  const origins = computeMeshOrigins(def.parts ?? [], def.models ?? []);
+  const origins = computeMeshOrigins(def.parts ?? [], def.models ?? [], fixtureZOffsetMm.value / 1000);
   if (!origins.length) return;
   const csv = meshOriginsToCsv(origins);
   const info = def.fixtureInformation;
@@ -317,6 +329,38 @@ function downloadMeshOrigins(): void {
 }
 
 const replacingModelId = ref<string | null>(null);
+
+/** Millimetres to lower the fixture body (clamp stays at the hang point). */
+const fixtureZOffsetMm = ref(0);
+
+const clampHasMesh = computed(() => {
+  const meta = fixture.value?.definition.models
+    ?.find((m) => m.modelId === REBUS_CLAMP_MODEL_ID)?.metadata as { mediaId?: unknown } | undefined;
+  return typeof meta?.mediaId === 'string' && meta.mediaId.length > 0;
+});
+
+const swapModels = computed(() =>
+  (fixture.value?.definition.models ?? []).filter((m) => m.modelId !== REBUS_CLAMP_MODEL_ID),
+);
+
+function syncPlacementFromFixture(): void {
+  fixtureZOffsetMm.value = Math.round(fixtureZOffsetM(fixture.value?.definition.metadata) * 1000);
+}
+
+function applyPlacementToDefinition(): void {
+  if (!fixture.value) return;
+  fixture.value.definition.metadata = {
+    ...fixture.value.definition.metadata,
+    fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
+  };
+}
+
+function onFixtureZOffsetChange(): void {
+  applyPlacementToDefinition();
+  assemblyRevision.value += 1;
+}
+
+watch(fixture, () => syncPlacementFromFixture(), { immediate: true });
 
 async function replaceModel(modelId: string, ev: Event): Promise<void> {
   const input = ev.target as HTMLInputElement;
@@ -473,6 +517,8 @@ async function save(): Promise<void> {
   saving.value = true;
 
   try {
+
+    applyPlacementToDefinition();
 
     const res = await fixturesApi.update(props.id, {
 
@@ -739,20 +785,12 @@ onMounted(() => {
           <h2>Fixture information</h2>
 
           <dl class="info-grid">
-
-            <dt>Brand</dt><dd>{{ info?.manufacturer ?? '—' }}</dd>
-
-            <dt>Fixture</dt><dd>{{ info?.fixtureName ?? '—' }}</dd>
-
-            <dt>Revision</dt><dd>{{ info?.revision ?? fixture.revision ?? '—' }}</dd>
-
+            <template v-for="row in fixtureInfoRows" :key="row.label">
+              <dt>{{ row.label }}</dt><dd :class="{ mono: row.label === 'GDTF type id' }">{{ row.value }}</dd>
+            </template>
             <dt>Status</dt><dd>{{ fixture.status }}</dd>
-
             <dt>Source hash</dt><dd class="mono">{{ fixture.sourceGdtfHash?.slice(0, 16) ?? '—' }}</dd>
-
           </dl>
-
-          <p v-if="info?.description" class="desc muted">{{ info.description }}</p>
 
         </section>
 
@@ -908,7 +946,7 @@ onMounted(() => {
 
 
 
-      <div v-else-if="activeTab === 'debug'" class="tab-panel debug-panel">
+      <div v-else-if="activeTab === 'debug'" class="tab-panel debug-tab-panel">
 
         <FixtureGdtfDebugPanel v-if="fixture" :fixture="fixture" />
 
@@ -971,6 +1009,48 @@ onMounted(() => {
         </section>
 
         <section class="panel-card settings-card">
+          <h2>Clamp</h2>
+          <p class="muted small">
+            Upload a hanging clamp or omega bracket model. It renders at the fixture origin while the body can be lowered separately.
+          </p>
+          <div class="clamp-upload-row">
+            <label class="model-swap-btn" :class="{ busy: replacingModelId === REBUS_CLAMP_MODEL_ID }">
+              <Icon name="upload_file" :size="14" />
+              {{ replacingModelId === REBUS_CLAMP_MODEL_ID ? 'Converting…' : (clampHasMesh ? 'Replace clamp model' : 'Upload clamp model') }}
+              <input
+                type="file"
+                accept=".gltf,.glb,.obj,.fbx,.3ds,.stl,.dae,.ply"
+                :disabled="!!replacingModelId"
+                @change="replaceModel(REBUS_CLAMP_MODEL_ID, $event)"
+              />
+            </label>
+            <span v-if="clampHasMesh" class="pill online">Attached</span>
+            <span v-else class="pill muted-pill">No model</span>
+          </div>
+        </section>
+
+        <section class="panel-card settings-card">
+          <h2>Fixture placement</h2>
+          <label class="offset-label">
+            Lower fixture body
+            <div class="offset-row">
+              <input
+                v-model.number="fixtureZOffsetMm"
+                type="number"
+                min="0"
+                step="1"
+                class="offset-input"
+                @input="onFixtureZOffsetChange"
+              />
+              <span class="muted small">mm</span>
+            </div>
+          </label>
+          <p class="muted small">
+            Shifts base, yoke, head, lenses and motion downward in Z (GDTF metres) so a clamp model can sit at the hang point above the fixture.
+          </p>
+        </section>
+
+        <section class="panel-card settings-card">
           <h2>3D models</h2>
           <p v-if="!availableModelQualities" class="muted small">
             Mesh options not recorded for this fixture — re-download or apply an update to refresh from the GDTF package.
@@ -1021,13 +1101,13 @@ onMounted(() => {
             </button>
           </div>
 
-          <div v-if="fixture?.definition.models?.length" class="model-swap">
+          <div v-if="swapModels.length" class="model-swap">
             <h3 class="model-swap-title">Swap a model</h3>
             <p class="muted small">
               Upload a 3D file to replace a model's mesh (glTF, GLB, OBJ, FBX, 3DS, STL, DAE, PLY). Part transforms are kept.
             </p>
             <ul class="model-swap-list">
-              <li v-for="m in fixture.definition.models" :key="m.modelId" class="model-swap-row">
+              <li v-for="m in swapModels" :key="m.modelId" class="model-swap-row">
                 <span class="model-swap-meta">
                   <span class="model-swap-name">{{ m.modelId }}</span>
                   <span class="model-swap-tag">{{ m.partTag }}</span>
@@ -1226,8 +1306,8 @@ onMounted(() => {
    collapses to 0 and the graph renders blank. */
 .construction-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
 .construction-panel > * { height: 100%; }
-.debug-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
-.debug-panel > * { height: 100%; }
+.debug-tab-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
+.debug-tab-panel > * { height: 100%; min-height: 0; }
 
 .model-swap { margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 12px; }
 .model-swap-title { margin: 0 0 4px; font-size: 13px; font-weight: 700; }
@@ -1245,6 +1325,17 @@ onMounted(() => {
 .model-swap-btn:hover { border-color: var(--orbit-primary); color: var(--orbit-primary); }
 .model-swap-btn.busy { opacity: 0.6; cursor: progress; }
 .model-swap-btn input { display: none; }
+.clamp-upload-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.offset-label { display: block; margin-top: 10px; font-size: 13px; }
+.offset-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.offset-input {
+  width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+}
 
 .overview-panel {
 

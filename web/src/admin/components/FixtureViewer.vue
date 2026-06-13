@@ -37,6 +37,8 @@ interface AssemblyProp {
   motionAxes?: MotionAxis[];
   /** DMX mode root geometry to render (multi-mode fixtures). */
   selectedModeGeometryId?: string | null;
+  /** Metres to lower fixture body while CLAMP/ORIGIN stay at the hang point. */
+  fixtureZOffsetM?: number;
 }
 
 const props = withDefaults(defineProps<{
@@ -447,6 +449,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     models: a.models ?? [],
     motionAxes: a.motionAxes ?? [],
     selectedModeGeometryId: a.selectedModeGeometryId ?? null,
+    fixtureZOffsetM: a.fixtureZOffsetM ?? 0,
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
@@ -622,7 +625,7 @@ const assemblyKey = (): string => {
   const a = props.assembly;
   if (!a) return '';
   const mats = a.parts?.map((p) => `${p.partId}=${p.materialId ?? ''}`).join('|') ?? '';
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${mats}`;
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${mats}`;
 };
 
 watch(() => [props.url, assemblyKey(), props.assemblyRevision], () => { void loadContent(); });
