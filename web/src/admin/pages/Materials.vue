@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * Materials library. Cards show the albedo-derived thumbnail (or a
- * placeholder), name, tag pills and a slot-fill indicator. Materials are
+ * Materials library. Cards show a persisted preview image when available, or a
+ * lazy-loaded GlbViewer sphere (same as the editor) for custom materials without
+ * an albedo thumbnail. Name, tag pills and slot-fill indicator follow.
  * created either blank (name prompt -> POST) or by importing a Megascans-
  * style or glTF packaged ZIP (drag-drop / picker -> POST with upload progress); a successful
  * import surfaces any skipped files before jumping into the editor. Cards
@@ -12,13 +13,13 @@ import { useRouter } from 'vue-router';
 import {
   materialsApi,
   materialGroupsApi,
-  texturesApi,
   type ApiError,
   type MaterialGroup as ApiMaterialGroup,
   type MaterialListItem,
 } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 import ExternalMaterialsModal from '../components/ExternalMaterialsModal.vue';
+import MaterialCardPreview from '../components/MaterialCardPreview.vue';
 
 const router = useRouter();
 const PAGE = 36;
@@ -186,8 +187,9 @@ function toggleTag(tag: string): void {
   void load(true);
 }
 
-function thumbUrl(m: MaterialListItem): string | null {
-  return m.thumbnailTextureId ? texturesApi.downloadUrl(m.thumbnailTextureId) : null;
+function onCardThumbnailUpdated(materialId: string, textureId: string): void {
+  const row = materials.value.find((m) => m.id === materialId);
+  if (row) row.thumbnailTextureId = textureId;
 }
 
 function openEditor(id: string): void {
@@ -511,8 +513,12 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
           @click="openEditor(m.id)"
         >
           <span class="thumb">
-            <img v-if="thumbUrl(m)" :src="thumbUrl(m)!" :alt="m.name" loading="lazy" />
-            <span v-else class="thumb-empty subtle">No preview</span>
+            <MaterialCardPreview
+              :material-id="m.id"
+              :thumbnail-texture-id="m.thumbnailTextureId"
+              :alt="m.name"
+              @thumbnail-updated="onCardThumbnailUpdated(m.id, $event)"
+            />
           </span>
           <div class="mat-name" :title="m.name">{{ m.name }}</div>
           <div v-if="m.branchedFromId" class="branch-hint subtle small">Branched copy</div>
@@ -710,8 +716,6 @@ h1 { font-size: 22px; margin: 0; }
   overflow: hidden; background: var(--color-bg-hover);
   display: flex; align-items: center; justify-content: center;
 }
-.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.thumb-empty { font-size: 12px; }
 .mat-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .branch-hint { font-style: italic; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; }
