@@ -286,11 +286,24 @@ function wrapModelMesh(meshRoot: THREE.Object3D, dims: ModelDims): THREE.Group {
     dims.length != null && dims.width != null && dims.height != null
     && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6
   ) {
-    wrapper.scale.set(
-      dims.length / size.x,
-      dims.height / size.y,
-      dims.width / size.z,
-    );
+    const sx = dims.length / size.x;
+    const sy = dims.height / size.y;
+    const sz = dims.width / size.z;
+    // A single rigid model should not need wildly different per-axis scales to
+    // fit its declared L/W/H. Large divergence means the model's axes/units do
+    // not match the declared dims — common for shared library geometry such as
+    // the Mac Aura "filament" strip, where one axis would otherwise explode into
+    // a wall (identically across every GeometryReference instance). Fall back to
+    // a uniform median scale so the mesh keeps its authored proportions.
+    const ratios = [sx, sy, sz];
+    const min = Math.min(...ratios);
+    const max = Math.max(...ratios);
+    if (min > 0 && max / min > 8) {
+      const median = [...ratios].sort((a, b) => a - b)[1]!;
+      wrapper.scale.setScalar(median);
+    } else {
+      wrapper.scale.set(sx, sy, sz);
+    }
   }
 
   wrapper.add(meshRoot);
