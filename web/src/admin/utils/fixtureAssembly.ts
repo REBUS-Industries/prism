@@ -16,6 +16,10 @@ import {
   REBUS_CLAMP_PART_ID,
   type ClampPlacement,
 } from './fixturePlacement';
+import {
+  collectReferencedGeometryIds,
+  isLibraryGeometryPart,
+} from './fixtureGeometryRefs';
 
 /** Minimal motion axis descriptor passed from FixtureDefinition.motionRig. */
 interface MotionAxisRef {
@@ -192,11 +196,12 @@ export function findGeometryReferenceEmissionNode(
   if (!emitPart) return refHost;
 
   let found: THREE.Object3D | undefined;
-  refHost.traverse((o) => {
-    if (found || o === refHost) return;
+  const instanceRoot = refHost.children.length === 1 ? refHost.children[0]! : refHost;
+  instanceRoot.traverse((o) => {
+    if (found || o === instanceRoot) return;
     if (o.name === emitPart!.name) found = o;
   });
-  return found ?? refHost;
+  return found ?? instanceRoot;
 }
 
 function isRebusClampPart(part: FixturePart): boolean {
@@ -338,6 +343,7 @@ export async function buildFixtureAssembly(
   input: FixtureAssemblyInput,
 ): Promise<FixtureAssemblyResult> {
   const { parts, models } = input;
+  const referencedGeomIds = collectReferencedGeometryIds(parts);
   const modelById = new Map(models.map((mm) => [mm.modelId, mm]));
   const loader = new GLTFLoader();
 
@@ -385,13 +391,13 @@ export async function buildFixtureAssembly(
     && parts.some((p) => !p.parentPartId && p.sourceGdtfGeometryId === selectedRoot);
   for (const part of parts) {
     const g = partGroups.get(part.partId)!;
-    if (partMeta(part).isGeometryTemplate) continue;
+    if (isLibraryGeometryPart(part, referencedGeomIds)) continue;
     const parent = part.parentPartId ? partGroups.get(part.parentPartId) : null;
     if (parent) {
       parent.add(g);
       continue;
     }
-    if (partMeta(part).isGeometryTemplate) continue;
+    if (isLibraryGeometryPart(part, referencedGeomIds)) continue;
     if (hasSelectedRoot && !hangsAtOrigin(part.tag) && part.sourceGdtfGeometryId !== selectedRoot) continue;
     (hangsAtOrigin(part.tag) ? contentRoot : bodyRoot).add(g);
   }
@@ -450,8 +456,12 @@ export async function buildFixtureAssembly(
     const targetGroup = target ? partGroups.get(target.partId) : null;
     if (!targetGroup) continue;
     const clone = targetGroup.clone(true);
-    // Keep the template root transform — it positions filaments / lens meshes
-    // relative to each GeometryReference host (resetting caused wrong orientations).
+    // Reference Position is the instance root; library template root offset must not stack.
+    if (target && isLibraryGeometryPart(target, referencedGeomIds)) {
+      clone.position.set(0, 0, 0);
+      clone.quaternion.identity();
+      clone.scale.set(1, 1, 1);
+    }
     // Strip copied partId tags so picking inside a referenced instance resolves
     // to the reference part group (walk-up), not the cloned source part.
     clone.traverse((o) => { delete o.userData.partId; });
