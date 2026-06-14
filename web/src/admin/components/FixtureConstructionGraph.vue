@@ -260,20 +260,51 @@ const graph = computed<Built>(() => {
     },
   });
 
+  const firstModelInGeometry = (geomId: string): FixtureModel | null => {
+    const root = fParts.find((p) => p.sourceGdtfGeometryId === geomId);
+    if (!root) return null;
+    const stack = [root.partId];
+    while (stack.length) {
+      const id = stack.pop()!;
+      const p = fParts.find((x) => x.partId === id);
+      if (!p) continue;
+      if (p.modelId && modelById.has(p.modelId)) return modelById.get(p.modelId)!;
+      for (const c of p.childPartIds) stack.push(c);
+    }
+    return null;
+  };
+
   const partNode = (p: FixturePart): TNode => {
     const children: TNode[] = [];
-    if (p.modelId && modelById.has(p.modelId)) children.push(modelChild(modelById.get(p.modelId)!, p.partId));
+    const refMeta = p.metadata as {
+      isGeometryReference?: boolean;
+      referencedGeometryId?: string;
+      isGeometryTemplate?: boolean;
+    };
+    let model = p.modelId && modelById.has(p.modelId) ? modelById.get(p.modelId)! : null;
+    if (!model && refMeta.isGeometryReference && refMeta.referencedGeometryId) {
+      model = firstModelInGeometry(refMeta.referencedGeometryId);
+    }
+    if (model) children.push(modelChild(model, p.partId));
+    for (const b of fBeams.filter((beam) => beam.parentPartId === p.partId)) {
+      children.push(beamChild(b));
+    }
     for (const a of motionByPart.get(p.partId) ?? []) children.push(motionChild(a));
+    const subtitle = refMeta.isGeometryTemplate
+      ? 'geometry template'
+      : refMeta.isGeometryReference
+        ? 'CELL instance'
+        : p.tag;
     return {
       id: `part:${p.partId}`,
       children,
       data: {
-        kind: 'part', title: p.name, subtitle: p.tag, icon: 'category', accent: TAG_META[p.tag]?.accent ?? ACCENT.parts,
+        kind: 'part', title: p.name, subtitle, icon: 'category', accent: TAG_META[p.tag]?.accent ?? ACCENT.parts,
         params: [
           { label: 'Tag', value: str(p.tag) },
           { label: 'GDTF geom', value: str(p.sourceGdtfGeometryId) },
           { label: 'Parent', value: partLabel(p.parentPartId) },
-          { label: 'Model', value: p.modelId ? str(p.modelId) : '—' },
+          { label: 'Model', value: model ? str(model.modelId) : (refMeta.referencedGeometryId ? `ref:${refMeta.referencedGeometryId}` : '—') },
           { label: 'Children', value: String(p.childPartIds?.length ?? 0) },
           { label: 'Position', value: vec({ x: p.localTransform.position.x, y: p.localTransform.position.y, z: p.localTransform.position.z }, ' m') },
           { label: 'Rotation', value: vec(p.localTransform.rotation, '°') },
@@ -301,7 +332,10 @@ const graph = computed<Built>(() => {
   };
 
   const tagNodes: TNode[] = STANDARD_TAGS.map((tag) => {
-    const ps = fParts.filter((p) => p.tag === tag);
+    const ps = fParts.filter((p) => {
+      if (p.tag !== tag) return false;
+      return !(p.metadata as { isGeometryTemplate?: boolean }).isGeometryTemplate;
+    });
     const children = ps.map(partNode);
     // The BEAM tag carries the REBUS Beams (light info/IES), not part meshes.
     if (tag === 'BEAM') children.push(...beamTagChildren());
