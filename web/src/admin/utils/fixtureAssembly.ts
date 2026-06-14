@@ -456,12 +456,10 @@ export async function buildFixtureAssembly(
     const targetGroup = target ? partGroups.get(target.partId) : null;
     if (!targetGroup) continue;
     const clone = targetGroup.clone(true);
-    // Reference Position is the instance root; library template root offset must not stack.
-    if (target && isLibraryGeometryPart(target, referencedGeomIds)) {
-      clone.position.set(0, 0, 0);
-      clone.quaternion.identity();
-      clone.scale.set(1, 1, 1);
-    }
+    // GDTF Builder (what GDTF-Share renders with) COMPOSES the reference Position
+    // with the referenced geometry's own root matrix — it does not replace it.
+    // Resetting to identity twisted asymmetric instances (Mac Aura aura filaments)
+    // while circular pixels looked unaffected; keep the referenced root transform.
     // Strip copied partId tags so picking inside a referenced instance resolves
     // to the reference part group (walk-up), not the cloned source part.
     clone.traverse((o) => { delete o.userData.partId; });
