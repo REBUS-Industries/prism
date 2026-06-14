@@ -1609,6 +1609,12 @@ export interface FixturePart {
   metadata: Record<string, unknown>;
 }
 
+export interface FixtureIesProfile {
+  /** DMX zoom value (0–255) this photometric profile applies at. */
+  zoomDmx: number;
+  iesAssetId: string;
+}
+
 export interface FixtureBeam {
   beamId: string;
   parentPartId?: string;
@@ -1617,7 +1623,10 @@ export interface FixtureBeam {
   fieldAngle?: number;
   luminousFlux?: number;
   colourTemperature?: number;
+  /** Legacy default IES — kept for older fixtures; prefer {@link iesProfiles}. */
   iesAssetId?: string | null;
+  /** IES files at standard zoom DMX positions (typically 0, 128, 255). */
+  iesProfiles?: FixtureIesProfile[];
   /** Min/max beam angle (°) across the zoom range, from the GDTF Zoom channel. */
   zoomMinAngle?: number;
   zoomMaxAngle?: number;
@@ -2045,11 +2054,12 @@ export const fixturesApi = {
   },
   export: (id: string) =>
     api.get<{ fixture: FixtureConnectorExport }>(`/api/fixtures/export/${id}`),
-  uploadIes: (id: string, beamId: string, file: File) => {
+  uploadIes: (id: string, beamId: string, file: File, zoomDmx?: number) => {
     const fd = new FormData();
     fd.append('beamId', beamId);
+    if (zoomDmx !== undefined) fd.append('zoomDmx', String(zoomDmx));
     fd.append('file', file);
-    return api.postForm<{ mediaId: string; beamId: string }>(`/api/fixtures/${id}/ies`, fd);
+    return api.postForm<{ mediaId: string; beamId: string; zoomDmx?: number }>(`/api/fixtures/${id}/ies`, fd);
   },
   searchGdtfShare: (q: string, limit = 25) =>
     api.get<{ results: GdtfShareResult[] }>(`/api/gdtf-share/search?q=${encodeURIComponent(q)}&limit=${limit}`),

@@ -21,6 +21,7 @@ import { buildTransform4x4 } from '../utils/fixtureTransform';
 import DmxModePanel from '../components/DmxModePanel.vue';
 
 import IesUploader from '../components/IesUploader.vue';
+import { iesProfileCount } from '../utils/fixtureIes';
 
 import DatumEditor from '../components/DatumEditor.vue';
 
@@ -981,7 +982,11 @@ onMounted(() => {
 
         <section class="panel-card">
 
-          <h2>IES profiles (per beam)</h2>
+          <h2>IES profiles (per beam × zoom)</h2>
+
+          <p class="muted small">
+            Upload a photometric (.ies) file for each zoom position — typically DMX 0 (wide), 128 (mid), and 255 (narrow).
+          </p>
 
           <IesUploader :fixture-id="fixture.id" :beams="fixture.definition.beams" @uploaded="reload" />
 
@@ -991,7 +996,7 @@ onMounted(() => {
 
               <span>{{ b.beamId }}</span>
 
-              <span v-if="b.iesAssetId" class="pill online">IES attached</span>
+              <span v-if="iesProfileCount(b)" class="pill online">{{ iesProfileCount(b) }} IES profile(s)</span>
 
               <span v-else class="pill muted-pill">No IES</span>
 
