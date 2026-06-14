@@ -342,16 +342,10 @@ function syncBeam(): void {
   const fallback = beamParent();
   const specs = props.beams ?? [];
   for (const spec of specs) {
-    const attachPart = spec.parentPartId ? partGroups.get(spec.parentPartId) : null;
-    let attach: THREE.Object3D | null | undefined = attachPart;
-    if (attachPart) {
-      let firstMesh: THREE.Object3D | null = null;
-      attachPart.traverse((o) => {
-        if (!firstMesh && (o as THREE.Mesh).isMesh) firstMesh = o;
-      });
-      if (firstMesh) attach = firstMesh;
-    }
-    attach = attach ?? fallback;
+    // Parent on the CELL / GeometryReference part group (GDTF Z-up, −Z emission).
+    // Do not attach to the first mesh inside a cloned template — that mesh sits
+    // under a +90° X glTF wrapper and double-rotates the cone inward.
+    const attach = (spec.parentPartId ? partGroups.get(spec.parentPartId) : null) ?? fallback;
     if (!attach) continue;
 
     const group = new THREE.Group();
