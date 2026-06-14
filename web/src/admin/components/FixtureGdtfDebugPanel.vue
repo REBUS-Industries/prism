@@ -7,7 +7,7 @@ import {
   type FixturePart,
   type MotionAxis,
 } from '../../shared/api';
-import { fixtureZOffsetM } from '../utils/fixturePlacement';
+import { fixtureZOffsetM, readClampPlacement } from '../utils/fixturePlacement';
 import {
   buildDebugBundle,
   buildFullMeshesJson,
@@ -85,6 +85,7 @@ const assembly = computed(() => {
     motionAxes: correctedAxes.value,
     selectedModeGeometryId: selectedModeGeometry.value,
     fixtureZOffsetM: fixtureZOffsetM(def.metadata),
+    clampPlacement: readClampPlacement(def.metadata),
   };
 });
 
