@@ -8,18 +8,9 @@ import {
   type MotionAxis,
 } from '../../shared/api';
 import { fixtureZOffsetM, readClampPlacement } from '../utils/fixturePlacement';
-import {
-  buildDebugBundle,
-  buildFullMeshesJson,
-  buildSummaryJson,
-  downloadJson,
-} from '../utils/gdtfDebugExport';
 
 const props = defineProps<{ fixture: FixtureDetail }>();
 const fixture = toRef(props, 'fixture');
-
-const viewTab = ref<'preview' | 'raw'>('preview');
-const rawJson = ref('');
 
 const dimmer = ref(0.5);
 const showBeam = ref(true);
@@ -208,18 +199,6 @@ const beamSpecs = computed(() => {
     }));
 });
 
-const exportSlug = computed(() =>
-  (fixture.value.name ?? 'fixture').replace(/[^\w.-]+/g, '_'),
-);
-
-function refreshRawJson(): void {
-  rawJson.value = JSON.stringify(buildDebugBundle(fixture.value), null, 2);
-}
-
-watch(() => fixture.value.id, () => {
-  refreshRawJson();
-}, { immediate: true });
-
 watch(modes, (m) => {
   if (!m.some((x) => x.modeId === selectedModeId.value)) selectedModeId.value = m[0]?.modeId ?? null;
 }, { immediate: true });
@@ -273,50 +252,12 @@ watch(motionAngles, (target) => {
 }, { deep: true });
 
 onBeforeUnmount(() => { if (motionRaf != null) cancelAnimationFrame(motionRaf); });
-
-function exportSummary(): void {
-  downloadJson(buildSummaryJson(fixture.value), `${exportSlug.value}-summary.json`);
-}
-
-function exportMeshes(): void {
-  downloadJson(buildFullMeshesJson(fixture.value), `${exportSlug.value}-meshes.json`);
-}
-
-function exportBundle(): void {
-  downloadJson(buildDebugBundle(fixture.value), `${exportSlug.value}-debug-bundle.json`);
-}
 </script>
 
 <template>
-  <div class="fg-debug">
-    <header class="fg-debug-toolbar">
-      <nav class="fg-debug-tabs">
-        <button
-          type="button"
-          class="fg-debug-tab"
-          :class="{ active: viewTab === 'preview' }"
-          @click="viewTab = 'preview'"
-        >3D preview</button>
-        <button
-          type="button"
-          class="fg-debug-tab"
-          :class="{ active: viewTab === 'raw' }"
-          @click="viewTab = 'raw'; refreshRawJson()"
-        >Raw JSON</button>
-      </nav>
-      <div class="fg-debug-exports">
-        <button type="button" class="btn-outline" @click="exportSummary">Summary JSON</button>
-        <button type="button" class="btn-outline" @click="exportMeshes">Full Meshes JSON</button>
-        <button type="button" class="btn-primary" @click="exportBundle">Full export bundle</button>
-      </div>
-    </header>
-
-    <div v-if="viewTab === 'raw'" class="fg-debug-raw">
-      <pre class="fg-debug-raw-text mono">{{ rawJson }}</pre>
-    </div>
-
-    <div v-else class="fg-debug-split">
-      <aside class="fg-debug-controls">
+  <div class="fg-control">
+    <div class="fg-control-split">
+      <aside class="fg-control-sidebar">
         <section class="ctrl-block">
           <h3>Fixture motion</h3>
           <div v-if="modes.length" class="slider-row mode-row">
@@ -368,11 +309,8 @@ function exportBundle(): void {
         </section>
       </aside>
 
-      <section class="fg-debug-viewer">
-        <div class="fg-debug-viewer-head">
-          <h3>3D preview</h3>
-        </div>
-        <div class="fg-debug-viewer-canvas">
+      <section class="fg-control-viewer">
+        <div class="fg-control-viewer-canvas">
           <FixtureViewer
             v-if="previewUrl || assembly"
             :url="previewUrl"
@@ -392,8 +330,7 @@ function exportBundle(): void {
 </template>
 
 <style scoped>
-/* Full-height shell inside the editor tab — controls left, viewer right. */
-.fg-debug {
+.fg-control {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -401,66 +338,7 @@ function exportBundle(): void {
   overflow: hidden;
 }
 
-.fg-debug-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-shrink: 0;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.fg-debug-tabs { display: flex; gap: 6px; }
-.fg-debug-tab {
-  padding: 6px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-}
-.fg-debug-tab.active {
-  color: var(--orbit-primary);
-  border-color: var(--orbit-primary);
-  background: var(--orbit-primary-fade);
-}
-
-.fg-debug-exports { display: flex; flex-wrap: wrap; gap: 8px; }
-.btn-outline {
-  padding: 6px 12px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-}
-.btn-outline:hover { border-color: var(--orbit-primary); }
-.btn-primary {
-  padding: 6px 12px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: var(--orbit-primary);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-}
-.btn-primary:hover { background: var(--orbit-primary-hover); }
-
-/* Main split: left controls | right viewer — fills all space below toolbar. */
-.fg-debug-split {
+.fg-control-split {
   flex: 1;
   min-height: 0;
   display: grid;
@@ -469,45 +347,27 @@ function exportBundle(): void {
   overflow: hidden;
 }
 
-.fg-debug-controls {
+.fg-control-sidebar {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 12px 10px 0;
+  padding: 0 12px 0 0;
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.fg-debug-viewer {
+.fg-control-viewer {
   min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 10px 0 0 12px;
+  padding-left: 12px;
 }
 
-.fg-debug-viewer-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-bottom: 8px;
-}
-
-.fg-debug-viewer-head h3 {
-  margin: 0;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.fg-debug-viewer-canvas {
+.fg-control-viewer-canvas {
   flex: 1;
   min-height: 0;
   position: relative;
@@ -515,23 +375,6 @@ function exportBundle(): void {
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: #e8eaed;
-}
-
-.fg-debug-raw {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-bg-elevated);
-}
-.fg-debug-raw-text {
-  margin: 0;
-  padding: 16px;
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .ctrl-block {
@@ -592,15 +435,15 @@ function exportBundle(): void {
 .small { font-size: 11px; }
 
 @media (max-width: 900px) {
-  .fg-debug-split {
+  .fg-control-split {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(200px, 35%) minmax(0, 1fr);
   }
-  .fg-debug-controls {
+  .fg-control-sidebar {
     border-right: none;
     border-bottom: 1px solid var(--color-border);
-    padding: 10px 0;
+    padding: 0 0 10px;
   }
-  .fg-debug-viewer { padding: 10px 0 0; }
+  .fg-control-viewer { padding-left: 0; padding-top: 10px; }
 }
 </style>
