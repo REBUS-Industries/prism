@@ -13,7 +13,6 @@ import {
   buildFullMeshesJson,
   buildSummaryJson,
   downloadJson,
-  meshVertexCount,
 } from '../utils/gdtfDebugExport';
 
 const props = defineProps<{ fixture: FixtureDetail }>();
@@ -24,7 +23,8 @@ const rawJson = ref('');
 
 const dimmer = ref(0.5);
 const showBeam = ref(true);
-const selectedPartId = ref<string | null>(null);
+/** 0 = wide beam, 1 = narrow beam (fixture zoom range). */
+const zoomT = ref(0);
 const motionAngles = ref<Record<string, number>>({});
 const appliedAngles = ref<Record<string, number>>({});
 const liveFade = ref(true);
@@ -148,15 +148,33 @@ const motionControls = computed(() => {
     }));
 });
 
+/** Zoom range from fixture beams (wide = max angle, narrow = min angle). */
+const zoomRange = computed(() => {
+  const def = fixture.value.definition;
+  for (const b of def.beams ?? []) {
+    const min = b.zoomMinAngle;
+    const max = b.zoomMaxAngle;
+    if (min != null && max != null && max > min) return { wide: max, narrow: min };
+  }
+  return null;
+});
+
+const hasZoomRange = computed(() => zoomRange.value != null);
+
+const zoomBeamAngle = computed(() => {
+  const r = zoomRange.value;
+  if (!r) return null;
+  return r.wide + (r.narrow - r.wide) * zoomT.value;
+});
+
 const beamSpecs = computed(() => {
   const def = fixture.value.definition;
   const vis = visiblePartIds.value;
   const inMode = (id: string | null | undefined): boolean => !vis || (id ? vis.has(id) : true);
 
   const primary = def.beams?.[0];
-  const angle = primary?.beamAngle ?? primary?.fieldAngle ?? 20;
-  const zoomMin = primary?.zoomMinAngle;
-  const zoomMax = primary?.zoomMaxAngle;
+  const fallbackAngle = primary?.beamAngle ?? primary?.fieldAngle ?? 20;
+  const zoomed = zoomBeamAngle.value;
 
   const diameter = (partId: string | null | undefined): number => {
     const part = def.parts.find((p) => p.partId === partId);
@@ -167,12 +185,17 @@ const beamSpecs = computed(() => {
     return Math.max(len, wid) || 0.08;
   };
 
+  const angleFor = (base: number | undefined): number =>
+    zoomed ?? base ?? fallbackAngle;
+
   const emitters = def.parts.filter(
     (p) => (p.tag === 'LENS' || p.tag === 'CELL') && p.modelId && inMode(p.partId),
   );
   if (emitters.length) {
     return emitters.map((p) => ({
-      parentPartId: p.partId, lensDiameter: diameter(p.partId), beamAngle: angle, zoomMin, zoomMax,
+      parentPartId: p.partId,
+      lensDiameter: diameter(p.partId),
+      beamAngle: angleFor(fallbackAngle),
     }));
   }
 
@@ -181,57 +204,9 @@ const beamSpecs = computed(() => {
     .map((b) => ({
       parentPartId: b.parentPartId ?? null,
       lensDiameter: diameter(b.parentPartId),
-      beamAngle: b.beamAngle ?? b.fieldAngle ?? angle,
-      zoomMin: b.zoomMinAngle ?? zoomMin,
-      zoomMax: b.zoomMaxAngle ?? zoomMax,
+      beamAngle: angleFor(b.beamAngle ?? b.fieldAngle),
     }));
 });
-
-const meshRecords = computed(() => {
-  const def = fixture.value.definition;
-  const vis = visiblePartIds.value;
-  return def.parts
-    .map((part, idx) => {
-      const model = def.models.find((m) => m.modelId === part.modelId);
-      const vtx = meshVertexCount(part.metadata) ?? (model ? meshVertexCount(model.metadata) : null);
-      return { idx, part, model, vtx };
-    })
-    .filter((r) => !vis || vis.has(r.part.partId));
-});
-
-const totalVtx = computed(() =>
-  meshRecords.value.reduce((sum, r) => sum + (r.vtx ?? 0), 0),
-);
-
-const geometryHierarchy = computed(() => {
-  const parts = fixture.value.definition.parts;
-  const roots = parts.filter((p) => !p.parentPartId);
-  function branch(part: FixturePart, depth: number): Array<{ part: FixturePart; depth: number }> {
-    const kids = parts.filter((p) => p.parentPartId === part.partId);
-    return [
-      { part, depth },
-      ...kids.flatMap((k) => branch(k, depth + 1)),
-    ];
-  }
-  return roots.flatMap((r) => branch(r, 0));
-});
-
-const sourceFiles = computed(() => {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const m of fixture.value.definition.models) {
-    const f = m.sourceFile ?? m.sourceGdtfModel;
-    if (f && !seen.has(f)) {
-      seen.add(f);
-      out.push(f);
-    }
-  }
-  return out;
-});
-
-const selectedPart = computed(() =>
-  fixture.value.definition.parts.find((p) => p.partId === selectedPartId.value) ?? null,
-);
 
 const exportSlug = computed(() =>
   (fixture.value.name ?? 'fixture').replace(/[^\w.-]+/g, '_'),
@@ -242,7 +217,6 @@ function refreshRawJson(): void {
 }
 
 watch(() => fixture.value.id, () => {
-  selectedPartId.value = fixture.value.definition.parts[0]?.partId ?? null;
   refreshRawJson();
 }, { immediate: true });
 
@@ -333,7 +307,7 @@ function exportBundle(): void {
       <div class="fg-debug-exports">
         <button type="button" class="btn-outline" @click="exportSummary">Summary JSON</button>
         <button type="button" class="btn-outline" @click="exportMeshes">Full Meshes JSON</button>
-        <button type="button" class="btn-primary" @click="exportBundle">Full Debug Bundle</button>
+        <button type="button" class="btn-primary" @click="exportBundle">Full export bundle</button>
       </div>
     </header>
 
@@ -376,6 +350,14 @@ function exportBundle(): void {
             />
             <span class="mono">{{ motionAngles[c.axis.motionAxisId] ?? 0 }}°</span>
           </div>
+          <div v-if="hasZoomRange" class="slider-row">
+            <span>Zoom</span>
+            <input v-model.number="zoomT" type="range" min="0" max="1" step="0.01" class="range-orange" />
+            <span class="mono">{{ (zoomBeamAngle ?? 0).toFixed(1) }}°</span>
+          </div>
+          <p v-if="hasZoomRange" class="muted small zoom-note">
+            {{ zoomRange!.wide.toFixed(1) }}° wide → {{ zoomRange!.narrow.toFixed(1) }}° narrow
+          </p>
           <p v-if="!motionControls.length" class="muted small">No motion axes in this mode.</p>
           <p v-if="fixture.definition.beams.length" class="muted small ies-note">
             IES: {{ fixture.definition.beams[0].beamType ?? 'beam' }}
@@ -384,66 +366,11 @@ function exportBundle(): void {
             </span>
           </p>
         </section>
-
-        <section class="ctrl-block">
-          <h3>Assembly</h3>
-          <p class="ctrl-meta muted">{{ meshRecords.length }} mesh records<span v-if="totalVtx"> · {{ totalVtx }} vtx</span></p>
-        </section>
-
-        <section class="ctrl-block">
-          <h3>Mesh records</h3>
-          <ul class="ctrl-list selectable">
-            <li
-              v-for="rec in meshRecords"
-              :key="rec.part.partId"
-              class="ctrl-item clickable"
-              :class="{ selected: selectedPartId === rec.part.partId }"
-              @click="selectedPartId = rec.part.partId"
-            >
-              <span class="mono">#{{ rec.idx }}</span>
-              <span>{{ rec.part.name }}</span>
-              <span class="tag-pill">{{ rec.part.tag }}</span>
-              <span v-if="rec.vtx" class="muted">{{ rec.vtx }} vtx</span>
-            </li>
-          </ul>
-        </section>
-
-        <section class="ctrl-block">
-          <h3>GDTF models</h3>
-          <ul class="ctrl-list">
-            <li v-for="m in fixture.definition.models" :key="m.modelId" class="ctrl-item">
-              <span class="tag-pill">{{ m.partTag }}</span>
-              <span>{{ m.modelId }}</span>
-            </li>
-          </ul>
-        </section>
-
-        <details v-if="sourceFiles.length" class="ctrl-block collapsible">
-          <summary>Source files</summary>
-          <ul class="ctrl-list mono small">
-            <li v-for="f in sourceFiles" :key="f">{{ f }}</li>
-          </ul>
-        </details>
-
-        <details class="ctrl-block collapsible">
-          <summary>Geometry hierarchy</summary>
-          <ul class="hier-list">
-            <li
-              v-for="row in geometryHierarchy"
-              :key="row.part.partId"
-              :style="{ paddingLeft: `${8 + row.depth * 12}px` }"
-              class="hier-item"
-            >
-              {{ row.part.name }} <span class="muted">({{ row.part.tag }})</span>
-            </li>
-          </ul>
-        </details>
       </aside>
 
       <section class="fg-debug-viewer">
         <div class="fg-debug-viewer-head">
-          <h3>3D assembly</h3>
-          <span v-if="selectedPart" class="muted small">{{ selectedPart.name }} ({{ selectedPart.tag }})</span>
+          <h3>3D preview</h3>
         </div>
         <div class="fg-debug-viewer-canvas">
           <FixtureViewer
@@ -622,58 +549,6 @@ function exportBundle(): void {
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
-.ctrl-meta { margin: 0; font-size: 11px; }
-
-.ctrl-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.ctrl-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-}
-.ctrl-item.clickable {
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.ctrl-item.clickable:hover { background: var(--color-bg-hover); }
-.ctrl-item.selected {
-  background: var(--orbit-primary-fade);
-  outline: 1px solid var(--orbit-primary);
-}
-
-.tag-pill {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--color-bg-hover);
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.collapsible summary {
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-.hier-list {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  font-size: 11px;
-}
-.hier-item { padding: 2px 0; }
 
 .check-row {
   display: flex;
@@ -703,6 +578,7 @@ function exportBundle(): void {
   color: var(--color-text);
 }
 .ies-note { margin: 4px 0 0; }
+.zoom-note { margin: 0 0 4px; }
 
 .no-preview {
   position: absolute;

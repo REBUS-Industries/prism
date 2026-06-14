@@ -9,13 +9,13 @@ onMounted(() => {
   router.replace({
     name: 'fixture-editor',
     params: { id: props.id },
-    query: { tab: 'debug' },
+    query: { tab: 'control' },
   });
 });
 </script>
 
 <template>
-  <p class="muted redirect-msg">Opening fixture debug…</p>
+  <p class="muted redirect-msg">Opening fixture control…</p>
 </template>
 
 <style scoped>
