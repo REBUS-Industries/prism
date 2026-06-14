@@ -139,11 +139,13 @@ function partMeta(part: FixturePart): {
   isGeometryReference?: boolean;
   referencedGeometryId?: string;
   rebusSlot?: boolean;
+  isGeometryTemplate?: boolean;
 } {
   return (part.metadata ?? {}) as {
     isGeometryReference?: boolean;
     referencedGeometryId?: string;
     rebusSlot?: boolean;
+    isGeometryTemplate?: boolean;
   };
 }
 
@@ -338,6 +340,7 @@ export async function buildFixtureAssembly(
       parent.add(g);
       continue;
     }
+    if (partMeta(part).isGeometryTemplate) continue;
     if (hasSelectedRoot && !hangsAtOrigin(part.tag) && part.sourceGdtfGeometryId !== selectedRoot) continue;
     (hangsAtOrigin(part.tag) ? contentRoot : bodyRoot).add(g);
   }

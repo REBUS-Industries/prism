@@ -36,8 +36,16 @@ export interface MeshOrigin {
   rotZ: number;
 }
 
-function refMeta(part: FixturePart): { isGeometryReference?: boolean; referencedGeometryId?: string } {
-  return (part.metadata ?? {}) as { isGeometryReference?: boolean; referencedGeometryId?: string };
+function refMeta(part: FixturePart): {
+  isGeometryReference?: boolean;
+  referencedGeometryId?: string;
+  isGeometryTemplate?: boolean;
+} {
+  return (part.metadata ?? {}) as {
+    isGeometryReference?: boolean;
+    referencedGeometryId?: string;
+    isGeometryTemplate?: boolean;
+  };
 }
 
 function modelLabel(model: FixtureModel | undefined): string {
@@ -124,6 +132,7 @@ export function computeMeshOrigins(
       parent.add(g);
       continue;
     }
+    if (refMeta(part).isGeometryTemplate) continue;
     (hangsAtOrigin(part.tag) ? root : bodyRoot).add(g);
   }
 
