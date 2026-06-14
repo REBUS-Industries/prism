@@ -127,6 +127,7 @@ export function computeMeshOrigins(
 
   for (const part of parts) {
     const g = groups.get(part.partId)!;
+    if (refMeta(part).isGeometryTemplate) continue;
     const parent = part.parentPartId ? groups.get(part.parentPartId) : null;
     if (parent) {
       parent.add(g);

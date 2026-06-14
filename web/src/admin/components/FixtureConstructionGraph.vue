@@ -317,13 +317,22 @@ const graph = computed<Built>(() => {
   // ---- tree: GDTF → Fixture → {Information, REBUS tags…, DMX Mapping} -------
   // REBUS Beams hold all light information (no models). They live under the
   // BEAM tag, grouped by beam type (e.g. "Beam Pixel") when there are several.
+  const partMeta = (p: FixturePart) => (p.metadata ?? {}) as {
+    isGeometryReference?: boolean;
+    isGeometryTemplate?: boolean;
+  };
+
   const beamTagChildren = (): TNode[] => {
+    const cellParentIds = new Set(
+      fParts.filter((p) => p.tag === 'CELL' || partMeta(p).isGeometryReference).map((p) => p.partId),
+    );
+    const orphanBeams = fBeams.filter((b) => !b.parentPartId || !cellParentIds.has(b.parentPartId));
     const byType = new Map<string, FixtureBeam[]>();
-    for (const b of fBeams) {
+    for (const b of orphanBeams) {
       const t = b.beamType || 'Beam';
       (byType.get(t) ?? byType.set(t, []).get(t)!).push(b);
     }
-    if (byType.size <= 1) return fBeams.map((b) => beamChild(b));
+    if (byType.size <= 1) return orphanBeams.map((b) => beamChild(b));
     return [...byType.entries()].map(([t, list]) => ({
       id: `beamgrp:${t}`,
       children: list.map((b) => beamChild(b, partLabel(b.parentPartId))),

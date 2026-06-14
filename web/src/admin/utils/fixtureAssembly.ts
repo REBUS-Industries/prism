@@ -335,6 +335,7 @@ export async function buildFixtureAssembly(
     && parts.some((p) => !p.parentPartId && p.sourceGdtfGeometryId === selectedRoot);
   for (const part of parts) {
     const g = partGroups.get(part.partId)!;
+    if (partMeta(part).isGeometryTemplate) continue;
     const parent = part.parentPartId ? partGroups.get(part.parentPartId) : null;
     if (parent) {
       parent.add(g);
