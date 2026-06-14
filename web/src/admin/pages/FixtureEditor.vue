@@ -93,22 +93,22 @@ const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 
 const gizmoSpace = ref<'world' | 'local'>('local');
 
-type EditorTab = 'overview' | 'dmx' | 'parts' | 'construction' | 'debug' | 'ies' | 'settings';
+type EditorTab = 'overview' | 'dmx' | 'parts' | 'construction' | 'control' | 'ies' | 'settings';
 
 const activeTab = ref<EditorTab>('overview');
 
 function selectTab(tab: EditorTab): void {
   activeTab.value = tab;
-  if (tab === 'debug') {
-    router.replace({ query: { ...route.query, tab: 'debug' } });
-  } else if (route.query.tab === 'debug') {
+  if (tab === 'control') {
+    router.replace({ query: { ...route.query, tab: 'control' } });
+  } else if (route.query.tab === 'control' || route.query.tab === 'debug') {
     const { tab: _tab, ...rest } = route.query;
     router.replace({ query: rest });
   }
 }
 
 watch(() => route.query.tab, (tab) => {
-  if (tab === 'debug') activeTab.value = 'debug';
+  if (tab === 'control' || tab === 'debug') activeTab.value = 'control';
 }, { immediate: true });
 
 
@@ -763,7 +763,7 @@ onMounted(() => {
 
             ['construction', 'Construction'],
 
-            ['debug', 'Debug 3D'],
+            ['control', 'Control'],
 
             ['ies', 'IES'],
 
@@ -969,7 +969,7 @@ onMounted(() => {
 
 
 
-      <div v-else-if="activeTab === 'debug'" class="tab-panel debug-tab-panel">
+      <div v-else-if="activeTab === 'control'" class="tab-panel control-tab-panel">
 
         <FixtureGdtfDebugPanel v-if="fixture" :fixture="fixture" />
 
@@ -1362,8 +1362,8 @@ onMounted(() => {
    collapses to 0 and the graph renders blank. */
 .construction-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
 .construction-panel > * { height: 100%; }
-.debug-tab-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
-.debug-tab-panel > * { height: 100%; min-height: 0; }
+.control-tab-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
+.control-tab-panel > * { height: 100%; min-height: 0; }
 
 .model-swap { margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 12px; }
 .model-swap-title { margin: 0 0 4px; font-size: 13px; font-weight: 700; }

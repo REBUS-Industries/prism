@@ -335,9 +335,9 @@ watch(
       ><Icon name="edit" :size="16" /></button>
       <RouterLink
         v-if="localFixture"
-        :to="{ name: 'fixture-editor', params: { id: localFixture.id }, query: { tab: 'debug' } }"
+        :to="{ name: 'fixture-editor', params: { id: localFixture.id }, query: { tab: 'control' } }"
         class="icon-action debug-link"
-        title="Debug GDTF 3D"
+        title="Fixture control"
       ><Icon name="view_in_ar" :size="16" /></RouterLink>
       <span
         v-else
@@ -560,9 +560,9 @@ watch(
         </div>
         <RouterLink
           v-if="localFixture"
-          :to="{ name: 'fixture-editor', params: { id: localFixture.id }, query: { tab: 'debug' } }"
+          :to="{ name: 'fixture-editor', params: { id: localFixture.id }, query: { tab: 'control' } }"
           class="debug-link-btn"
-        >Developer: open mesh debug</RouterLink>
+        >Open fixture control</RouterLink>
       </div>
 
       <div v-else-if="activeTab === 'images'" class="images-tab">
