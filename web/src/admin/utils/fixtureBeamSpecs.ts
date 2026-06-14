@@ -1,4 +1,5 @@
 import type { FixtureBeam, FixtureDefinition, FixtureModel, FixturePart } from '../../shared/api';
+import { collectReferencedGeometryIds, isLibraryGeometryPart } from './fixtureGeometryRefs';
 
 export interface BeamSpec {
   parentPartId: string;
@@ -66,17 +67,26 @@ function lensDiameterForPart(
   return Math.max(dims.length, dims.width) || 0.08;
 }
 
-function isTemplatePart(partId: string | null | undefined, parts: FixturePart[]): boolean {
+function isTemplatePart(
+  partId: string | null | undefined,
+  parts: FixturePart[],
+  referencedGeomIds: Set<string>,
+): boolean {
   if (!partId) return false;
   const part = parts.find((p) => p.partId === partId);
-  return partMeta(part!).isGeometryTemplate === true;
+  if (!part) return false;
+  return isLibraryGeometryPart(part, referencedGeomIds);
 }
 
 /** Beam is a REBUS emission record (AuraFilament, Wash metadata) — not a cell lens origin. */
-function isEmissionMetadataBeam(beam: FixtureBeam, parts: FixturePart[]): boolean {
+function isEmissionMetadataBeam(
+  beam: FixtureBeam,
+  parts: FixturePart[],
+  referencedGeomIds: Set<string>,
+): boolean {
   const parent = parts.find((p) => p.partId === beam.parentPartId);
   if (!parent) return true;
-  if (partMeta(parent).isGeometryTemplate) return true;
+  if (isLibraryGeometryPart(parent, referencedGeomIds)) return true;
   return parent.tag === 'BEAM';
 }
 
@@ -94,6 +104,7 @@ export function buildFixtureBeamSpecs(
   const parts = def.parts ?? [];
   const models = def.models ?? [];
   const beams = def.beams ?? [];
+  const referencedGeomIds = collectReferencedGeometryIds(parts);
   const vis = options?.visiblePartIds ?? null;
   const inMode = (id: string | null | undefined): boolean => !vis || (id ? vis.has(id) : true);
   const zoomed = options?.zoomBeamAngle ?? null;
@@ -104,8 +115,8 @@ export function buildFixtureBeamSpecs(
 
   const cellBeams = beams.filter((b) => {
     if (!b.parentPartId || !inMode(b.parentPartId)) return false;
-    if (isTemplatePart(b.parentPartId, parts)) return false;
-    if (isEmissionMetadataBeam(b, parts)) return false;
+    if (isTemplatePart(b.parentPartId, parts, referencedGeomIds)) return false;
+    if (isEmissionMetadataBeam(b, parts, referencedGeomIds)) return false;
     const parent = parts.find((p) => p.partId === b.parentPartId);
     return parent?.tag === 'CELL' || partMeta(parent!).isGeometryReference === true;
   });
@@ -123,7 +134,7 @@ export function buildFixtureBeamSpecs(
   // Parser v6 and older may leave beams on the hidden template only — still draw
   // one cone per CELL / GeometryReference instance at its array transform.
   const cellRefs = parts.filter((p) => {
-    if (!inMode(p.partId) || partMeta(p).isGeometryTemplate) return false;
+    if (!inMode(p.partId) || isLibraryGeometryPart(p, referencedGeomIds)) return false;
     if (p.tag !== 'CELL' && !partMeta(p).isGeometryReference) return false;
     return !beams.some((b) => b.parentPartId === p.partId);
   });
@@ -137,7 +148,7 @@ export function buildFixtureBeamSpecs(
 
   const emitters = parts.filter(
     (p) => (p.tag === 'LENS' || p.tag === 'CELL') && p.modelId && inMode(p.partId)
-      && !partMeta(p).isGeometryTemplate,
+      && !isLibraryGeometryPart(p, referencedGeomIds),
   );
   if (emitters.length) {
     return emitters.map((p) => ({
@@ -149,8 +160,8 @@ export function buildFixtureBeamSpecs(
 
   return beams
     .filter((b) => b.parentPartId && inMode(b.parentPartId)
-      && !isTemplatePart(b.parentPartId, parts)
-      && !isEmissionMetadataBeam(b, parts))
+      && !isTemplatePart(b.parentPartId, parts, referencedGeomIds)
+      && !isEmissionMetadataBeam(b, parts, referencedGeomIds))
     .map((b) => ({
       parentPartId: b.parentPartId!,
       lensDiameter: lensDiameterForPart(b.parentPartId, parts, models),

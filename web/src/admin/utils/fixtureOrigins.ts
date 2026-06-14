@@ -13,6 +13,10 @@ import * as THREE from 'three';
 import type { FixturePart, FixtureModel } from '../../shared/api';
 import { applyPartTransform } from './fixtureAssembly';
 import {
+  collectReferencedGeometryIds,
+  isLibraryGeometryPart,
+} from './fixtureGeometryRefs';
+import {
   REBUS_CLAMP_PART_ID,
   type ClampPlacement,
   readClampPlacement,
@@ -106,6 +110,7 @@ export function computeMeshOrigins(
 ): MeshOrigin[] {
   const partById = new Map(parts.map((p) => [p.partId, p]));
   const modelById = new Map(models.map((m) => [m.modelId, m]));
+  const referencedGeomIds = collectReferencedGeometryIds(parts);
   const byGeometryId = new Map<string, FixturePart>();
 
   const groups = new Map<string, THREE.Group>();
@@ -127,13 +132,13 @@ export function computeMeshOrigins(
 
   for (const part of parts) {
     const g = groups.get(part.partId)!;
-    if (refMeta(part).isGeometryTemplate) continue;
+    if (isLibraryGeometryPart(part, referencedGeomIds)) continue;
     const parent = part.parentPartId ? groups.get(part.parentPartId) : null;
     if (parent) {
       parent.add(g);
       continue;
     }
-    if (refMeta(part).isGeometryTemplate) continue;
+    if (isLibraryGeometryPart(part, referencedGeomIds)) continue;
     (hangsAtOrigin(part.tag) ? root : bodyRoot).add(g);
   }
 
@@ -147,6 +152,11 @@ export function computeMeshOrigins(
     const host = groups.get(part.partId);
     if (!targetGroup || !host) continue;
     const clone = targetGroup.clone(true);
+    if (target && isLibraryGeometryPart(target, referencedGeomIds)) {
+      clone.position.set(0, 0, 0);
+      clone.quaternion.identity();
+      clone.scale.set(1, 1, 1);
+    }
     clone.traverse((o) => { o.userData.instanceOf = part.name; });
     host.add(clone);
   }
