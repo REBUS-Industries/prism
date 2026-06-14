@@ -1,20 +1,23 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { FixtureBeam } from '../../shared/api';
+import type { FixtureBeam, FixturePart } from '../../shared/api';
 import { fixturesApi, type ApiError } from '../../shared/api';
 import {
+  beamDisplayDetail,
+  beamDisplayLabel,
   IES_ZOOM_DMX_SLOTS,
   iesAssetForZoom,
   iesZoomSlotLabel,
 } from '../utils/fixtureIes';
 
-const props = defineProps<{ fixtureId: string; beams: FixtureBeam[] }>();
+const props = defineProps<{ fixtureId: string; beams: FixtureBeam[]; parts?: FixturePart[] }>();
 const emit = defineEmits<{ uploaded: [] }>();
 
 const uploadingKey = ref<string | null>(null);
 const error = ref<string | null>(null);
 
 const zoomSlots = IES_ZOOM_DMX_SLOTS;
+const parts = computed(() => props.parts ?? []);
 
 const hasBeams = computed(() => props.beams.length > 0);
 
@@ -46,7 +49,10 @@ async function onFile(beamId: string, zoomDmx: number, ev: Event): Promise<void>
     <p v-if="!hasBeams" class="muted small">No beams in this fixture.</p>
 
     <div v-for="beam in beams" :key="beam.beamId" class="beam-block">
-      <h3 class="beam-title">{{ beam.beamId }}</h3>
+      <h3 class="beam-title">{{ beamDisplayLabel(beam, parts) }}</h3>
+      <p v-if="beamDisplayDetail(beam, parts)" class="muted small beam-detail">
+        {{ beamDisplayDetail(beam, parts) }}
+      </p>
       <p v-if="beam.zoomMinAngle != null && beam.zoomMaxAngle != null" class="muted small beam-zoom-range">
         Zoom range {{ beam.zoomMaxAngle.toFixed(1) }}° wide → {{ beam.zoomMinAngle.toFixed(1) }}° narrow
       </p>
@@ -92,6 +98,8 @@ async function onFile(beamId: string, zoomDmx: number, ev: Event): Promise<void>
   font-size: 13px;
   font-weight: 600;
 }
+
+.beam-detail { margin: 0 0 4px; }
 
 .beam-zoom-range { margin: 0 0 10px; }
 
