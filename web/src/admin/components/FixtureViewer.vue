@@ -342,9 +342,16 @@ function syncBeam(): void {
   const fallback = beamParent();
   const specs = props.beams ?? [];
   for (const spec of specs) {
-    // Attach each cone to its own beam part so pixels array across the fixture;
-    // fall back to the single head/beam parent when no part is known.
-    const attach = (spec.parentPartId ? partGroups.get(spec.parentPartId) : null) ?? fallback;
+    const attachPart = spec.parentPartId ? partGroups.get(spec.parentPartId) : null;
+    let attach: THREE.Object3D | null | undefined = attachPart;
+    if (attachPart) {
+      let firstMesh: THREE.Object3D | null = null;
+      attachPart.traverse((o) => {
+        if (!firstMesh && (o as THREE.Mesh).isMesh) firstMesh = o;
+      });
+      if (firstMesh) attach = firstMesh;
+    }
+    attach = attach ?? fallback;
     if (!attach) continue;
 
     const group = new THREE.Group();

@@ -8,6 +8,7 @@ import {
   type MotionAxis,
 } from '../../shared/api';
 import { fixtureZOffsetM, readClampPlacement } from '../utils/fixturePlacement';
+import { buildFixtureBeamSpecs } from '../utils/fixtureBeamSpecs';
 
 const props = defineProps<{ fixture: FixtureDetail }>();
 const fixture = toRef(props, 'fixture');
@@ -158,46 +159,12 @@ const zoomBeamAngle = computed(() => {
   return r.wide + (r.narrow - r.wide) * zoomT.value;
 });
 
-const beamSpecs = computed(() => {
-  const def = fixture.value.definition;
-  const vis = visiblePartIds.value;
-  const inMode = (id: string | null | undefined): boolean => !vis || (id ? vis.has(id) : true);
-
-  const primary = def.beams?.[0];
-  const fallbackAngle = primary?.beamAngle ?? primary?.fieldAngle ?? 20;
-  const zoomed = zoomBeamAngle.value;
-
-  const diameter = (partId: string | null | undefined): number => {
-    const part = def.parts.find((p) => p.partId === partId);
-    const model = part?.modelId ? def.models.find((m) => m.modelId === part.modelId) : undefined;
-    const meta = (model?.metadata ?? {}) as Record<string, unknown>;
-    const len = typeof meta.length === 'number' ? meta.length : 0;
-    const wid = typeof meta.width === 'number' ? meta.width : 0;
-    return Math.max(len, wid) || 0.08;
-  };
-
-  const angleFor = (base: number | undefined): number =>
-    zoomed ?? base ?? fallbackAngle;
-
-  const emitters = def.parts.filter(
-    (p) => (p.tag === 'LENS' || p.tag === 'CELL') && p.modelId && inMode(p.partId),
-  );
-  if (emitters.length) {
-    return emitters.map((p) => ({
-      parentPartId: p.partId,
-      lensDiameter: diameter(p.partId),
-      beamAngle: angleFor(fallbackAngle),
-    }));
-  }
-
-  return (def.beams ?? [])
-    .filter((b) => inMode(b.parentPartId))
-    .map((b) => ({
-      parentPartId: b.parentPartId ?? null,
-      lensDiameter: diameter(b.parentPartId),
-      beamAngle: angleFor(b.beamAngle ?? b.fieldAngle),
-    }));
-});
+const beamSpecs = computed(() =>
+  buildFixtureBeamSpecs(fixture.value.definition, {
+    visiblePartIds: visiblePartIds.value,
+    zoomBeamAngle: zoomBeamAngle.value,
+  }),
+);
 
 watch(modes, (m) => {
   if (!m.some((x) => x.modeId === selectedModeId.value)) selectedModeId.value = m[0]?.modeId ?? null;
