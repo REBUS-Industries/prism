@@ -147,9 +147,6 @@ export function computeMeshOrigins(
     const host = groups.get(part.partId);
     if (!targetGroup || !host) continue;
     const clone = targetGroup.clone(true);
-    clone.position.set(0, 0, 0);
-    clone.quaternion.identity();
-    clone.scale.set(1, 1, 1);
     clone.traverse((o) => { o.userData.instanceOf = part.name; });
     host.add(clone);
   }

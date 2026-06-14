@@ -140,15 +140,25 @@ const motionControls = computed(() => {
     }));
 });
 
-/** Zoom range from fixture beams (wide = max angle, narrow = min angle). */
+/** Zoom range from any beam that carries DMX zoom angles (prefer non-CELL emission). */
 const zoomRange = computed(() => {
   const def = fixture.value.definition;
+  const parts = def.parts ?? [];
+  const isCell = (partId: string | null | undefined): boolean => {
+    if (!partId) return false;
+    const p = parts.find((x) => x.partId === partId);
+    return p?.tag === 'CELL' || (p?.metadata as { isGeometryReference?: boolean })?.isGeometryReference === true;
+  };
+  let cell: { wide: number; narrow: number } | null = null;
   for (const b of def.beams ?? []) {
     const min = b.zoomMinAngle;
     const max = b.zoomMaxAngle;
-    if (min != null && max != null && max > min) return { wide: max, narrow: min };
+    if (min == null || max == null || max <= min) continue;
+    const range = { wide: max, narrow: min };
+    if (!isCell(b.parentPartId)) return range;
+    cell ??= range;
   }
-  return null;
+  return cell;
 });
 
 const hasZoomRange = computed(() => zoomRange.value != null);
