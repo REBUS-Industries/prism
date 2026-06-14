@@ -14,6 +14,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 import { buildFixtureAssembly, disposeAssembly, type MotionNode } from '../utils/fixtureAssembly';
+import type { ClampPlacement } from '../utils/fixturePlacement';
 import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
 import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type MotionAxis, type Vec3 } from '../../shared/api';
 
@@ -39,6 +40,8 @@ interface AssemblyProp {
   selectedModeGeometryId?: string | null;
   /** Metres to lower fixture body while CLAMP/ORIGIN stay at the hang point. */
   fixtureZOffsetM?: number;
+  /** REBUS clamp Y mirror + Z rotation through fixture origin. */
+  clampPlacement?: ClampPlacement;
 }
 
 const props = withDefaults(defineProps<{
@@ -450,6 +453,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     motionAxes: a.motionAxes ?? [],
     selectedModeGeometryId: a.selectedModeGeometryId ?? null,
     fixtureZOffsetM: a.fixtureZOffsetM ?? 0,
+    clampPlacement: a.clampPlacement,
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
@@ -625,7 +629,9 @@ const assemblyKey = (): string => {
   const a = props.assembly;
   if (!a) return '';
   const mats = a.parts?.map((p) => `${p.partId}=${p.materialId ?? ''}`).join('|') ?? '';
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${mats}`;
+  const clamp = a.clampPlacement;
+  const clampKey = clamp ? `${clamp.mirrorY ? 1 : 0}:${clamp.rotateZDeg}` : '0:0';
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${mats}`;
 };
 
 watch(() => [props.url, assemblyKey(), props.assemblyRevision], () => { void loadContent(); });

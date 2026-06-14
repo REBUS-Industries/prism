@@ -44,7 +44,7 @@ import {
   downloadTextFile,
 } from '../utils/fixtureOrigins';
 
-import { fixtureZOffsetM, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
+import { fixtureZOffsetM, readClampPlacement, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
 
 import { fixtureInformationParams } from '../utils/fixtureInformation';
 
@@ -195,6 +195,10 @@ const assembly = computed(() => {
     motionAxes: def.motionRig ?? [],
     selectedModeGeometryId: selectedModeGeometryId.value,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
+    clampPlacement: {
+      mirrorY: clampMirrorY.value,
+      rotateZDeg: clampRotateZDeg.value,
+    },
   };
 });
 
@@ -313,13 +317,19 @@ const meshOriginCount = computed(
     fixture.value?.definition.parts ?? [],
     fixture.value?.definition.models ?? [],
     fixtureZOffsetMm.value / 1000,
+    fixture.value?.definition.metadata,
   ).length,
 );
 
 function downloadMeshOrigins(): void {
   const def = fixture.value?.definition;
   if (!def) return;
-  const origins = computeMeshOrigins(def.parts ?? [], def.models ?? [], fixtureZOffsetMm.value / 1000);
+  const origins = computeMeshOrigins(
+    def.parts ?? [],
+    def.models ?? [],
+    fixtureZOffsetMm.value / 1000,
+    def.metadata,
+  );
   if (!origins.length) return;
   const csv = meshOriginsToCsv(origins);
   const info = def.fixtureInformation;
@@ -332,6 +342,8 @@ const replacingModelId = ref<string | null>(null);
 
 /** Millimetres to lower the fixture body (clamp stays at the hang point). */
 const fixtureZOffsetMm = ref(0);
+const clampMirrorY = ref(false);
+const clampRotateZDeg = ref(0);
 
 const clampHasMesh = computed(() => {
   const meta = fixture.value?.definition.models
@@ -344,7 +356,11 @@ const swapModels = computed(() =>
 );
 
 function syncPlacementFromFixture(): void {
-  fixtureZOffsetMm.value = Math.round(fixtureZOffsetM(fixture.value?.definition.metadata) * 1000);
+  const meta = fixture.value?.definition.metadata;
+  fixtureZOffsetMm.value = Math.round(fixtureZOffsetM(meta) * 1000);
+  const clamp = readClampPlacement(meta);
+  clampMirrorY.value = clamp.mirrorY;
+  clampRotateZDeg.value = clamp.rotateZDeg;
 }
 
 function applyPlacementToDefinition(): void {
@@ -352,10 +368,17 @@ function applyPlacementToDefinition(): void {
   fixture.value.definition.metadata = {
     ...fixture.value.definition.metadata,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
+    clampMirrorY: clampMirrorY.value,
+    clampRotateZDeg: clampRotateZDeg.value,
   };
 }
 
 function onFixtureZOffsetChange(): void {
+  applyPlacementToDefinition();
+  assemblyRevision.value += 1;
+}
+
+function onClampPlacementChange(): void {
   applyPlacementToDefinition();
   assemblyRevision.value += 1;
 }
@@ -1027,6 +1050,39 @@ onMounted(() => {
             <span v-if="clampHasMesh" class="pill online">Attached</span>
             <span v-else class="pill muted-pill">No model</span>
           </div>
+          <template v-if="clampHasMesh">
+            <label class="check-row clamp-option">
+              <input v-model="clampMirrorY" type="checkbox" @change="onClampPlacementChange" />
+              Mirror on Y axis (dual clamp)
+            </label>
+            <label class="clamp-rotate-label">
+              Rotate around centre Z
+              <div class="clamp-rotate-row">
+                <input
+                  v-model.number="clampRotateZDeg"
+                  type="range"
+                  min="-180"
+                  max="180"
+                  step="1"
+                  class="range-orange"
+                  @input="onClampPlacementChange"
+                />
+                <input
+                  v-model.number="clampRotateZDeg"
+                  type="number"
+                  min="-180"
+                  max="180"
+                  step="1"
+                  class="clamp-rotate-input"
+                  @input="onClampPlacementChange"
+                />
+                <span class="muted small">°</span>
+              </div>
+            </label>
+            <p class="muted small">
+              Y mirror duplicates the clamp mesh across the fixture centre line; Z rotation spins both clamps around the hang point.
+            </p>
+          </template>
         </section>
 
         <section class="panel-card settings-card">
@@ -1326,6 +1382,35 @@ onMounted(() => {
 .model-swap-btn.busy { opacity: 0.6; cursor: progress; }
 .model-swap-btn input { display: none; }
 .clamp-upload-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.clamp-option { margin-top: 12px; }
+.clamp-rotate-label {
+  display: block;
+  margin-top: 12px;
+  font-size: 13px;
+}
+.clamp-rotate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.clamp-rotate-row .range-orange { flex: 1; min-width: 120px; }
+.clamp-rotate-input {
+  width: 72px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+}
+.range-orange { accent-color: var(--orbit-primary); }
 .offset-label { display: block; margin-top: 10px; font-size: 13px; }
 .offset-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .offset-input {

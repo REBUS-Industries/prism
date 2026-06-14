@@ -12,6 +12,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FixturePart, FixtureModel } from '../../shared/api';
+import {
+  REBUS_CLAMP_PART_ID,
+  type ClampPlacement,
+} from './fixturePlacement';
 
 /** Minimal motion axis descriptor passed from FixtureDefinition.motionRig. */
 interface MotionAxisRef {
@@ -50,6 +54,8 @@ export interface FixtureAssemblyInput {
    * at the hanging point. Positive values shift base/yoke/head/motion downward.
    */
   fixtureZOffsetM?: number;
+  /** REBUS clamp mirror + Z rotation (GDTF space, through fixture origin). */
+  clampPlacement?: ClampPlacement;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -129,8 +135,47 @@ function modelDims(model: FixtureModel | undefined): ModelDims {
   };
 }
 
-function partMeta(part: FixturePart): { isGeometryReference?: boolean; referencedGeometryId?: string } {
-  return (part.metadata ?? {}) as { isGeometryReference?: boolean; referencedGeometryId?: string };
+function partMeta(part: FixturePart): {
+  isGeometryReference?: boolean;
+  referencedGeometryId?: string;
+  rebusSlot?: boolean;
+} {
+  return (part.metadata ?? {}) as {
+    isGeometryReference?: boolean;
+    referencedGeometryId?: string;
+    rebusSlot?: boolean;
+  };
+}
+
+function isRebusClampPart(part: FixturePart): boolean {
+  return part.partId === REBUS_CLAMP_PART_ID
+    || (part.tag === 'CLAMP' && partMeta(part).rebusSlot === true);
+}
+
+/** Place one or two (Y-mirrored) clamp meshes, rotated around GDTF Z at the origin. */
+function attachClampMeshes(
+  partGroup: THREE.Group,
+  mesh: THREE.Object3D,
+  placement: ClampPlacement,
+): number {
+  const rig = new THREE.Group();
+  rig.name = 'ClampRig';
+  rig.rotation.z = THREE.MathUtils.degToRad(placement.rotateZDeg);
+  partGroup.add(rig);
+
+  const primary = mesh.clone(true);
+  primary.name = 'Clamp';
+  rig.add(primary);
+  let count = 1;
+
+  if (placement.mirrorY) {
+    const mirrored = mesh.clone(true);
+    mirrored.name = 'ClampMirror';
+    mirrored.scale.y *= -1;
+    rig.add(mirrored);
+    count += 1;
+  }
+  return count;
 }
 
 /** Apply the GDTF geometry Position matrix directly (Z-up, metres). */
@@ -322,8 +367,13 @@ export async function buildFixtureAssembly(
       if (obj) {
         const wrapped = wrapModelMesh(obj.clone(true), dims);
         paintMaterial(wrapped, part);
-        partGroup.add(wrapped);
-        meshCount += 1;
+        if (isRebusClampPart(part)) {
+          const placement = input.clampPlacement ?? { mirrorY: false, rotateZDeg: 0 };
+          meshCount += attachClampMeshes(partGroup, wrapped, placement);
+        } else {
+          partGroup.add(wrapped);
+          meshCount += 1;
+        }
         return;
       }
     }

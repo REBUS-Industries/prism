@@ -5,3 +5,19 @@ export function fixtureZOffsetM(metadata: Record<string, unknown> | undefined): 
 }
 
 export const REBUS_CLAMP_MODEL_ID = 'rebus-clamp';
+export const REBUS_CLAMP_PART_ID = 'rebus-clamp-part';
+
+export interface ClampPlacement {
+  /** Duplicate the clamp mesh mirrored across GDTF Y (depth) for dual omega brackets. */
+  mirrorY: boolean;
+  /** Rotate clamp(s) around GDTF Z through the fixture origin (degrees). */
+  rotateZDeg: number;
+}
+
+export function readClampPlacement(metadata: Record<string, unknown> | undefined): ClampPlacement {
+  const rot = metadata?.clampRotateZDeg;
+  return {
+    mirrorY: metadata?.clampMirrorY === true,
+    rotateZDeg: typeof rot === 'number' && Number.isFinite(rot) ? rot : 0,
+  };
+}
