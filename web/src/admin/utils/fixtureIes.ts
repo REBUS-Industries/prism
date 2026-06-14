@@ -1,9 +1,31 @@
-import type { FixtureBeam } from '../../shared/api';
+import type { FixtureBeam, FixturePart } from '../../shared/api';
 
 /** Standard DMX zoom positions manufacturers ship IES sets for. */
 export const IES_ZOOM_DMX_SLOTS = [0, 128, 255] as const;
 
 export type IesZoomDmx = (typeof IES_ZOOM_DMX_SLOTS)[number];
+
+/** Human-readable beam title — never the internal UUID beamId. */
+export function beamDisplayLabel(beam: FixtureBeam, parts: FixturePart[] = []): string {
+  const part = beam.parentPartId ? parts.find((p) => p.partId === beam.parentPartId) : undefined;
+  const type = beam.beamType?.trim();
+  const partName = part?.name?.trim();
+  if (type && partName && type.toLowerCase() !== partName.toLowerCase()) {
+    return `${partName} — ${type}`;
+  }
+  if (type) return type;
+  if (partName) return partName;
+  return 'Light beam';
+}
+
+/** Optional detail line under the beam title (emitter part tag, flux). */
+export function beamDisplayDetail(beam: FixtureBeam, parts: FixturePart[] = []): string | null {
+  const part = beam.parentPartId ? parts.find((p) => p.partId === beam.parentPartId) : undefined;
+  const bits: string[] = [];
+  if (part?.tag) bits.push(part.tag);
+  if (beam.luminousFlux) bits.push(`${beam.luminousFlux} lm`);
+  return bits.length ? bits.join(' · ') : null;
+}
 
 export interface FixtureIesProfile {
   zoomDmx: number;
