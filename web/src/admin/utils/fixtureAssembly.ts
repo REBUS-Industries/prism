@@ -149,6 +149,56 @@ function partMeta(part: FixturePart): {
   };
 }
 
+/**
+ * For CELL GeometryReference hosts, find the cloned GDTF Beam child group inside
+ * the instanced subtree. Beams emit along that node's local −Z, not the reference
+ * root (which may be offset from the lens / filament).
+ */
+export function findGeometryReferenceEmissionNode(
+  refPartId: string,
+  parts: FixturePart[],
+  refHost: THREE.Object3D,
+): THREE.Object3D {
+  const refPart = parts.find((p) => p.partId === refPartId);
+  if (!refPart) return refHost;
+  const meta = partMeta(refPart);
+  if (!meta.isGeometryReference || !meta.referencedGeometryId) return refHost;
+
+  const templateRoot = parts.find((p) => p.sourceGdtfGeometryId === meta.referencedGeometryId);
+  if (!templateRoot) return refHost;
+
+  let emitPart: FixturePart | undefined;
+  let lensPart: FixturePart | undefined;
+  const walk = (partId: string): void => {
+    if (emitPart) return;
+    const parent = parts.find((p) => p.partId === partId);
+    if (!parent) return;
+    for (const childId of parent.childPartIds) {
+      const child = parts.find((p) => p.partId === childId);
+      if (!child) continue;
+      const nodeType = (child.metadata as { geometryNodeType?: string }).geometryNodeType;
+      if (nodeType === 'Beam') {
+        emitPart = child;
+        return;
+      }
+      if (!lensPart && child.modelId && (child.tag === 'LENS' || child.tag === 'CELL')) {
+        lensPart = child;
+      }
+      walk(childId);
+    }
+  };
+  walk(templateRoot.partId);
+  if (!emitPart) emitPart = lensPart;
+  if (!emitPart) return refHost;
+
+  let found: THREE.Object3D | undefined;
+  refHost.traverse((o) => {
+    if (found || o === refHost) return;
+    if (o.name === emitPart!.name) found = o;
+  });
+  return found ?? refHost;
+}
+
 function isRebusClampPart(part: FixturePart): boolean {
   return part.partId === REBUS_CLAMP_PART_ID
     || (part.tag === 'CLAMP' && partMeta(part).rebusSlot === true);
@@ -400,9 +450,8 @@ export async function buildFixtureAssembly(
     const targetGroup = target ? partGroups.get(target.partId) : null;
     if (!targetGroup) continue;
     const clone = targetGroup.clone(true);
-    clone.position.set(0, 0, 0);
-    clone.quaternion.identity();
-    clone.scale.set(1, 1, 1);
+    // Keep the template root transform — it positions filaments / lens meshes
+    // relative to each GeometryReference host (resetting caused wrong orientations).
     // Strip copied partId tags so picking inside a referenced instance resolves
     // to the reference part group (walk-up), not the cloned source part.
     clone.traverse((o) => { delete o.userData.partId; });

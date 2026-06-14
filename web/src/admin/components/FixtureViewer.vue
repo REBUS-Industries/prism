@@ -13,7 +13,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
-import { buildFixtureAssembly, disposeAssembly, type MotionNode } from '../utils/fixtureAssembly';
+import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, type MotionNode } from '../utils/fixtureAssembly';
 import type { ClampPlacement } from '../utils/fixturePlacement';
 import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
 import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type MotionAxis, type Vec3 } from '../../shared/api';
@@ -126,6 +126,8 @@ let panNode: MotionNode | null = null;
 let tiltNode: MotionNode | null = null;
 /** All motion axes from the current assembly (for per-axis motion control). */
 let assemblyMotionAxes: MotionAxis[] = [];
+/** Parts from the last loaded assembly — used for beam emission attach. */
+let assemblyParts: FixturePart[] = [];
 /** Rest quaternion per controlled part group, captured at load for per-axis motion. */
 const motionRest = new Map<string, THREE.Quaternion>();
 /** BEAM part group from assembly — preferred parent for beam wireframe. */
@@ -168,6 +170,7 @@ function disposeBuiltMaterials(): void {
 function clearLoaded(): void {
   // Detach the gizmo before disposing the groups it may be attached to.
   transformControls?.detach();
+  assemblyParts = [];
   partGroups = new Map();
   disposeBuiltMaterials();
   // Detach beams before disposing assembly nodes they may be parented to.
@@ -329,7 +332,7 @@ function makeBeamFrustum(topR: number, bottomR: number, opacity: number): THREE.
   const geo = new THREE.CylinderGeometry(topR, bottomR, BEAM_CONE_HEIGHT, 24, 1, true);
   geo.translate(0, -BEAM_CONE_HEIGHT / 2, 0);
   const mat = new THREE.MeshBasicMaterial({
-    color: 0xff6600, transparent: true, opacity, wireframe: true, side: THREE.DoubleSide,
+    color: 0xff6600, transparent: true, opacity, wireframe: true, side: THREE.FrontSide,
   });
   return new THREE.Mesh(geo, mat);
 }
@@ -342,26 +345,24 @@ function syncBeam(): void {
   const fallback = beamParent();
   const specs = props.beams ?? [];
   for (const spec of specs) {
-    // Parent on the CELL / GeometryReference part group (GDTF Z-up, −Z emission).
-    // Do not attach to the first mesh inside a cloned template — that mesh sits
-    // under a +90° X glTF wrapper and double-rotates the cone inward.
-    const attach = (spec.parentPartId ? partGroups.get(spec.parentPartId) : null) ?? fallback;
+    const hostPartId = spec.parentPartId ?? null;
+    let attach: THREE.Object3D | null = hostPartId ? partGroups.get(hostPartId) ?? null : null;
+    if (attach && hostPartId) {
+      attach = findGeometryReferenceEmissionNode(hostPartId, assemblyParts, attach);
+    }
+    attach = attach ?? fallback;
     if (!attach) continue;
 
     const group = new THREE.Group();
     const lensR = Math.max((spec.lensDiameter ?? 0) / 2, 0.01);
     const bottomFor = (deg: number): number =>
       lensR + BEAM_CONE_HEIGHT * Math.tan((Math.max(deg, 1) / 2) * Math.PI / 180);
-    const angles = (spec.zoomMin != null && spec.zoomMax != null)
-      ? [spec.zoomMin, spec.zoomMax]
-      : [spec.beamAngle ?? 20];
-    for (let i = 0; i < angles.length; i++) {
-      group.add(makeBeamFrustum(lensR, bottomFor(angles[i]!), angles.length > 1 && i === 0 ? 0.5 : 0.32));
-    }
+    const angle = spec.beamAngle ?? 20;
+    group.add(makeBeamFrustum(lensR, bottomFor(angle), 0.32));
 
     group.position.set(0, 0, 0);
-    if (spec.parentPartId || tiltNode || beamPartGroup) {
-      // GDTF Z-up: beam opens along −Z; top (lens) at the part origin.
+    if (hostPartId || tiltNode || beamPartGroup) {
+      // GDTF Z-up: beam opens along −Z; top (lens) at the emission origin.
       group.rotation.set(Math.PI / 2, 0, 0);
       group.scale.setScalar(1);
     } else {
@@ -469,6 +470,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   panNode = pn ?? null;
   tiltNode = tn ?? null;
   beamPartGroup = beamPart ?? null;
+  assemblyParts = a.parts;
   partGroups = pg;
   // Capture rest quaternions for per-axis motion control.
   assemblyMotionAxes = a.motionAxes ?? [];
