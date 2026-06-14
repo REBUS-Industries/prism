@@ -91,6 +91,16 @@ function isEmissionMetadataBeam(
 }
 
 /**
+ * GDTF `BeamType="None"` marks decorative geometry (e.g. Mac Aura "Aura Filament"
+ * LED rings) that carries no lit beam. These must not draw a cone — otherwise the
+ * filament references spray beams along their own frames (opposite the real Wash
+ * pixels), producing the "beams in both directions" artefact.
+ */
+function isLitEmitterBeam(beam: FixtureBeam): boolean {
+  return (beam.beamType ?? '').trim().toLowerCase() !== 'none';
+}
+
+/**
  * Build per-lens beam cones for the 3D viewer. Prefers instanced CELL beams (pixel
  * fixtures) over a single LENS/BEAM emission record at the fixture origin.
  */
@@ -115,6 +125,7 @@ export function buildFixtureBeamSpecs(
 
   const cellBeams = beams.filter((b) => {
     if (!b.parentPartId || !inMode(b.parentPartId)) return false;
+    if (!isLitEmitterBeam(b)) return false;
     if (isTemplatePart(b.parentPartId, parts, referencedGeomIds)) return false;
     if (isEmissionMetadataBeam(b, parts, referencedGeomIds)) return false;
     const parent = parts.find((p) => p.partId === b.parentPartId);
@@ -160,6 +171,7 @@ export function buildFixtureBeamSpecs(
 
   return beams
     .filter((b) => b.parentPartId && inMode(b.parentPartId)
+      && isLitEmitterBeam(b)
       && !isTemplatePart(b.parentPartId, parts, referencedGeomIds)
       && !isEmissionMetadataBeam(b, parts, referencedGeomIds))
     .map((b) => ({
