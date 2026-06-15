@@ -28,7 +28,7 @@ import PbrNodeGraph from '../components/PbrNodeGraph.vue';
 
 import GlbViewer from '../components/GlbViewer.vue';
 
-import MaterialPreviewSphere from '../components/MaterialPreviewSphere.vue';
+import MaterialPreviewSwatch from '../components/MaterialPreviewSwatch.vue';
 
 import Icon from '../../shared/Icon.vue';
 
@@ -116,7 +116,7 @@ let thumbUploadInFlight = false;
 
 const bodyRef = ref<HTMLDivElement | null>(null);
 
-const viewerRef = ref<InstanceType<typeof MaterialPreviewSphere> | null>(null);
+const viewerRef = ref<InstanceType<typeof MaterialPreviewSwatch> | null>(null);
 
 const sidePaneWidth = ref(400);
 
@@ -844,7 +844,7 @@ onBeforeUnmount(() => {
 
             <GlbViewer :sources="sources" :parameters="parameters" />
 
-            <MaterialPreviewSphere
+            <MaterialPreviewSwatch
               ref="viewerRef"
               class="thumb-capture"
               :sources="sources"
