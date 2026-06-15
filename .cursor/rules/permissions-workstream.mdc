@@ -1,0 +1,31 @@
+---
+description: Portal permissions workstream — prism-permissions-service + admin Permissions page
+globs:
+  - PRISM/scaffold/prism-permissions-service/**
+  - PRISM/shared/contracts/portal-access.*
+  - PRISM/web/src/admin/pages/Permissions.vue
+  - PRISM/web/src/admin/components/permissions/**
+  - PRISM/docs/PERMISSIONS.md
+  - PRISM/docs/PORTAL_CONTRACT.md
+---
+
+# Permissions workstream
+
+Read `.cursor/plans/HANDOFF-permissions.md` before starting.
+
+## Branch
+
+- Repo: `REBUS-Industries/prism` — branch `feat/permissions` only (never commit to `main`)
+- Polyrepo: `REBUS-Industries/prism-permissions-service` — `main`
+- Connectors: `REBUS-Industries/orbit-connectors` — coordinate portal login changes
+
+## Build / deploy
+
+- Web + infra: `gh workflow run web-image --repo REBUS-Industries/prism --ref feat/permissions`
+- Service: merge polyrepo → `permissions-image` auto-deploys via dispatch
+- Dev target: https://prism-dev.rebus.industries
+
+## Do not edit
+
+- Other workstream pages (fixtures, materials, models) without coordination
+- The plan file in `.cursor/plans/portal_auth_permissions_system_*.plan.md`

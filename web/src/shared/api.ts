@@ -2242,3 +2242,60 @@ export const modelsApi = {
     return api.postForm<{ model: ModelListItem }>('/api/model-import', fd);
   },
 };
+
+// ── Permissions (portal-brokered access + function policy graph) ─────────────
+
+export type ConnectorFunction =
+  | 'send'
+  | 'receive'
+  | 'list_projects'
+  | 'list_models'
+  | 'list_versions'
+  | 'create_project'
+  | 'create_model'
+  | 'create_version';
+
+export type PolicyNodeType = 'role' | 'user' | 'project' | 'function';
+
+export interface PolicyNode {
+  id: string;
+  type: PolicyNodeType;
+  label: string;
+  ref?: string | null;
+  position: { x: number; y: number };
+  data?: Record<string, unknown>;
+}
+
+export interface PolicyEdge {
+  id: string;
+  source: string;
+  target: string;
+  grant?: boolean;
+}
+
+export interface FunctionPolicyGraph {
+  nodes: PolicyNode[];
+  edges: PolicyEdge[];
+  updatedAt?: string;
+}
+
+export interface PermissionsPolicyResponse {
+  graph: FunctionPolicyGraph;
+  defaultFunctions: ConnectorFunction[];
+}
+
+export const permissionsApi = {
+  functionsList: (): ConnectorFunction[] => [
+    'send',
+    'receive',
+    'list_projects',
+    'list_models',
+    'list_versions',
+    'create_project',
+    'create_model',
+    'create_version',
+  ],
+  getPolicy: () => api.get<PermissionsPolicyResponse>('/api/permissions/policy'),
+  savePolicy: (body: { graph: FunctionPolicyGraph; defaultFunctions?: ConnectorFunction[] }) =>
+    api.put<PermissionsPolicyResponse>('/api/permissions/policy', body as Record<string, unknown>),
+};
