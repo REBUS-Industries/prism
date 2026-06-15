@@ -580,6 +580,8 @@ export const serverLogsApi = {
 export const adminApi = {
   me:     () => api.get<{ kind: string; principal: { username?: string } }>('/api/admin/me'),
   login:  (username: string, password: string) => api.post<{ ok: true; username: string }>('/api/admin/login', { username, password }),
+  loginGoogle: (portalAuthCode: string, redirectUri?: string) =>
+    api.post<{ ok: true; username: string }>('/api/admin/login/google', { portalAuthCode, redirectUri }),
   logout: () => api.post<{ ok: true }>('/api/admin/logout', {}),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post<{ ok: true }>('/api/admin/change-password', { currentPassword, newPassword }),
@@ -2298,4 +2300,78 @@ export const permissionsApi = {
   getPolicy: () => api.get<PermissionsPolicyResponse>('/api/permissions/policy'),
   savePolicy: (body: { graph: FunctionPolicyGraph; defaultFunctions?: ConnectorFunction[] }) =>
     api.put<PermissionsPolicyResponse>('/api/permissions/policy', body as Record<string, unknown>),
+};
+
+export type GoogleWorkspaceStatus = 'disconnected' | 'linked' | 'syncing';
+export type ProvisionedUserStatus = 'pending' | 'active' | 'suspended';
+export type PortalProjectLevel = 'viewer' | 'contributor' | 'owner' | 'admin';
+
+export interface GoogleWorkspaceLink {
+  id: string;
+  domain: string;
+  displayName?: string | null;
+  status: GoogleWorkspaceStatus;
+  adapter: string;
+  linkedAt?: string | null;
+  lastSyncAt?: string | null;
+  userCount: number;
+}
+
+export interface ProvisionedUser {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  googleSub?: string | null;
+  status: ProvisionedUserStatus;
+  source: 'manual' | 'workspace_sync';
+  isPrismAdmin: boolean;
+  prismAdminUsername?: string | null;
+  projectPermissions: Array<{
+    orbitProjectId: string;
+    level: PortalProjectLevel;
+    projectName?: string | null;
+  }>;
+  roleRefs: string[];
+  lastLoginAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceOverviewResponse {
+  workspace: GoogleWorkspaceLink | null;
+  users: ProvisionedUser[];
+}
+
+export interface WorkspaceSyncResult {
+  linked: GoogleWorkspaceLink;
+  imported: number;
+  updated: number;
+  unchanged: number;
+}
+
+export const workspaceApi = {
+  get: () => api.get<WorkspaceOverviewResponse>('/api/permissions/workspace'),
+  link: (domain: string, displayName?: string) =>
+    api.post<{ workspace: GoogleWorkspaceLink }>('/api/permissions/workspace/link', { domain, displayName }),
+  unlink: () => api.post<{ ok: true }>('/api/permissions/workspace/unlink', {}),
+  sync: () => api.post<WorkspaceSyncResult>('/api/permissions/workspace/sync', {}),
+  createUser: (body: {
+    email: string;
+    displayName?: string;
+    isPrismAdmin?: boolean;
+    prismAdminUsername?: string;
+    projectPermissions?: ProvisionedUser['projectPermissions'];
+    roleRefs?: string[];
+    status?: ProvisionedUserStatus;
+  }) => api.post<{ user: ProvisionedUser }>('/api/permissions/workspace/users', body),
+  updateUser: (id: string, body: Partial<{
+    email: string;
+    displayName?: string | null;
+    isPrismAdmin?: boolean;
+    prismAdminUsername?: string | null;
+    projectPermissions?: ProvisionedUser['projectPermissions'];
+    roleRefs?: string[];
+    status?: ProvisionedUserStatus;
+  }>) => api.patch<{ user: ProvisionedUser }>(`/api/permissions/workspace/users/${id}`, body),
+  deleteUser: (id: string) => api.delete<{ ok: true }>(`/api/permissions/workspace/users/${id}`),
 };

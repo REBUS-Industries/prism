@@ -11,9 +11,34 @@ const route = useRoute();
 const username = ref<string | null>(null);
 const serverVersion = ref<string | null>(null);
 const ready = ref(false);
+const submittingPortal = ref(false);
 
 onMounted(async () => {
   healthApi.get().then((h) => { serverVersion.value = h.version; }).catch(() => null);
+
+  const search = new URLSearchParams(window.location.search);
+  const portalCode = search.get('code');
+  if (search.get('portal_callback') && portalCode) {
+    submittingPortal.value = true;
+    try {
+      const redirectUri = `${window.location.origin}/admin/?portal_callback=1`;
+      const result = await adminApi.loginGoogle(portalCode, redirectUri);
+      username.value = result.username;
+      window.history.replaceState({}, '', '/admin/#/');
+      adminWs.connect();
+      ready.value = true;
+      await router.replace({ name: 'dashboard' });
+      return;
+    } catch (err) {
+      const message = (err as { message?: string }).message ?? 'Google sign-in failed';
+      await router.replace({ name: 'login', query: { error: message } });
+    } finally {
+      submittingPortal.value = false;
+      ready.value = true;
+    }
+    return;
+  }
+
   try {
     const me = await adminApi.me();
     username.value = me.principal?.username ?? null;
@@ -36,6 +61,7 @@ async function logout() {
 
 <template>
   <div v-if="ready" :class="['layout', { 'layout--bare': route.name === 'login' }]">
+    <div v-if="submittingPortal" class="portal-overlay">Signing in with Google…</div>
     <aside v-if="route.name !== 'login'">
       <div class="brand">
         <img src="/prism-logo.png" alt="PRISM" class="brand-logo" />
@@ -172,4 +198,16 @@ nav a.external:hover { color: hsl(var(--sidebar-foreground)); }
 .profile-link:hover { color: hsl(var(--sidebar-primary)); }
 
 main { padding: 16px 24px; overflow: auto; }
+
+.portal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--background) / 0.72);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
 </style>

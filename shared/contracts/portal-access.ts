@@ -138,3 +138,65 @@ export interface PortalAdapter {
   getMe(portalToken: string): Promise<PortalUser>;
   getProjectPermissions(portalToken: string, userId: string): Promise<PortalProjectPermissionsResponse>;
 }
+
+// ── Google Workspace linking + pre-provisioned users ─────────────────────────
+
+export type GoogleWorkspaceStatus = 'disconnected' | 'linked' | 'syncing';
+
+export interface GoogleWorkspaceLink {
+  id: string;
+  domain: string;
+  displayName?: string | null;
+  status: GoogleWorkspaceStatus;
+  /** mock | google_admin_sdk */
+  adapter: string;
+  linkedAt?: string | null;
+  lastSyncAt?: string | null;
+  userCount: number;
+}
+
+export type ProvisionedUserStatus = 'pending' | 'active' | 'suspended';
+export type ProvisionedUserSource = 'manual' | 'workspace_sync';
+
+export interface ProvisionedUser {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  googleSub?: string | null;
+  status: ProvisionedUserStatus;
+  source: ProvisionedUserSource;
+  /** Grant PRISM admin SPA access on Google sign-in. */
+  isPrismAdmin: boolean;
+  /** Optional bind to local admin_users.username (defaults to PORTAL_ADMIN_USERNAME). */
+  prismAdminUsername?: string | null;
+  /** Pre-defined ORBIT project access (applied before first login). */
+  projectPermissions: PortalProjectPermission[];
+  /** Role refs matched against function-policy graph role nodes. */
+  roleRefs: string[];
+  lastLoginAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceSyncResult {
+  linked: GoogleWorkspaceLink;
+  imported: number;
+  updated: number;
+  unchanged: number;
+}
+
+export interface ProvisionedUserInput {
+  email: string;
+  displayName?: string | null;
+  isPrismAdmin?: boolean;
+  prismAdminUsername?: string | null;
+  projectPermissions?: PortalProjectPermission[];
+  roleRefs?: string[];
+  status?: ProvisionedUserStatus;
+}
+
+export interface ProvisionedAdminCheck {
+  allowed: boolean;
+  prismAdminUsername?: string | null;
+  email: string;
+}

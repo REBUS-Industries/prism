@@ -8,6 +8,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { hashPassword, loginAdmin, logoutAdmin, tryAuthAdminSession } from '../auth/adminSession.js';
+import {
+  adminPortalCallbackUri,
+  buildGoogleLoginStartUrl,
+  loginAdminViaPortal,
+} from '../auth/portalAdminLogin.js';
 import { db } from '../db/client.js';
 import { adminUsers } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -23,7 +28,27 @@ const changePasswordBody = z.object({
   newPassword: z.string().min(8),
 });
 
+const googleLoginBody = z.object({
+  portalAuthCode: z.string().min(1),
+  redirectUri: z.string().min(1).optional(),
+});
+
 const plugin: FastifyPluginAsync = async (app) => {
+  app.get('/login/google/start', async (req, reply) => {
+    const startUrl = await buildGoogleLoginStartUrl(req);
+    if (!startUrl) return reply.code(503).send({ error: 'Google sign-in is not configured' });
+    return reply.redirect(startUrl);
+  });
+
+  app.post('/login/google', async (req, reply) => {
+    const parsed = googleLoginBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid body' });
+    const redirectUri = parsed.data.redirectUri ?? adminPortalCallbackUri(req);
+    const result = await loginAdminViaPortal(req, reply, parsed.data.portalAuthCode, redirectUri);
+    if (!result.ok) return reply.code(result.status).send({ error: result.error });
+    return { ok: true, username: result.username };
+  });
+
   app.post('/login', async (req, reply) => {
     const parsed = loginBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid body' });

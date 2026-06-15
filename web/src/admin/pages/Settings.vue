@@ -6,6 +6,7 @@ import Modal from '../../shared/Modal.vue';
 import Icon from '../../shared/Icon.vue';
 import FixtureTypesManager from '../components/FixtureTypesManager.vue';
 import ExternalMaterialsSettings from '../components/ExternalMaterialsSettings.vue';
+import PortalIdentitySettings from '../components/PortalIdentitySettings.vue';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
 interface FieldDef {
@@ -64,7 +65,7 @@ const fixtureTypesStore = useFixtureTypesStore();
 // Each section is a tile; clicking either opens a modal (fields/custom) or
 // navigates to a named route (routeName).
 type TileKey = 'orbit-prod' | 'orbit-dev' | 'gdtf' | 'server' | 'workstation' | 'fixture-types'
-             | 'external-materials'
+             | 'external-materials' | 'portal-identity'
              | 'users' | 'webhooks' | 'api-keys';
 interface TileDef {
   key: TileKey;
@@ -74,7 +75,7 @@ interface TileDef {
   description: string;
   fields?: FieldDef[];
   testTarget?: 'prod' | 'dev';
-  custom?: 'fixture-types' | 'external-materials';
+  custom?: 'fixture-types' | 'external-materials' | 'portal-identity';
   /** Navigate to this named route instead of opening a modal. */
   routeName?: string;
 }
@@ -87,6 +88,7 @@ const tiles: TileDef[] = [
   { key: 'gdtf',           title: 'GDTF-Share',            icon: 'lightbulb', description: 'Credentials for fixture library import from GDTF-Share.com.', fields: gdtfShareFields },
   { key: 'fixture-types',  title: 'Fixture Types',         icon: 'palette',   description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
   { key: 'external-materials', title: 'External materials', icon: 'travel_explore', description: 'Fab, Poly Haven, and ambientCG search providers + Epic OAuth token.', custom: 'external-materials' },
+  { key: 'portal-identity', title: 'Portal & Google Workspace', icon: 'account_circle', description: 'Portal OAuth, Google API credentials, workspace sync, and admin Google sign-in.', custom: 'portal-identity' },
   { key: 'server',         title: 'Server',                icon: 'dns',       description: 'Job retention window and maintenance mode.', fields: otherFields },
   { key: 'workstation',    title: 'Workstation agent',     icon: 'lan',       description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
   { key: 'users',          title: 'Users',                 icon: 'group',     description: 'Manage admin accounts and access.', routeName: 'users' },
@@ -238,6 +240,8 @@ function tileSummary(tile: TileDef): string {
       return `${fixtureTypesStore.labels.length} type${fixtureTypesStore.labels.length === 1 ? '' : 's'}`;
     case 'external-materials':
       return 'Fab · Poly Haven · ambientCG';
+    case 'portal-identity':
+      return 'OAuth · Workspace · Google API';
     case 'users':
     case 'webhooks':
     case 'api-keys':
@@ -284,9 +288,9 @@ onMounted(() => {
     v-if="activeTile"
     :title="activeTile.title"
     :subtitle="activeTile.description"
-    :max-width="activeTile.custom === 'fixture-types' ? 600 : activeTile.custom === 'external-materials' ? 960 : 560"
-    :min-width="activeTile.custom === 'external-materials' ? 720 : 0"
-    :viewport-width="activeTile.custom === 'external-materials' ? 94 : undefined"
+    :max-width="activeTile.custom === 'fixture-types' ? 600 : activeTile.custom === 'external-materials' ? 960 : activeTile.custom === 'portal-identity' ? 920 : 560"
+    :min-width="activeTile.custom === 'external-materials' || activeTile.custom === 'portal-identity' ? 720 : 0"
+    :viewport-width="activeTile.custom === 'external-materials' || activeTile.custom === 'portal-identity' ? 94 : undefined"
     @close="closeTile"
   >
     <!-- Fixture Types manager -->
@@ -294,6 +298,9 @@ onMounted(() => {
 
     <!-- External materials providers -->
     <ExternalMaterialsSettings v-else-if="activeTile.custom === 'external-materials'" />
+
+    <!-- Portal OAuth + Google Workspace -->
+    <PortalIdentitySettings v-else-if="activeTile.custom === 'portal-identity'" />
 
     <!-- Standard key/value field sections -->
     <template v-else>
@@ -368,6 +375,9 @@ onMounted(() => {
       <button class="primary" @click="closeTile">Done</button>
     </template>
     <template v-else-if="activeTile.custom === 'external-materials'" #footer>
+      <button @click="closeTile">Close</button>
+    </template>
+    <template v-else-if="activeTile.custom === 'portal-identity'" #footer>
       <button @click="closeTile">Close</button>
     </template>
     <template v-else #footer>
