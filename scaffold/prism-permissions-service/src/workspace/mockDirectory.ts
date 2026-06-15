@@ -3,6 +3,7 @@ export interface WorkspaceDirectoryUser {
   email: string;
   displayName: string;
   googleSub?: string;
+  suspended?: boolean;
 }
 
 export function listMockWorkspaceDirectory(domain: string): WorkspaceDirectoryUser[] {

@@ -52,6 +52,7 @@ export class CachedPortalAdapter implements PortalAdapter {
 
 import { MockPortalAdapter } from './mock.js';
 import { RealPortalAdapter } from './real.js';
+import { GooglePortalAdapter } from './google.js';
 import { getIntegrationSetting, getIntegrationSettingOr } from '../config/integrationSettings.js';
 
 export async function createPortalAdapter(): Promise<PortalAdapter> {
@@ -60,7 +61,12 @@ export async function createPortalAdapter(): Promise<PortalAdapter> {
   const mode = (await getIntegrationSettingOr('portal_adapter', 'mock')).toLowerCase();
   const ttlMs = Number(process.env.PORTAL_CACHE_TTL_MS ?? 300_000);
   const config: PortalAdapterConfig = { baseUrl, apiKey, cacheTtlMs: ttlMs };
-  const inner = mode === 'real' ? new RealPortalAdapter(config) : new MockPortalAdapter(config);
+  const inner =
+    mode === 'google'
+      ? new GooglePortalAdapter()
+      : mode === 'real'
+        ? new RealPortalAdapter(config)
+        : new MockPortalAdapter(config);
   return new CachedPortalAdapter(inner, ttlMs);
 }
 

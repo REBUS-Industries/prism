@@ -13,6 +13,7 @@ import { getDb } from '../db/client.js';
 import { googleWorkspace, provisionedUser } from '../db/schema.js';
 import { getIntegrationSetting, getIntegrationSettingOr } from '../config/integrationSettings.js';
 import { listMockWorkspaceDirectory } from './mockDirectory.js';
+import { listGoogleWorkspaceDirectory } from './googleDirectory.js';
 
 const WORKSPACE_ROW_ID = 'default';
 
@@ -208,7 +209,11 @@ export async function syncWorkspaceDirectory(): Promise<WorkspaceSyncResult> {
 
   await db.update(googleWorkspace).set({ status: 'syncing', updatedAt: new Date() }).where(eq(googleWorkspace.id, row.id));
 
-  const directory = listMockWorkspaceDirectory(row.domain);
+  const adapter = (row.adapter ?? (await getIntegrationSettingOr('workspace_adapter', 'mock'))).toLowerCase();
+  const directory =
+    adapter === 'google_admin_sdk'
+      ? await listGoogleWorkspaceDirectory(row.domain)
+      : listMockWorkspaceDirectory(row.domain);
 
   let imported = 0;
   let updated = 0;
@@ -224,15 +229,23 @@ export async function syncWorkspaceDirectory(): Promise<WorkspaceSyncResult> {
       .limit(1);
 
     if (existing[0]) {
+      const nextStatus =
+        entry.suspended === true
+          ? 'suspended'
+          : existing[0].status === 'suspended'
+            ? 'pending'
+            : existing[0].status;
       const needsUpdate =
         existing[0].displayName !== entry.displayName ||
-        (entry.googleSub && existing[0].googleSub !== entry.googleSub);
+        (entry.googleSub && existing[0].googleSub !== entry.googleSub) ||
+        nextStatus !== existing[0].status;
       if (needsUpdate) {
         await db
           .update(provisionedUser)
           .set({
             displayName: entry.displayName,
             googleSub: entry.googleSub ?? existing[0].googleSub,
+            status: nextStatus as typeof provisionedUser.$inferInsert.status,
             updatedAt: now,
           })
           .where(eq(provisionedUser.id, existing[0].id));

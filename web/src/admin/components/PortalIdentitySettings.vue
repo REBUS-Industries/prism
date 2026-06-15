@@ -22,17 +22,18 @@ const portalFields: FieldDef[] = [
     type: 'select',
     options: [
       { value: 'mock', label: 'Mock (prism-dev)' },
+      { value: 'google', label: 'Google OAuth (direct)' },
       { value: 'real', label: 'REBUS portal API' },
     ],
-    hint: 'Mock uses /api/access/mock-login for dev sign-in flows.',
+    hint: 'Use Google OAuth for direct Workspace sign-in without portal.rebus.industries.',
   },
   { key: 'portal_base_url', label: 'Portal API base URL', placeholder: 'https://portal.rebus.industries' },
   { key: 'portal_api_key', label: 'Portal service API key', secret: true, placeholder: 'Bearer token for /portal/* calls' },
   {
     key: 'portal_google_authorize_url',
-    label: 'Google OAuth authorize URL',
+    label: 'Portal OAuth authorize URL (real adapter only)',
     placeholder: 'https://portal.rebus.industries/oauth/authorize',
-    hint: 'Production admin + connector sign-in redirect target.',
+    hint: 'Ignored when portal_adapter=google (uses accounts.google.com).',
   },
   {
     key: 'portal_mock_persona',
@@ -59,6 +60,12 @@ const workspaceFields: FieldDef[] = [
     hint: 'Default domain when linking Google Workspace on the Users page.',
   },
   {
+    key: 'workspace_admin_email',
+    label: 'Workspace admin email (impersonation)',
+    placeholder: 'admin@rebus.industries',
+    hint: 'Super-admin Google account for Admin SDK directory sync (domain-wide delegation).',
+  },
+  {
     key: 'workspace_enforce_provisioned',
     label: 'Require provisioned users',
     type: 'switch',
@@ -78,6 +85,12 @@ const googleApiFields: FieldDef[] = [
     label: 'Google OAuth client secret',
     secret: true,
     placeholder: 'Write-only after save',
+  },
+  {
+    key: 'google_oauth_scopes',
+    label: 'Google OAuth scopes',
+    placeholder: 'openid email profile',
+    hint: 'Space-separated scopes for admin Sign in with Google.',
   },
   {
     key: 'google_service_account_json',
@@ -100,7 +113,7 @@ const adminAccessFields: FieldDef[] = [
     key: 'portal_admin_username',
     label: 'Local admin username bind',
     placeholder: 'admin',
-    hint: 'Google admin sessions bind to this admin_users row.',
+    hint: 'Optional override when a provisioned user has prismAdminUsername set.',
   },
 ];
 
@@ -269,6 +282,26 @@ onMounted(refresh);
       </div>
     </section>
 
+    <section class="section setup-help">
+      <h3>Google Cloud setup</h3>
+      <ol class="setup-steps">
+        <li>Create a <strong>Web application</strong> OAuth client in Google Cloud Console.</li>
+        <li>Add authorized redirect URIs:
+          <code>https://prism.rebus.industries/admin/?portal_callback=1</code>,
+          <code>https://prism-dev.rebus.industries/admin/?portal_callback=1</code>,
+          and local dev <code>http://localhost:29364/admin/?portal_callback=1</code>.
+        </li>
+        <li>Create a service account, enable <strong>domain-wide delegation</strong>, and grant scope
+          <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code> in Workspace Admin → Security → API controls.
+        </li>
+        <li>Set <code>portal_adapter=google</code>, <code>workspace_adapter=google_admin_sdk</code>,
+          paste OAuth client ID/secret, service account JSON, and <code>workspace_admin_email</code>.
+        </li>
+        <li>Link the domain on <RouterLink :to="{ name: 'users' }">Users</RouterLink>, sync directory, assign permissions, then sign in with Google.</li>
+      </ol>
+      <p class="muted section-intro">Full checklist: <code>docs/WORKSPACE.md</code></p>
+    </section>
+
     <div class="actions">
       <button class="primary" type="button" :disabled="saving || !dirty" @click="saveAll">
         {{ saving ? 'Saving…' : 'Save changes' }}
@@ -293,4 +326,7 @@ onMounted(refresh);
 .field input, .field select, .field textarea { width: 100%; }
 .hint { margin: 0; font-size: 11px; color: var(--color-text-muted); line-height: 1.4; }
 .actions { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.setup-help ol { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.55; }
+.setup-help li { margin-bottom: 8px; }
+.setup-help code { font-size: 11px; word-break: break-all; }
 </style>
