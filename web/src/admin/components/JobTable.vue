@@ -13,6 +13,12 @@ const emit = defineEmits<{
    * button (handled by `.stop` on the click handler in the template).
    */
   selectJob: [job: JobSummary];
+  /**
+   * "Select layers" button on an `awaiting_selection` job — Dashboard pops
+   * the JobLayerPickerModal so the operator can choose layers and resume the
+   * two-phase convert. Uses `.stop` so it does not also open the logs modal.
+   */
+  selectLayers: [job: JobSummary];
 }>();
 
 const CANCELLABLE = new Set(['queued', 'dispatched', 'processing', 'uploading']);
@@ -82,7 +88,13 @@ async function handleCancel(id: string) {
         <td><code>{{ shortId(j.id) }}</code></td>
         <td>
           <button
-            v-if="CANCELLABLE.has(j.status)"
+            v-if="j.status === 'awaiting_selection'"
+            class="btn-layers"
+            title="Select layers and start the convert"
+            @click.stop="$emit('selectLayers', j)"
+          ><Icon name="layers" :size="14" /> Select layers</button>
+          <button
+            v-else-if="CANCELLABLE.has(j.status)"
             class="btn-cancel"
             :disabled="cancellingId === j.id"
             :title="cancellingId === j.id ? 'Cancelling…' : 'Cancel job'"
@@ -113,6 +125,27 @@ tr.clickable:hover td { color: var(--color-text); }
   line-height: 1.4;
   min-width: 28px;
 }
+
+/* "Select layers" call-to-action for awaiting_selection jobs. Compact accent
+   button (overrides the design-system's 40px-tall uppercase button base). */
+.btn-layers {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: auto;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  cursor: pointer;
+}
+.btn-layers:hover { background: hsl(var(--primary) / 0.9); border-color: hsl(var(--primary) / 0.9); }
 .btn-cancel:hover:not(:disabled) {
   background: var(--color-error-bg);
 }

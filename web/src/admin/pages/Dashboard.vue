@@ -4,10 +4,28 @@ import { jobsApi, workstationsApi, type JobSummary, type Workstation } from '../
 import { adminWs } from '../../shared/ws';
 import JobTable from '../components/JobTable.vue';
 import JobLogsModal from '../components/JobLogsModal.vue';
+import JobLayerPickerModal from '../components/JobLayerPickerModal.vue';
 
 // The job whose logs are currently in the modal.  Clicking a row in
 // JobTable opens the modal; closing it clears this back to null.
 const selectedJob = ref<JobSummary | null>(null);
+
+// The awaiting_selection job whose layer picker is open (null = closed).
+// Opened from the JobTable "Select layers" button or the logs modal.
+const layerJob = ref<JobSummary | null>(null);
+
+function openLayerPicker(job: JobSummary) {
+  // Only one modal at a time — close the logs modal if it was open.
+  selectedJob.value = null;
+  layerJob.value = job;
+}
+
+function onLayersSubmitted() {
+  // Selection accepted: the job is back to `queued`. Close + refresh so the
+  // new status / progress shows and active-job polling restarts.
+  layerJob.value = null;
+  void refresh();
+}
 
 // Keep selectedJob in sync with the live jobs[] array so the modal's
 // status pill / lastMessage stay current as WS updates arrive.  Without
@@ -121,10 +139,12 @@ const onlineCount = computed(() => workstations.value.filter((w) => w.online).le
       v-else
       :jobs="jobs"
       @cancelled="refresh"
-      @select-job="(j) => selectedJob = j" />
+      @select-job="(j) => selectedJob = j"
+      @select-layers="openLayerPicker" />
   </div>
 
-  <JobLogsModal :job="selectedJob" @close="selectedJob = null" />
+  <JobLogsModal :job="selectedJob" @close="selectedJob = null" @select-layers="openLayerPicker" />
+  <JobLayerPickerModal :job="layerJob" @submitted="onLayersSubmitted" @close="layerJob = null" />
 </template>
 
 <style scoped>
