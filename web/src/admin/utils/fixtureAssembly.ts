@@ -60,6 +60,11 @@ export interface FixtureAssemblyInput {
   fixtureZOffsetM?: number;
   /** REBUS clamp mirror + Z rotation (GDTF space, through fixture origin). */
   clampPlacement?: ClampPlacement;
+  /**
+   * When set, the REBUS clamp part loads this GLB URL (Model Library preview)
+   * instead of the fixture's own clamp media upload.
+   */
+  clampModelUrl?: string;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -361,13 +366,13 @@ export async function buildFixtureAssembly(
   const loader = new GLTFLoader();
 
   const glbCache = new Map<string, Promise<THREE.Object3D | null>>();
-  const loadGlb = (mediaId: string): Promise<THREE.Object3D | null> => {
-    let p = glbCache.get(mediaId);
+  const loadGlbUrl = (url: string): Promise<THREE.Object3D | null> => {
+    let p = glbCache.get(url);
     if (!p) {
-      p = loader.loadAsync(input.resolveUrl(mediaId))
+      p = loader.loadAsync(url)
         .then((g) => g.scene as THREE.Object3D)
         .catch(() => null);
-      glbCache.set(mediaId, p);
+      glbCache.set(url, p);
     }
     return p;
   };
@@ -435,8 +440,10 @@ export async function buildFixtureAssembly(
     const mediaId = modelMediaId(model);
     const partGroup = partGroups.get(part.partId)!;
 
-    if (mediaId) {
-      const obj = await loadGlb(mediaId);
+    const clampUrl = isRebusClampPart(part) && input.clampModelUrl ? input.clampModelUrl : null;
+    const meshUrl = clampUrl ?? (mediaId ? input.resolveUrl(mediaId) : null);
+    if (meshUrl) {
+      const obj = await loadGlbUrl(meshUrl);
       if (obj) {
         const wrapped = wrapModelMesh(obj.clone(true), dims);
         paintMaterial(wrapped, part);

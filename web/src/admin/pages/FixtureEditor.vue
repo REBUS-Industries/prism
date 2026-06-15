@@ -45,7 +45,7 @@ import {
   downloadTextFile,
 } from '../utils/fixtureOrigins';
 
-import { fixtureZOffsetM, readClampPlacement, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
+import { fixtureZOffsetM, readClampModelLibraryId, readClampPlacement, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
 
 import { fixtureInformationParams } from '../utils/fixtureInformation';
 
@@ -54,6 +54,8 @@ import {
   fixturesApi,
 
   materialsApi,
+
+  modelsApi,
 
   type ApiError,
 
@@ -64,6 +66,8 @@ import {
   type FixtureUpdateCheck,
 
   type FixtureVersionSummary,
+
+  type ModelListItem,
 
   type Vec3,
 
@@ -200,6 +204,7 @@ const assembly = computed(() => {
       mirrorY: clampMirrorY.value,
       rotateZDeg: clampRotateZDeg.value,
     },
+    clampModelUrl: clampModelLibraryId.value ? modelsApi.previewUrl(clampModelLibraryId.value) : undefined,
   };
 });
 
@@ -345,12 +350,20 @@ const replacingModelId = ref<string | null>(null);
 const fixtureZOffsetMm = ref(0);
 const clampMirrorY = ref(false);
 const clampRotateZDeg = ref(0);
+const clampModelLibraryId = ref<string | null>(null);
+const clampLibraryModels = ref<ModelListItem[]>([]);
+const clampLibraryLoading = ref(false);
+const clampLibraryPreviewMissing = ref(false);
 
-const clampHasMesh = computed(() => {
+const clampHasUploadedMesh = computed(() => {
   const meta = fixture.value?.definition.models
     ?.find((m) => m.modelId === REBUS_CLAMP_MODEL_ID)?.metadata as { mediaId?: unknown } | undefined;
   return typeof meta?.mediaId === 'string' && meta.mediaId.length > 0;
 });
+
+const clampHasMesh = computed(() =>
+  clampHasUploadedMesh.value || !!clampModelLibraryId.value,
+);
 
 const swapModels = computed(() =>
   (fixture.value?.definition.models ?? []).filter((m) => m.modelId !== REBUS_CLAMP_MODEL_ID),
@@ -362,16 +375,61 @@ function syncPlacementFromFixture(): void {
   const clamp = readClampPlacement(meta);
   clampMirrorY.value = clamp.mirrorY;
   clampRotateZDeg.value = clamp.rotateZDeg;
+  clampModelLibraryId.value = readClampModelLibraryId(meta);
+  void verifyClampLibraryPreview();
 }
 
 function applyPlacementToDefinition(): void {
   if (!fixture.value) return;
-  fixture.value.definition.metadata = {
+  const meta: Record<string, unknown> = {
     ...fixture.value.definition.metadata,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
     clampMirrorY: clampMirrorY.value,
     clampRotateZDeg: clampRotateZDeg.value,
   };
+  if (clampModelLibraryId.value) {
+    meta.clampModelLibraryId = clampModelLibraryId.value;
+  } else {
+    delete meta.clampModelLibraryId;
+  }
+  fixture.value.definition.metadata = meta;
+}
+
+async function loadClampLibraryModels(): Promise<void> {
+  clampLibraryLoading.value = true;
+  try {
+    const res = await modelsApi.list({ category: 'clamp', limit: 100 });
+    clampLibraryModels.value = res.models.filter((m) => m.status === 'published' && m.hasPreview);
+  } catch {
+    clampLibraryModels.value = [];
+  } finally {
+    clampLibraryLoading.value = false;
+  }
+}
+
+async function verifyClampLibraryPreview(): Promise<void> {
+  const id = clampModelLibraryId.value;
+  if (!id) {
+    clampLibraryPreviewMissing.value = false;
+    return;
+  }
+  try {
+    const res = await modelsApi.get(id);
+    clampLibraryPreviewMissing.value = !res.model.hasPreview;
+  } catch {
+    clampLibraryPreviewMissing.value = true;
+  }
+}
+
+function onClampLibraryChange(): void {
+  applyPlacementToDefinition();
+  void verifyClampLibraryPreview();
+  assemblyRevision.value += 1;
+}
+
+function clearClampLibrary(): void {
+  clampModelLibraryId.value = null;
+  onClampLibraryChange();
 }
 
 function onFixtureZOffsetChange(): void {
@@ -647,6 +705,7 @@ async function removeFixture(): Promise<void> {
 onMounted(() => {
   void reload();
   void checkForUpdates();
+  void loadClampLibraryModels();
 });
 
 </script>
@@ -1044,12 +1103,41 @@ onMounted(() => {
         <section class="panel-card settings-card">
           <h2>Clamp</h2>
           <p class="muted small">
-            Upload a hanging clamp or omega bracket model. It renders at the fixture origin while the body can be lowered separately.
+            Pick a clamp from the Model Library or upload a custom mesh. It renders at the fixture origin while the body can be lowered separately.
+          </p>
+          <label class="clamp-library-label">
+            Model Library
+            <div class="clamp-library-row">
+              <select
+                v-model="clampModelLibraryId"
+                class="clamp-library-select"
+                :disabled="clampLibraryLoading"
+                @change="onClampLibraryChange"
+              >
+                <option :value="null">— None (use upload) —</option>
+                <option v-for="m in clampLibraryModels" :key="m.id" :value="m.id">{{ m.name }}</option>
+              </select>
+              <button
+                v-if="clampModelLibraryId"
+                type="button"
+                class="btn-link small"
+                @click="clearClampLibrary"
+              >
+                Clear
+              </button>
+            </div>
+          </label>
+          <p v-if="clampLibraryLoading" class="muted small">Loading clamp models…</p>
+          <p v-else-if="!clampLibraryLoading && clampLibraryModels.length === 0" class="muted small">
+            No published clamp models in the library yet.
+          </p>
+          <p v-if="clampLibraryPreviewMissing" class="warn small">
+            The assigned library model is missing or has no preview — the viewport may not show a clamp until you pick another model or upload one.
           </p>
           <div class="clamp-upload-row">
             <label class="model-swap-btn" :class="{ busy: replacingModelId === REBUS_CLAMP_MODEL_ID }">
               <Icon name="upload_file" :size="14" />
-              {{ replacingModelId === REBUS_CLAMP_MODEL_ID ? 'Converting…' : (clampHasMesh ? 'Replace clamp model' : 'Upload clamp model') }}
+              {{ replacingModelId === REBUS_CLAMP_MODEL_ID ? 'Converting…' : (clampHasUploadedMesh ? 'Replace clamp upload' : 'Upload clamp model') }}
               <input
                 type="file"
                 accept=".gltf,.glb,.obj,.fbx,.3ds,.stl,.dae,.ply"
@@ -1060,6 +1148,9 @@ onMounted(() => {
             <span v-if="clampHasMesh" class="pill online">Attached</span>
             <span v-else class="pill muted-pill">No model</span>
           </div>
+          <p v-if="clampModelLibraryId && clampHasUploadedMesh" class="muted small">
+            Library model is used in the viewport when set; the uploaded mesh remains for ORBIT export until you clear the library pick.
+          </p>
           <template v-if="clampHasMesh">
             <label class="check-row clamp-option">
               <input v-model="clampMirrorY" type="checkbox" @change="onClampPlacementChange" />
@@ -1392,6 +1483,24 @@ onMounted(() => {
 .model-swap-btn.busy { opacity: 0.6; cursor: progress; }
 .model-swap-btn input { display: none; }
 .clamp-upload-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.clamp-library-label {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.clamp-library-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.clamp-library-select {
+  flex: 1;
+  min-width: 180px;
+  max-width: 100%;
+}
+.warn { color: var(--color-warn, #b45309); }
 .check-row {
   display: flex;
   align-items: center;

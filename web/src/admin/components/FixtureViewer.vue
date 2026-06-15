@@ -42,6 +42,8 @@ interface AssemblyProp {
   fixtureZOffsetM?: number;
   /** REBUS clamp Y mirror + Z rotation through fixture origin. */
   clampPlacement?: ClampPlacement;
+  /** Model Library preview GLB for the REBUS clamp (overrides fixture upload). */
+  clampModelUrl?: string;
 }
 
 const props = withDefaults(defineProps<{
@@ -523,6 +525,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     selectedModeGeometryId: a.selectedModeGeometryId ?? null,
     fixtureZOffsetM: a.fixtureZOffsetM ?? 0,
     clampPlacement: a.clampPlacement,
+    clampModelUrl: a.clampModelUrl,
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
@@ -701,7 +704,7 @@ const assemblyKey = (): string => {
   const mats = a.parts?.map((p) => `${p.partId}=${p.materialId ?? ''}`).join('|') ?? '';
   const clamp = a.clampPlacement;
   const clampKey = clamp ? `${clamp.mirrorY ? 1 : 0}:${clamp.rotateZDeg}` : '0:0';
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${mats}`;
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${mats}`;
 };
 
 const modelMaterialsKey = (): string =>
