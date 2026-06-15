@@ -2054,12 +2054,15 @@ export const fixturesApi = {
   },
   export: (id: string) =>
     api.get<{ fixture: FixtureConnectorExport }>(`/api/fixtures/export/${id}`),
-  uploadIes: (id: string, beamId: string, file: File, zoomDmx?: number) => {
+  /** Upload one IES file and attach it to one or more beams (group apply). */
+  uploadIes: (id: string, beamIds: string | string[], file: File, zoomDmx?: number) => {
     const fd = new FormData();
-    fd.append('beamId', beamId);
+    const ids = Array.isArray(beamIds) ? beamIds : [beamIds];
+    fd.append('beamIds', ids.join(','));
+    fd.append('beamId', ids[0] ?? ''); // back-compat for older API builds
     if (zoomDmx !== undefined) fd.append('zoomDmx', String(zoomDmx));
     fd.append('file', file);
-    return api.postForm<{ mediaId: string; beamId: string; zoomDmx?: number }>(`/api/fixtures/${id}/ies`, fd);
+    return api.postForm<{ mediaId: string; beamIds?: string[]; beamId?: string; zoomDmx?: number }>(`/api/fixtures/${id}/ies`, fd);
   },
   searchGdtfShare: (q: string, limit = 25) =>
     api.get<{ results: GdtfShareResult[] }>(`/api/gdtf-share/search?q=${encodeURIComponent(q)}&limit=${limit}`),
