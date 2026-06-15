@@ -154,6 +154,8 @@ services:
       DATA_DIR: "/data/prism"
       REDIS_URL: "redis://redis:6379"
       ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL:-https://orbit.rebus.industries}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - prism-data:/data/prism
@@ -190,6 +192,8 @@ services:
       DATA_DIR: "/data/prism"
       REDIS_URL: "redis://redis:6379"
       ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL:-https://orbit.rebus.industries}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - prism-data:/data/prism
