@@ -51,7 +51,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     const code = typeof req.query === 'object' && req.query && 'code' in req.query ? String(req.query.code) : '';
     const oauthError =
       typeof req.query === 'object' && req.query && 'error' in req.query ? String(req.query.error) : '';
-    const settingsUrl = '/admin/settings?open=portal-identity';
+    const settingsUrl = '/admin/#/settings?open=portal-identity';
 
     if (oauthError) {
       return reply.redirect(`${settingsUrl}&directory_oauth_error=${encodeURIComponent(oauthError)}`);
