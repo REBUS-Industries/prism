@@ -1945,6 +1945,31 @@ export interface MvrOrbitUploadResult {
   objectCount: number;
 }
 
+/** Stored on definition.metadata.orbitFixtureRef after publish-orbit. */
+export interface FixtureOrbitRef {
+  target: 'prod' | 'dev';
+  projectId: string;
+  modelId: string;
+  versionId: string;
+  objectId: string;
+  publishedAt: string;
+  orbitUrl?: string;
+}
+
+/** Optional template values included in the Orbit FixtureType payload. */
+export interface FixtureOrbitPublishTemplate {
+  unitNumber?: string;
+  patch?: FixturePatch;
+}
+
+export interface FixturePublishOrbitResult {
+  ok: boolean;
+  createdModel: boolean;
+  objectCount: number;
+  orbitFixtureRef: FixtureOrbitRef;
+  fixture: FixtureDetail;
+}
+
 export const fixturesApi = {
   list: (params: { q?: string; tags?: string[]; origin?: FixtureOrigin | FixtureOrigin[]; limit?: number; cursor?: string | null } = {}) => {
     const qs = new URLSearchParams();
@@ -2056,6 +2081,9 @@ export const fixturesApi = {
   },
   export: (id: string) =>
     api.get<{ fixture: FixtureConnectorExport }>(`/api/fixtures/export/${id}`),
+  /** Publish or republish a fixture type to the Orbit Fixtures project. */
+  publishToOrbit: (id: string, body: { orbitTarget?: 'prod' | 'dev' } = {}) =>
+    api.post<FixturePublishOrbitResult>(`/api/fixtures/${id}/publish-orbit`, body),
   /** Upload one IES file and attach it to one or more beams (group apply). */
   uploadIes: (id: string, beamIds: string | string[], file: File, zoomDmx?: number) => {
     const fd = new FormData();
@@ -2159,6 +2187,21 @@ export interface ModelMaterialSlot {
   materialId?: string | null;
 }
 
+/** Async import lifecycle when routed through the PRISM convert pipeline. */
+export type ModelImportStatus = 'converting' | 'complete' | 'failed';
+
+/** Orbit storage reference for a model definition (Model Library Project). */
+export interface ModelOrbitRef {
+  target: 'prod' | 'dev';
+  projectId: string;
+  modelId: string;
+  versionId?: string;
+  resultUrl?: string;
+}
+
+/** Length units for imported mesh vertex coordinates (canonical storage is metres). */
+export type ModelLengthUnit = 'mm' | 'cm' | 'm' | 'in' | 'ft';
+
 /** Root transform for a model definition (metres, rotation in degrees). */
 export interface ModelTransform {
   position: ModelVec3;
@@ -2174,6 +2217,11 @@ export interface ModelDefinition {
   upAxis?: 'Y' | 'Z';
   /** Optional root offset applied when previewing / placing the asset. */
   transform?: ModelTransform;
+  /**
+   * Coordinate units of the stored GLB vertices. Preview applies a scale factor
+   * to convert to canonical metres. Defaults to `mm` when absent (legacy imports).
+   */
+  sourceUnits?: ModelLengthUnit;
   metadata?: Record<string, unknown>;
 }
 
@@ -2194,6 +2242,9 @@ export interface ModelListItem {
   description: string | null;
   activeVersionId: string | null;
   hasPreview: boolean;
+  /** Present while import runs through the convert pipeline. */
+  importStatus?: ModelImportStatus | null;
+  importJobId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2235,13 +2286,20 @@ export const modelsApi = {
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/models/${id}`),
   previewUrl: (id: string) => `/api/models/${id}/preview.glb`,
   mediaUrl: (id: string, mediaId: string) => `/api/models/${id}/media/${mediaId}`,
-  import: (file: File, options: { name?: string; category?: string; tags?: string[] } = {}) => {
+  import: (file: File, options: { name?: string; category?: string; tags?: string[]; sourceUnits?: ModelLengthUnit } = {}) => {
     const fd = new FormData();
     fd.append('file', file);
     if (options.name) fd.append('name', options.name);
     if (options.category) fd.append('category', options.category);
     if (options.tags?.length) fd.append('tags', options.tags.join(','));
-    return api.postForm<{ model: ModelListItem }>('/api/model-import', fd);
+    if (options.sourceUnits) fd.append('sourceUnits', options.sourceUnits);
+    return api.postForm<{
+      model: ModelListItem;
+      modelId: string;
+      jobId?: string;
+      isNewVersion?: boolean;
+      importStatus?: ModelImportStatus | null;
+    }>('/api/model-import', fd);
   },
 };
 

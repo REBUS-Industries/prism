@@ -13,6 +13,7 @@ export type {
   ModelMeshRef,
   ModelMaterialSlot,
   ModelTransform,
+  ModelLengthUnit,
   ModelDefinition,
   ModelVersionSummary,
   ModelListItem,

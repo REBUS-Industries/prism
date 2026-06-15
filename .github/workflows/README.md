@@ -4,7 +4,7 @@ CI pipelines for PRISM.
 
 | Workflow | Trigger | Dev deploy (VM 212) |
 |---|---|---|
-| `web-image` (`web.yml`) | push to `main`, paths `web/**` | Builds + deploys `prism-web` (+ `prism-fixtures`, `prism-models`, `prism-router`) |
+| `web-image` (`web.yml`) | push to `main`, paths `web/**`; **PR:** `npm run build` only (no image push) | Builds + deploys `prism-web` (+ `prism-fixtures`, `prism-models`, `prism-router`) |
 | `server-image` (`server.yml`) | push to `main`, paths `server/**` `shared/**` `agent/install/**` … | Builds + deploys `prism-server` (+ related services) |
 | `agent.yml` | tag matching `agent-v*` | — |
 | `assimp.yml` | push to `main`, paths `assimp/**` | — |
