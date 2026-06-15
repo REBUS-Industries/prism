@@ -59,7 +59,9 @@ async function pollUntilReady(modelId: string): Promise<void> {
           resolve();
         } else {
           progress.value = status === 'converting'
-            ? 'Converting via PRISM pipeline and uploading to Orbit…'
+            ? (progress.value?.startsWith('Adding new version')
+              ? progress.value
+              : 'Converting via PRISM pipeline and uploading to Orbit…')
             : 'Waiting for conversion…';
         }
       } catch (err) {
@@ -82,6 +84,10 @@ async function runImport(): Promise<void> {
       tags: tags.value.split(',').map((t) => t.trim()).filter(Boolean),
       sourceUnits: sourceUnits.value,
     });
+
+    if (res.isNewVersion) {
+      progress.value = `Adding new version to existing model ${res.model.name}…`;
+    }
 
     if (res.importStatus === 'converting' || res.jobId) {
       await pollUntilReady(res.model.id);

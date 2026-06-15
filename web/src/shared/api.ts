@@ -2267,7 +2267,9 @@ export const modelsApi = {
     if (options.sourceUnits) fd.append('sourceUnits', options.sourceUnits);
     return api.postForm<{
       model: ModelListItem;
+      modelId: string;
       jobId?: string;
+      isNewVersion?: boolean;
       importStatus?: ModelImportStatus | null;
     }>('/api/model-import', fd);
   },
