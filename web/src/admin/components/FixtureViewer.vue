@@ -4,7 +4,7 @@
  *  - `assembly`: walk the GDTF geometry tree, load every linked model GLB and
  *    apply the composed transforms to show the FULL assembled fixture.
  *  - `url`: single GLB (legacy preview.glb) fallback.
- * The assembly is preferred whenever it yields at least one mesh.
+ * Z-up authoring space (camera.up = Z; assembly stays in GDTF Z-up).
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
@@ -16,6 +16,7 @@ import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, type MotionNode } from '../utils/fixtureAssembly';
 import type { ClampPlacement } from '../utils/fixturePlacement';
 import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
+import { fetchSlotMaterials, paintModelMaterialSlots } from '../utils/modelMaterialSlots';
 import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type ModelMaterialSlot, type MotionAxis, type Vec3 } from '../../shared/api';
 
 /** Gizmo edit emitted to the parent (GDTF local space: position metres, rotation degrees). */
@@ -44,6 +45,8 @@ interface AssemblyProp {
   clampPlacement?: ClampPlacement;
   /** Model Library preview GLB for the REBUS clamp (overrides fixture upload). */
   clampModelUrl?: string;
+  /** Model Library material slots for the linked clamp (when clampModelUrl is set). */
+  clampMaterialSlots?: ModelMaterialSlot[];
 }
 
 const props = withDefaults(defineProps<{
@@ -131,6 +134,8 @@ let resizeObs: ResizeObserver | null = null;
 let rafId: number | null = null;
 let panGroup: THREE.Group | null = null;
 let tiltGroup: THREE.Group | null = null;
+/** +90° X wrapper for legacy single-GLB url mode (Y-up glTF → Z-up viewer). */
+let glbOrient: THREE.Group | null = null;
 /** Pan node from the assembly motion rig (Yoke). Overrides panGroup when set. */
 let panNode: MotionNode | null = null;
 /** Tilt node from the assembly motion rig (Head). Overrides tiltGroup when set. */
@@ -228,7 +233,7 @@ function dispose(): void {
   renderer?.dispose();
   if (dom && wrapRef.value?.contains(dom)) wrapRef.value.removeChild(dom);
   envRT?.dispose();
-  renderer = scene = camera = controls = envRT = panGroup = tiltGroup = dirLight = null;
+  renderer = scene = camera = controls = envRT = panGroup = tiltGroup = glbOrient = dirLight = null;
 }
 
 function applyCameraPreset(): void {
@@ -236,10 +241,10 @@ function applyCameraPreset(): void {
   const s = modelSize;
   const c = modelCenter;
   const presets: Record<string, [number, number, number]> = {
-    top: [c.x, c.y + s * 1.2, c.z + 0.001],
-    front: [c.x, c.y + s * 0.15, c.z + s * 1.1],
-    side: [c.x + s * 1.1, c.y + s * 0.15, c.z],
-    iso: [c.x + s * 0.6, c.y + s * 0.4, c.z + s * 0.8],
+    top: [c.x, c.y + 0.001, c.z + s * 1.2],
+    front: [c.x, c.y - s * 1.1, c.z + s * 0.15],
+    side: [c.x + s * 1.1, c.y, c.z + s * 0.15],
+    iso: [c.x + s * 0.6, c.y - s * 0.4, c.z + s * 0.8],
   };
   const pos = presets[props.viewPreset] ?? presets.iso;
   camera.position.set(pos[0], pos[1], pos[2]);
@@ -285,7 +290,7 @@ function syncMotion(): void {
       .copy(panNode.restQuaternion)
       .multiply(new THREE.Quaternion().setFromAxisAngle(panNode.axis, panRad));
   } else if (panGroup) {
-    panGroup.rotation.y = panRad;
+    panGroup.rotation.z = panRad;
   }
 
   if (tiltNode) {
@@ -430,12 +435,12 @@ function frameLoaded(precomputedBox?: THREE.Box3): void {
 }
 
 async function loadGlb(url: string): Promise<boolean> {
-  if (!scene || !tiltGroup) return false;
+  if (!scene || !glbOrient) return false;
   const loader = new GLTFLoader();
   const gltf = await loader.loadAsync(url);
   clearLoaded();
   loadedRoot = gltf.scene;
-  tiltGroup.add(loadedRoot);
+  glbOrient.add(loadedRoot);
   await applyModelSlotMaterials();
   frameLoaded();
   return true;
@@ -450,51 +455,14 @@ async function loadGlb(url: string): Promise<boolean> {
 async function applyModelSlotMaterials(): Promise<void> {
   const slots = props.modelMaterialSlots;
   if (!slots?.length || !loadedRoot) return;
-  const assigned = slots.filter(
-    (s): s is ModelMaterialSlot & { materialId: string } => !!s.materialId,
-  );
-  if (!assigned.length) return;
 
   const maxAniso = renderer?.capabilities.getMaxAnisotropy() ?? 1;
-  const built: BuiltMaterial[] = [];
-  const byId = new Map<string, THREE.Material>();
-  await Promise.all([...new Set(assigned.map((s) => s.materialId))].map(async (id) => {
-    try {
-      const detail = await materialsApi.get(id);
-      const bm = buildFixturePbrMaterial(detail, texLoader, maxAniso);
-      built.push(bm);
-      byId.set(id, bm.material);
-    } catch {
-      // Material may have been deleted; leave the GLB's own material in place.
-    }
-  }));
+  const { bySlotName, built } = await fetchSlotMaterials(slots, texLoader, maxAniso);
   if (!loadedRoot) {
     for (const bm of built) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
     return;
   }
-
-  const bySlotName = new Map<string, THREE.Material>();
-  for (const s of assigned) {
-    const mat = byId.get(s.materialId);
-    if (mat) bySlotName.set(s.name, mat);
-  }
-  // A single slot represents the whole model (e.g. the importer's `default`
-  // fallback) — paint every mesh with it.
-  const sole = slots.length === 1 ? bySlotName.values().next().value ?? null : null;
-
-  loadedRoot.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    if (sole) {
-      mesh.material = sole;
-      return;
-    }
-    if (Array.isArray(mesh.material)) {
-      mesh.material = mesh.material.map((m) => bySlotName.get(m.name) ?? m);
-    } else if (mesh.material) {
-      mesh.material = bySlotName.get(mesh.material.name) ?? bySlotName.get(mesh.name) ?? mesh.material;
-    }
-  });
+  paintModelMaterialSlots(loadedRoot, slots, bySlotName);
   builtMaterials = builtMaterials.concat(built);
 }
 
@@ -518,6 +486,15 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     }
   }));
 
+  let clampSlotMaterialsByName: Map<string, THREE.Material> | undefined;
+  if (a.clampModelUrl && a.clampMaterialSlots?.length) {
+    const { bySlotName, built } = await fetchSlotMaterials(a.clampMaterialSlots, texLoader, maxAniso);
+    if (bySlotName.size) {
+      clampSlotMaterialsByName = bySlotName;
+      newBuilt.push(...built);
+    }
+  }
+
   const { root, meshCount, box, panNode: pn, tiltNode: tn, beamPart, partGroups: pg } = await buildFixtureAssembly({
     parts: a.parts,
     models: a.models ?? [],
@@ -526,6 +503,8 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     fixtureZOffsetM: a.fixtureZOffsetM ?? 0,
     clampPlacement: a.clampPlacement,
     clampModelUrl: a.clampModelUrl,
+    clampMaterialSlots: a.clampMaterialSlots,
+    clampSlotMaterialsByName,
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
@@ -661,11 +640,15 @@ onMounted(() => {
 
   panGroup = new THREE.Group();
   tiltGroup = new THREE.Group();
+  glbOrient = new THREE.Group();
+  glbOrient.rotation.x = Math.PI / 2;
   panGroup.add(tiltGroup);
+  tiltGroup.add(glbOrient);
   scene.add(panGroup);
 
   camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
-  camera.position.set(2, 1.5, 3);
+  camera.up.set(0, 0, 1);
+  camera.position.set(2, -3, 1.5);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.enabled = props.interactive;
@@ -687,7 +670,7 @@ onMounted(() => {
   scene.environment = envRT.texture;
   scene.add(new THREE.AmbientLight(0xffffff, 0.35));
   dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
-  dirLight.position.set(4, 6, 3);
+  dirLight.position.set(4, 3, 6);
   scene.add(dirLight);
 
   resizeObs = new ResizeObserver(() => resize());
@@ -704,7 +687,8 @@ const assemblyKey = (): string => {
   const mats = a.parts?.map((p) => `${p.partId}=${p.materialId ?? ''}`).join('|') ?? '';
   const clamp = a.clampPlacement;
   const clampKey = clamp ? `${clamp.mirrorY ? 1 : 0}:${clamp.rotateZDeg}` : '0:0';
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${mats}`;
+  const clampSlots = (a.clampMaterialSlots ?? []).map((s) => `${s.name}=${s.materialId ?? ''}`).join('|');
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${mats}`;
 };
 
 const modelMaterialsKey = (): string =>

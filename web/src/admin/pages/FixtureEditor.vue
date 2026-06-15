@@ -69,6 +69,8 @@ import {
 
   type ModelListItem,
 
+  type ModelMaterialSlot,
+
   type Vec3,
 
 } from '../../shared/api';
@@ -205,6 +207,7 @@ const assembly = computed(() => {
       rotateZDeg: clampRotateZDeg.value,
     },
     clampModelUrl: clampModelLibraryId.value ? modelsApi.previewUrl(clampModelLibraryId.value) : undefined,
+    clampMaterialSlots: clampMaterialSlots.value.length ? clampMaterialSlots.value : undefined,
   };
 });
 
@@ -351,6 +354,7 @@ const fixtureZOffsetMm = ref(0);
 const clampMirrorY = ref(false);
 const clampRotateZDeg = ref(0);
 const clampModelLibraryId = ref<string | null>(null);
+const clampMaterialSlots = ref<ModelMaterialSlot[]>([]);
 const clampLibraryModels = ref<ModelListItem[]>([]);
 const clampLibraryLoading = ref(false);
 const clampLibraryPreviewMissing = ref(false);
@@ -390,6 +394,21 @@ function syncPlacementFromFixture(): void {
   clampRotateZDeg.value = clamp.rotateZDeg;
   clampModelLibraryId.value = readClampModelLibraryId(meta);
   void verifyClampLibraryPreview();
+  void loadClampMaterialSlots();
+}
+
+async function loadClampMaterialSlots(): Promise<void> {
+  const id = clampModelLibraryId.value;
+  if (!id) {
+    clampMaterialSlots.value = [];
+    return;
+  }
+  try {
+    const res = await modelsApi.get(id);
+    clampMaterialSlots.value = res.model.definition?.materialSlots ?? [];
+  } catch {
+    clampMaterialSlots.value = [];
+  }
 }
 
 function applyPlacementToDefinition(): void {
@@ -451,6 +470,7 @@ async function verifyClampLibraryPreview(): Promise<void> {
 function onClampLibraryChange(): void {
   applyPlacementToDefinition();
   void verifyClampLibraryPreview();
+  void loadClampMaterialSlots();
   assemblyRevision.value += 1;
 }
 
