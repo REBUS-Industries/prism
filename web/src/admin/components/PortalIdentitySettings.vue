@@ -15,57 +15,54 @@ interface FieldDef {
   type?: FieldType;
   placeholder?: string;
   options?: { value: string; label: string }[];
+  /** When set, only show this field if the selected portal_adapter is in the list. */
+  adapters?: string[];
 }
 
 const portalFields: FieldDef[] = [
   {
     key: 'portal_adapter',
-    label: 'Portal adapter',
+    label: 'Sign-in method',
     type: 'select',
     options: [
-      { value: 'mock', label: 'Mock (prism-dev)' },
-      { value: 'google', label: 'Google OAuth (direct)' },
-      { value: 'real', label: 'REBUS portal API' },
+      { value: 'google', label: 'Google Workspace (direct)' },
+      { value: 'mock', label: 'Mock (dev only)' },
+      { value: 'real', label: 'REBUS portal (future)' },
     ],
-    hint: 'Use Google OAuth for direct Workspace sign-in without portal.rebus.industries.',
+    hint: 'Google Workspace is the live method. REBUS portal is for when portal.rebus.industries ships.',
   },
-  { key: 'portal_base_url', label: 'Portal API base URL', placeholder: 'https://portal.rebus.industries' },
-  { key: 'portal_api_key', label: 'Portal service API key', secret: true, placeholder: 'Bearer token for /portal/* calls' },
+  { key: 'portal_base_url', label: 'Portal API base URL', placeholder: 'https://portal.rebus.industries', adapters: ['real'] },
+  { key: 'portal_api_key', label: 'Portal service API key', secret: true, placeholder: 'Bearer token for /portal/* calls', adapters: ['real'] },
   {
     key: 'portal_google_authorize_url',
-    label: 'Portal OAuth authorize URL (real adapter only)',
+    label: 'Portal OAuth authorize URL',
     placeholder: 'https://portal.rebus.industries/oauth/authorize',
-    hint: 'Ignored when portal_adapter=google (uses accounts.google.com).',
+    adapters: ['real'],
   },
   {
     key: 'portal_mock_persona',
-    label: 'Mock persona (dev only)',
+    label: 'Mock persona',
     placeholder: 'alice',
-    hint: 'Used when adapter=mock and Sign in with Google is clicked.',
+    hint: 'Dev only — persona used when Sign in with Google is clicked in mock mode.',
+    adapters: ['mock'],
   },
 ];
 
 const workspaceFields: FieldDef[] = [
   {
     key: 'workspace_adapter',
-    label: 'Workspace directory adapter',
+    label: 'Directory source',
     type: 'select',
     options: [
-      { value: 'mock', label: 'Mock directory' },
-      { value: 'google_admin_sdk', label: 'Google Admin SDK' },
+      { value: 'google_admin_sdk', label: 'Google Workspace' },
+      { value: 'mock', label: 'Mock (dev only)' },
     ],
   },
   {
     key: 'workspace_domain',
-    label: 'Primary workspace domain',
+    label: 'Workspace domain',
     placeholder: 'rebus.industries',
-    hint: 'Default domain when linking Google Workspace on the Users page.',
-  },
-  {
-    key: 'workspace_admin_email',
-    label: 'Workspace admin email (impersonation)',
-    placeholder: 'admin@rebus.industries',
-    hint: 'Super-admin Google account for Admin SDK directory sync (domain-wide delegation).',
+    hint: 'Domain to import users from on the Users page.',
   },
   {
     key: 'workspace_enforce_provisioned',
@@ -80,7 +77,7 @@ const googleApiFields: FieldDef[] = [
     key: 'google_oauth_client_id',
     label: 'Google OAuth client ID',
     placeholder: 'xxxx.apps.googleusercontent.com',
-    hint: 'Web client for Sign in with Google (admin SPA + connectors).',
+    hint: 'Web client for Sign in with Google.',
   },
   {
     key: 'google_oauth_client_secret',
@@ -92,41 +89,21 @@ const googleApiFields: FieldDef[] = [
     key: 'google_oauth_scopes',
     label: 'Google OAuth scopes',
     placeholder: 'openid email profile',
-    hint: 'Space-separated scopes for admin Sign in with Google.',
-  },
-  {
-    key: 'google_workspace_directory_refresh_token',
-    label: 'Directory sync refresh token',
-    secret: true,
-    placeholder: 'Write-only — use Authorize directory sync',
-    hint: 'Preferred when org policy blocks service account keys (iam.disableServiceAccountKeyCreation).',
-  },
-  {
-    key: 'google_service_account_json',
-    label: 'Google service account JSON (optional)',
-    type: 'textarea',
-    secret: true,
-    placeholder: 'Only if your org allows service account key creation',
-    hint: 'Alternative to refresh token: domain-wide delegation + SA JSON key.',
+    hint: 'Advanced — leave default unless adding connector scopes.',
   },
 ];
 
 const adminAccessFields: FieldDef[] = [
   {
     key: 'portal_admin_emails',
-    label: 'Legacy admin allowlist (emails)',
-    placeholder: 'alice@rebus.industries, dom@rebus.industries',
-    hint: 'Fallback when user is not marked PRISM admin under Users. Comma-separated.',
-  },
-  {
-    key: 'portal_admin_username',
-    label: 'Local admin username bind',
-    placeholder: 'admin',
-    hint: 'Optional override when a provisioned user has prismAdminUsername set.',
+    label: 'Admin allowlist (emails)',
+    placeholder: 'it@rebus.industries',
+    hint: 'Break-glass: these emails get admin even if not marked PRISM admin under Users. Comma-separated.',
   },
 ];
 
 const ALL_FIELDS = [...portalFields, ...workspaceFields, ...googleApiFields, ...adminAccessFields];
+const DIRECTORY_TOKEN_KEY = 'google_workspace_directory_refresh_token';
 const values = reactive<Record<string, { value: string; original: string; configured?: boolean }>>(
   Object.fromEntries(ALL_FIELDS.map((f) => [f.key, { value: '', original: '', configured: false }])),
 );
@@ -134,7 +111,12 @@ const saving = ref(false);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const status = ref<string | null>(null);
+const directorySyncConfigured = ref(false);
 
+const currentAdapter = computed(() => values['portal_adapter']?.value ?? 'google');
+const visiblePortalFields = computed(() =>
+  portalFields.filter((f) => !f.adapters || f.adapters.includes(currentAdapter.value)),
+);
 const dirty = computed(() => ALL_FIELDS.some((f) => isDirty(f.key)));
 
 function isMasked(v: string): boolean {
@@ -162,6 +144,7 @@ async function refresh() {
         configured,
       };
     }
+    directorySyncConfigured.value = !!(all[DIRECTORY_TOKEN_KEY] ?? '').trim();
   } catch (err) {
     error.value = (err as ApiError).message ?? 'Failed to load settings';
   } finally {
@@ -207,10 +190,10 @@ onMounted(async () => {
     <div v-if="status" class="success-box">{{ status }}</div>
 
     <section class="section">
-      <h3>Portal OAuth</h3>
-      <p class="muted section-intro">Connector Sign in with REBUS and admin Google sign-in redirect configuration.</p>
+      <h3>Sign-in</h3>
+      <p class="muted section-intro">How admins and connectors authenticate.</p>
       <div class="field-grid">
-        <div v-for="f in portalFields" :key="f.key" class="field">
+        <div v-for="f in visiblePortalFields" :key="f.key" class="field">
           <label :for="`pi-${f.key}`">
             {{ f.label }}
             <code class="muted">{{ f.key }}</code>
@@ -231,9 +214,9 @@ onMounted(async () => {
     </section>
 
     <section class="section">
-      <h3>Google Workspace</h3>
+      <h3>Workspace directory</h3>
       <p class="muted section-intro">
-        Directory sync + enforcement. Manage provisioned users on
+        Import + enforcement. Manage provisioned users on
         <RouterLink :to="{ name: 'users' }">Users</RouterLink>.
       </p>
       <div class="field-grid">
@@ -256,31 +239,24 @@ onMounted(async () => {
     </section>
 
     <section class="section">
-      <h3>Google API credentials</h3>
-      <p class="muted section-intro">
-        OAuth client for user sign-in. Directory sync uses a refresh token (recommended) or an optional service account JSON key.
-      </p>
+      <h3>Google credentials</h3>
+      <p class="muted section-intro">OAuth web client for sign-in. Directory sync uses a one-time super-admin authorization.</p>
       <div class="directory-auth-row">
-        <a class="btn secondary" href="/api/admin/directory-oauth/start">Authorize directory sync</a>
+        <a class="btn secondary" href="/api/admin/directory-oauth/start">
+          {{ directorySyncConfigured ? 'Re-authorize directory sync' : 'Authorize directory sync' }}
+        </a>
         <p class="hint">
-          Sign in as a Workspace super-admin once. Stores <code>google_workspace_directory_refresh_token</code> — no service account key required.
+          <span v-if="directorySyncConfigured" class="ok-badge">Authorized</span>
+          Sign in once as a Workspace super-admin — no service account key needed.
         </p>
       </div>
       <div class="field-grid">
-        <div v-for="f in googleApiFields" :key="f.key" class="field" :class="{ wide: f.type === 'textarea' }">
+        <div v-for="f in googleApiFields" :key="f.key" class="field">
           <label :for="`pi-${f.key}`">
             {{ f.label }}
             <code class="muted">{{ f.key }}</code>
           </label>
-          <textarea
-            v-if="f.type === 'textarea'"
-            :id="`pi-${f.key}`"
-            v-model="values[f.key].value"
-            rows="5"
-            :placeholder="values[f.key].configured ? 'Configured — leave blank to keep' : (f.placeholder ?? '')"
-          />
           <input
-            v-else
             :id="`pi-${f.key}`"
             v-model="values[f.key].value"
             :type="f.secret ? 'password' : 'text'"
@@ -292,8 +268,8 @@ onMounted(async () => {
     </section>
 
     <section class="section">
-      <h3>PRISM admin access</h3>
-      <p class="muted section-intro">Prefer marking users as PRISM admin on the Users page; these are legacy fallbacks.</p>
+      <h3>Admin access</h3>
+      <p class="muted section-intro">Prefer marking users as PRISM admin on the Users page; this is a break-glass fallback.</p>
       <div class="field-grid">
         <div v-for="f in adminAccessFields" :key="f.key" class="field">
           <label :for="`pi-${f.key}`">
@@ -310,25 +286,14 @@ onMounted(async () => {
       <h3>Google Cloud setup</h3>
       <ol class="setup-steps">
         <li>Create a <strong>Web application</strong> OAuth client in Google Cloud Console.</li>
-        <li>Add authorized redirect URIs:
-          <code>https://prism.rebus.industries/admin/?portal_callback=1</code>,
-          <code>https://prism-dev.rebus.industries/admin/?portal_callback=1</code>,
-          <code>https://prism.rebus.industries/api/admin/directory-oauth/callback</code>,
-          <code>https://prism-dev.rebus.industries/api/admin/directory-oauth/callback</code>,
-          and local dev <code>http://localhost:29364/admin/?portal_callback=1</code>.
+        <li>Add these authorized redirect URIs:
+          <code>https://prism-dev.rebus.industries/admin/?portal_callback=1</code> and
+          <code>https://prism-dev.rebus.industries/api/admin/directory-oauth/callback</code>
+          (add the <code>prism.rebus.industries</code> equivalents when prod goes live).
         </li>
-        <li>Add scope <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code> on the OAuth consent screen.</li>
-        <li>
-          <strong>Directory sync (no SA key):</strong> save OAuth client ID/secret, click <strong>Authorize directory sync</strong> above
-          (super-admin). Use this when org policy <code>iam.disableServiceAccountKeyCreation</code> blocks JSON keys.
-        </li>
-        <li>
-          <strong>Directory sync (SA key):</strong> optional — service account + domain-wide delegation if your org allows key creation.
-        </li>
-        <li>Set <code>portal_adapter=google</code>, <code>workspace_adapter=google_admin_sdk</code>,
-          paste OAuth client ID/secret, authorize directory sync (or paste SA JSON), and set <code>workspace_admin_email</code> if using SA keys.
-        </li>
-        <li>Link the domain on <RouterLink :to="{ name: 'users' }">Users</RouterLink>, sync directory, assign permissions, then sign in with Google.</li>
+        <li>Paste the client ID + secret above and save.</li>
+        <li>Click <strong>Authorize directory sync</strong> and sign in as a Workspace super-admin.</li>
+        <li>Import users on <RouterLink :to="{ name: 'users' }">Users</RouterLink>, assign permissions, then everyone signs in with Google.</li>
       </ol>
       <p class="muted section-intro">Full checklist: <code>docs/WORKSPACE.md</code></p>
     </section>
@@ -362,4 +327,16 @@ onMounted(async () => {
 .setup-help code { font-size: 11px; word-break: break-all; }
 .directory-auth-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .directory-auth-row .btn { align-self: flex-start; text-decoration: none; }
+.ok-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: hsl(140 60% 40% / 0.15);
+  color: hsl(140 60% 35%);
+}
 </style>
