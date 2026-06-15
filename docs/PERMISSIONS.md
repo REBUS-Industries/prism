@@ -24,9 +24,16 @@ effective = portal project grants ∩ function policy graph
 **orbit-cli** is excluded: it authenticates via OAuth/PAT only and is never manifest-gated.
 Use `orbit-cli auth login --server <prod|dev>` for full token capabilities (automation, UE5 subprocess, PRISM agent).
 
-## Admin UI
+## Admin login
 
 **Admin → Permissions** (`/admin/#/permissions`) — Vue Flow editor for the policy graph.
+
+**Admin → Users** (`/admin/#/users`) — link Google Workspace, sync directory users, and
+pre-provision project access / PRISM admin flags before first sign-in.
+
+**Admin login** — username/password (unchanged) or **Sign in with Google** when the user's
+portal email is provisioned with `isPrismAdmin` (or listed in legacy `PORTAL_ADMIN_EMAILS`).
+On prism-dev with the mock workspace, link domain `rebus.industries`, sync, then edit `alice@rebus.industries`.
 
 ## Service
 

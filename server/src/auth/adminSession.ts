@@ -20,13 +20,11 @@ interface SessionPayload {
   iat: number;
 }
 
-export async function loginAdmin(req: FastifyRequest, reply: FastifyReply, username: string, password: string): Promise<boolean> {
-  const rows = await db.select().from(adminUsers).where(eq(adminUsers.username, username)).limit(1);
-  const row = rows[0];
-  if (!row || !row.isActive) return false;
-  const ok = await bcrypt.compare(password, row.passwordHash);
-  if (!ok) return false;
-
+export async function setAdminSession(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  row: typeof adminUsers.$inferSelect,
+): Promise<void> {
   await db.update(adminUsers).set({ lastLoginAt: new Date() }).where(eq(adminUsers.id, row.id));
 
   const payload: SessionPayload = { uid: row.id, username: row.username, iat: Date.now() };
@@ -39,6 +37,16 @@ export async function loginAdmin(req: FastifyRequest, reply: FastifyReply, usern
     maxAge: SESSION_TTL_DAYS * 24 * 60 * 60,
   });
   req.principal = { kind: 'adminSession', adminUserId: row.id, username: row.username };
+}
+
+export async function loginAdmin(req: FastifyRequest, reply: FastifyReply, username: string, password: string): Promise<boolean> {
+  const rows = await db.select().from(adminUsers).where(eq(adminUsers.username, username)).limit(1);
+  const row = rows[0];
+  if (!row || !row.isActive) return false;
+  const ok = await bcrypt.compare(password, row.passwordHash);
+  if (!ok) return false;
+
+  await setAdminSession(req, reply, row);
   return true;
 }
 

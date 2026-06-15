@@ -34,6 +34,13 @@
 
 Rhino panel → **Sign in with REBUS** (uses mock-login on prism-dev).
 
+## Workspace smoke test
+
+1. Admin → **Users** → link `rebus.industries` → **Sync directory**
+2. Edit `alice@rebus.industries` — enable **PRISM admin**, set project `mock-project-1` / contributor
+3. **Sign in with Google** on admin login (mock persona alice)
+4. Connector session with `mock:alice` receives provisioned project grants
+
 CLI: `orbit-cli auth login --server dev` (OAuth — full access, not portal-scoped)
 
 ## Risks

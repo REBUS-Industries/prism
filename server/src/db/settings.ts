@@ -12,6 +12,19 @@ const ENV_FALLBACKS: Partial<Record<SettingKey | LegacySettingKey, string | unde
   orbit_dev_server_url: process.env.ORBIT_DEV_SERVER_URL,
   job_retention_hours:  process.env.JOB_RETENTION_HOURS ?? '720',
   maintenance_mode:     process.env.MAINTENANCE_MODE ?? '0',
+  portal_adapter: process.env.PORTAL_ADAPTER ?? 'mock',
+  portal_base_url: process.env.PORTAL_BASE_URL ?? 'https://portal.rebus.industries',
+  portal_api_key: process.env.PORTAL_API_KEY,
+  portal_google_authorize_url: process.env.PORTAL_GOOGLE_AUTHORIZE_URL,
+  portal_mock_persona: process.env.PORTAL_MOCK_PERSONA ?? 'alice',
+  portal_admin_emails: process.env.PORTAL_ADMIN_EMAILS,
+  portal_admin_username: process.env.PORTAL_ADMIN_USERNAME ?? process.env.ADMIN_USERNAME ?? 'admin',
+  workspace_adapter: process.env.WORKSPACE_ADAPTER ?? 'mock',
+  workspace_domain: process.env.WORKSPACE_DOMAIN,
+  workspace_enforce_provisioned: process.env.WORKSPACE_ENFORCE_PROVISIONED ?? '1',
+  google_oauth_client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
+  google_oauth_client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+  google_service_account_json: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
 };
 
 export type SettingKey =
@@ -51,7 +64,21 @@ export type SettingKey =
   | 'external_materials_index_use'
   | 'external_materials_index_providers'
   | 'external_materials_index_updated_at'
-  | 'external_materials_index_version';
+  | 'external_materials_index_version'
+  // Portal OAuth + Google Workspace (Admin → Settings tiles; consumed by permissions service).
+  | 'portal_adapter'
+  | 'portal_base_url'
+  | 'portal_api_key'
+  | 'portal_google_authorize_url'
+  | 'portal_mock_persona'
+  | 'portal_admin_emails'
+  | 'portal_admin_username'
+  | 'workspace_adapter'
+  | 'workspace_domain'
+  | 'workspace_enforce_provisioned'
+  | 'google_oauth_client_id'
+  | 'google_oauth_client_secret'
+  | 'google_service_account_json';
 
 /**
  * Legacy keys that are still read from the DB as a fallback by older code

@@ -18,6 +18,9 @@ const SECRET_KEYS = new Set<SettingKey>([
   'orbit_dev_token',
   'gdtf_share_password',
   'fab_epic_refresh_token',
+  'portal_api_key',
+  'google_oauth_client_secret',
+  'google_service_account_json',
 ]);
 
 const plugin: FastifyPluginAsync = async (app) => {
