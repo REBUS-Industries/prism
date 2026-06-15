@@ -21,7 +21,16 @@ const props = defineProps<{
   job: JobSummary | null;
 }>();
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{
+  close: [];
+  /** Operator clicked "Select layers" on an awaiting_selection job — the
+   *  Dashboard closes this modal and opens the layer picker. */
+  selectLayers: [job: JobSummary];
+}>();
+
+function emitSelectLayers() {
+  if (props.job) emit('selectLayers', props.job);
+}
 
 const lines    = ref<JobLogLine[]>([]);
 const loading  = ref(false);
@@ -181,6 +190,14 @@ onUnmounted(() => {
         <button class="icon-btn" type="button" @click="close" title="Close (Esc)" aria-label="Close"><Icon name="close" :size="18" /></button>
       </header>
 
+      <div v-if="job.status === 'awaiting_selection'" class="select-banner">
+        <span class="banner-text">
+          <Icon name="layers" :size="16" />
+          This job is waiting for you to choose which layers to convert.
+        </span>
+        <button type="button" class="banner-btn" @click="emitSelectLayers">Select layers</button>
+      </div>
+
       <div class="toolbar">
         <input
           v-model="search"
@@ -320,6 +337,37 @@ onUnmounted(() => {
 }
 .toolbar .link:hover:not(:disabled) { background: var(--color-bg-hover); }
 .toolbar .spacer { flex: 1; }
+
+.select-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-warn-bg);
+}
+.banner-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.banner-btn {
+  min-height: auto;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 4px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  cursor: pointer;
+}
+.banner-btn:hover { background: hsl(var(--primary) / 0.9); border-color: hsl(var(--primary) / 0.9); }
 
 .logs {
   flex: 1;
