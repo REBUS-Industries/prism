@@ -2,30 +2,19 @@
 
 Polyrepo microservice for the **PRISM Model Library** — same split-stack pattern as `prism-fixtures-service`.
 
-## Create the GitHub repo (once)
-
-From this directory:
+**Live repo:** https://github.com/REBUS-Industries/prism-models-service
 
 ```powershell
-gh repo create REBUS-Industries/prism-models-service --private --source=. --remote=origin --push
+git clone https://github.com/REBUS-Industries/prism-models-service.git
 ```
 
-If the repo already exists:
-
-```powershell
-git init
-git remote add origin https://github.com/REBUS-Industries/prism-models-service.git
-git checkout -b main
-git add .
-git commit -m "chore: bootstrap models service scaffold"
-git push -u origin main
-```
+This folder in the PRISM monorepo (`scaffold/prism-models-service/`) is a reference copy; develop in the polyrepo checkout.
 
 ## Secrets
 
 | Secret | Purpose |
 |--------|---------|
-| `PRISM_DISPATCH_TOKEN` | PAT with `repo` scope — triggers `deploy-dev-service` on `REBUS-Industries/prism` after image push |
+| `PRISM_DISPATCH_TOKEN` | PAT with `repo` scope — triggers `deploy-dev-service` on `REBUS-Industries/prism` after image push (configured) |
 
 ## CI
 
