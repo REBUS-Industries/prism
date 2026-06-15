@@ -147,6 +147,7 @@ onMounted(() => {
   <div v-if="loading" class="muted">Loading…</div>
   <div v-else-if="error && !model" class="error-box">{{ error }}</div>
   <template v-else-if="model">
+    <div class="page-fill model-editor">
     <header class="editor-head">
       <RouterLink :to="{ name: 'models' }" class="back muted"><Icon name="arrow_back" :size="14" /> Model library</RouterLink>
       <div class="head-main">
@@ -167,7 +168,7 @@ onMounted(() => {
 
     <div v-if="error" class="error-box mt">{{ error }}</div>
 
-    <div v-if="activeTab === 'overview'" class="overview">
+    <div v-if="activeTab === 'overview'" class="overview page-fill__body">
       <div class="viewer-col">
         <div v-if="previewUrl" class="gizmo-toolbar">
           <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'translate' }" title="Move" @click="gizmoMode = 'translate'"><Icon name="open_with" :size="16" /></button>
@@ -217,7 +218,7 @@ onMounted(() => {
       </aside>
     </div>
 
-    <section v-else-if="activeTab === 'metadata'" class="card mt">
+    <section v-else-if="activeTab === 'metadata'" class="card mt page-fill__scroll">
       <label class="muted small">Name</label>
       <input v-model="name" />
       <label class="muted small mt-sm">Category</label>
@@ -249,7 +250,7 @@ onMounted(() => {
       </p>
     </section>
 
-    <section v-else-if="activeTab === 'materials'" class="card mt">
+    <section v-else-if="activeTab === 'materials'" class="card mt page-fill__scroll">
       <h3>Materials</h3>
       <p class="muted small intro">
         Assign a PRISM material to each slot detected in the mesh. Assignments render in the
@@ -274,7 +275,7 @@ onMounted(() => {
       </p>
     </section>
 
-    <section v-else class="card mt">
+    <section v-else class="card mt page-fill__scroll">
       <h3>Versions</h3>
       <ul class="version-list">
         <li v-for="v in model.versions" :key="v.id">
@@ -285,23 +286,25 @@ onMounted(() => {
         <li v-if="!model.versions.length" class="muted">No versions.</li>
       </ul>
     </section>
+    </div>
   </template>
 </template>
 
 <style scoped>
-.editor-head { margin-bottom: 12px; }
+.model-editor { gap: 12px; }
+.editor-head { margin-bottom: 0; flex-shrink: 0; }
 .back { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
 .head-main { display: flex; align-items: center; gap: 16px; margin-top: 6px; }
 .head-main h1 { flex: 1; margin: 0; }
 .head-actions { display: flex; gap: 8px; }
-.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border, #2a2a32); margin-bottom: 12px; }
+.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border, #2a2a32); margin-bottom: 0; flex-shrink: 0; }
 .tab-bar button { background: none; border: none; padding: 8px 14px; cursor: pointer; color: inherit; border-bottom: 2px solid transparent; }
 .tab-bar button.active { border-bottom-color: var(--accent, #ff8800); font-weight: 600; }
-.overview { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
-.viewer-col { display: flex; flex-direction: column; min-width: 0; }
-.viewer-wrap { flex: 1; height: 60vh; min-height: 360px; border-radius: 10px; overflow: hidden; background: var(--surface-2, #1a1a1f); }
+.overview { display: grid; grid-template-columns: 1fr 300px; gap: 16px; min-height: 0; }
+.viewer-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.viewer-wrap { flex: 1; min-height: 0; border-radius: 10px; overflow: hidden; background: var(--surface-2, #1a1a1f); }
 .no-preview { display: flex; align-items: center; justify-content: center; height: 100%; }
-.side-panels { display: flex; flex-direction: column; gap: 12px; }
+.side-panels { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
 .facts dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
 .facts dt { color: var(--color-text-muted, #888); }
 .facts h3 { margin: 0 0 8px; font-size: 14px; }

@@ -289,7 +289,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="prism-library">
+  <div class="prism-library page-fill">
     <header class="lib-header">
       <div class="header-brand">
         <span class="brand-icon" aria-hidden="true">P</span>
@@ -560,14 +560,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0;
-  height: calc(100vh - 32px);
-  min-height: 520px;
 }
 .lib-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+  flex-shrink: 0;
   padding: 16px 20px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg);

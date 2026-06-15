@@ -706,7 +706,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
 <template>
 
-  <div class="fixture-library">
+  <div class="fixture-library page-fill">
 
     <header class="lib-header">
 
@@ -1101,10 +1101,6 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
   gap: 0;
 
-  height: calc(100vh - 32px);
-
-  min-height: 520px;
-
 }
 
 .lib-header {
@@ -1116,6 +1112,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
   align-items: flex-start;
 
   gap: 16px;
+
+  flex-shrink: 0;
 
   padding: 16px 20px;
 
