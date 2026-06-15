@@ -6,12 +6,12 @@
  *  - Each linked model GLB is wrapped in a +90° X group scaled so its bounding
  *    box matches the Model's declared Length / Width / Height (metres).
  *  - Parts without a mesh file render as scaled unit primitives (box / cylinder).
- *  - A single −90° X rotation on the root presents the Z-up assembly in Three's
- *    Y-up viewer (fixture hangs downward like the builder).
+ *  - The assembly root stays in native GDTF Z-up space for the Z-up fixture viewer.
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { FixturePart, FixtureModel } from '../../shared/api';
+import type { FixturePart, FixtureModel, ModelMaterialSlot } from '../../shared/api';
+import { paintModelMaterialSlots } from './modelMaterialSlots';
 import {
   REBUS_CLAMP_PART_ID,
   type ClampPlacement,
@@ -65,6 +65,14 @@ export interface FixtureAssemblyInput {
    * instead of the fixture's own clamp media upload.
    */
   clampModelUrl?: string;
+  /**
+   * Model Library material slots for the linked clamp GLB. When present with
+   * `clampModelUrl`, slot materials are painted on the clamp mesh instead of
+   * the fixture part's `materialId`.
+   */
+  clampMaterialSlots?: ModelMaterialSlot[];
+  /** Built slot materials keyed by slot name (from fetchSlotMaterials). */
+  clampSlotMaterialsByName?: Map<string, THREE.Material>;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -446,7 +454,15 @@ export async function buildFixtureAssembly(
       const obj = await loadGlbUrl(meshUrl);
       if (obj) {
         const wrapped = wrapModelMesh(obj.clone(true), dims);
-        paintMaterial(wrapped, part);
+        if (
+          isRebusClampPart(part) && clampUrl
+          && input.clampMaterialSlots?.length
+          && input.clampSlotMaterialsByName?.size
+        ) {
+          paintModelMaterialSlots(wrapped, input.clampMaterialSlots, input.clampSlotMaterialsByName);
+        } else {
+          paintMaterial(wrapped, part);
+        }
         if (isRebusClampPart(part)) {
           const placement = input.clampPlacement ?? { mirrorY: false, rotateZDeg: 0 };
           meshCount += attachClampMeshes(partGroup, wrapped, placement);
@@ -487,14 +503,7 @@ export async function buildFixtureAssembly(
     clone.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshCount += 1; });
   }
 
-  // Present Z-up GDTF assembly in the viewer's Y-up world (single root rotation).
-  const presentation = new THREE.Group();
-  presentation.name = 'Presentation';
-  presentation.rotation.x = -Math.PI / 2;
-  presentation.add(contentRoot);
-
-  const root = new THREE.Group();
-  root.add(presentation);
+  const root = contentRoot;
 
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);

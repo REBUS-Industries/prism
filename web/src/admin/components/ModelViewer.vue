@@ -10,14 +10,20 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
-import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
+import { fetchSlotMaterials, paintModelMaterialSlots } from '../utils/modelMaterialSlots';
+import { type BuiltMaterial } from '../utils/fixturePbrMaterial';
 import {
   applyModelTransform,
   ensureModelTransform,
   modelTransformKey,
   readModelTransform,
 } from '../utils/modelTransform';
-import { materialsApi, type ModelMaterialSlot, type ModelTransform } from '../../shared/api';
+import { type ModelMaterialSlot, type ModelTransform } from '../../shared/api';
+import {
+  ensureModelSourceUnits,
+  unitScaleToMetres,
+  type ModelLengthUnit,
+} from '../utils/modelUnits';
 
 const props = withDefaults(defineProps<{
   url: string;
@@ -177,49 +183,14 @@ function frameLoaded(): void {
 async function applyModelSlotMaterials(): Promise<void> {
   const slots = props.modelMaterialSlots;
   if (!slots?.length || !loadedRoot) return;
-  const assigned = slots.filter(
-    (s): s is ModelMaterialSlot & { materialId: string } => !!s.materialId,
-  );
-  if (!assigned.length) return;
 
   const maxAniso = renderer?.capabilities.getMaxAnisotropy() ?? 1;
-  const built: BuiltMaterial[] = [];
-  const byId = new Map<string, THREE.Material>();
-  await Promise.all([...new Set(assigned.map((s) => s.materialId))].map(async (id) => {
-    try {
-      const detail = await materialsApi.get(id);
-      const bm = buildFixturePbrMaterial(detail, texLoader, maxAniso);
-      built.push(bm);
-      byId.set(id, bm.material);
-    } catch {
-      // Material may have been deleted; leave the GLB's own material in place.
-    }
-  }));
+  const { bySlotName, built } = await fetchSlotMaterials(slots, texLoader, maxAniso);
   if (!loadedRoot) {
     for (const bm of built) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
     return;
   }
-
-  const bySlotName = new Map<string, THREE.Material>();
-  for (const s of assigned) {
-    const mat = byId.get(s.materialId);
-    if (mat) bySlotName.set(s.name, mat);
-  }
-  const sole = slots.length === 1 ? bySlotName.values().next().value ?? null : null;
-
-  loadedRoot.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    if (sole) {
-      mesh.material = sole;
-      return;
-    }
-    if (Array.isArray(mesh.material)) {
-      mesh.material = mesh.material.map((m) => bySlotName.get(m.name) ?? m);
-    } else if (mesh.material) {
-      mesh.material = bySlotName.get(mesh.material.name) ?? bySlotName.get(mesh.name) ?? mesh.material;
-    }
-  });
+  paintModelMaterialSlots(loadedRoot, slots, bySlotName);
   builtMaterials = builtMaterials.concat(built);
 }
 
