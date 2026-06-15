@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "rebus/portal-access/v1",
+  "title": "PortalAccess",
+  "description": "REBUS portal integration + connector permissions manifest",
+  "definitions": {
+    "ConnectorFunction": {
+      "type": "string",
+      "enum": [
+        "send",
+        "receive",
+        "list_projects",
+        "list_models",
+        "list_versions",
+        "create_project",
+        "create_model",
+        "create_version"
+      ]
+    },
+    "PortalProjectLevel": {
+      "type": "string",
+      "enum": ["viewer", "contributor", "owner", "admin"]
+    },
+    "ConnectorManifest": {
+      "type": "object",
+      "required": ["schema", "userId", "email", "orbitTarget", "orbitServerUrl", "orbitToken", "expiresAt", "sessionId", "projects", "globalAllowedFunctions"],
+      "properties": {
+        "schema": { "const": "rebus/connector-manifest/v1" },
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "orbitTarget": { "enum": ["prod", "dev"] },
+        "orbitServerUrl": { "type": "string", "format": "uri" },
+        "orbitToken": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "sessionId": { "type": "string" },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["orbitProjectId", "level", "allowedFunctions"],
+            "properties": {
+              "orbitProjectId": { "type": "string" },
+              "projectName": { "type": "string" },
+              "level": { "$ref": "#/definitions/PortalProjectLevel" },
+              "allowedFunctions": {
+                "type": "array",
+                "items": { "$ref": "#/definitions/ConnectorFunction" }
+              }
+            }
+          }
+        },
+        "globalAllowedFunctions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ConnectorFunction" }
+        }
+      }
+    }
+  }
+}

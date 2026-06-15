@@ -74,6 +74,7 @@ services:
       - prism-materials
       - prism-fixtures
       - prism-models
+      - prism-permissions
     ports:
       - "8765:80"
     volumes:
@@ -194,6 +195,40 @@ services:
       - prism-data:/data/prism
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8770/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prism-permissions:
+    image: ghcr.io/rebus-industries/prism-permissions-service:${PRISM_PERMISSIONS_TAG:-latest}
+    container_name: prism-permissions
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8771
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      PORTAL_ADAPTER: "${PORTAL_ADAPTER:-mock}"
+      PORTAL_BASE_URL: "${PORTAL_BASE_URL:-https://portal.rebus.industries}"
+      PORTAL_API_KEY: "${PORTAL_API_KEY:-}"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL:-https://orbit.rebus.industries}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
+      ORBIT_ADMIN_TOKEN: "${ORBIT_ADMIN_TOKEN:-}"
+      ORBIT_DEV_ADMIN_TOKEN: "${ORBIT_DEV_ADMIN_TOKEN:-${ORBIT_ADMIN_TOKEN:-}}"
+      ORBIT_AUTO_INVITE: "${ORBIT_AUTO_INVITE:-0}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8771/health"]
       interval: 30s
       timeout: 5s
       retries: 3

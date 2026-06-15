@@ -23,6 +23,7 @@ jobs:
           case "$PKG" in
             *prism-fixtures-service*) echo "service=prism-fixtures" >> "$GITHUB_OUTPUT" ;;
             *prism-models-service*) echo "service=prism-models" >> "$GITHUB_OUTPUT" ;;
+            *prism-permissions-service*) echo "service=prism-permissions" >> "$GITHUB_OUTPUT" ;;
             *prism-materials-service*) echo "service=prism-materials" >> "$GITHUB_OUTPUT" ;;
             *prism-agent-service*) echo "service=prism-agent" >> "$GITHUB_OUTPUT" ;;
             *prism-visualiser-service*) echo "service=prism-visualiser" >> "$GITHUB_OUTPUT" ;;

@@ -52,6 +52,9 @@ const KNOWN_SCOPES = [
   'models:write',
   'models:delete',
   'models:import',
+  // Permissions service — portal-brokered access + policy graph admin.
+  'access:read',
+  'access:admin',
 ] as const;
 const scopesSchema = z.array(z.enum(KNOWN_SCOPES)).default([]);
 

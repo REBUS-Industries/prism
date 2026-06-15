@@ -29,6 +29,7 @@ import FixtureMaterials from './pages/FixtureMaterials.vue';
 import Models from './pages/Models.vue';
 import ModelImport from './pages/ModelImport.vue';
 import ModelEditor from './pages/ModelEditor.vue';
+import Permissions from './pages/Permissions.vue';
 
 import '../shared/designSystem.css';
 
@@ -59,6 +60,7 @@ const router = createRouter({
     { path: '/models/library',         component: Models,           name: 'model-library' },
     { path: '/models/import',          component: ModelImport,      name: 'model-import' },
     { path: '/models/:id',             component: ModelEditor,      name: 'model-editor', props: true },
+    { path: '/permissions',            component: Permissions,      name: 'permissions' },
     { path: '/settings',               component: Settings,         name: 'settings' },
     { path: '/keys',                   component: ApiKeys,          name: 'keys' },
     { path: '/webhooks',               component: Webhooks,         name: 'webhooks' },
