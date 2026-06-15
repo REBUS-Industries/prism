@@ -9,6 +9,11 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { hashPassword, loginAdmin, logoutAdmin, tryAuthAdminSession } from '../auth/adminSession.js';
 import {
+  buildDirectoryOAuthStartUrl,
+  directoryOAuthCallbackUri,
+  saveDirectoryOAuthRefreshToken,
+} from '../auth/directoryOAuth.js';
+import {
   adminPortalCallbackUri,
   buildGoogleLoginStartUrl,
   loginAdminViaPortal,
@@ -34,6 +39,36 @@ const googleLoginBody = z.object({
 });
 
 const plugin: FastifyPluginAsync = async (app) => {
+  app.get('/directory-oauth/start', { preHandler: requireAdmin }, async (req, reply) => {
+    const startUrl = await buildDirectoryOAuthStartUrl(req);
+    if (!startUrl) {
+      return reply.code(503).send({ error: 'Configure google_oauth_client_id and secret before authorizing directory sync' });
+    }
+    return reply.redirect(startUrl);
+  });
+
+  app.get('/directory-oauth/callback', { preHandler: requireAdmin }, async (req, reply) => {
+    const code = typeof req.query === 'object' && req.query && 'code' in req.query ? String(req.query.code) : '';
+    const oauthError =
+      typeof req.query === 'object' && req.query && 'error' in req.query ? String(req.query.error) : '';
+    const settingsUrl = '/admin/settings?open=portal-identity';
+
+    if (oauthError) {
+      return reply.redirect(`${settingsUrl}&directory_oauth_error=${encodeURIComponent(oauthError)}`);
+    }
+    if (!code) {
+      return reply.redirect(`${settingsUrl}&directory_oauth_error=${encodeURIComponent('missing_code')}`);
+    }
+
+    try {
+      await saveDirectoryOAuthRefreshToken(code, directoryOAuthCallbackUri(req));
+      return reply.redirect(`${settingsUrl}&directory_oauth=ok`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'directory_oauth_failed';
+      return reply.redirect(`${settingsUrl}&directory_oauth_error=${encodeURIComponent(message)}`);
+    }
+  });
+
   app.get('/login/google/start', async (req, reply) => {
     const startUrl = await buildGoogleLoginStartUrl(req);
     if (!startUrl) return reply.code(503).send({ error: 'Google sign-in is not configured' });

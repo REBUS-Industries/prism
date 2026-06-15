@@ -27,6 +27,7 @@ const ENV_FALLBACKS: Partial<Record<SettingKey | LegacySettingKey, string | unde
   google_oauth_client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
   google_oauth_scopes: process.env.GOOGLE_OAUTH_SCOPES ?? 'openid email profile',
   google_service_account_json: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  google_workspace_directory_refresh_token: process.env.GOOGLE_WORKSPACE_DIRECTORY_REFRESH_TOKEN,
 };
 
 export type SettingKey =
@@ -82,7 +83,8 @@ export type SettingKey =
   | 'google_oauth_client_id'
   | 'google_oauth_client_secret'
   | 'google_oauth_scopes'
-  | 'google_service_account_json';
+  | 'google_service_account_json'
+  | 'google_workspace_directory_refresh_token';
 
 /**
  * Legacy keys that are still read from the DB as a fallback by older code

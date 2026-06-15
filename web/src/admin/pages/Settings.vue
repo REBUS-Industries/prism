@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { RouterLink, useRouter } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { orbitApi, settingsApi, type ApiError, type OrbitTestFail, type OrbitTestOk } from '../../shared/api';
 import Modal from '../../shared/Modal.vue';
 import Icon from '../../shared/Icon.vue';
@@ -81,6 +81,7 @@ interface TileDef {
 }
 
 const router = useRouter();
+const route = useRoute();
 
 const tiles: TileDef[] = [
   { key: 'orbit-prod',     title: 'ORBIT — Production',   icon: 'cloud',     description: 'Production server URL + API token used by the orchestrator.', fields: orbitProdFields, testTarget: 'prod' },
@@ -252,6 +253,9 @@ function tileSummary(tile: TileDef): string {
 }
 
 onMounted(() => {
+  if (route.query.open === 'portal-identity' || route.query.directory_oauth || route.query.directory_oauth_error) {
+    activeKey.value = 'portal-identity';
+  }
   void refresh();
   void fixtureTypesStore.ensureLoaded();
 });

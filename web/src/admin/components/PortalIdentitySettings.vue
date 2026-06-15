@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRoute } from 'vue-router';
 import { settingsApi, type ApiError } from '../../shared/api';
+
+const route = useRoute();
 
 type FieldType = 'text' | 'select' | 'switch' | 'textarea';
 
@@ -93,12 +95,19 @@ const googleApiFields: FieldDef[] = [
     hint: 'Space-separated scopes for admin Sign in with Google.',
   },
   {
+    key: 'google_workspace_directory_refresh_token',
+    label: 'Directory sync refresh token',
+    secret: true,
+    placeholder: 'Write-only — use Authorize directory sync',
+    hint: 'Preferred when org policy blocks service account keys (iam.disableServiceAccountKeyCreation).',
+  },
+  {
     key: 'google_service_account_json',
-    label: 'Google service account JSON',
+    label: 'Google service account JSON (optional)',
     type: 'textarea',
     secret: true,
-    placeholder: 'Paste service account key JSON for Admin SDK directory sync',
-    hint: 'Domain-wide delegation required for google_admin_sdk adapter.',
+    placeholder: 'Only if your org allows service account key creation',
+    hint: 'Alternative to refresh token: domain-wide delegation + SA JSON key.',
   },
 ];
 
@@ -181,7 +190,14 @@ async function saveAll() {
   }
 }
 
-onMounted(refresh);
+onMounted(async () => {
+  if (route.query.directory_oauth === 'ok') {
+    status.value = 'Directory sync authorized — refresh token saved';
+  } else if (typeof route.query.directory_oauth_error === 'string' && route.query.directory_oauth_error) {
+    error.value = decodeURIComponent(route.query.directory_oauth_error);
+  }
+  await refresh();
+});
 </script>
 
 <template>
@@ -241,7 +257,15 @@ onMounted(refresh);
 
     <section class="section">
       <h3>Google API credentials</h3>
-      <p class="muted section-intro">OAuth client for user sign-in and service account for workspace directory sync.</p>
+      <p class="muted section-intro">
+        OAuth client for user sign-in. Directory sync uses a refresh token (recommended) or an optional service account JSON key.
+      </p>
+      <div class="directory-auth-row">
+        <a class="btn secondary" href="/api/admin/directory-oauth/start">Authorize directory sync</a>
+        <p class="hint">
+          Sign in as a Workspace super-admin once. Stores <code>google_workspace_directory_refresh_token</code> — no service account key required.
+        </p>
+      </div>
       <div class="field-grid">
         <div v-for="f in googleApiFields" :key="f.key" class="field" :class="{ wide: f.type === 'textarea' }">
           <label :for="`pi-${f.key}`">
@@ -289,13 +313,20 @@ onMounted(refresh);
         <li>Add authorized redirect URIs:
           <code>https://prism.rebus.industries/admin/?portal_callback=1</code>,
           <code>https://prism-dev.rebus.industries/admin/?portal_callback=1</code>,
+          <code>https://prism.rebus.industries/api/admin/directory-oauth/callback</code>,
+          <code>https://prism-dev.rebus.industries/api/admin/directory-oauth/callback</code>,
           and local dev <code>http://localhost:29364/admin/?portal_callback=1</code>.
         </li>
-        <li>Create a service account, enable <strong>domain-wide delegation</strong>, and grant scope
-          <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code> in Workspace Admin → Security → API controls.
+        <li>Add scope <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code> on the OAuth consent screen.</li>
+        <li>
+          <strong>Directory sync (no SA key):</strong> save OAuth client ID/secret, click <strong>Authorize directory sync</strong> above
+          (super-admin). Use this when org policy <code>iam.disableServiceAccountKeyCreation</code> blocks JSON keys.
+        </li>
+        <li>
+          <strong>Directory sync (SA key):</strong> optional — service account + domain-wide delegation if your org allows key creation.
         </li>
         <li>Set <code>portal_adapter=google</code>, <code>workspace_adapter=google_admin_sdk</code>,
-          paste OAuth client ID/secret, service account JSON, and <code>workspace_admin_email</code>.
+          paste OAuth client ID/secret, authorize directory sync (or paste SA JSON), and set <code>workspace_admin_email</code> if using SA keys.
         </li>
         <li>Link the domain on <RouterLink :to="{ name: 'users' }">Users</RouterLink>, sync directory, assign permissions, then sign in with Google.</li>
       </ol>
@@ -329,4 +360,6 @@ onMounted(refresh);
 .setup-help ol { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.55; }
 .setup-help li { margin-bottom: 8px; }
 .setup-help code { font-size: 11px; word-break: break-all; }
+.directory-auth-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.directory-auth-row .btn { align-self: flex-start; text-decoration: none; }
 </style>
