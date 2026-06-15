@@ -14,9 +14,6 @@ import { googleWorkspace, provisionedUser } from '../db/schema.js';
 import { getIntegrationSetting, getIntegrationSettingOr } from '../config/integrationSettings.js';
 import { listMockWorkspaceDirectory } from './mockDirectory.js';
 import { listGoogleWorkspaceDirectory } from './googleDirectory.js';
-import { listAllOrbitProjects, type OrbitTarget } from '../orbit/client.js';
-
-const VALID_PROJECT_LEVELS: PortalProjectPermission['level'][] = ['viewer', 'contributor', 'owner', 'admin'];
 
 const WORKSPACE_ROW_ID = 'default';
 
@@ -298,52 +295,9 @@ function enforceProvisionedOnly(): Promise<boolean> {
   return getIntegrationSettingOr('workspace_enforce_provisioned', '1').then((v) => v !== '0');
 }
 
-async function blanketProjectLevel(): Promise<PortalProjectPermission['level']> {
-  const raw = (await getIntegrationSettingOr('workspace_default_project_level', 'contributor')).toLowerCase();
-  return (VALID_PROJECT_LEVELS as string[]).includes(raw)
-    ? (raw as PortalProjectPermission['level'])
-    : 'contributor';
-}
-
-/**
- * Blanket access mode: grant every signed-in user access to all ORBIT projects
- * at the configured default level. Explicit per-user grants override the blanket
- * level for the same project (highest level wins). Best-effort — if ORBIT can't
- * be reached, fall back to the explicit grants so login still succeeds.
- */
-async function applyBlanketProjects(
-  explicit: PortalProjectPermission[],
-  orbitTarget: OrbitTarget,
-): Promise<PortalProjectPermission[]> {
-  if ((await getIntegrationSettingOr('workspace_grant_all_projects', '0')) === '0') return explicit;
-
-  let all: { id: string; name: string | null }[];
-  try {
-    all = await listAllOrbitProjects(orbitTarget);
-  } catch {
-    return explicit;
-  }
-  if (all.length === 0) return explicit;
-
-  const level = await blanketProjectLevel();
-  const rank = (l: PortalProjectPermission['level']) => VALID_PROJECT_LEVELS.indexOf(l);
-  const merged = new Map<string, PortalProjectPermission>();
-  for (const p of all) {
-    merged.set(p.id, { orbitProjectId: p.id, level, projectName: p.name });
-  }
-  for (const g of explicit) {
-    const existing = merged.get(g.orbitProjectId);
-    if (!existing || rank(g.level) > rank(existing.level)) {
-      merged.set(g.orbitProjectId, { ...g, projectName: g.projectName ?? existing?.projectName ?? null });
-    }
-  }
-  return [...merged.values()];
-}
-
 export async function resolveProvisionedAccess(
   portalUser: PortalUser,
   portalProjects: PortalProjectPermission[],
-  orbitTarget: OrbitTarget = 'prod',
 ): Promise<ResolvedProvisionedAccess> {
   const workspace = await getWorkspaceLink();
   const provisioned = await findProvisionedUserByEmail(portalUser.email);
@@ -369,14 +323,20 @@ export async function resolveProvisionedAccess(
     }
   }
 
-  const explicit = provisioned ? provisioned.projectPermissions : portalProjects;
-  const projects = await applyBlanketProjects(explicit, orbitTarget);
+  if (provisioned) {
+    return {
+      blocked: false,
+      provisioned,
+      projects: provisioned.projectPermissions,
+      roleRefs: provisioned.roleRefs,
+    };
+  }
 
   return {
     blocked: false,
-    provisioned,
-    projects,
-    roleRefs: provisioned?.roleRefs ?? [],
+    provisioned: null,
+    projects: portalProjects,
+    roleRefs: [],
   };
 }
 

@@ -23,8 +23,7 @@ const ENV_FALLBACKS: Partial<Record<SettingKey | LegacySettingKey, string | unde
   workspace_domain: process.env.WORKSPACE_DOMAIN,
   workspace_admin_email: process.env.GOOGLE_WORKSPACE_ADMIN_EMAIL,
   workspace_enforce_provisioned: process.env.WORKSPACE_ENFORCE_PROVISIONED ?? '1',
-  workspace_grant_all_projects: process.env.WORKSPACE_GRANT_ALL_PROJECTS ?? '0',
-  workspace_default_project_level: process.env.WORKSPACE_DEFAULT_PROJECT_LEVEL ?? 'contributor',
+  workspace_grant_all_projects: process.env.WORKSPACE_GRANT_ALL_PROJECTS ?? '1',
   google_oauth_client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
   google_oauth_client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
   google_oauth_scopes: process.env.GOOGLE_OAUTH_SCOPES ?? 'openid email profile',
@@ -83,7 +82,6 @@ export type SettingKey =
   | 'workspace_admin_email'
   | 'workspace_enforce_provisioned'
   | 'workspace_grant_all_projects'
-  | 'workspace_default_project_level'
   | 'google_oauth_client_id'
   | 'google_oauth_client_secret'
   | 'google_oauth_scopes'

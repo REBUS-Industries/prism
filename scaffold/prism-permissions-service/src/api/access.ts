@@ -50,14 +50,6 @@ async function buildAccessLoginUrl(redirectUri: string): Promise<string> {
   return url.toString();
 }
 
-function orbitTokenConfigured(target: 'prod' | 'dev'): boolean {
-  const token =
-    target === 'dev'
-      ? (process.env.ORBIT_DEV_ADMIN_TOKEN || process.env.ORBIT_ADMIN_TOKEN || '').trim()
-      : (process.env.ORBIT_ADMIN_TOKEN || '').trim();
-  return token.length > 0;
-}
-
 export async function registerAccessRoutes(app: FastifyInstance, portal: PortalAdapter) {
   /** Dev-only mock portal redirect (mock adapter). */
   app.get<{ Querystring: { redirect_uri?: string; persona?: string } }>(
@@ -158,7 +150,5 @@ export async function registerAccessRoutes(app: FastifyInstance, portal: PortalA
   app.get('/api/access/health', async () => ({
     status: 'ok',
     adapter: await getIntegrationSettingOr('portal_adapter', 'mock'),
-    orbitAdminTokenConfigured: orbitTokenConfigured('prod'),
-    orbitDevAdminTokenConfigured: orbitTokenConfigured('dev'),
   }));
 }

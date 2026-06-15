@@ -33,9 +33,7 @@ const defaultFunctions = ref<ConnectorFunction[]>([]);
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
 
-type BlanketLevel = 'viewer' | 'contributor' | 'owner';
-const grantAllProjects = ref(false);
-const blanketLevel = ref<BlanketLevel>('contributor');
+const grantAllProjects = ref(true);
 const savingAccess = ref(false);
 const accessStatus = ref<string | null>(null);
 
@@ -45,11 +43,10 @@ async function saveAccessMode() {
   error.value = null;
   try {
     await settingsApi.set('workspace_grant_all_projects', grantAllProjects.value ? '1' : '0');
-    if (grantAllProjects.value) {
-      await settingsApi.set('workspace_default_project_level', blanketLevel.value);
-    }
-    accessStatus.value = 'Access mode saved';
-    setTimeout(() => (accessStatus.value = null), 2500);
+    accessStatus.value = grantAllProjects.value
+      ? 'Blanket access on — every user can use all projects'
+      : 'Blanket access off — users only get projects assigned on Users';
+    setTimeout(() => (accessStatus.value = null), 3000);
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to save access mode';
   } finally {
@@ -77,9 +74,7 @@ function nodeLabel(n: PolicyNodeType) {
 onMounted(async () => {
   try {
     const s = (await settingsApi.list()).settings;
-    grantAllProjects.value = s['workspace_grant_all_projects'] === '1';
-    const lvl = s['workspace_default_project_level'];
-    if (lvl === 'viewer' || lvl === 'contributor' || lvl === 'owner') blanketLevel.value = lvl;
+    grantAllProjects.value = s['workspace_grant_all_projects'] !== '0';
   } catch {
     // non-fatal — access mode controls just default to granular/contributor
   }
@@ -178,25 +173,17 @@ async function savePolicy() {
         </div>
         <label class="switch-row">
           <input type="checkbox" v-model="grantAllProjects" :disabled="savingAccess" @change="saveAccessMode" />
-          <span>Blanket — give every user all ORBIT projects</span>
+          <span>Blanket — every user can use all ORBIT projects</span>
         </label>
       </div>
-      <div v-if="grantAllProjects" class="access-level">
-        <label>Access level on every project
-          <select v-model="blanketLevel" :disabled="savingAccess" @change="saveAccessMode">
-            <option value="viewer">Viewer — receive only</option>
-            <option value="contributor">Contributor — send + receive + new versions</option>
-            <option value="owner">Owner — full access</option>
-          </select>
-        </label>
-        <p class="muted hint">
-          Every provisioned user gets this level on all projects. Refine later by switching this off and assigning
-          projects per user on the <RouterLink :to="{ name: 'users' }">Users</RouterLink> page (the policy graph below can still grant extra functions).
-        </p>
-      </div>
+      <p v-if="grantAllProjects" class="muted hint">
+        On — every signed-in user gets full connector access (send, receive, create) to all ORBIT projects.
+        Refine later by switching this off and assigning projects per user on the
+        <RouterLink :to="{ name: 'users' }">Users</RouterLink> page.
+      </p>
       <p v-else class="muted hint">
-        Granular — users only get the projects assigned on the
-        <RouterLink :to="{ name: 'users' }">Users</RouterLink> page, intersected with the policy graph below.
+        Off — users only get the projects assigned on the
+        <RouterLink :to="{ name: 'users' }">Users</RouterLink> page (users with none still get blanket access so they're not locked out).
       </p>
       <p v-if="accessStatus" class="ok">{{ accessStatus }}</p>
     </section>

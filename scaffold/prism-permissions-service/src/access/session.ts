@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { AccessSessionRequest, PortalProjectPermission } from '../contracts/portal-access.js';
+import { CONNECTOR_FUNCTIONS } from '../contracts/portal-access.js';
 import { getDb } from '../db/client.js';
 import {
   accessSession,
@@ -19,6 +20,7 @@ import { mintScopedOrbitToken } from '../orbit/mint.js';
 import type { PortalAdapter } from '../portal/adapter.js';
 import { buildConnectorManifest, collectEffectiveFunctions } from './manifest.js';
 import { resolveProvisionedAccess, recordProvisionedLogin } from '../workspace/service.js';
+import { getIntegrationSettingOr } from '../config/integrationSettings.js';
 
 export class AccessError extends Error {
   constructor(
@@ -45,8 +47,28 @@ function toAccessError(err: unknown, fallback: string, status = 500): AccessErro
   return new AccessError(fallback, status);
 }
 
-export function shouldProvisionOrbit(projects: PortalProjectPermission[]): boolean {
-  return projects.length > 0;
+/**
+ * Blanket access: all provisioned portal users receive ORBIT connector access to
+ * every project (no per-project list). Controlled from Admin → Permissions via the
+ * `workspace_grant_all_projects` setting (default on). `ORBIT_BLANKET_ACCESS=0` is an
+ * ops kill-switch. When blanket is off, project-scoped manifests come from PRISM Users;
+ * users with no assignments still get blanket access so they are not locked out.
+ */
+export async function useBlanketOrbitAccess(provisionedProjects: PortalProjectPermission[]): Promise<boolean> {
+  if (process.env.ORBIT_BLANKET_ACCESS === '0') {
+    return provisionedProjects.length === 0;
+  }
+  let enabled = true;
+  try {
+    enabled = (await getIntegrationSettingOr('workspace_grant_all_projects', '1')) !== '0';
+  } catch {
+    // Settings DB unavailable — default to blanket on so users are not locked out.
+    enabled = true;
+  }
+  if (!enabled) {
+    return provisionedProjects.length === 0;
+  }
+  return true;
 }
 
 export function sessionExpiry(): Date {
@@ -180,9 +202,8 @@ async function tryMintOrbitToken(input: {
   portalUser: { userId: string; email: string; displayName?: string | null };
   projects: PortalProjectPermission[];
   sessionId: string;
+  blanket: boolean;
 }): Promise<{ orbitToken: string; orbitUserId: string; scopes: string[]; projectIds: string[] } | null> {
-  if (!shouldProvisionOrbit(input.projects)) return null;
-
   let creds;
   try {
     creds = getOrbitCreds(input.orbitTarget);
@@ -210,8 +231,10 @@ async function tryMintOrbitToken(input: {
   }
 
   const orbitUserId = orbitUser?.id ?? `portal:${input.portalUser.userId}`;
-  const projectIds = input.projects.map((p) => p.orbitProjectId);
-  const functions = [...new Set(graphFunctionsForProjects(input.projects))];
+  const projectIds = input.blanket ? [] : input.projects.map((p) => p.orbitProjectId);
+  const functions = input.blanket
+    ? [...CONNECTOR_FUNCTIONS]
+    : ([...new Set(graphFunctionsForProjects(input.projects))] as typeof CONNECTOR_FUNCTIONS);
 
   try {
     const minted = await mintScopedOrbitToken({
@@ -247,7 +270,7 @@ export async function exchangePortalSession(
 
   const portalUser = await portal.getMe(portalToken);
   const permissions = await portal.getProjectPermissions(portalToken, portalUser.userId);
-  const access = await resolveProvisionedAccess(portalUser, permissions.projects, orbitTarget);
+  const access = await resolveProvisionedAccess(portalUser, permissions.projects);
   if (access.blocked) {
     throw new AccessError(access.reason ?? 'Access denied', 403);
   }
@@ -255,6 +278,7 @@ export async function exchangePortalSession(
   await recordProvisionedLogin(portalUser);
   const effectiveProjects = access.projects;
   const roleRefs = access.roleRefs;
+  const blanket = await useBlanketOrbitAccess(effectiveProjects);
 
   const sessionId = randomUUID();
   const expiresAt = sessionExpiry();
@@ -271,6 +295,7 @@ export async function exchangePortalSession(
     portalUser,
     projects: effectiveProjects,
     sessionId,
+    blanket,
   });
 
   const manifest = await buildConnectorManifest({
@@ -282,7 +307,7 @@ export async function exchangePortalSession(
     portalUser,
     portalProjects: effectiveProjects,
     roleRefs,
-    orbitFunctionsEnabled: Boolean(minted?.orbitToken),
+    orbitBlanketAccess: blanket,
     prismAccessToken: sessionId,
   });
 
@@ -295,7 +320,7 @@ export async function exchangePortalSession(
     mintRow: {
       orbitUserId: minted?.orbitUserId ?? orbitUserId,
       email: portalUser.email,
-      projectIds: minted?.projectIds ?? effectiveProjects.map((p) => p.orbitProjectId),
+      projectIds: minted?.projectIds ?? (blanket ? [] : effectiveProjects.map((p) => p.orbitProjectId)),
       scopes: minted?.scopes ?? [],
       tokenPrefix: minted?.orbitToken ? minted.orbitToken.slice(0, 8) : 'prism-only',
     },
