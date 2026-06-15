@@ -16,7 +16,7 @@ import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, type MotionNode } from '../utils/fixtureAssembly';
 import type { ClampPlacement } from '../utils/fixturePlacement';
 import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
-import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type MotionAxis, type Vec3 } from '../../shared/api';
+import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type ModelMaterialSlot, type MotionAxis, type Vec3 } from '../../shared/api';
 
 /** Gizmo edit emitted to the parent (GDTF local space: position metres, rotation degrees). */
 export interface PartTransformEdit {
@@ -48,6 +48,14 @@ const props = withDefaults(defineProps<{
   url?: string | null;
   /** Full geometry tree + models for assembled rendering. */
   assembly?: AssemblyProp | null;
+  /**
+   * Model-library material slots for `url` mode only. When provided, after the
+   * single GLB loads each slot with a resolved `materialId` is fetched, built
+   * into a THREE material and painted onto the meshes whose material/mesh name
+   * matches the slot name (or onto every mesh when there is a single slot).
+   * Ignored in assembly mode so fixture rendering is unaffected.
+   */
+  modelMaterialSlots?: ModelMaterialSlot[] | null;
   /** Optional world-space datum markers (pivot points). */
   datums?: Array<{ id: string; position: { x: number; y: number; z: number }; color?: string }>;
   viewPreset?: 'top' | 'front' | 'side' | 'iso';
@@ -84,6 +92,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   url: null,
   assembly: null,
+  modelMaterialSlots: null,
   viewPreset: 'iso',
   panDeg: 0,
   tiltDeg: 0,
@@ -425,8 +434,66 @@ async function loadGlb(url: string): Promise<boolean> {
   clearLoaded();
   loadedRoot = gltf.scene;
   tiltGroup.add(loadedRoot);
+  await applyModelSlotMaterials();
   frameLoaded();
   return true;
+}
+
+/**
+ * Paint model-library slot materials onto the freshly loaded single GLB.
+ * Slot → mesh matching: a single slot paints every mesh; otherwise a slot is
+ * applied to meshes whose `material.name` (or, failing that, `mesh.name`)
+ * equals the slot name — the same `materials[].name` the importer recorded.
+ */
+async function applyModelSlotMaterials(): Promise<void> {
+  const slots = props.modelMaterialSlots;
+  if (!slots?.length || !loadedRoot) return;
+  const assigned = slots.filter(
+    (s): s is ModelMaterialSlot & { materialId: string } => !!s.materialId,
+  );
+  if (!assigned.length) return;
+
+  const maxAniso = renderer?.capabilities.getMaxAnisotropy() ?? 1;
+  const built: BuiltMaterial[] = [];
+  const byId = new Map<string, THREE.Material>();
+  await Promise.all([...new Set(assigned.map((s) => s.materialId))].map(async (id) => {
+    try {
+      const detail = await materialsApi.get(id);
+      const bm = buildFixturePbrMaterial(detail, texLoader, maxAniso);
+      built.push(bm);
+      byId.set(id, bm.material);
+    } catch {
+      // Material may have been deleted; leave the GLB's own material in place.
+    }
+  }));
+  if (!loadedRoot) {
+    for (const bm of built) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
+    return;
+  }
+
+  const bySlotName = new Map<string, THREE.Material>();
+  for (const s of assigned) {
+    const mat = byId.get(s.materialId);
+    if (mat) bySlotName.set(s.name, mat);
+  }
+  // A single slot represents the whole model (e.g. the importer's `default`
+  // fallback) — paint every mesh with it.
+  const sole = slots.length === 1 ? bySlotName.values().next().value ?? null : null;
+
+  loadedRoot.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (sole) {
+      mesh.material = sole;
+      return;
+    }
+    if (Array.isArray(mesh.material)) {
+      mesh.material = mesh.material.map((m) => bySlotName.get(m.name) ?? m);
+    } else if (mesh.material) {
+      mesh.material = bySlotName.get(mesh.material.name) ?? bySlotName.get(mesh.name) ?? mesh.material;
+    }
+  });
+  builtMaterials = builtMaterials.concat(built);
 }
 
 async function loadAssembly(a: AssemblyProp): Promise<boolean> {
@@ -637,7 +704,10 @@ const assemblyKey = (): string => {
   return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${mats}`;
 };
 
-watch(() => [props.url, assemblyKey(), props.assemblyRevision], () => { void loadContent(); });
+const modelMaterialsKey = (): string =>
+  (props.modelMaterialSlots ?? []).map((s) => `${s.name}=${s.materialId ?? ''}`).join('|');
+
+watch(() => [props.url, assemblyKey(), modelMaterialsKey(), props.assemblyRevision], () => { void loadContent(); });
 watch(() => props.datums, syncDatums, { deep: true });
 watch(() => props.viewPreset, applyCameraPreset);
 watch(() => [props.panDeg, props.tiltDeg], syncMotion);
