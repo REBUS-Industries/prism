@@ -1945,6 +1945,31 @@ export interface MvrOrbitUploadResult {
   objectCount: number;
 }
 
+/** Stored on definition.metadata.orbitFixtureRef after publish-orbit. */
+export interface FixtureOrbitRef {
+  target: 'prod' | 'dev';
+  projectId: string;
+  modelId: string;
+  versionId: string;
+  objectId: string;
+  publishedAt: string;
+  orbitUrl?: string;
+}
+
+/** Optional template values included in the Orbit FixtureType payload. */
+export interface FixtureOrbitPublishTemplate {
+  unitNumber?: string;
+  patch?: FixturePatch;
+}
+
+export interface FixturePublishOrbitResult {
+  ok: boolean;
+  createdModel: boolean;
+  objectCount: number;
+  orbitFixtureRef: FixtureOrbitRef;
+  fixture: FixtureDetail;
+}
+
 export const fixturesApi = {
   list: (params: { q?: string; tags?: string[]; origin?: FixtureOrigin | FixtureOrigin[]; limit?: number; cursor?: string | null } = {}) => {
     const qs = new URLSearchParams();
@@ -2056,6 +2081,9 @@ export const fixturesApi = {
   },
   export: (id: string) =>
     api.get<{ fixture: FixtureConnectorExport }>(`/api/fixtures/export/${id}`),
+  /** Publish or republish a fixture type to the Orbit Fixtures project. */
+  publishToOrbit: (id: string, body: { orbitTarget?: 'prod' | 'dev' } = {}) =>
+    api.post<FixturePublishOrbitResult>(`/api/fixtures/${id}/publish-orbit`, body),
   /** Upload one IES file and attach it to one or more beams (group apply). */
   uploadIes: (id: string, beamIds: string | string[], file: File, zoomDmx?: number) => {
     const fd = new FormData();

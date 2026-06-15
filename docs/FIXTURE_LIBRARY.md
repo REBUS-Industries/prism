@@ -7,7 +7,7 @@ Lighting fixture types (GDTF) and placed instances (MVR) managed by `prism-fixtu
 - **Service:** `prism-fixtures-service` on port **8769**, routed via nginx at `/api/fixtures`, `/api/gdtf-share`, `/api/mvr-import`.
 - **Storage:** `${DATA_DIR}/fixtures/` on the shared `prism-data` volume.
 - **Contracts:** `prism-shared/src/contracts/fixtures.ts` (wire types + DB migration `0012_fixtures_store.sql`).
-- **Orbit upload:** TypeScript serialiser in `prism-shared/src/orbit/` — MVR workflow uploads `Orbit.Objects.Lighting.FixtureInstance` objects directly.
+- **Orbit upload:** TypeScript serialiser in `prism-shared/src/orbit/` — MVR workflow uploads `Orbit.Objects.Lighting.FixtureInstance` objects directly. Fixture **types** publish via `POST /api/fixtures/:id/publish-orbit` as `Orbit.Objects.Lighting.FixtureType` into the Orbit Fixtures project (`ORBIT_FIXTURES_PROJECT_ID`, default `0f2893eb28`).
 
 ## Data model
 
@@ -37,6 +37,8 @@ Part tags: `ORIGIN`, `CLAMP`, `BASE`, `YOKE`, `HEAD`, `LENS`, `CELL`, `BEAM`.
 | `/mvr-import` | MVR parse → ORBIT upload |
 
 GDTF-Share credentials: **Settings → GDTF-Share** (`gdtf_share_username`, `gdtf_share_password`).
+
+Orbit fixture publish: **Settings → Orbit** (`orbit_server_url`, `orbit_token`) plus `ORBIT_FIXTURES_PROJECT_ID` on `prism-fixtures-service`. Published refs are stored on `definition.metadata.orbitFixtureRef`.
 
 ## Connectors
 
