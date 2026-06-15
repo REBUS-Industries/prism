@@ -1822,9 +1822,13 @@ onMounted(() => {
 
   display: grid;
 
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
 
   gap: 16px;
+
+  min-height: 0;
+
+  overflow: hidden;
 
 }
 
@@ -1842,13 +1846,25 @@ onMounted(() => {
 
 .preview-card {
 
+  display: flex;
+
+  flex-direction: column;
+
   min-height: 0;
 
   overflow: hidden;
 
 }
 
-.preview-caption { margin: 8px 0 0; }
+.info-card {
+
+  min-height: 0;
+
+  overflow-y: auto;
+
+}
+
+.preview-caption { flex-shrink: 0; margin: 8px 0 0; }
 
 .info-card h2, .panel-card h2 {
 
