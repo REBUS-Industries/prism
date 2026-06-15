@@ -17,7 +17,7 @@ import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNod
 import type { ClampPlacement } from '../utils/fixturePlacement';
 import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
 import { fetchSlotMaterials, paintModelMaterialSlots } from '../utils/modelMaterialSlots';
-import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type ModelMaterialSlot, type MotionAxis, type Vec3 } from '../../shared/api';
+import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type ModelMaterialSlot, type ModelTransform, type MotionAxis, type Vec3 } from '../../shared/api';
 
 /** Gizmo edit emitted to the parent (GDTF local space: position metres, rotation degrees). */
 export interface PartTransformEdit {
@@ -41,12 +41,16 @@ interface AssemblyProp {
   selectedModeGeometryId?: string | null;
   /** Metres to lower fixture body while CLAMP/ORIGIN stay at the hang point. */
   fixtureZOffsetM?: number;
-  /** REBUS clamp Y mirror + Z rotation through fixture origin. */
+  /** REBUS clamp Z mirror + Z rotation through fixture origin. */
   clampPlacement?: ClampPlacement;
   /** Model Library preview GLB for the REBUS clamp (overrides fixture upload). */
   clampModelUrl?: string;
   /** Model Library material slots for the linked clamp (when clampModelUrl is set). */
   clampMaterialSlots?: ModelMaterialSlot[];
+  /** Model Library root transform for the linked clamp (metres, degrees). */
+  clampModelTransform?: ModelTransform | null;
+  /** Vertex units of the library clamp GLB. */
+  clampSourceUnits?: string | null;
 }
 
 const props = withDefaults(defineProps<{
@@ -504,6 +508,8 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     clampPlacement: a.clampPlacement,
     clampModelUrl: a.clampModelUrl,
     clampMaterialSlots: a.clampMaterialSlots,
+    clampModelTransform: a.clampModelTransform,
+    clampSourceUnits: a.clampSourceUnits,
     clampSlotMaterialsByName,
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
@@ -686,9 +692,12 @@ const assemblyKey = (): string => {
   if (!a) return '';
   const mats = a.parts?.map((p) => `${p.partId}=${p.materialId ?? ''}`).join('|') ?? '';
   const clamp = a.clampPlacement;
-  const clampKey = clamp ? `${clamp.mirrorY ? 1 : 0}:${clamp.rotateZDeg}` : '0:0';
+  const clampKey = clamp ? `${clamp.mirrorZ ? 1 : 0}:${clamp.rotateZDeg}` : '0:0';
   const clampSlots = (a.clampMaterialSlots ?? []).map((s) => `${s.name}=${s.materialId ?? ''}`).join('|');
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${mats}`;
+  const clampXform = a.clampModelTransform
+    ? `${a.clampModelTransform.position.x},${a.clampModelTransform.position.y},${a.clampModelTransform.position.z}|${a.clampModelTransform.rotation.x},${a.clampModelTransform.rotation.y},${a.clampModelTransform.rotation.z}|${a.clampModelTransform.scale.x},${a.clampModelTransform.scale.y},${a.clampModelTransform.scale.z}`
+    : '';
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
 };
 
 const modelMaterialsKey = (): string =>

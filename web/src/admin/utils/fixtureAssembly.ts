@@ -10,8 +10,10 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { FixturePart, FixtureModel, ModelMaterialSlot } from '../../shared/api';
+import type { FixturePart, FixtureModel, ModelMaterialSlot, ModelTransform } from '../../shared/api';
 import { paintModelMaterialSlots } from './modelMaterialSlots';
+import { applyModelTransform, ensureModelTransform } from './modelTransform';
+import { isModelLengthUnit, unitScaleToMetres } from './modelUnits';
 import {
   REBUS_CLAMP_PART_ID,
   type ClampPlacement,
@@ -73,6 +75,13 @@ export interface FixtureAssemblyInput {
   clampMaterialSlots?: ModelMaterialSlot[];
   /** Built slot materials keyed by slot name (from fetchSlotMaterials). */
   clampSlotMaterialsByName?: Map<string, THREE.Material>;
+  /**
+   * Model Library root transform for the linked clamp GLB (metres, degrees).
+   * Applied before fixture clamp placement (mirror Z, rotate Z on ClampRig).
+   */
+  clampModelTransform?: ModelTransform | null;
+  /** Vertex units of the library clamp GLB; scaled to metres when not `m`. */
+  clampSourceUnits?: string | null;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -222,7 +231,11 @@ function isRebusClampPart(part: FixturePart): boolean {
     || (part.tag === 'CLAMP' && partMeta(part).rebusSlot === true);
 }
 
-/** Place one or two (Y-mirrored) clamp meshes, rotated around GDTF Z at the origin. */
+/**
+ * Place one or two (Z-mirrored) clamp meshes, rotated around GDTF Z at the origin.
+ * `mesh` should already include any Model Library root transform when loaded from
+ * the library; this rig applies fixture-level mirror Z + rotate Z afterward.
+ */
 function attachClampMeshes(
   partGroup: THREE.Group,
   mesh: THREE.Object3D,
@@ -238,14 +251,42 @@ function attachClampMeshes(
   rig.add(primary);
   let count = 1;
 
-  if (placement.mirrorY) {
+  if (placement.mirrorZ) {
     const mirrored = mesh.clone(true);
     mirrored.name = 'ClampMirror';
-    mirrored.scale.y *= -1;
+    mirrored.scale.z *= -1;
     rig.add(mirrored);
     count += 1;
   }
   return count;
+}
+
+/**
+ * Orient a Model Library clamp GLB like ModelViewer, then apply the stored root
+ * transform. Order (inner → outer): GLB → unit scale → +90° X wrap → model transform.
+ * Fixture ClampRig mirror/rotation is applied afterward by attachClampMeshes.
+ */
+function wrapLibraryClampMesh(
+  meshRoot: THREE.Object3D,
+  dims: ModelDims,
+  transform?: ModelTransform | null,
+  sourceUnits?: string | null,
+): THREE.Object3D {
+  let mesh: THREE.Object3D = meshRoot;
+  if (sourceUnits && isModelLengthUnit(sourceUnits) && sourceUnits !== 'm') {
+    const scaleGroup = new THREE.Group();
+    scaleGroup.name = 'ClampUnitScale';
+    scaleGroup.scale.setScalar(unitScaleToMetres(sourceUnits));
+    scaleGroup.add(meshRoot);
+    mesh = scaleGroup;
+  }
+  const oriented = wrapModelMesh(mesh, dims);
+  if (!transform) return oriented;
+  const root = new THREE.Group();
+  root.name = 'ClampModelRoot';
+  applyModelTransform(root, ensureModelTransform(transform));
+  root.add(oriented);
+  return root;
 }
 
 /** Apply the GDTF geometry Position matrix directly (Z-up, metres). */
@@ -453,7 +494,14 @@ export async function buildFixtureAssembly(
     if (meshUrl) {
       const obj = await loadGlbUrl(meshUrl);
       if (obj) {
-        const wrapped = wrapModelMesh(obj.clone(true), dims);
+        const wrapped = clampUrl
+          ? wrapLibraryClampMesh(
+            obj.clone(true),
+            dims,
+            input.clampModelTransform,
+            input.clampSourceUnits,
+          )
+          : wrapModelMesh(obj.clone(true), dims);
         if (
           isRebusClampPart(part) && clampUrl
           && input.clampMaterialSlots?.length
@@ -464,7 +512,7 @@ export async function buildFixtureAssembly(
           paintMaterial(wrapped, part);
         }
         if (isRebusClampPart(part)) {
-          const placement = input.clampPlacement ?? { mirrorY: false, rotateZDeg: 0 };
+          const placement = input.clampPlacement ?? { mirrorZ: false, rotateZDeg: 0 };
           meshCount += attachClampMeshes(partGroup, wrapped, placement);
         } else {
           partGroup.add(wrapped);
