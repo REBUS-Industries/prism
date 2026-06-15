@@ -195,8 +195,15 @@ services:
       ORBIT_SERVER_URL: "${ORBIT_SERVER_URL:-https://orbit.rebus.industries}"
       ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+      # Model import → PRISM convert pipeline + Orbit Model Library project.
+      ORBIT_MODEL_LIBRARY_PROJECT_ID: "${ORBIT_MODEL_LIBRARY_PROJECT_ID:-e86589cc1e}"
+      ORBIT_MODEL_LIBRARY_TARGET: "${ORBIT_MODEL_LIBRARY_TARGET:-prod}"
+      PRISM_SERVER_URL: "http://prism-server:8765"
+      PRISM_SERVICE_API_KEY: "${PRISM_SERVICE_API_KEY:-}"
+      CONVERT_UPLOAD_DIR: "/var/lib/prism/uploads"
     volumes:
       - prism-data:/data/prism
+      - prism-uploads:/var/lib/prism/uploads
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8770/health"]
       interval: 30s

@@ -29,6 +29,8 @@ const props = withDefaults(defineProps<{
   url: string;
   modelMaterialSlots?: ModelMaterialSlot[] | null;
   transform?: ModelTransform | null;
+  /** Vertex coordinate units of the GLB; scaled to metres in the preview. */
+  sourceUnits?: ModelLengthUnit | null;
   viewPreset?: 'top' | 'front' | 'side' | 'iso';
   interactive?: boolean;
   lightBackground?: boolean;
@@ -39,6 +41,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   modelMaterialSlots: null,
   transform: null,
+  sourceUnits: null,
   viewPreset: 'iso',
   interactive: true,
   lightBackground: false,
@@ -60,6 +63,8 @@ let controls: OrbitControls | null = null;
 let transformControls: TransformControls | null = null;
 let transformHelper: THREE.Object3D | null = null;
 let transformGroup: THREE.Group | null = null;
+/** Uniform scale from mesh source units → canonical metres. */
+let unitScaleGroup: THREE.Group | null = null;
 /** Fixed +90° X: glTF Y-up mesh → Z-up authoring space (matches fixture GLB wrap). */
 let glbOrient: THREE.Group | null = null;
 let loadedRoot: THREE.Object3D | null = null;
@@ -117,6 +122,7 @@ function dispose(): void {
   clearLoaded();
   transformGroup?.removeFromParent();
   transformGroup = null;
+  unitScaleGroup = null;
   glbOrient = null;
   const dom = renderer?.domElement;
   renderer?.dispose();
@@ -139,6 +145,12 @@ function applyCameraPreset(): void {
   camera.position.set(pos[0], pos[1], pos[2]);
   controls.target.copy(c);
   controls.update();
+}
+
+function syncUnitScale(): void {
+  if (!unitScaleGroup) return;
+  const s = unitScaleToMetres(ensureModelSourceUnits(props.sourceUnits));
+  unitScaleGroup.scale.set(s, s, s);
 }
 
 function syncTransformFromProps(): void {
@@ -195,13 +207,14 @@ async function applyModelSlotMaterials(): Promise<void> {
 }
 
 async function loadGlb(url: string): Promise<void> {
-  if (!scene || !transformGroup || !glbOrient) return;
+  if (!scene || !transformGroup || !glbOrient || !unitScaleGroup) return;
   const loader = new GLTFLoader();
   const gltf = await loader.loadAsync(url);
   clearLoaded();
   loadedRoot = gltf.scene;
+  syncUnitScale();
   syncTransformFromProps();
-  glbOrient.add(loadedRoot);
+  unitScaleGroup.add(loadedRoot);
   await applyModelSlotMaterials();
   frameLoaded();
   syncGizmo();
@@ -257,8 +270,11 @@ onMounted(() => {
   transformGroup = new THREE.Group();
   glbOrient = new THREE.Group();
   glbOrient.rotation.x = Math.PI / 2;
+  unitScaleGroup = new THREE.Group();
+  glbOrient.add(unitScaleGroup);
   transformGroup.add(glbOrient);
   scene.add(transformGroup);
+  syncUnitScale();
 
   camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
   camera.up.set(0, 0, 1);
@@ -301,6 +317,10 @@ watch(() => props.interactive, (v) => { if (controls) controls.enabled = v && !g
 watch(() => [props.editable, props.gizmoMode, props.gizmoSpace], syncGizmo);
 watch(() => modelTransformKey(ensureModelTransform(props.transform)), () => {
   syncTransformFromProps();
+});
+watch(() => props.sourceUnits, () => {
+  syncUnitScale();
+  frameLoaded();
 });
 watch(() => props.lightBackground, (v) => {
   if (scene) scene.background = new THREE.Color(v ? 0xe8eaed : 0x1a1a1f);

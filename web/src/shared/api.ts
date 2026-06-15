@@ -2157,6 +2157,21 @@ export interface ModelMaterialSlot {
   materialId?: string | null;
 }
 
+/** Async import lifecycle when routed through the PRISM convert pipeline. */
+export type ModelImportStatus = 'converting' | 'complete' | 'failed';
+
+/** Orbit storage reference for a model definition (Model Library Project). */
+export interface ModelOrbitRef {
+  target: 'prod' | 'dev';
+  projectId: string;
+  modelId: string;
+  versionId?: string;
+  resultUrl?: string;
+}
+
+/** Length units for imported mesh vertex coordinates (canonical storage is metres). */
+export type ModelLengthUnit = 'mm' | 'cm' | 'm' | 'in' | 'ft';
+
 /** Root transform for a model definition (metres, rotation in degrees). */
 export interface ModelTransform {
   position: ModelVec3;
@@ -2172,6 +2187,11 @@ export interface ModelDefinition {
   upAxis?: 'Y' | 'Z';
   /** Optional root offset applied when previewing / placing the asset. */
   transform?: ModelTransform;
+  /**
+   * Coordinate units of the stored GLB vertices. Preview applies a scale factor
+   * to convert to canonical metres. Defaults to `mm` when absent (legacy imports).
+   */
+  sourceUnits?: ModelLengthUnit;
   metadata?: Record<string, unknown>;
 }
 
@@ -2192,6 +2212,9 @@ export interface ModelListItem {
   description: string | null;
   activeVersionId: string | null;
   hasPreview: boolean;
+  /** Present while import runs through the convert pipeline. */
+  importStatus?: ModelImportStatus | null;
+  importJobId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2233,13 +2256,18 @@ export const modelsApi = {
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/models/${id}`),
   previewUrl: (id: string) => `/api/models/${id}/preview.glb`,
   mediaUrl: (id: string, mediaId: string) => `/api/models/${id}/media/${mediaId}`,
-  import: (file: File, options: { name?: string; category?: string; tags?: string[] } = {}) => {
+  import: (file: File, options: { name?: string; category?: string; tags?: string[]; sourceUnits?: ModelLengthUnit } = {}) => {
     const fd = new FormData();
     fd.append('file', file);
     if (options.name) fd.append('name', options.name);
     if (options.category) fd.append('category', options.category);
     if (options.tags?.length) fd.append('tags', options.tags.join(','));
-    return api.postForm<{ model: ModelListItem }>('/api/model-import', fd);
+    if (options.sourceUnits) fd.append('sourceUnits', options.sourceUnits);
+    return api.postForm<{
+      model: ModelListItem;
+      jobId?: string;
+      importStatus?: ModelImportStatus | null;
+    }>('/api/model-import', fd);
   },
 };
 
