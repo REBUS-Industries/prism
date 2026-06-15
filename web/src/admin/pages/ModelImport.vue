@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { modelsApi, type ApiError } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
+import { MODEL_CATEGORY_OPTIONS } from '../utils/modelCategories';
 
 const router = useRouter();
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -56,7 +57,15 @@ async function runImport(): Promise<void> {
     <input v-model="name" placeholder="Model name" />
 
     <label class="muted small mt-sm">Category (optional)</label>
-    <input v-model="category" placeholder="e.g. Truss, Speaker, Prop" />
+    <select v-model="category">
+      <option
+        v-for="opt in MODEL_CATEGORY_OPTIONS"
+        :key="opt.value || '__none__'"
+        :value="opt.value"
+      >
+        {{ opt.label }}
+      </option>
+    </select>
 
     <label class="muted small mt-sm">Tags (comma-separated)</label>
     <input v-model="tags" placeholder="e.g. rigging, stage" />
