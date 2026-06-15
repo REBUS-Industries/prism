@@ -15,6 +15,8 @@ import { join } from 'node:path';
 import { runBootstrap } from './bootstrap.js';
 import { resolveProvenance } from './auth/provenance.js';
 import { serverApiLog, redactPath, categoryFor, levelFor } from './observability/apiLog.js';
+import { redisRegistry } from './ws/redisRegistry.js';
+import { sessionRegistry } from './ws/sessionRegistry.js';
 
 // Sourced from this package's package.json at startup. The process is always
 // launched from the package root: `npm run dev`/`start` run with cwd=server/,
@@ -181,6 +183,21 @@ async function main() {
     app.log.error(err);
     process.exit(1);
   }
+
+  // Relay cross-process admin/job broadcasts to the subscribers held in THIS
+  // process — most importantly the convert page's `/api/jobs/:id/stream` SSE
+  // clients. In the dev microservice split the agent gateway runs in a
+  // separate process (`/ws/agent` -> prism-agent) and publishes the job's
+  // `awaiting_selection` / `processing` / `complete` frames to the Redis
+  // `admin:broadcast` channel. Without this subscription those frames never
+  // reach the SSE clients registered here, so the convert page sits on its
+  // initial `queued` snapshot forever (the SSE socket never errors, so the
+  // client-side polling fallback never starts). broadcastAdminLocal does not
+  // re-publish to Redis, so there is no fan-out loop. Mirrors
+  // visualiser-service.ts, which already does this for its /ws/admin sockets.
+  void redisRegistry.subscribeToAdminBroadcast((topic, frame) => {
+    sessionRegistry.broadcastAdminLocal(topic, frame);
+  });
 
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.on(sig, async () => {
