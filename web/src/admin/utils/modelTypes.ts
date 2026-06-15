@@ -12,6 +12,7 @@ export type {
   ModelMediaType,
   ModelMeshRef,
   ModelMaterialSlot,
+  ModelTransform,
   ModelDefinition,
   ModelVersionSummary,
   ModelListItem,

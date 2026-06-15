@@ -6,11 +6,14 @@ import {
   materialsApi,
   type ModelDetail,
   type ModelMaterialSlot,
+  type ModelTransform,
   type MaterialListItem,
   type ApiError,
 } from '../../shared/api';
-import FixtureViewer from '../components/FixtureViewer.vue';
+import ModelViewer from '../components/ModelViewer.vue';
+import ModelTransformPanel from '../components/ModelTransformPanel.vue';
 import Icon from '../../shared/Icon.vue';
+import { cloneModelTransform, ensureModelTransform } from '../utils/modelTransform';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -30,6 +33,11 @@ const status = ref<'draft' | 'published'>('draft');
 /** Editable copy of the model's material slots (drives the preview + Save). */
 const materialSlots = ref<ModelMaterialSlot[]>([]);
 const materials = ref<MaterialListItem[]>([]);
+/** Root transform for preview + persistence on Save. */
+const modelTransform = ref<ModelTransform>(ensureModelTransform(null));
+
+const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
+const gizmoSpace = ref<'world' | 'local'>('local');
 
 const previewUrl = computed(() => (model.value?.hasPreview ? modelsApi.previewUrl(props.id) : null));
 
@@ -57,11 +65,16 @@ async function reload(): Promise<void> {
       name: s.name,
       materialId: s.materialId ?? null,
     }));
+    modelTransform.value = ensureModelTransform(res.model.definition.transform);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load model';
   } finally {
     loading.value = false;
   }
+}
+
+function onTransformChange(next: ModelTransform): void {
+  modelTransform.value = cloneModelTransform(next);
 }
 
 async function save(): Promise<void> {
@@ -75,13 +88,18 @@ async function save(): Promise<void> {
       tags: tags.value.split(',').map((t) => t.trim()).filter(Boolean),
       description: description.value.trim() || null,
       status: status.value,
-      definition: { ...model.value.definition, materialSlots: materialSlots.value },
+      definition: {
+        ...model.value.definition,
+        materialSlots: materialSlots.value,
+        transform: cloneModelTransform(modelTransform.value),
+      },
     });
     model.value = res.model;
     materialSlots.value = (res.model.definition.materialSlots ?? []).map((s) => ({
       name: s.name,
       materialId: s.materialId ?? null,
     }));
+    modelTransform.value = ensureModelTransform(res.model.definition.transform);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'save failed';
   } finally {
@@ -133,21 +151,49 @@ onMounted(() => {
     <div v-if="error" class="error-box mt">{{ error }}</div>
 
     <div v-if="activeTab === 'overview'" class="overview">
-      <div class="viewer-wrap">
-        <FixtureViewer v-if="previewUrl" :url="previewUrl" :model-material-slots="materialSlots" view-preset="iso" interactive light-background fill />
-        <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
+      <div class="viewer-col">
+        <div v-if="previewUrl" class="gizmo-toolbar">
+          <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'translate' }" title="Move" @click="gizmoMode = 'translate'"><Icon name="open_with" :size="16" /></button>
+          <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'rotate' }" title="Rotate" @click="gizmoMode = 'rotate'"><Icon name="3d_rotation" :size="16" /></button>
+          <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'scale' }" title="Scale" @click="gizmoMode = 'scale'"><Icon name="zoom_out_map" :size="16" /></button>
+          <span class="gizmo-sep" aria-hidden="true" />
+          <button type="button" class="gizmo-btn space" :title="`Gizmo space: ${gizmoSpace}`" @click="gizmoSpace = gizmoSpace === 'local' ? 'world' : 'local'">{{ gizmoSpace === 'local' ? 'LOCAL' : 'WORLD' }}</button>
+        </div>
+        <div class="viewer-wrap">
+          <ModelViewer
+            v-if="previewUrl"
+            :url="previewUrl"
+            :model-material-slots="materialSlots"
+            :transform="modelTransform"
+            view-preset="iso"
+            interactive
+            light-background
+            fill
+            editable
+            :gizmo-mode="gizmoMode"
+            :gizmo-space="gizmoSpace"
+            @transform-change="onTransformChange"
+          />
+          <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
+        </div>
+        <p v-if="previewUrl" class="muted small gizmo-hint">Drag the gizmo to move / rotate / scale · numeric edits in the panel · persist with <strong>Save</strong>.</p>
       </div>
-      <aside class="facts card">
-        <h3>Details</h3>
-        <dl>
-          <dt>Status</dt><dd>{{ model.status }}</dd>
-          <dt>Origin</dt><dd>{{ model.origin }}</dd>
-          <dt>Category</dt><dd>{{ model.category ?? '—' }}</dd>
-          <dt>Tags</dt><dd>{{ model.tags.length ? model.tags.join(', ') : '—' }}</dd>
-          <dt>Meshes</dt><dd>{{ model.definition.meshes.length }}</dd>
-          <dt v-if="dims">Size (m)</dt>
-          <dd v-if="dims">{{ dims.length }} × {{ dims.width }} × {{ dims.height }}</dd>
-        </dl>
+      <aside class="side-panels">
+        <div class="card">
+          <ModelTransformPanel v-model="modelTransform" />
+        </div>
+        <div class="facts card">
+          <h3>Details</h3>
+          <dl>
+            <dt>Status</dt><dd>{{ model.status }}</dd>
+            <dt>Origin</dt><dd>{{ model.origin }}</dd>
+            <dt>Category</dt><dd>{{ model.category ?? '—' }}</dd>
+            <dt>Tags</dt><dd>{{ model.tags.length ? model.tags.join(', ') : '—' }}</dd>
+            <dt>Meshes</dt><dd>{{ model.definition.meshes.length }}</dd>
+            <dt v-if="dims">Size (m)</dt>
+            <dd v-if="dims">{{ dims.length }} × {{ dims.width }} × {{ dims.height }}</dd>
+          </dl>
+        </div>
       </aside>
     </div>
 
@@ -215,11 +261,41 @@ onMounted(() => {
 .tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border, #2a2a32); margin-bottom: 12px; }
 .tab-bar button { background: none; border: none; padding: 8px 14px; cursor: pointer; color: inherit; border-bottom: 2px solid transparent; }
 .tab-bar button.active { border-bottom-color: var(--accent, #ff8800); font-weight: 600; }
-.overview { display: grid; grid-template-columns: 1fr 280px; gap: 16px; }
-.viewer-wrap { height: 60vh; min-height: 360px; border-radius: 10px; overflow: hidden; background: var(--surface-2, #1a1a1f); }
+.overview { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
+.viewer-col { display: flex; flex-direction: column; min-width: 0; }
+.viewer-wrap { flex: 1; height: 60vh; min-height: 360px; border-radius: 10px; overflow: hidden; background: var(--surface-2, #1a1a1f); }
 .no-preview { display: flex; align-items: center; justify-content: center; height: 100%; }
+.side-panels { display: flex; flex-direction: column; gap: 12px; }
 .facts dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
 .facts dt { color: var(--color-text-muted, #888); }
+.facts h3 { margin: 0 0 8px; font-size: 14px; }
+.gizmo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--surface-2, #1a1a1f);
+  border: 1px solid var(--color-border, #2a2a32);
+}
+.gizmo-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted, #9aa0a6);
+  cursor: pointer;
+}
+.gizmo-btn:hover { background: var(--color-bg-hover, #2a2a32); color: inherit; }
+.gizmo-btn.active { background: var(--orbit-primary, #ff8800); color: #fff; }
+.gizmo-btn.space { font-family: var(--font-mono, monospace); min-width: 52px; width: auto; padding: 0 8px; font-size: 11px; }
+.gizmo-sep { width: 1px; height: 18px; background: var(--color-border, #2a2a32); margin: 0 2px; }
+.gizmo-hint { margin: 8px 0 0; }
 .version-list { list-style: none; padding: 0; margin: 0; }
 .version-list li { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--color-border, #2a2a32); }
 .intro { margin: 4px 0 12px; max-width: 640px; line-height: 1.5; }

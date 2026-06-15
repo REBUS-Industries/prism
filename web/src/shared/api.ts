@@ -2154,12 +2154,21 @@ export interface ModelMaterialSlot {
   materialId?: string | null;
 }
 
+/** Root transform for a model definition (metres, rotation in degrees). */
+export interface ModelTransform {
+  position: ModelVec3;
+  rotation: ModelVec3;
+  scale: ModelVec3;
+}
+
 export interface ModelDefinition {
   meshes: ModelMeshRef[];
   materialSlots: ModelMaterialSlot[];
   boundingBox?: ModelBoundingBox;
   dimensions?: { length: number; width: number; height: number };
   upAxis?: 'Y' | 'Z';
+  /** Optional root offset applied when previewing / placing the asset. */
+  transform?: ModelTransform;
   metadata?: Record<string, unknown>;
 }
 
