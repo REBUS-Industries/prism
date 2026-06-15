@@ -8,16 +8,18 @@ export const REBUS_CLAMP_MODEL_ID = 'rebus-clamp';
 export const REBUS_CLAMP_PART_ID = 'rebus-clamp-part';
 
 export interface ClampPlacement {
-  /** Duplicate the clamp mesh mirrored across GDTF Y (depth) for dual omega brackets. */
-  mirrorY: boolean;
+  /** Duplicate the clamp mesh mirrored across GDTF Z for dual omega brackets. */
+  mirrorZ: boolean;
   /** Rotate clamp(s) around GDTF Z through the fixture origin (degrees). */
   rotateZDeg: number;
 }
 
 export function readClampPlacement(metadata: Record<string, unknown> | undefined): ClampPlacement {
   const rot = metadata?.clampRotateZDeg;
+  // clampMirrorZ is canonical; clampMirrorY was the legacy field name (same semantics after Z-up migration).
+  const mirrorZ = metadata?.clampMirrorZ === true || metadata?.clampMirrorY === true;
   return {
-    mirrorY: metadata?.clampMirrorY === true,
+    mirrorZ,
     rotateZDeg: typeof rot === 'number' && Number.isFinite(rot) ? rot : 0,
   };
 }

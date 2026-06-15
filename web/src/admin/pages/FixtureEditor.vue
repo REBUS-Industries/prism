@@ -46,6 +46,7 @@ import {
 } from '../utils/fixtureOrigins';
 
 import { fixtureZOffsetM, readClampModelLibraryId, readClampPlacement, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
+import { isModelLengthUnit, type ModelLengthUnit } from '../utils/modelUnits';
 
 import { fixtureInformationParams } from '../utils/fixtureInformation';
 
@@ -70,6 +71,8 @@ import {
   type ModelListItem,
 
   type ModelMaterialSlot,
+
+  type ModelTransform,
 
   type Vec3,
 
@@ -203,11 +206,13 @@ const assembly = computed(() => {
     selectedModeGeometryId: selectedModeGeometryId.value,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
     clampPlacement: {
-      mirrorY: clampMirrorY.value,
+      mirrorZ: clampMirrorZ.value,
       rotateZDeg: clampRotateZDeg.value,
     },
     clampModelUrl: clampModelLibraryId.value ? modelsApi.previewUrl(clampModelLibraryId.value) : undefined,
     clampMaterialSlots: clampMaterialSlots.value.length ? clampMaterialSlots.value : undefined,
+    clampModelTransform: clampModelLibraryId.value ? clampModelTransform.value ?? undefined : undefined,
+    clampSourceUnits: clampModelLibraryId.value ? clampSourceUnits.value ?? undefined : undefined,
   };
 });
 
@@ -351,10 +356,12 @@ const replacingModelId = ref<string | null>(null);
 
 /** Millimetres to lower the fixture body (clamp stays at the hang point). */
 const fixtureZOffsetMm = ref(0);
-const clampMirrorY = ref(false);
+const clampMirrorZ = ref(false);
 const clampRotateZDeg = ref(0);
 const clampModelLibraryId = ref<string | null>(null);
 const clampMaterialSlots = ref<ModelMaterialSlot[]>([]);
+const clampModelTransform = ref<ModelTransform | null>(null);
+const clampSourceUnits = ref<ModelLengthUnit | null>(null);
 const clampLibraryModels = ref<ModelListItem[]>([]);
 const clampLibraryLoading = ref(false);
 const clampLibraryPreviewMissing = ref(false);
@@ -390,24 +397,32 @@ function syncPlacementFromFixture(): void {
   const meta = fixture.value?.definition.metadata;
   fixtureZOffsetMm.value = Math.round(fixtureZOffsetM(meta) * 1000);
   const clamp = readClampPlacement(meta);
-  clampMirrorY.value = clamp.mirrorY;
+  clampMirrorZ.value = clamp.mirrorZ;
   clampRotateZDeg.value = clamp.rotateZDeg;
   clampModelLibraryId.value = readClampModelLibraryId(meta);
   void verifyClampLibraryPreview();
-  void loadClampMaterialSlots();
+  void loadClampLibraryDefinition();
 }
 
-async function loadClampMaterialSlots(): Promise<void> {
+async function loadClampLibraryDefinition(): Promise<void> {
   const id = clampModelLibraryId.value;
   if (!id) {
     clampMaterialSlots.value = [];
+    clampModelTransform.value = null;
+    clampSourceUnits.value = null;
     return;
   }
   try {
     const res = await modelsApi.get(id);
-    clampMaterialSlots.value = res.model.definition?.materialSlots ?? [];
+    const def = res.model.definition;
+    clampMaterialSlots.value = def?.materialSlots ?? [];
+    clampModelTransform.value = def?.transform ?? null;
+    const su = (def as { sourceUnits?: unknown } | undefined)?.sourceUnits;
+    clampSourceUnits.value = isModelLengthUnit(su) ? su : null;
   } catch {
     clampMaterialSlots.value = [];
+    clampModelTransform.value = null;
+    clampSourceUnits.value = null;
   }
 }
 
@@ -416,9 +431,14 @@ function applyPlacementToDefinition(): void {
   const meta: Record<string, unknown> = {
     ...fixture.value.definition.metadata,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
-    clampMirrorY: clampMirrorY.value,
     clampRotateZDeg: clampRotateZDeg.value,
   };
+  if (clampMirrorZ.value) {
+    meta.clampMirrorZ = true;
+  } else {
+    delete meta.clampMirrorZ;
+  }
+  delete meta.clampMirrorY;
   if (clampModelLibraryId.value) {
     meta.clampModelLibraryId = clampModelLibraryId.value;
   } else {
@@ -470,7 +490,7 @@ async function verifyClampLibraryPreview(): Promise<void> {
 function onClampLibraryChange(): void {
   applyPlacementToDefinition();
   void verifyClampLibraryPreview();
-  void loadClampMaterialSlots();
+  void loadClampLibraryDefinition();
   assemblyRevision.value += 1;
 }
 
@@ -1203,8 +1223,8 @@ onMounted(() => {
           </p>
           <template v-if="clampHasMesh">
             <label class="check-row clamp-option">
-              <input v-model="clampMirrorY" type="checkbox" @change="onClampPlacementChange" />
-              Mirror on Y axis (dual clamp)
+              <input v-model="clampMirrorZ" type="checkbox" @change="onClampPlacementChange" />
+              Mirror on Z axis (dual clamp)
             </label>
             <label class="clamp-rotate-label">
               Rotate around centre Z
@@ -1231,7 +1251,7 @@ onMounted(() => {
               </div>
             </label>
             <p class="muted small">
-              Y mirror duplicates the clamp mesh across the fixture centre line; Z rotation spins both clamps around the hang point.
+              Z mirror duplicates the clamp mesh across the fixture centre line; Z rotation spins both clamps around the hang point.
             </p>
           </template>
         </section>

@@ -87,11 +87,11 @@ function attachClampOriginRig(
   primary.userData.partId = partId;
   rig.add(primary);
 
-  if (placement.mirrorY) {
+  if (placement.mirrorZ) {
     const mirrored = new THREE.Group();
-    mirrored.scale.y = -1;
+    mirrored.scale.z = -1;
     mirrored.userData.partId = partId;
-    mirrored.userData.instanceOf = 'Y mirror';
+    mirrored.userData.instanceOf = 'Z mirror';
     rig.add(mirrored);
   }
 
