@@ -65,7 +65,7 @@ async function logout() {
     <aside v-if="route.name !== 'login'">
       <div class="brand">
         <img src="/prism-logo.png" alt="PRISM" class="brand-logo" />
-        PRISM
+        <span class="brand-mark">PR<span class="brand-accent">ISM</span></span>
       </div>
       <nav>
         <RouterLink :to="{ name: 'dashboard'    }"><Icon name="dashboard" :size="18" />Dashboard</RouterLink>

@@ -208,7 +208,7 @@ const showLayerPicker = computed(() =>
     <header class="page-head">
       <div class="brand">
         <img src="/prism-logo.png" alt="PRISM" class="brand-logo" />
-        PRISM convert
+        <span class="brand-mark">PR<span class="brand-accent">ISM</span></span> convert
       </div>
       <div class="spacer"></div>
       <ThemeToggle />

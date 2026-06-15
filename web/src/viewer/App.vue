@@ -67,7 +67,7 @@ onMounted(async () => {
 <template>
   <div class="viewer-page">
     <header class="bar">
-      <span class="brand">PRISM</span>
+      <span class="brand brand-mark">PR<span class="brand-accent">ISM</span></span>
       <span class="muted small">shared viewport</span>
     </header>
 
