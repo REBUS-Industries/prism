@@ -67,7 +67,13 @@ export async function tryAuthOrbitBearer(req: FastifyRequest, target: 'prod' | '
   const token = auth.slice(7).trim();
   if (!token) return false;
 
-  const result = await validate(token, target);
+  // Try requested target first, then the other — allows ORBIT prod tokens against
+  // PRISM dev (and vice versa) when the host only has one ORBIT URL configured.
+  let result = await validate(token, target);
+  if (!result) {
+    const fallback: 'prod' | 'dev' = target === 'prod' ? 'dev' : 'prod';
+    result = await validate(token, fallback);
+  }
   if (!result) return false;
 
   req.principal = {
