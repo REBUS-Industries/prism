@@ -1,18 +1,33 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import ParamSlider from './ParamSlider.vue';
 import type { ModelTransform } from '../../shared/api';
 import { ensureModelTransform } from '../utils/modelTransform';
-import { metresToMm, mmToMetres } from '../utils/fixtureTransform';
+import {
+  metresToUnit,
+  positionSliderRange,
+  unitToMetres,
+  type ModelLengthUnit,
+} from '../utils/modelUnits';
 
 const transform = defineModel<ModelTransform>({ required: true });
+
+const props = withDefaults(defineProps<{
+  /** Display unit for position sliders (canonical storage remains metres). */
+  displayUnits?: ModelLengthUnit;
+}>(), {
+  displayUnits: 'mm',
+});
+
+const posRange = computed(() => positionSliderRange(props.displayUnits));
 
 function t(): ModelTransform {
   return ensureModelTransform(transform.value);
 }
 
-function posMm(axis: 'x' | 'y' | 'z', mm: number): void {
+function posDisplay(axis: 'x' | 'y' | 'z', value: number): void {
   const next = t();
-  next.position[axis] = mmToMetres(mm);
+  next.position[axis] = unitToMetres(value, props.displayUnits);
   transform.value = next;
 }
 
@@ -28,8 +43,8 @@ function scaleVal(axis: 'x' | 'y' | 'z', v: number): void {
   transform.value = next;
 }
 
-function posMmValue(axis: 'x' | 'y' | 'z'): number {
-  return metresToMm(t().position[axis]);
+function posDisplayValue(axis: 'x' | 'y' | 'z'): number {
+  return metresToUnit(t().position[axis], props.displayUnits);
 }
 
 function rotDegValue(axis: 'x' | 'y' | 'z'): number {
@@ -53,10 +68,10 @@ function resetTransform(): void {
     </header>
 
     <fieldset class="field-group">
-      <legend>Position <span class="unit">mm</span></legend>
-      <ParamSlider label="X" :min="-5000" :max="5000" :step="1" :model-value="posMmValue('x')" @update:model-value="posMm('x', $event)" />
-      <ParamSlider label="Y" :min="-5000" :max="5000" :step="1" :model-value="posMmValue('y')" @update:model-value="posMm('y', $event)" />
-      <ParamSlider label="Z" :min="-5000" :max="5000" :step="1" :model-value="posMmValue('z')" @update:model-value="posMm('z', $event)" />
+      <legend>Position <span class="unit">{{ displayUnits }}</span></legend>
+      <ParamSlider label="X" :min="posRange.min" :max="posRange.max" :step="posRange.step" :model-value="posDisplayValue('x')" @update:model-value="posDisplay('x', $event)" />
+      <ParamSlider label="Y" :min="posRange.min" :max="posRange.max" :step="posRange.step" :model-value="posDisplayValue('y')" @update:model-value="posDisplay('y', $event)" />
+      <ParamSlider label="Z" :min="posRange.min" :max="posRange.max" :step="posRange.step" :model-value="posDisplayValue('z')" @update:model-value="posDisplay('z', $event)" />
     </fieldset>
 
     <fieldset class="field-group">
