@@ -47,6 +47,11 @@ const KNOWN_SCOPES = [
   'fixtures:write',
   'fixtures:delete',
   'fixtures:import',
+  // Model library — generic 3D assets (routes on prism-models-service).
+  'models:read',
+  'models:write',
+  'models:delete',
+  'models:import',
 ] as const;
 const scopesSchema = z.array(z.enum(KNOWN_SCOPES)).default([]);
 
