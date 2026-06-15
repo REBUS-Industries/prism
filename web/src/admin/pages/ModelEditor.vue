@@ -14,6 +14,11 @@ import ModelViewer from '../components/ModelViewer.vue';
 import ModelTransformPanel from '../components/ModelTransformPanel.vue';
 import Icon from '../../shared/Icon.vue';
 import { cloneModelTransform, ensureModelTransform } from '../utils/modelTransform';
+import {
+  modelCategoryLabel,
+  modelCategorySelectOptions,
+  normalizeModelCategory,
+} from '../utils/modelCategories';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -40,6 +45,7 @@ const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 const gizmoSpace = ref<'world' | 'local'>('local');
 
 const previewUrl = computed(() => (model.value?.hasPreview ? modelsApi.previewUrl(props.id) : null));
+const categoryOptions = computed(() => modelCategorySelectOptions(category.value));
 
 async function loadMaterials(): Promise<void> {
   try {
@@ -57,7 +63,7 @@ async function reload(): Promise<void> {
     const res = await modelsApi.get(props.id);
     model.value = res.model;
     name.value = res.model.name;
-    category.value = res.model.category ?? '';
+    category.value = normalizeModelCategory(res.model.category);
     tags.value = res.model.tags.join(', ');
     description.value = res.model.description ?? '';
     status.value = res.model.status;
@@ -187,7 +193,7 @@ onMounted(() => {
           <dl>
             <dt>Status</dt><dd>{{ model.status }}</dd>
             <dt>Origin</dt><dd>{{ model.origin }}</dd>
-            <dt>Category</dt><dd>{{ model.category ?? '—' }}</dd>
+            <dt>Category</dt><dd>{{ modelCategoryLabel(model.category) }}</dd>
             <dt>Tags</dt><dd>{{ model.tags.length ? model.tags.join(', ') : '—' }}</dd>
             <dt>Meshes</dt><dd>{{ model.definition.meshes.length }}</dd>
             <dt v-if="dims">Size (m)</dt>
@@ -201,7 +207,15 @@ onMounted(() => {
       <label class="muted small">Name</label>
       <input v-model="name" />
       <label class="muted small mt-sm">Category</label>
-      <input v-model="category" placeholder="e.g. Truss, Speaker, Prop" />
+      <select v-model="category">
+        <option
+          v-for="opt in categoryOptions"
+          :key="opt.value || '__none__'"
+          :value="opt.value"
+        >
+          {{ opt.label }}
+        </option>
+      </select>
       <label class="muted small mt-sm">Tags (comma-separated)</label>
       <input v-model="tags" />
       <label class="muted small mt-sm">Description</label>
