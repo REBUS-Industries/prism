@@ -127,7 +127,8 @@ const emit = defineEmits<{
 const wrapRef = ref<HTMLDivElement | null>(null);
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
-let camera: THREE.PerspectiveCamera | null = null;
+let perspectiveCamera: THREE.PerspectiveCamera | null = null;
+let orthographicCamera: THREE.OrthographicCamera | null = null;
 let controls: OrbitControls | null = null;
 let transformControls: TransformControls | null = null;
 let transformHelper: THREE.Object3D | null = null;
@@ -170,9 +171,96 @@ function disposeBeam(): void {
 /** Cone height — tip translated to local origin in syncBeam(). */
 const BEAM_CONE_HEIGHT = 0.6;
 let modelCenter = new THREE.Vector3();
+let modelBox = new THREE.Box3();
 let modelSize = 1;
 let lastCssW = 0;
 let lastCssH = 0;
+
+const ORTHO_VIEW_PADDING = 1.1;
+const ORTHO_VIEW_AXES: Record<'top' | 'front' | 'side', { forward: THREE.Vector3; up: THREE.Vector3 }> = {
+  top: { forward: new THREE.Vector3(0, 0, 1), up: new THREE.Vector3(0, 1, 0) },
+  front: { forward: new THREE.Vector3(0, -1, 0), up: new THREE.Vector3(0, 0, 1) },
+  side: { forward: new THREE.Vector3(1, 0, 0), up: new THREE.Vector3(0, 0, 1) },
+};
+
+function activeCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera | null {
+  return props.viewPreset === 'iso' ? perspectiveCamera : orthographicCamera;
+}
+
+function syncActiveCamera(): void {
+  const cam = activeCamera();
+  if (!cam || !controls) return;
+  controls.object = cam;
+  if (transformControls) transformControls.camera = cam;
+}
+
+function boxCorners(box: THREE.Box3): THREE.Vector3[] {
+  const { min, max } = box;
+  return [
+    new THREE.Vector3(min.x, min.y, min.z),
+    new THREE.Vector3(min.x, min.y, max.z),
+    new THREE.Vector3(min.x, max.y, min.z),
+    new THREE.Vector3(min.x, max.y, max.z),
+    new THREE.Vector3(max.x, min.y, min.z),
+    new THREE.Vector3(max.x, min.y, max.z),
+    new THREE.Vector3(max.x, max.y, min.z),
+    new THREE.Vector3(max.x, max.y, max.z),
+  ];
+}
+
+/** Fit an orthographic frustum so the full model bbox is visible with padding. */
+function fitOrthographicView(preset: 'top' | 'front' | 'side', aspect: number): void {
+  const cam = orthographicCamera;
+  if (!cam) return;
+
+  const { forward, up } = ORTHO_VIEW_AXES[preset];
+  const center = modelCenter;
+  const size = modelBox.getSize(new THREE.Vector3());
+  const f = forward.clone().normalize();
+  let right = new THREE.Vector3().crossVectors(up, f);
+  if (right.lengthSq() < 1e-12) right.set(1, 0, 0);
+  else right.normalize();
+  const camUp = new THREE.Vector3().crossVectors(f, right).normalize();
+
+  const corners = modelBox.isEmpty()
+    ? [center.clone()]
+    : boxCorners(modelBox);
+  let minR = Infinity;
+  let maxR = -Infinity;
+  let minU = Infinity;
+  let maxU = -Infinity;
+  let minF = Infinity;
+  let maxF = -Infinity;
+  for (const p of corners) {
+    const rel = p.clone().sub(center);
+    minR = Math.min(minR, rel.dot(right));
+    maxR = Math.max(maxR, rel.dot(right));
+    minU = Math.min(minU, rel.dot(camUp));
+    maxU = Math.max(maxU, rel.dot(camUp));
+    minF = Math.min(minF, rel.dot(f));
+    maxF = Math.max(maxF, rel.dot(f));
+  }
+
+  const cx = (minR + maxR) / 2;
+  const cy = (minU + maxU) / 2;
+  let halfW = Math.max(((maxR - minR) / 2) * ORTHO_VIEW_PADDING, 0.05);
+  let halfH = Math.max(((maxU - minU) / 2) * ORTHO_VIEW_PADDING, 0.05);
+  if (halfW / halfH > aspect) halfH = halfW / aspect;
+  else halfW = halfH * aspect;
+
+  cam.left = cx - halfW;
+  cam.right = cx + halfW;
+  cam.top = cy + halfH;
+  cam.bottom = cy - halfH;
+
+  const dist = Math.max(maxF + size.length() * 0.5 + 0.1, 0.5);
+  cam.position.copy(center).add(f.clone().multiplyScalar(dist));
+  cam.up.copy(up);
+  cam.lookAt(center);
+  cam.near = Math.max(0.01, dist - maxF + 0.01);
+  cam.far = Math.max(cam.near + 1, dist - minF + size.length());
+  cam.updateProjectionMatrix();
+}
 let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
 const texLoader = new THREE.TextureLoader();
@@ -237,21 +325,24 @@ function dispose(): void {
   renderer?.dispose();
   if (dom && wrapRef.value?.contains(dom)) wrapRef.value.removeChild(dom);
   envRT?.dispose();
-  renderer = scene = camera = controls = envRT = panGroup = tiltGroup = glbOrient = dirLight = null;
+  renderer = scene = perspectiveCamera = orthographicCamera = controls = envRT = panGroup = tiltGroup = glbOrient = dirLight = null;
 }
 
 function applyCameraPreset(): void {
-  if (!camera || !controls) return;
-  const s = modelSize;
+  if (!controls) return;
+  syncActiveCamera();
+  const aspect = lastCssW > 0 && lastCssH > 0 ? lastCssW / lastCssH : 1;
   const c = modelCenter;
-  const presets: Record<string, [number, number, number]> = {
-    top: [c.x, c.y + 0.001, c.z + s * 1.2],
-    front: [c.x, c.y - s * 1.1, c.z + s * 0.15],
-    side: [c.x + s * 1.1, c.y, c.z + s * 0.15],
-    iso: [c.x + s * 0.6, c.y - s * 0.4, c.z + s * 0.8],
-  };
-  const pos = presets[props.viewPreset] ?? presets.iso;
-  camera.position.set(pos[0], pos[1], pos[2]);
+  const s = modelSize;
+
+  if (props.viewPreset === 'iso') {
+    if (!perspectiveCamera) return;
+    perspectiveCamera.up.set(0, 0, 1);
+    perspectiveCamera.position.set(c.x + s * 0.6, c.y - s * 0.4, c.z + s * 0.8);
+  } else {
+    fitOrthographicView(props.viewPreset, aspect);
+  }
+
   controls.target.copy(c);
   controls.update();
 }
@@ -428,7 +519,9 @@ function frameLoaded(precomputedBox?: THREE.Box3): void {
   if (box.isEmpty()) {
     modelSize = 1;
     modelCenter.set(0, 0, 0);
+    modelBox.makeEmpty();
   } else {
+    modelBox.copy(box);
     modelSize = box.getSize(new THREE.Vector3()).length() || 1;
     box.getCenter(modelCenter);
   }
@@ -570,7 +663,8 @@ function resetView(): void {
 function tick(): void {
   rafId = requestAnimationFrame(tick);
   controls?.update();
-  renderer?.render(scene!, camera!);
+  const cam = activeCamera();
+  if (renderer && scene && cam) renderer.render(scene, cam);
 }
 
 /** Walk up the scene graph to the nearest ancestor tagged with a partId. */
@@ -585,7 +679,8 @@ function resolvePartId(obj: THREE.Object3D | null): string | null {
 }
 
 function onPointerDown(ev: PointerEvent): void {
-  if (!props.interactive || !camera || !wrapRef.value) return;
+  const cam = activeCamera();
+  if (!props.interactive || !cam || !wrapRef.value) return;
   // Don't hijack clicks meant for the transform gizmo handles.
   if (transformControls && (transformControls.axis || transformControls.dragging)) return;
   const rect = wrapRef.value.getBoundingClientRect();
@@ -593,7 +688,7 @@ function onPointerDown(ev: PointerEvent): void {
   const x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
   const y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
   const ray = new THREE.Raycaster();
-  ray.setFromCamera(new THREE.Vector2(x, y), camera);
+  ray.setFromCamera(new THREE.Vector2(x, y), cam);
 
   const datumHits = ray.intersectObjects([...datumMeshes.values()]);
   if (datumHits[0]?.object.userData.datumId) {
@@ -612,7 +707,7 @@ function onPointerDown(ev: PointerEvent): void {
 
 function resize(): void {
   const el = wrapRef.value;
-  if (!el || !renderer || !camera) return;
+  if (!el || !renderer || !perspectiveCamera || !orthographicCamera) return;
   const size = readContainerCssSize(el);
   if (!size) return;
   const { width, height } = size;
@@ -621,8 +716,12 @@ function resize(): void {
   lastCssH = height;
   renderer.setPixelRatio(threePixelRatio());
   renderer.setSize(width, height, true);
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
+  const aspect = width / height;
+  perspectiveCamera.aspect = aspect;
+  perspectiveCamera.updateProjectionMatrix();
+  if (props.viewPreset !== 'iso') {
+    fitOrthographicView(props.viewPreset, aspect);
+  }
 }
 
 onMounted(() => {
@@ -652,14 +751,18 @@ onMounted(() => {
   tiltGroup.add(glbOrient);
   scene.add(panGroup);
 
-  camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
-  camera.up.set(0, 0, 1);
-  camera.position.set(2, -3, 1.5);
-  controls = new OrbitControls(camera, renderer.domElement);
+  perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
+  perspectiveCamera.up.set(0, 0, 1);
+  perspectiveCamera.position.set(2, -3, 1.5);
+
+  orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 500);
+  orthographicCamera.up.set(0, 0, 1);
+
+  controls = new OrbitControls(activeCamera()!, renderer.domElement);
   controls.enableDamping = true;
   controls.enabled = props.interactive;
 
-  transformControls = new TransformControls(camera, renderer.domElement);
+  transformControls = new TransformControls(activeCamera()!, renderer.domElement);
   transformControls.setSpace(props.gizmoSpace);
   transformControls.setMode(props.gizmoMode);
   // Pause orbit while dragging a handle so the camera doesn't fight the gizmo.
@@ -705,7 +808,10 @@ const modelMaterialsKey = (): string =>
 
 watch(() => [props.url, assemblyKey(), modelMaterialsKey(), props.assemblyRevision], () => { void loadContent(); });
 watch(() => props.datums, syncDatums, { deep: true });
-watch(() => props.viewPreset, applyCameraPreset);
+watch(() => props.viewPreset, () => {
+  syncActiveCamera();
+  applyCameraPreset();
+});
 watch(() => [props.panDeg, props.tiltDeg], syncMotion);
 watch(() => props.motionAngles, syncMotion, { deep: true });
 watch(() => props.dimmer, syncDimmer);
