@@ -4,6 +4,7 @@
  * are read-only context; effective connector permissions = portal ∩ this graph).
  */
 import { onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import {
   VueFlow,
   MarkerType,
@@ -19,6 +20,7 @@ import '@vue-flow/controls/dist/style.css';
 import Icon from '../../shared/Icon.vue';
 import {
   permissionsApi,
+  settingsApi,
   type ConnectorFunction,
   type PolicyEdge,
   type PolicyNode as PolicyNodeType,
@@ -30,6 +32,30 @@ const error = ref<string | null>(null);
 const defaultFunctions = ref<ConnectorFunction[]>([]);
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
+
+type BlanketLevel = 'viewer' | 'contributor' | 'owner';
+const grantAllProjects = ref(false);
+const blanketLevel = ref<BlanketLevel>('contributor');
+const savingAccess = ref(false);
+const accessStatus = ref<string | null>(null);
+
+async function saveAccessMode() {
+  savingAccess.value = true;
+  accessStatus.value = null;
+  error.value = null;
+  try {
+    await settingsApi.set('workspace_grant_all_projects', grantAllProjects.value ? '1' : '0');
+    if (grantAllProjects.value) {
+      await settingsApi.set('workspace_default_project_level', blanketLevel.value);
+    }
+    accessStatus.value = 'Access mode saved';
+    setTimeout(() => (accessStatus.value = null), 2500);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to save access mode';
+  } finally {
+    savingAccess.value = false;
+  }
+}
 
 function onConnect(conn: Connection) {
   edges.value.push({
@@ -49,6 +75,14 @@ function nodeLabel(n: PolicyNodeType) {
 }
 
 onMounted(async () => {
+  try {
+    const s = (await settingsApi.list()).settings;
+    grantAllProjects.value = s['workspace_grant_all_projects'] === '1';
+    const lvl = s['workspace_default_project_level'];
+    if (lvl === 'viewer' || lvl === 'contributor' || lvl === 'owner') blanketLevel.value = lvl;
+  } catch {
+    // non-fatal — access mode controls just default to granular/contributor
+  }
   try {
     const res = await permissionsApi.getPolicy();
     defaultFunctions.value = res.defaultFunctions;
@@ -135,6 +169,38 @@ async function savePolicy() {
     </header>
 
     <p v-if="error" class="error">{{ error }}</p>
+
+    <section class="access-mode">
+      <div class="access-head">
+        <div>
+          <h2>Access mode</h2>
+          <p class="muted">How ORBIT project access is granted to users who sign in via a connector.</p>
+        </div>
+        <label class="switch-row">
+          <input type="checkbox" v-model="grantAllProjects" :disabled="savingAccess" @change="saveAccessMode" />
+          <span>Blanket — give every user all ORBIT projects</span>
+        </label>
+      </div>
+      <div v-if="grantAllProjects" class="access-level">
+        <label>Access level on every project
+          <select v-model="blanketLevel" :disabled="savingAccess" @change="saveAccessMode">
+            <option value="viewer">Viewer — receive only</option>
+            <option value="contributor">Contributor — send + receive + new versions</option>
+            <option value="owner">Owner — full access</option>
+          </select>
+        </label>
+        <p class="muted hint">
+          Every provisioned user gets this level on all projects. Refine later by switching this off and assigning
+          projects per user on the <RouterLink :to="{ name: 'users' }">Users</RouterLink> page (the policy graph below can still grant extra functions).
+        </p>
+      </div>
+      <p v-else class="muted hint">
+        Granular — users only get the projects assigned on the
+        <RouterLink :to="{ name: 'users' }">Users</RouterLink> page, intersected with the policy graph below.
+      </p>
+      <p v-if="accessStatus" class="ok">{{ accessStatus }}</p>
+    </section>
+
     <div v-if="loading" class="muted">Loading policy…</div>
 
     <div v-else class="graph-wrap">
@@ -172,4 +238,14 @@ async function savePolicy() {
 .fn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; margin-top: 8px; }
 .fn-check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .error { color: var(--danger, #ef4444); }
+.ok { color: var(--success, #16a34a); font-size: 13px; margin: 4px 0 0; }
+.access-mode { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: var(--surface, transparent); }
+.access-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.access-head h2 { margin: 0 0 2px; font-size: 15px; }
+.access-head .muted { margin: 0; }
+.switch-row { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.access-level { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.access-level label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; max-width: 360px; }
+.access-level select { font-weight: 400; }
+.access-level .hint { font-weight: 400; margin-top: 8px; }
 </style>

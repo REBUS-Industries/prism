@@ -23,6 +23,8 @@ const ENV_MAP: Record<string, string> = {
   workspace_domain: 'WORKSPACE_DOMAIN',
   workspace_admin_email: 'GOOGLE_WORKSPACE_ADMIN_EMAIL',
   workspace_enforce_provisioned: 'WORKSPACE_ENFORCE_PROVISIONED',
+  workspace_grant_all_projects: 'WORKSPACE_GRANT_ALL_PROJECTS',
+  workspace_default_project_level: 'WORKSPACE_DEFAULT_PROJECT_LEVEL',
   google_oauth_client_id: 'GOOGLE_OAUTH_CLIENT_ID',
   google_oauth_client_secret: 'GOOGLE_OAUTH_CLIENT_SECRET',
   google_oauth_scopes: 'GOOGLE_OAUTH_SCOPES',
@@ -37,6 +39,8 @@ const DEFAULTS: Record<string, string> = {
   portal_admin_username: 'admin',
   workspace_adapter: 'mock',
   workspace_enforce_provisioned: '1',
+  workspace_grant_all_projects: '0',
+  workspace_default_project_level: 'contributor',
   google_oauth_scopes: 'openid email profile',
 };
 
