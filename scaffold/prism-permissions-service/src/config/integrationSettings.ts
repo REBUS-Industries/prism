@@ -21,9 +21,11 @@ const ENV_MAP: Record<string, string> = {
   portal_admin_username: 'PORTAL_ADMIN_USERNAME',
   workspace_adapter: 'WORKSPACE_ADAPTER',
   workspace_domain: 'WORKSPACE_DOMAIN',
+  workspace_admin_email: 'GOOGLE_WORKSPACE_ADMIN_EMAIL',
   workspace_enforce_provisioned: 'WORKSPACE_ENFORCE_PROVISIONED',
   google_oauth_client_id: 'GOOGLE_OAUTH_CLIENT_ID',
   google_oauth_client_secret: 'GOOGLE_OAUTH_CLIENT_SECRET',
+  google_oauth_scopes: 'GOOGLE_OAUTH_SCOPES',
   google_service_account_json: 'GOOGLE_SERVICE_ACCOUNT_JSON',
 };
 
@@ -34,6 +36,7 @@ const DEFAULTS: Record<string, string> = {
   portal_admin_username: 'admin',
   workspace_adapter: 'mock',
   workspace_enforce_provisioned: '1',
+  google_oauth_scopes: 'openid email profile',
 };
 
 let cache: Record<string, string> | null = null;

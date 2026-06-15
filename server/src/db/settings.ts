@@ -21,9 +21,11 @@ const ENV_FALLBACKS: Partial<Record<SettingKey | LegacySettingKey, string | unde
   portal_admin_username: process.env.PORTAL_ADMIN_USERNAME ?? process.env.ADMIN_USERNAME ?? 'admin',
   workspace_adapter: process.env.WORKSPACE_ADAPTER ?? 'mock',
   workspace_domain: process.env.WORKSPACE_DOMAIN,
+  workspace_admin_email: process.env.GOOGLE_WORKSPACE_ADMIN_EMAIL,
   workspace_enforce_provisioned: process.env.WORKSPACE_ENFORCE_PROVISIONED ?? '1',
   google_oauth_client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
   google_oauth_client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+  google_oauth_scopes: process.env.GOOGLE_OAUTH_SCOPES ?? 'openid email profile',
   google_service_account_json: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
 };
 
@@ -75,9 +77,11 @@ export type SettingKey =
   | 'portal_admin_username'
   | 'workspace_adapter'
   | 'workspace_domain'
+  | 'workspace_admin_email'
   | 'workspace_enforce_provisioned'
   | 'google_oauth_client_id'
   | 'google_oauth_client_secret'
+  | 'google_oauth_scopes'
   | 'google_service_account_json';
 
 /**
