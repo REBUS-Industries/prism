@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { modelsApi, type ModelDetail, type ApiError } from '../../shared/api';
+import {
+  modelsApi,
+  materialsApi,
+  type ModelDetail,
+  type ModelMaterialSlot,
+  type MaterialListItem,
+  type ApiError,
+} from '../../shared/api';
 import FixtureViewer from '../components/FixtureViewer.vue';
 import Icon from '../../shared/Icon.vue';
 
@@ -12,7 +19,7 @@ const model = ref<ModelDetail | null>(null);
 const loading = ref(false);
 const saving = ref(false);
 const error = ref<string | null>(null);
-const activeTab = ref<'overview' | 'metadata' | 'versions'>('overview');
+const activeTab = ref<'overview' | 'metadata' | 'materials' | 'versions'>('overview');
 
 const name = ref('');
 const category = ref('');
@@ -20,7 +27,20 @@ const tags = ref('');
 const description = ref('');
 const status = ref<'draft' | 'published'>('draft');
 
+/** Editable copy of the model's material slots (drives the preview + Save). */
+const materialSlots = ref<ModelMaterialSlot[]>([]);
+const materials = ref<MaterialListItem[]>([]);
+
 const previewUrl = computed(() => (model.value?.hasPreview ? modelsApi.previewUrl(props.id) : null));
+
+async function loadMaterials(): Promise<void> {
+  try {
+    const res = await materialsApi.list({ limit: 500 });
+    materials.value = res.materials;
+  } catch {
+    // Non-fatal: the picker just shows no options.
+  }
+}
 
 async function reload(): Promise<void> {
   loading.value = true;
@@ -33,6 +53,10 @@ async function reload(): Promise<void> {
     tags.value = res.model.tags.join(', ');
     description.value = res.model.description ?? '';
     status.value = res.model.status;
+    materialSlots.value = (res.model.definition.materialSlots ?? []).map((s) => ({
+      name: s.name,
+      materialId: s.materialId ?? null,
+    }));
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load model';
   } finally {
@@ -51,8 +75,13 @@ async function save(): Promise<void> {
       tags: tags.value.split(',').map((t) => t.trim()).filter(Boolean),
       description: description.value.trim() || null,
       status: status.value,
+      definition: { ...model.value.definition, materialSlots: materialSlots.value },
     });
     model.value = res.model;
+    materialSlots.value = (res.model.definition.materialSlots ?? []).map((s) => ({
+      name: s.name,
+      materialId: s.materialId ?? null,
+    }));
   } catch (err) {
     error.value = (err as ApiError).message ?? 'save failed';
   } finally {
@@ -73,7 +102,10 @@ async function removeModel(): Promise<void> {
 
 const dims = computed(() => model.value?.dimensions ?? null);
 
-onMounted(() => void reload());
+onMounted(() => {
+  void reload();
+  void loadMaterials();
+});
 </script>
 
 <template>
@@ -94,6 +126,7 @@ onMounted(() => void reload());
     <nav class="tab-bar">
       <button :class="{ active: activeTab === 'overview' }" @click="activeTab = 'overview'">Overview</button>
       <button :class="{ active: activeTab === 'metadata' }" @click="activeTab = 'metadata'">Metadata</button>
+      <button :class="{ active: activeTab === 'materials' }" @click="activeTab = 'materials'">Materials</button>
       <button :class="{ active: activeTab === 'versions' }" @click="activeTab = 'versions'">Versions</button>
     </nav>
 
@@ -101,7 +134,7 @@ onMounted(() => void reload());
 
     <div v-if="activeTab === 'overview'" class="overview">
       <div class="viewer-wrap">
-        <FixtureViewer v-if="previewUrl" :url="previewUrl" view-preset="iso" interactive light-background fill />
+        <FixtureViewer v-if="previewUrl" :url="previewUrl" :model-material-slots="materialSlots" view-preset="iso" interactive light-background fill />
         <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
       </div>
       <aside class="facts card">
@@ -134,6 +167,31 @@ onMounted(() => void reload());
       </select>
     </section>
 
+    <section v-else-if="activeTab === 'materials'" class="card mt">
+      <h3>Materials</h3>
+      <p class="muted small intro">
+        Assign a PRISM material to each slot detected in the mesh. Assignments render in the
+        preview and persist on <strong>Save</strong>.
+      </p>
+      <div v-if="materialSlots.length" class="slot-list">
+        <div v-for="(slot, i) in materialSlots" :key="slot.name + i" class="slot-row">
+          <div class="slot-meta">
+            <span class="slot-name">{{ slot.name }}</span>
+          </div>
+          <select v-model="slot.materialId" class="mat-select">
+            <option :value="null">— No material —</option>
+            <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.name }}</option>
+          </select>
+        </div>
+      </div>
+      <p v-else class="muted small">
+        No material slots — re-import this model to detect slots from the mesh.
+      </p>
+      <p v-if="materialSlots.length && !materials.length" class="muted small">
+        No materials yet — create some in <RouterLink :to="{ name: 'materials' }">Materials</RouterLink>.
+      </p>
+    </section>
+
     <section v-else class="card mt">
       <h3>Versions</h3>
       <ul class="version-list">
@@ -164,6 +222,14 @@ onMounted(() => void reload());
 .facts dt { color: var(--color-text-muted, #888); }
 .version-list { list-style: none; padding: 0; margin: 0; }
 .version-list li { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--color-border, #2a2a32); }
+.intro { margin: 4px 0 12px; max-width: 640px; line-height: 1.5; }
+.slot-list { display: flex; flex-direction: column; gap: 4px; }
+.slot-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--color-border, #2a2a32); }
+.slot-row:last-child { border-bottom: none; }
+.slot-meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.slot-name { font-weight: 600; font-size: 13px; word-break: break-word; }
+.mat-select { min-width: 240px; padding: 8px 10px; border: 1px solid var(--color-border, #2a2a32); border-radius: 6px; background: var(--color-bg-input, #16161a); color: inherit; font-size: 13px; }
+.small { font-size: 12px; }
 .mono { font-family: monospace; }
 .pill.online { background: #1f3a23; color: #7fd18c; padding: 1px 6px; border-radius: 999px; font-size: 10px; }
 </style>
