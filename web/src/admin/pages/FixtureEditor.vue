@@ -62,6 +62,10 @@ import {
 
   type FixtureDetail,
 
+  type FixtureOrbitRef,
+
+  type FixtureOrbitPublishTemplate,
+
   type FixturePart,
 
   type FixtureUpdateCheck,
@@ -94,6 +98,16 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 
 const saving = ref(false);
+
+const publishingOrbit = ref(false);
+
+const publishOrbitError = ref<string | null>(null);
+
+const orbitUnitNumber = ref('');
+
+const orbitPatchUniverse = ref<number | ''>('');
+
+const orbitPatchAddress = ref<number | ''>('');
 
 const selectedPartId = ref<string | null>(null);
 
@@ -581,6 +595,38 @@ const badges = computed(() => {
 
 
 
+const orbitFixtureRef = computed<FixtureOrbitRef | null>(() => {
+  const raw = fixture.value?.definition?.metadata?.orbitFixtureRef;
+  if (!raw || typeof raw !== 'object') return null;
+  const bag = raw as Record<string, unknown>;
+  const modelId = typeof bag.modelId === 'string' ? bag.modelId : '';
+  if (!modelId) return null;
+  return {
+    target: bag.target === 'dev' ? 'dev' : 'prod',
+    projectId: String(bag.projectId ?? ''),
+    modelId,
+    versionId: String(bag.versionId ?? ''),
+    objectId: String(bag.objectId ?? ''),
+    publishedAt: String(bag.publishedAt ?? ''),
+    orbitUrl: typeof bag.orbitUrl === 'string' ? bag.orbitUrl : undefined,
+  };
+});
+
+const orbitPublishBlockedReason = computed(() => {
+  const def = fixture.value?.definition;
+  if (!def) return 'fixture not loaded';
+  if (!def.parts?.length) return 'fixture has no geometry parts';
+  const info = def.fixtureInformation;
+  if (!info?.manufacturer?.trim() || !info?.fixtureName?.trim()) {
+    return 'manufacturer and fixture name are required';
+  }
+  return null;
+});
+
+const canPublishToOrbit = computed(() => !orbitPublishBlockedReason.value);
+
+
+
 const selectedPart = computed<FixturePart | null>(() => {
 
   if (!fixture.value || !selectedPartId.value) return null;
@@ -643,6 +689,8 @@ async function reload(): Promise<void> {
 
     }
 
+    syncOrbitPublishFields();
+
   } catch (err) {
 
     error.value = (err as ApiError).message ?? 'failed to load';
@@ -668,6 +716,7 @@ async function save(): Promise<void> {
   try {
 
     applyPlacementToDefinition();
+    applyOrbitPublishTemplate();
 
     const res = await fixturesApi.update(props.id, {
 
@@ -693,6 +742,64 @@ async function save(): Promise<void> {
 
   }
 
+}
+
+
+
+function readOrbitPublishTemplate(): FixtureOrbitPublishTemplate {
+  const raw = fixture.value?.definition?.metadata?.orbitPublishTemplate;
+  if (!raw || typeof raw !== 'object') return {};
+  return raw as FixtureOrbitPublishTemplate;
+}
+
+function syncOrbitPublishFields(): void {
+  const template = readOrbitPublishTemplate();
+  orbitUnitNumber.value = template.unitNumber ?? '';
+  orbitPatchUniverse.value = template.patch?.universe ?? '';
+  orbitPatchAddress.value = template.patch?.address ?? '';
+}
+
+function applyOrbitPublishTemplate(): void {
+  if (!fixture.value) return;
+  const patchUniverse = orbitPatchUniverse.value;
+  const patchAddress = orbitPatchAddress.value;
+  const hasPatch = patchUniverse !== '' && patchAddress !== '';
+  const template: FixtureOrbitPublishTemplate = {
+    ...(orbitUnitNumber.value.trim() ? { unitNumber: orbitUnitNumber.value.trim() } : {}),
+    ...(hasPatch ? {
+      patch: {
+        protocol: 'DMX',
+        universe: Number(patchUniverse),
+        address: Number(patchAddress),
+        absoluteAddress: Number(patchUniverse) * 512 + Number(patchAddress),
+        break: 1,
+        footprint: 0,
+        channelRange: '',
+        status: 'template',
+      },
+    } : {}),
+  };
+  fixture.value.definition.metadata = {
+    ...(fixture.value.definition.metadata ?? {}),
+    orbitPublishTemplate: Object.keys(template).length ? template : undefined,
+  };
+}
+
+async function publishToOrbit(): Promise<void> {
+  if (!fixture.value || !canPublishToOrbit.value) return;
+  publishingOrbit.value = true;
+  publishOrbitError.value = null;
+  error.value = null;
+  try {
+    await save();
+    const res = await fixturesApi.publishToOrbit(props.id);
+    fixture.value = res.fixture;
+    syncOrbitPublishFields();
+  } catch (err) {
+    publishOrbitError.value = (err as ApiError).message ?? 'publish to Orbit failed';
+  } finally {
+    publishingOrbit.value = false;
+  }
 }
 
 
@@ -846,6 +953,23 @@ onMounted(() => {
 
           <div class="head-actions">
 
+            <RouterLink
+              :to="{ name: 'fixture-debug', params: { id: fixture.id } }"
+              class="btn-debug"
+            >Debug GDTF 3D</RouterLink>
+
+            <button
+              type="button"
+              class="btn-orbit"
+              :disabled="publishingOrbit || saving || !canPublishToOrbit"
+              :title="orbitPublishBlockedReason ?? undefined"
+              @click="publishToOrbit"
+            >
+              <Icon name="cloud_upload" :size="16" />
+              {{ publishingOrbit ? 'Publishing…' : (orbitFixtureRef ? 'Republish to Orbit' : 'Publish to Orbit') }}
+            </button>
+
+
             <button :disabled="saving" class="primary" @click="save"><Icon name="save" :size="16" />{{ saving ? 'Saving…' : 'Save' }}</button>
 
             <button class="danger" @click="removeFixture"><Icon name="delete" :size="16" />Delete</button>
@@ -870,7 +994,22 @@ onMounted(() => {
 
           <span v-for="tag in fixture.tags" :key="tag" class="pill tag">{{ tag }}</span>
 
+          <span v-if="orbitFixtureRef" class="pill orbit-pill">
+            <a
+              v-if="orbitFixtureRef.orbitUrl"
+              :href="orbitFixtureRef.orbitUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+            >Orbit · {{ formatEditorDate(orbitFixtureRef.publishedAt) }}</a>
+            <span v-else>Orbit · {{ formatEditorDate(orbitFixtureRef.publishedAt) }}</span>
+          </span>
+
+          <span v-else class="pill muted-pill">Not on Orbit</span>
+
         </div>
+
+        <p v-if="publishOrbitError" class="orbit-error">{{ publishOrbitError }}</p>
+        <p v-else-if="orbitPublishBlockedReason" class="muted small orbit-hint">{{ orbitPublishBlockedReason }}</p>
 
       </header>
 
@@ -1275,6 +1414,42 @@ onMounted(() => {
           <p class="muted small">
             Shifts base, yoke, head, lenses and motion downward in Z (GDTF metres) so a clamp model can sit at the hang point above the fixture.
           </p>
+
+        <section class="panel-card settings-card">
+<h2>Orbit publish</h2>
+          <p class="muted small">
+            Publishes this fixture type to the Orbit Fixtures project. Republish after edits to update the existing Orbit model (new version, same model id).
+          </p>
+          <p v-if="orbitFixtureRef" class="muted small">
+            Last published {{ formatEditorDate(orbitFixtureRef.publishedAt) }}
+            <span v-if="orbitFixtureRef.orbitUrl">
+              · <a :href="orbitFixtureRef.orbitUrl" target="_blank" rel="noopener noreferrer">Open in Orbit</a>
+            </span>
+          </p>
+          <label>Unit number (optional template)
+            <input v-model="orbitUnitNumber" placeholder="e.g. 101" @change="applyOrbitPublishTemplate" />
+          </label>
+          <div class="orbit-patch-row">
+            <label>Patch universe (optional)
+              <input v-model.number="orbitPatchUniverse" type="number" min="0" step="1" @change="applyOrbitPublishTemplate" />
+            </label>
+            <label>Patch address (optional)
+              <input v-model.number="orbitPatchAddress" type="number" min="1" step="1" @change="applyOrbitPublishTemplate" />
+            </label>
+          </div>
+          <p class="muted small">
+            Includes fixture information, REBUS tags, per-part material IDs, motion rig, and preview asset URLs. Mesh geometry is referenced via preview GLB URL — direct Orbit mesh upload is not yet wired.
+          </p>
+          <button
+            type="button"
+            class="mt-sm btn-orbit"
+            :disabled="publishingOrbit || saving || !canPublishToOrbit"
+            @click="publishToOrbit"
+          >
+            {{ publishingOrbit ? 'Publishing…' : (orbitFixtureRef ? 'Republish to Orbit' : 'Publish to Orbit') }}
+          </button>
+        </section>
+
         </section>
 
         <section class="panel-card settings-card">
@@ -1451,7 +1626,25 @@ onMounted(() => {
 .pill.warn { background: var(--color-warn-bg); color: var(--color-warn); font-size: 11px; padding: 2px 8px; border-radius: 999px; }
 .carry-report { margin: 0; padding-left: 18px; font-size: 11px; }
 
-.head-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+.head-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; flex-wrap: wrap; }
+.btn-orbit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--orbit-primary, #ff8800);
+  background: transparent;
+  color: var(--orbit-primary, #ff8800);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-orbit:disabled { opacity: 0.5; cursor: not-allowed; }
+.orbit-pill a { color: inherit; text-decoration: none; }
+.orbit-pill a:hover { text-decoration: underline; }
+.orbit-error { color: var(--color-error); margin: 8px 0 0; font-size: 13px; }
+.orbit-hint { margin: 8px 0 0; }
+.orbit-patch-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
 
 
 

@@ -156,6 +156,8 @@ services:
       ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
       ORBIT_SERVER_URL: "${ORBIT_SERVER_URL:-https://orbit.rebus.industries}"
       ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
+      ORBIT_FIXTURES_PROJECT_ID: "${ORBIT_FIXTURES_PROJECT_ID:-0f2893eb28}"
+      ORBIT_FIXTURES_TARGET: "${ORBIT_FIXTURES_TARGET:-prod}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - prism-data:/data/prism
