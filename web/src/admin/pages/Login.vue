@@ -41,7 +41,7 @@ function signInWithGoogle() {
     <form class="card" @submit.prevent="submit">
       <div class="brand">
         <img src="/prism-logo.png" alt="PRISM" class="brand-logo" />
-        PRISM admin
+        <span class="brand-mark">PR<span class="brand-accent">ISM</span></span> admin
       </div>
       <label>Username
         <input v-model="username" autocomplete="username" required />

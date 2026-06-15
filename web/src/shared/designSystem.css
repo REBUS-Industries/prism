@@ -92,6 +92,11 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
+/* PRISM wordmark — trailing "ISM" uses brand orange */
+.brand-mark .brand-accent {
+  color: var(--orbit-primary);
+}
+
 html.dark,
 html[class*="dark"],
 [data-theme="dark"] {
