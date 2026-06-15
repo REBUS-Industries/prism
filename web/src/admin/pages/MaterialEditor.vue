@@ -748,7 +748,7 @@ onBeforeUnmount(() => {
 
 <template>
 
-  <section class="editor">
+  <section class="editor page-fill">
 
     <div v-if="loading" class="muted">Loading material…</div>
 
@@ -912,17 +912,11 @@ onBeforeUnmount(() => {
 
 .editor {
 
-  display: flex;
-
-  flex-direction: column;
-
   gap: 12px;
-
-  height: calc(100vh - 48px);
 
 }
 
-.topbar { display: flex; align-items: center; gap: 8px; }
+.topbar { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .back {
 

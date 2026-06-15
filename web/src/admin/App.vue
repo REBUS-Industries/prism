@@ -110,6 +110,7 @@ async function logout() {
   display: grid;
   grid-template-columns: 240px 1fr;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 .layout--bare { grid-template-columns: 1fr; }
@@ -122,6 +123,8 @@ aside {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
   z-index: 40;
 }
 
@@ -197,7 +200,7 @@ nav a.external:hover { color: hsl(var(--sidebar-foreground)); }
 }
 .profile-link:hover { color: hsl(var(--sidebar-primary)); }
 
-main { padding: 16px 24px; overflow: auto; }
+main { padding: 16px 24px; }
 
 .portal-overlay {
   position: fixed;

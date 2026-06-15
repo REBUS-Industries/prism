@@ -894,7 +894,7 @@ onMounted(() => {
 
   <template v-else-if="fixture">
 
-    <div class="editor-shell">
+    <div class="editor-shell page-fill">
 
       <header class="editor-head">
 
@@ -1547,14 +1547,13 @@ onMounted(() => {
 
 .editor-shell {
 
-  display: flex;
-
-  flex-direction: column;
-
   gap: 16px;
 
-  min-height: calc(100vh - 48px);
+}
 
+.editor-head,
+.tab-bar {
+  flex-shrink: 0;
 }
 
 .editor-head {
@@ -1718,16 +1717,31 @@ onMounted(() => {
 
 
 
-.tab-panel { flex: 1; }
+.tab-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 
-/* `flex: none` (not the inherited .tab-panel `flex: 1`, which forces
-   flex-basis:0% and overrides height) + a definite height so the Vue Flow
-   canvas's height:100% resolves. Without a definite height the percentage
-   collapses to 0 and the graph renders blank. */
-.construction-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
-.construction-panel > * { height: 100%; }
-.control-tab-panel { flex: none; height: calc(100vh - 230px); min-height: 480px; }
-.control-tab-panel > * { height: 100%; min-height: 0; }
+/* Flex fill (not vh calc) so viewer/graph panels get a definite height inside the shell */
+.construction-panel,
+.control-tab-panel,
+.parts-panel {
+  overflow: hidden;
+}
+
+.construction-panel,
+.control-tab-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.construction-panel > *,
+.control-tab-panel > * {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
 
 .model-swap { margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 12px; }
 .model-swap-title { margin: 0 0 4px; font-size: 13px; font-weight: 700; }
@@ -1884,8 +1898,6 @@ onMounted(() => {
 
   gap: 16px;
 
-  min-height: 480px;
-
 }
 
 .parts-tree-card,
@@ -1894,7 +1906,7 @@ onMounted(() => {
 
   overflow-y: auto;
 
-  max-height: calc(100vh - 220px);
+  min-height: 0;
 
 }
 
@@ -1930,7 +1942,7 @@ onMounted(() => {
 
   flex: 1;
 
-  min-height: 360px;
+  min-height: 0;
 
   border: 1px solid var(--color-border);
 
