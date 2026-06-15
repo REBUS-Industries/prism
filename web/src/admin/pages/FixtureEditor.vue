@@ -354,6 +354,19 @@ const clampModelLibraryId = ref<string | null>(null);
 const clampLibraryModels = ref<ModelListItem[]>([]);
 const clampLibraryLoading = ref(false);
 const clampLibraryPreviewMissing = ref(false);
+const clampLibraryShowingAll = ref(false);
+
+function isClampLibraryModel(m: ModelListItem): boolean {
+  if (m.category?.toLowerCase() === 'clamp') return true;
+  return m.tags.some((t) => t.toLowerCase() === 'clamp');
+}
+
+function clampLibraryOptionLabel(m: ModelListItem): string {
+  let label = m.name;
+  if (m.status === 'draft') label += ' (draft)';
+  if (clampLibraryShowingAll.value && m.category) label += ` [${m.category}]`;
+  return label;
+}
 
 const clampHasUploadedMesh = computed(() => {
   const meta = fixture.value?.definition.models
@@ -398,10 +411,24 @@ function applyPlacementToDefinition(): void {
 async function loadClampLibraryModels(): Promise<void> {
   clampLibraryLoading.value = true;
   try {
-    const res = await modelsApi.list({ category: 'clamp', limit: 100 });
-    clampLibraryModels.value = res.models.filter((m) => m.status === 'published' && m.hasPreview);
+    const res = await modelsApi.list({ limit: 200 });
+    const withPreview = res.models.filter((m) => m.hasPreview);
+    const clampMatches = withPreview.filter(isClampLibraryModel);
+    if (clampMatches.length > 0) {
+      clampLibraryModels.value = clampMatches;
+      clampLibraryShowingAll.value = false;
+    } else {
+      clampLibraryModels.value = withPreview;
+      clampLibraryShowingAll.value = withPreview.length > 0;
+    }
+    const assignedId = clampModelLibraryId.value;
+    if (assignedId && !clampLibraryModels.value.some((m) => m.id === assignedId)) {
+      const assigned = res.models.find((m) => m.id === assignedId);
+      if (assigned) clampLibraryModels.value = [assigned, ...clampLibraryModels.value];
+    }
   } catch {
     clampLibraryModels.value = [];
+    clampLibraryShowingAll.value = false;
   } finally {
     clampLibraryLoading.value = false;
   }
@@ -1115,7 +1142,7 @@ onMounted(() => {
                 @change="onClampLibraryChange"
               >
                 <option :value="null">— None (use upload) —</option>
-                <option v-for="m in clampLibraryModels" :key="m.id" :value="m.id">{{ m.name }}</option>
+                <option v-for="m in clampLibraryModels" :key="m.id" :value="m.id">{{ clampLibraryOptionLabel(m) }}</option>
               </select>
               <button
                 v-if="clampModelLibraryId"
@@ -1128,8 +1155,11 @@ onMounted(() => {
             </div>
           </label>
           <p v-if="clampLibraryLoading" class="muted small">Loading clamp models…</p>
+          <p v-else-if="clampLibraryShowingAll" class="muted small">
+            Showing all library models with a preview mesh. Set Category to <strong>clamp</strong> (or add a <strong>clamp</strong> tag) in the Model Editor to filter this list.
+          </p>
           <p v-else-if="!clampLibraryLoading && clampLibraryModels.length === 0" class="muted small">
-            No published clamp models in the library yet.
+            No clamp models with a preview yet. In the Model Library, import or convert a mesh, set Category to <strong>clamp</strong> (or tag <strong>clamp</strong>), then pick it here. Draft models are included.
           </p>
           <p v-if="clampLibraryPreviewMissing" class="warn small">
             The assigned library model is missing or has no preview — the viewport may not show a clamp until you pick another model or upload one.
