@@ -73,6 +73,7 @@ services:
       - prism-visualiser
       - prism-materials
       - prism-fixtures
+      - prism-models
     ports:
       - "8765:80"
     volumes:
@@ -155,6 +156,39 @@ services:
       - prism-data:/data/prism
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8769/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prism-models:
+    image: ghcr.io/rebus-industries/prism-models-service:${PRISM_MODELS_TAG:-latest}
+    container_name: prism-models
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 8770
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      DATA_DIR: "/data/prism"
+      REDIS_URL: "redis://redis:6379"
+      ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      - prism-data:/data/prism
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8770/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -309,9 +343,14 @@ services:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     restart: unless-stopped
+    # Cap RAM so leaked Chromium sessions OOM-recycle instead of starving the VM.
+    # Host cron also restarts this container (see infra/scripts/prism-dev-host-cleanup.sh).
+    mem_limit: 6g
+    memswap_limit: 6g
     environment:
       LOG_LEVEL: info
       CAPTCHA_SOLVER: none
+      BROWSER_TIMEOUT: "120000"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8191/"]
       interval: 30s

@@ -31,6 +31,7 @@ const CI_WATCH_MINUTES = 12;
 const REPOS = [
   { label: 'prism (web / server)',      value: 'REBUS-Industries/prism' },
   { label: 'prism-fixtures-service',    value: 'REBUS-Industries/prism-fixtures-service' },
+  { label: 'prism-models-service',      value: 'REBUS-Industries/prism-models-service' },
   { label: 'prism-materials-service',   value: 'REBUS-Industries/prism-materials-service' },
   { label: 'prism-visualiser-service',  value: 'REBUS-Industries/prism-visualiser-service' },
   { label: 'prism-agent-service',       value: 'REBUS-Industries/prism-agent-service' },
@@ -52,11 +53,19 @@ const REPO_CI = {
     workflows: ['fixtures-image'],
     crossRepo: [{ repo: 'REBUS-Industries/prism', workflows: ['deploy-dev-service'] }],
     deploysToDev: true,
+    requiresPrCi: false,
+  },
+  'REBUS-Industries/prism-models-service': {
+    workflows: ['models-image'],
+    crossRepo: [{ repo: 'REBUS-Industries/prism', workflows: ['deploy-dev-service'] }],
+    deploysToDev: true,
+    requiresPrCi: false,
   },
   'REBUS-Industries/prism-materials-service': {
     workflows: ['materials-image'],
     crossRepo: [{ repo: 'REBUS-Industries/prism', workflows: ['deploy-dev-service'] }],
     deploysToDev: true,
+    requiresPrCi: false,
   },
   'REBUS-Industries/prism-visualiser-service': {
     workflows: ['visualiser-image'],

@@ -14,6 +14,7 @@
 |---|---|---|
 | Materials editor | `feat/materials-editor` | [HANDOFF-materials-editor.md](./HANDOFF-materials-editor.md) |
 | Fixture builder | `feat/fixture-builder` | [HANDOFF-fixture-builder.md](./HANDOFF-fixture-builder.md) |
+| Model library | `feat/model-library` | [HANDOFF-model-library.md](./HANDOFF-model-library.md) |
 | Connectors | feature branches in **orbit-connectors** | [HANDOFF-connectors.md](./HANDOFF-connectors.md) (pointer) |
 
 ## Session-start prompts
@@ -30,6 +31,13 @@ If the PR touches server/**, run server-image (not just web-image) to deploy API
 Read PRISM/.cursor/plans/README.md, AGENT-GIT-INSTRUCTIONS.md, and HANDOFF-fixture-builder.md fully before starting any work.
 Work only on feat/fixture-builder. Do not edit materials editor files.
 If you change web/** only, deploy with web-image. If you change server/**, also run server-image.
+```
+
+**Model library:**
+```
+Read PRISM/.cursor/plans/README.md, AGENT-GIT-INSTRUCTIONS.md, and HANDOFF-model-library.md fully before starting any work.
+Work only on feat/model-library. Do not edit fixture or materials editor files.
+Clone prism-models-service (or bootstrap from scaffold/prism-models-service). Deploy web-image + models-image when UI and API both change.
 ```
 
 **Connectors** (open `orbit-connectors` as workspace root — not this repo):

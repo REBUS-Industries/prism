@@ -1,0 +1,46 @@
+---
+description: Model Library workstream scope, branch, and coordination rules
+alwaysApply: true
+---
+
+# Model Library workstream
+
+Read `.cursor/plans/HANDOFF-model-library.md` before starting work. Git workflow: `.cursor/plans/AGENT-GIT-INSTRUCTIONS.md`.
+
+## Branch and repos
+
+- Monorepo: `REBUS-Industries/prism` — branch **`feat/model-library`** only
+- API polyrepo: **`REBUS-Industries/prism-models-service`** — feature branches off `main`
+- Bootstrap: `scaffold/prism-models-service/` if polyrepo not created yet
+- Daily sync: `git fetch origin && git rebase origin/main`
+
+## Owned files (edit freely)
+
+- `web/src/admin/pages/Model*.vue`, `Models.vue`, `PrismModelLibrary.vue`
+- `web/src/admin/components/Model*.vue`, `web/src/admin/utils/model*.ts`
+- `prism-models-service/src/**`
+- `docs/MODEL_LIBRARY.md`
+
+## Do not edit
+
+- Fixture builder files (`Fixture*.vue`, `fixtureAssembly.ts`, `prism-fixtures-service`)
+- Materials editor files (`Material*.vue`, `server/src/materials/**`)
+- `prism/server/**` except `server/src/api/keys.ts` for `models:*` scopes
+
+## Shared files — coordinate before merge
+
+- `web/src/shared/api.ts` — add `modelsApi` at end; announce in team chat
+- `web/src/admin/App.vue` — nav/routes; announce first
+
+## Build and deploy (keep UI + API in sync)
+
+- Pre-PR: `cd web && npm run build`
+- **Web only:** `gh workflow run web-image --repo REBUS-Industries/prism --ref feat/model-library`
+- **Models API:** merge `prism-models-service` PR; `models-image` on merge to `main`, or:
+  `gh workflow run models-image --repo REBUS-Industries/prism-models-service --ref <branch>`
+- Merge via `/prism-merge <PR#>` or `/prism-merge prism-models-service#N`
+- Dev: https://prism-dev.rebus.industries
+
+## Commit format
+
+`feat|fix|chore(web): <description>` (models-service: `feat:` / `fix:` without web scope)
