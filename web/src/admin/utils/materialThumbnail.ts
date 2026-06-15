@@ -1,14 +1,14 @@
 /**
- * Capture a GlbViewer canvas snapshot and upload it as the material list
- * thumbnail (sphere render persisted server-side).
+ * Capture a flat swatch snapshot and upload it as the material list
+ * thumbnail (persisted server-side).
  */
 import { materialsApi } from '../../shared/api';
-import type MaterialPreviewSphere from '../components/MaterialPreviewSphere.vue';
+import type MaterialPreviewSwatch from '../components/MaterialPreviewSwatch.vue';
 
 export async function uploadMaterialPreviewThumbnail(
   materialId: string,
   materialName: string,
-  viewer: InstanceType<typeof MaterialPreviewSphere> | null,
+  viewer: InstanceType<typeof MaterialPreviewSwatch> | null,
 ): Promise<string | null> {
   if (!viewer?.captureSnapshot) return null;
   const dataUrl = await viewer.captureSnapshot();

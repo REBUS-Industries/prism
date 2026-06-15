@@ -2,10 +2,10 @@
 /**
  * Material library card thumbnail. Uses the persisted albedo / captured preview
  * image when available; otherwise lazy-loads material detail and renders a
- * compact GlbViewer sphere (same look as the editor preview).
+ * compact flat swatch (same look as the editor preview).
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import MaterialPreviewSphere from './MaterialPreviewSphere.vue';
+import MaterialPreviewSwatch from './MaterialPreviewSwatch.vue';
 import {
   DEFAULT_MATERIAL_PARAMETERS,
   materialsApi,
@@ -100,7 +100,7 @@ defineExpose({
 <template>
   <span ref="rootRef" class="material-card-preview">
     <img v-if="staticUrl" :src="staticUrl" :alt="alt" loading="lazy" />
-    <MaterialPreviewSphere
+    <MaterialPreviewSwatch
       v-else-if="shouldRender && detail"
       :sources="sources"
       :parameters="parameters"
@@ -123,7 +123,7 @@ defineExpose({
   object-fit: cover;
   display: block;
 }
-.material-card-preview :deep(.material-preview-sphere) {
+.material-card-preview :deep(.material-preview-swatch) {
   width: 100%;
   height: 100%;
   min-height: 0;
