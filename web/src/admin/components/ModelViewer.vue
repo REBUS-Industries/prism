@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Model library 3D preview — single GLB with optional root transform gizmo.
- * Mirrors FixtureViewer url mode without assembly / fixture-specific features.
+ * Z-up authoring space (camera.up = Z; glTF meshes wrapped +90° X like fixtures).
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
@@ -54,6 +54,8 @@ let controls: OrbitControls | null = null;
 let transformControls: TransformControls | null = null;
 let transformHelper: THREE.Object3D | null = null;
 let transformGroup: THREE.Group | null = null;
+/** Fixed +90° X: glTF Y-up mesh → Z-up authoring space (matches fixture GLB wrap). */
+let glbOrient: THREE.Group | null = null;
 let loadedRoot: THREE.Object3D | null = null;
 let envRT: THREE.WebGLRenderTarget | null = null;
 let resizeObs: ResizeObserver | null = null;
@@ -109,6 +111,7 @@ function dispose(): void {
   clearLoaded();
   transformGroup?.removeFromParent();
   transformGroup = null;
+  glbOrient = null;
   const dom = renderer?.domElement;
   renderer?.dispose();
   if (dom && wrapRef.value?.contains(dom)) wrapRef.value.removeChild(dom);
@@ -121,10 +124,10 @@ function applyCameraPreset(): void {
   const s = modelSize;
   const c = modelCenter;
   const presets: Record<string, [number, number, number]> = {
-    top: [c.x, c.y + s * 1.2, c.z + 0.001],
-    front: [c.x, c.y + s * 0.15, c.z + s * 1.1],
-    side: [c.x + s * 1.1, c.y + s * 0.15, c.z],
-    iso: [c.x + s * 0.6, c.y + s * 0.4, c.z + s * 0.8],
+    top: [c.x, c.y + 0.001, c.z + s * 1.2],
+    front: [c.x, c.y - s * 1.1, c.z + s * 0.15],
+    side: [c.x + s * 1.1, c.y, c.z + s * 0.15],
+    iso: [c.x + s * 0.6, c.y - s * 0.4, c.z + s * 0.8],
   };
   const pos = presets[props.viewPreset] ?? presets.iso;
   camera.position.set(pos[0], pos[1], pos[2]);
@@ -221,13 +224,13 @@ async function applyModelSlotMaterials(): Promise<void> {
 }
 
 async function loadGlb(url: string): Promise<void> {
-  if (!scene || !transformGroup) return;
+  if (!scene || !transformGroup || !glbOrient) return;
   const loader = new GLTFLoader();
   const gltf = await loader.loadAsync(url);
   clearLoaded();
   loadedRoot = gltf.scene;
   syncTransformFromProps();
-  transformGroup.add(loadedRoot);
+  glbOrient.add(loadedRoot);
   await applyModelSlotMaterials();
   frameLoaded();
   syncGizmo();
@@ -281,10 +284,14 @@ onMounted(() => {
   scene.background = new THREE.Color(props.lightBackground ? 0xe8eaed : 0x1a1a1f);
 
   transformGroup = new THREE.Group();
+  glbOrient = new THREE.Group();
+  glbOrient.rotation.x = Math.PI / 2;
+  transformGroup.add(glbOrient);
   scene.add(transformGroup);
 
   camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
-  camera.position.set(2, 1.5, 3);
+  camera.up.set(0, 0, 1);
+  camera.position.set(2, -3, 1.5);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.enabled = props.interactive;
@@ -303,7 +310,7 @@ onMounted(() => {
   scene.environment = envRT.texture;
   scene.add(new THREE.AmbientLight(0xffffff, 0.35));
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
-  dirLight.position.set(4, 6, 3);
+  dirLight.position.set(4, 3, 6);
   scene.add(dirLight);
 
   resizeObs = new ResizeObserver(() => resize());
