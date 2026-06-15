@@ -101,6 +101,8 @@ services:
       PORT: 8766
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
+      ORBIT_SERVER_URL: "${ORBIT_SERVER_URL:-https://orbit.rebus.industries}"
+      ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
       SESSION_SECRET: "${SESSION_SECRET}"
