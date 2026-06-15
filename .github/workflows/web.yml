@@ -79,6 +79,7 @@ jobs:
             cp docker-compose.dev.yml docker-compose.yml
             docker compose pull prism-web prism-fixtures prism-models
             docker compose up -d prism-web prism-fixtures prism-models prism-router
+            docker exec prism-router nginx -s reload
             docker compose ps prism-web prism-fixtures prism-models prism-router
             # Keep VM 212 disk healthy — remove images older than 24h
             docker image prune -af --filter "until=24h" 2>/dev/null || true

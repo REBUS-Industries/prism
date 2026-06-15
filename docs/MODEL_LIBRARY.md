@@ -2,22 +2,22 @@
 
 Generic 3D model assets (props, scenery, equipment meshes) managed by **`prism-models-service`**.
 
-> **Status:** Scaffold only — infra wiring + handoff in place; feature development on `feat/model-library` + `prism-models-service`.
+> **Status:** Implemented (v1) — CRUD + mesh import on `prism-models-service`; admin library/editor/import UI on `feat/model-library`. Model instances (ORBIT placement) remain a later milestone.
 
 ## Architecture
 
 - **Service:** `prism-models-service` on port **8770**, routed via nginx at `/api/models`, `/api/model-import`.
-- **Storage:** `${DATA_DIR}/models/` on the shared `prism-data` volume (meshes, thumbnails, metadata JSON).
-- **Contracts:** Target `prism-shared/src/contracts/models.ts` + DB migration (mirror fixtures pattern).
+- **Database:** dedicated **`prism_models`** Postgres database, owned by the service (`src/db/schema.ts` + Drizzle migrations). Created automatically at boot (`runModelBootstrap`). Auth (`requireAuth`/`requireScope`) reuses `@rebus-industries/prism-shared` against the shared `prism` DB via `POSTGRES_URL`; the model store connects via `MODELS_POSTGRES_URL`.
+- **Storage:** `${DATA_DIR}/models/{modelId}/` on the shared `prism-data` volume (`original/` upload + converted `{mediaId}.glb`). Non-GLB meshes are converted via the assimp sidecar.
+- **Contracts:** `prism-models-service/src/contracts/models.ts`, mirrored on the web in `web/src/shared/api.ts` (+ `web/src/admin/utils/modelTypes.ts`).
 - **Orbit upload:** TBD — model instances as ORBIT objects for connector placement workflows.
 
-## Data model (target)
+## Data model
 
-| Concept | Notes |
-|---------|--------|
-| **ModelDefinition** | Canonical asset: name, category, tags, mesh refs, materials slots, bounding box |
-| **ModelInstance** | Placed instance in a project/scene; transform + reference to ModelDefinition |
-| **Import bundle** | glTF/GLB (primary), optional textures sidecar |
+- **model_types** — canonical asset: `name`, `category`, `tags`, `status` (draft/published), `origin` (upload/import/manual), `description`, `dimensions`, `boundingBox`, `definition` (jsonb: meshes + material slots), `previewModelId`, `activeVersionId`, soft delete.
+- **model_media** — `MODEL_GLB | THUMBNAIL | TEXTURE_IMAGE | ORIGINAL_UPLOAD`, content hash, storage path, size.
+- **model_versions** — import history (definition snapshot + source hash) with the active version tracked on `model_types`.
+- **ModelInstance** — defined in contracts for the connector/ORBIT placement workflow (not yet exposed via CRUD).
 
 Part/slot tags TBD — align with visualiser material resolution where models reuse PBR slots.
 

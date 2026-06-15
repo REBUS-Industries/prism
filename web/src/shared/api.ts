@@ -2132,3 +2132,101 @@ export const fixtureTypesApi = {
       `/api/fixtures/categories/${id}${reassign ? '?reassign=unassigned' : ''}`,
     ),
 };
+
+// ---------------------------------------------------------------------------
+// Models library (prism-models-service)
+// ---------------------------------------------------------------------------
+
+export type ModelVec3 = { x: number; y: number; z: number };
+export interface ModelBoundingBox { min: ModelVec3; max: ModelVec3 }
+export type ModelOrigin = 'upload' | 'import' | 'manual';
+export type ModelMediaType = 'MODEL_GLB' | 'THUMBNAIL' | 'TEXTURE_IMAGE' | 'ORIGINAL_UPLOAD';
+
+export interface ModelMeshRef {
+  mediaId: string;
+  name: string;
+  lod?: number;
+  format?: 'glb';
+}
+
+export interface ModelMaterialSlot {
+  name: string;
+  materialId?: string | null;
+}
+
+export interface ModelDefinition {
+  meshes: ModelMeshRef[];
+  materialSlots: ModelMaterialSlot[];
+  boundingBox?: ModelBoundingBox;
+  dimensions?: { length: number; width: number; height: number };
+  upAxis?: 'Y' | 'Z';
+  metadata?: Record<string, unknown>;
+}
+
+export interface ModelVersionSummary {
+  id: string;
+  sourceHash: string | null;
+  createdAt: string;
+  isActive: boolean;
+}
+
+export interface ModelListItem {
+  id: string;
+  name: string;
+  category: string | null;
+  tags: string[];
+  status: 'draft' | 'published';
+  origin: ModelOrigin;
+  description: string | null;
+  activeVersionId: string | null;
+  hasPreview: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelDetail extends ModelListItem {
+  definition: ModelDefinition;
+  dimensions: { length: number; width: number; height: number } | null;
+  boundingBox: ModelBoundingBox | null;
+  versions: ModelVersionSummary[];
+}
+
+export const modelsApi = {
+  list: (params: { q?: string; tags?: string[]; category?: string; limit?: number; cursor?: string | null } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.tags?.length) qs.set('tags', params.tags.join(','));
+    if (params.category) qs.set('category', params.category);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.cursor) qs.set('cursor', params.cursor);
+    const tail = qs.toString();
+    return api.get<{ models: ModelListItem[]; nextCursor: string | null }>(
+      `/api/models${tail ? `?${tail}` : ''}`,
+    );
+  },
+  get: (id: string) => api.get<{ model: ModelDetail }>(`/api/models/${id}`),
+  create: (body: { name: string; category?: string | null; tags?: string[]; description?: string | null }) =>
+    api.post<{ model: ModelListItem }>('/api/models', body),
+  update: (
+    id: string,
+    body: {
+      name?: string;
+      category?: string | null;
+      tags?: string[];
+      status?: 'draft' | 'published';
+      description?: string | null;
+      definition?: ModelDefinition;
+    },
+  ) => api.put<{ model: ModelDetail }>(`/api/models/${id}`, body),
+  remove: (id: string) => api.delete<{ ok: boolean }>(`/api/models/${id}`),
+  previewUrl: (id: string) => `/api/models/${id}/preview.glb`,
+  mediaUrl: (id: string, mediaId: string) => `/api/models/${id}/media/${mediaId}`,
+  import: (file: File, options: { name?: string; category?: string; tags?: string[] } = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (options.name) fd.append('name', options.name);
+    if (options.category) fd.append('category', options.category);
+    if (options.tags?.length) fd.append('tags', options.tags.join(','));
+    return api.postForm<{ model: ModelListItem }>('/api/model-import', fd);
+  },
+};
