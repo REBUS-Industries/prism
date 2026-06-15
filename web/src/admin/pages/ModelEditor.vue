@@ -19,6 +19,12 @@ import {
   modelCategorySelectOptions,
   normalizeModelCategory,
 } from '../utils/modelCategories';
+import {
+  DEFAULT_MODEL_SOURCE_UNITS,
+  MODEL_LENGTH_UNITS,
+  ensureModelSourceUnits,
+  type ModelLengthUnit,
+} from '../utils/modelUnits';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -40,6 +46,8 @@ const materialSlots = ref<ModelMaterialSlot[]>([]);
 const materials = ref<MaterialListItem[]>([]);
 /** Root transform for preview + persistence on Save. */
 const modelTransform = ref<ModelTransform>(ensureModelTransform(null));
+/** Mesh vertex units (GLB coordinate space); preview scales to metres. */
+const sourceUnits = ref<ModelLengthUnit>(DEFAULT_MODEL_SOURCE_UNITS);
 
 const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 const gizmoSpace = ref<'world' | 'local'>('local');
@@ -72,6 +80,7 @@ async function reload(): Promise<void> {
       materialId: s.materialId ?? null,
     }));
     modelTransform.value = ensureModelTransform(res.model.definition.transform);
+    sourceUnits.value = ensureModelSourceUnits(res.model.definition.sourceUnits);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load model';
   } finally {
@@ -98,6 +107,7 @@ async function save(): Promise<void> {
         ...model.value.definition,
         materialSlots: materialSlots.value,
         transform: cloneModelTransform(modelTransform.value),
+        sourceUnits: sourceUnits.value,
       },
     });
     model.value = res.model;
@@ -106,6 +116,7 @@ async function save(): Promise<void> {
       materialId: s.materialId ?? null,
     }));
     modelTransform.value = ensureModelTransform(res.model.definition.transform);
+    sourceUnits.value = ensureModelSourceUnits(res.model.definition.sourceUnits);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'save failed';
   } finally {
@@ -171,6 +182,7 @@ onMounted(() => {
             :url="previewUrl"
             :model-material-slots="materialSlots"
             :transform="modelTransform"
+            :source-units="sourceUnits"
             view-preset="iso"
             interactive
             light-background
@@ -186,7 +198,7 @@ onMounted(() => {
       </div>
       <aside class="side-panels">
         <div class="card">
-          <ModelTransformPanel v-model="modelTransform" />
+          <ModelTransformPanel v-model="modelTransform" :display-units="sourceUnits" />
         </div>
         <div class="facts card">
           <h3>Details</h3>
@@ -198,6 +210,8 @@ onMounted(() => {
             <dt>Meshes</dt><dd>{{ model.definition.meshes.length }}</dd>
             <dt v-if="dims">Size (m)</dt>
             <dd v-if="dims">{{ dims.length }} × {{ dims.width }} × {{ dims.height }}</dd>
+            <dt>Mesh units</dt>
+            <dd>{{ sourceUnits }}</dd>
           </dl>
         </div>
       </aside>
@@ -225,6 +239,14 @@ onMounted(() => {
         <option value="draft">draft</option>
         <option value="published">published</option>
       </select>
+      <label class="muted small mt-sm">Mesh units</label>
+      <select v-model="sourceUnits">
+        <option v-for="u in MODEL_LENGTH_UNITS" :key="u" :value="u">{{ u }}</option>
+      </select>
+      <p class="muted small unit-hint">
+        Units of the imported mesh vertices. The preview scales to metres for correct real-world size.
+        Changing this does not alter the stored transform.
+      </p>
     </section>
 
     <section v-else-if="activeTab === 'materials'" class="card mt">
@@ -319,6 +341,7 @@ onMounted(() => {
 .slot-meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .slot-name { font-weight: 600; font-size: 13px; word-break: break-word; }
 .mat-select { min-width: 240px; padding: 8px 10px; border: 1px solid var(--color-border, #2a2a32); border-radius: 6px; background: var(--color-bg-input, #16161a); color: inherit; font-size: 13px; }
+.unit-hint { margin: 6px 0 0; max-width: 480px; line-height: 1.45; }
 .small { font-size: 12px; }
 .mono { font-family: monospace; }
 .pill.online { background: #1f3a23; color: #7fd18c; padding: 1px 6px; border-radius: 999px; font-size: 10px; }

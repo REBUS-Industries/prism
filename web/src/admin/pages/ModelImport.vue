@@ -4,6 +4,11 @@ import { RouterLink, useRouter } from 'vue-router';
 import { modelsApi, type ApiError } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 import { MODEL_CATEGORY_OPTIONS } from '../utils/modelCategories';
+import {
+  DEFAULT_MODEL_SOURCE_UNITS,
+  MODEL_LENGTH_UNITS,
+  type ModelLengthUnit,
+} from '../utils/modelUnits';
 
 const router = useRouter();
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -12,6 +17,7 @@ const error = ref<string | null>(null);
 const name = ref('');
 const category = ref('');
 const tags = ref('');
+const sourceUnits = ref<ModelLengthUnit>(DEFAULT_MODEL_SOURCE_UNITS);
 const selectedFile = ref<File | null>(null);
 
 const ACCEPT = '.glb,.gltf,.fbx,.obj,.3ds,.dae,.stl,.ply,.usdz,.zip';
@@ -33,6 +39,7 @@ async function runImport(): Promise<void> {
       name: name.value || undefined,
       category: category.value || undefined,
       tags: tags.value.split(',').map((t) => t.trim()).filter(Boolean),
+      sourceUnits: sourceUnits.value,
     });
     void router.push({ name: 'model-editor', params: { id: res.model.id } });
   } catch (err) {
@@ -70,6 +77,12 @@ async function runImport(): Promise<void> {
     <label class="muted small mt-sm">Tags (comma-separated)</label>
     <input v-model="tags" placeholder="e.g. rigging, stage" />
 
+    <label class="muted small mt-sm">Mesh units</label>
+    <select v-model="sourceUnits">
+      <option v-for="u in MODEL_LENGTH_UNITS" :key="u" :value="u">{{ u }}</option>
+    </select>
+    <p class="muted small unit-hint">Coordinate units of the mesh file. Used to scale the preview to real-world metres.</p>
+
     <div class="mt-sm">
       <button :disabled="importing" @click="fileInput?.click()">
         <Icon name="upload_file" :size="16" />Choose file
@@ -90,3 +103,7 @@ async function runImport(): Promise<void> {
 
   <div v-if="error" class="error-box mt">{{ error }}</div>
 </template>
+
+<style scoped>
+.unit-hint { margin: 4px 0 0; max-width: 480px; line-height: 1.45; }
+</style>

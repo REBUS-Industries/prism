@@ -38,3 +38,20 @@ export function metresToUnit(value: number, unit: ModelLengthUnit): number {
 export function unitScaleToMetres(unit: ModelLengthUnit): number {
   return METRES_PER_UNIT[unit];
 }
+
+
+/** Sensible slider range for position edits in the given display unit. */
+export function positionSliderRange(unit: ModelLengthUnit): { min: number; max: number; step: number } {
+  switch (unit) {
+    case 'mm':
+      return { min: -5000, max: 5000, step: 1 };
+    case 'cm':
+      return { min: -500, max: 500, step: 0.1 };
+    case 'm':
+      return { min: -5, max: 5, step: 0.001 };
+    case 'in':
+      return { min: -200, max: 200, step: 0.1 };
+    case 'ft':
+      return { min: -16, max: 16, step: 0.01 };
+  }
+}
