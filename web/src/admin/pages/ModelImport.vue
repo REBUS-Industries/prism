@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onUnmounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { modelsApi, type ApiError } from '../../shared/api';
+import { modelsApi, type ApiError, type ModelImportStatus } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 import { MODEL_CATEGORY_OPTIONS } from '../utils/modelCategories';
 import {
@@ -14,26 +14,67 @@ const router = useRouter();
 const fileInput = ref<HTMLInputElement | null>(null);
 const importing = ref(false);
 const error = ref<string | null>(null);
+const progress = ref<string | null>(null);
 const name = ref('');
 const category = ref('');
 const tags = ref('');
 const sourceUnits = ref<ModelLengthUnit>(DEFAULT_MODEL_SOURCE_UNITS);
 const selectedFile = ref<File | null>(null);
 
-const ACCEPT = '.glb,.gltf,.fbx,.obj,.3ds,.dae,.stl,.ply,.usdz,.zip';
+/** Match /convert/ supported formats (Rhino + assimp pre-convert). */
+const ACCEPT = '.3dm,.dwg,.dxf,.fbx,.obj,.stl,.ply,.3mf,.skp,.dae,.gltf,.glb,.blend,.x,.usdz,.step,.stp,.iges,.igs,.zip';
+
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function onFileChosen(ev: Event): void {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
   selectedFile.value = file;
   error.value = null;
+  progress.value = null;
   if (!name.value) name.value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+}
+
+function stopPolling(): void {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+async function pollUntilReady(modelId: string): Promise<void> {
+  stopPolling();
+  return new Promise((resolve, reject) => {
+    pollTimer = setInterval(async () => {
+      try {
+        const { model } = await modelsApi.get(modelId);
+        const status = model.importStatus as ModelImportStatus | null | undefined;
+        if (status === 'failed') {
+          stopPolling();
+          reject(new Error('Conversion failed — check Pipeline jobs for details'));
+          return;
+        }
+        if (model.hasPreview || status === 'complete') {
+          stopPolling();
+          resolve();
+        } else {
+          progress.value = status === 'converting'
+            ? 'Converting via PRISM pipeline and uploading to Orbit…'
+            : 'Waiting for conversion…';
+        }
+      } catch (err) {
+        stopPolling();
+        reject(err);
+      }
+    }, 3000);
+  });
 }
 
 async function runImport(): Promise<void> {
   if (!selectedFile.value) return;
   importing.value = true;
   error.value = null;
+  progress.value = 'Uploading and submitting convert job…';
   try {
     const res = await modelsApi.import(selectedFile.value, {
       name: name.value || undefined,
@@ -41,13 +82,22 @@ async function runImport(): Promise<void> {
       tags: tags.value.split(',').map((t) => t.trim()).filter(Boolean),
       sourceUnits: sourceUnits.value,
     });
+
+    if (res.importStatus === 'converting' || res.jobId) {
+      await pollUntilReady(res.model.id);
+    }
+
     void router.push({ name: 'model-editor', params: { id: res.model.id } });
   } catch (err) {
     error.value = (err as ApiError).message ?? 'import failed';
   } finally {
     importing.value = false;
+    progress.value = null;
+    stopPolling();
   }
 }
+
+onUnmounted(stopPolling);
 </script>
 
 <template>
@@ -58,7 +108,11 @@ async function runImport(): Promise<void> {
 
   <section class="card mt">
     <h2>Upload a 3D mesh</h2>
-    <p class="muted small">Accepts glTF/GLB, FBX, OBJ, 3DS, DAE, STL, PLY, or a .zip containing a single mesh. Non-GLB meshes are converted to GLB on import.</p>
+    <p class="muted small">
+      Uses the same PRISM convert pipeline as
+      <a href="/convert/" target="_blank" rel="noopener">/convert/</a>.
+      Converted assets are stored in the Orbit Model Library project; a GLB preview is cached locally after conversion completes.
+    </p>
 
     <label class="muted small">Display name</label>
     <input v-model="name" placeholder="Model name" />
@@ -99,6 +153,8 @@ async function runImport(): Promise<void> {
     >
       <Icon name="download" :size="16" />{{ importing ? 'Importing…' : 'Import' }}
     </button>
+
+    <p v-if="progress" class="muted small mt-sm progress-hint">{{ progress }}</p>
   </section>
 
   <div v-if="error" class="error-box mt">{{ error }}</div>
@@ -106,4 +162,5 @@ async function runImport(): Promise<void> {
 
 <style scoped>
 .unit-hint { margin: 4px 0 0; max-width: 480px; line-height: 1.45; }
+.progress-hint { margin-top: 8px; font-style: italic; }
 </style>

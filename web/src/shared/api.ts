@@ -2157,6 +2157,18 @@ export interface ModelMaterialSlot {
   materialId?: string | null;
 }
 
+/** Async import lifecycle when routed through the PRISM convert pipeline. */
+export type ModelImportStatus = 'converting' | 'complete' | 'failed';
+
+/** Orbit storage reference for a model definition (Model Library Project). */
+export interface ModelOrbitRef {
+  target: 'prod' | 'dev';
+  projectId: string;
+  modelId: string;
+  versionId?: string;
+  resultUrl?: string;
+}
+
 /** Length units for imported mesh vertex coordinates (canonical storage is metres). */
 export type ModelLengthUnit = 'mm' | 'cm' | 'm' | 'in' | 'ft';
 
@@ -2200,6 +2212,9 @@ export interface ModelListItem {
   description: string | null;
   activeVersionId: string | null;
   hasPreview: boolean;
+  /** Present while import runs through the convert pipeline. */
+  importStatus?: ModelImportStatus | null;
+  importJobId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2248,7 +2263,11 @@ export const modelsApi = {
     if (options.category) fd.append('category', options.category);
     if (options.tags?.length) fd.append('tags', options.tags.join(','));
     if (options.sourceUnits) fd.append('sourceUnits', options.sourceUnits);
-    return api.postForm<{ model: ModelListItem }>('/api/model-import', fd);
+    return api.postForm<{
+      model: ModelListItem;
+      jobId?: string;
+      importStatus?: ModelImportStatus | null;
+    }>('/api/model-import', fd);
   },
 };
 
