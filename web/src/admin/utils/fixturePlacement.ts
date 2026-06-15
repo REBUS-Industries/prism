@@ -21,3 +21,9 @@ export function readClampPlacement(metadata: Record<string, unknown> | undefined
     rotateZDeg: typeof rot === 'number' && Number.isFinite(rot) ? rot : 0,
   };
 }
+
+/** Model Library id for the REBUS clamp mesh (alternative to per-fixture upload). */
+export function readClampModelLibraryId(metadata: Record<string, unknown> | undefined): string | null {
+  const id = metadata?.clampModelLibraryId;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
