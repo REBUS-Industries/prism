@@ -927,6 +927,31 @@ export const orbitApi = {
       throw err;
     }
   },
+  /** Push PRISM material assignments to ORBIT (single new version). */
+  materialSwapBatch: (body: {
+    projectId: string;
+    modelId: string;
+    versionId?: string;
+    orbitTarget?: 'prod' | 'dev';
+    message?: string;
+    assignments: Array<{
+      prismMaterialId: string;
+      objectId?: string;
+      applicationId?: string;
+    }>;
+  }) => api.post<{
+    ok: boolean;
+    target: 'prod' | 'dev';
+    projectId: string;
+    modelId: string;
+    previousVersionId: string;
+    newVersionId: string;
+    newRootObjectId: string;
+    appliedCount: number;
+    uploadedObjectCount: number;
+    uploadedBlobCount: number;
+    idRemap: Record<string, string>;
+  }>('/api/orbit/material-swap/batch', body),
 };
 
 // ---------------------------------------------------------------- Project attachments

@@ -5,6 +5,7 @@ import {
   modelsApi,
   materialsApi,
   settingsApi,
+  orbitApi,
   type ModelDetail,
   type ModelMaterialSlot,
   type ModelTransform,
@@ -36,6 +37,7 @@ import {
   fetchOrbitMaterialSlots,
   fetchOrbitSourceMaterialSlots,
   mergeMaterialSlots,
+  buildOrbitMaterialSwapAssignments,
 } from '../utils/orbitModelMeshSlots';
 import {
   discoverGlbSlotNames,
@@ -68,6 +70,8 @@ const materialAssignMode = ref<'mesh' | 'sourceMaterial'>('mesh');
 const materials = ref<MaterialListItem[]>([]);
 const slotsLoading = ref(false);
 const slotsHydrated = ref(false);
+const orbitSyncing = ref(false);
+const orbitSyncMessage = ref<string | null>(null);
 /** Root transform for preview + persistence on Save. */
 const modelTransform = ref<ModelTransform>(ensureModelTransform(null));
 /** Mesh vertex units (GLB coordinate space); preview scales to metres. */
@@ -96,6 +100,14 @@ const materialSlots = computed(() =>
 
 const activeMaterialSlots = computed(() =>
   materialAssignMode.value === 'mesh' ? meshSlots.value : sourceMaterialSlots.value,
+);
+
+const assignedMaterialCount = computed(() =>
+  materialSlots.value.filter((s) => s.materialId).length,
+);
+
+const canSyncOrbitMaterials = computed(() =>
+  useOrbitViewer.value && assignedMaterialCount.value > 0 && !orbitSyncing.value,
 );
 
 function applyPersistedMaterialSlots(slots: ModelMaterialSlot[]): void {
@@ -214,6 +226,76 @@ async function reload(): Promise<void> {
 
 function onTransformChange(next: ModelTransform): void {
   modelTransform.value = cloneModelTransform(next);
+}
+
+async function syncOrbitMaterials(): Promise<void> {
+  const ref = modelOrbitRef.value;
+  if (!model.value || !ref) return;
+
+  orbitSyncing.value = true;
+  orbitSyncMessage.value = null;
+  error.value = null;
+
+  try {
+    const [meshResult, sourceResult] = await Promise.all([
+      buildOrbitMaterialSwapAssignments(ref, meshSlots.value, 'mesh'),
+      buildOrbitMaterialSwapAssignments(ref, sourceMaterialSlots.value, 'sourceMaterial'),
+    ]);
+    const merged = new Map<string, typeof meshResult.assignments[0]>();
+    for (const a of [...meshResult.assignments, ...sourceResult.assignments]) {
+      merged.set(a.objectId, a);
+    }
+    const assignments = [...merged.values()];
+    const unresolved = [...new Set([...meshResult.unresolved, ...sourceResult.unresolved])];
+
+    if (unresolved.length) {
+      error.value = `Could not resolve ORBIT meshes for: ${unresolved.join(', ')}`;
+      return;
+    }
+    if (!assignments.length) {
+      error.value = 'No material assignments to sync — assign PRISM materials first.';
+      return;
+    }
+
+    const result = await orbitApi.materialSwapBatch({
+      projectId: ref.projectId,
+      modelId: ref.modelId,
+      versionId: ref.versionId,
+      orbitTarget: ref.target,
+      message: `Model library: ${model.value.name}`,
+      assignments,
+    });
+
+    const orbitMeta = {
+      ...(typeof model.value.definition.metadata?.orbit === 'object'
+        ? model.value.definition.metadata.orbit as Record<string, unknown>
+        : {}),
+      target: ref.target,
+      projectId: ref.projectId,
+      modelId: ref.modelId,
+      versionId: result.newVersionId,
+    };
+
+    const res = await modelsApi.update(props.id, {
+      definition: {
+        ...model.value.definition,
+        materialSlots: materialSlots.value,
+        metadata: {
+          ...model.value.definition.metadata,
+          orbit: orbitMeta,
+        },
+      },
+    });
+
+    model.value = res.model;
+    applyPersistedMaterialSlots(res.model.definition.materialSlots ?? []);
+    orbitSyncMessage.value = `Synced ${result.appliedCount} mesh${result.appliedCount === 1 ? '' : 'es'} to ORBIT (version ${result.newVersionId.slice(0, 8)}…).`;
+    await reload();
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'ORBIT material sync failed';
+  } finally {
+    orbitSyncing.value = false;
+  }
 }
 
 async function save(): Promise<void> {
@@ -403,7 +485,24 @@ onMounted(() => {
       <p class="muted small intro">
         Assign PRISM library materials by mesh object or by the model's existing material
         definitions. Assignments render in the GLB preview and persist on <strong>Save</strong>.
+        For ORBIT-linked models, use <strong>Sync to ORBIT</strong> to upload materials and
+        commit a new ORBIT version visible in the viewer.
       </p>
+
+      <div v-if="useOrbitViewer && assignedMaterialCount" class="orbit-sync-bar">
+        <button
+          type="button"
+          class="primary"
+          :disabled="!canSyncOrbitMaterials"
+          @click="syncOrbitMaterials"
+        >
+          {{ orbitSyncing ? 'Syncing to ORBIT…' : 'Sync to ORBIT' }}
+        </button>
+        <span class="muted small">
+          {{ assignedMaterialCount }} assignment{{ assignedMaterialCount === 1 ? '' : 's' }} — commits one new ORBIT version
+        </span>
+      </div>
+      <p v-if="orbitSyncMessage" class="muted small sync-ok">{{ orbitSyncMessage }}</p>
 
       <nav class="assign-mode-bar">
         <button
@@ -523,6 +622,14 @@ onMounted(() => {
 .version-list { list-style: none; padding: 0; margin: 0; }
 .version-list li { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--color-border, #2a2a32); }
 .intro { margin: 4px 0 12px; max-width: 640px; line-height: 1.5; }
+.orbit-sync-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sync-ok { margin: 0 0 12px; color: var(--color-text-muted, #9aa0a6); }
 .assign-mode-bar {
   display: flex;
   gap: 4px;
