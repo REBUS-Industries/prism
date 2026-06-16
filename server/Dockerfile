@@ -1,4 +1,5 @@
 # PRISM server image.
+# Redeploy: server-image workflow on push to main (server/**).
 #
 # Multi-stage build:
 #   1. web-builder — builds both Vue SPAs into web/dist
