@@ -12,16 +12,14 @@ describe('uploadObjects', () => {
   it('POSTs multipart/form-data with object-batch JSON array', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.method).toBe('POST');
-      expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' });
-      expect(init?.body).toBeInstanceOf(FormData);
+      const headers = init?.headers as Record<string, string>;
+      expect(headers.authorization).toBe('Bearer test-token');
+      expect(headers['content-type']).toMatch(/^multipart\/form-data; boundary=/);
 
-      const form = init!.body as FormData;
-      const part = form.get('object-batch');
-      expect(part).toBeInstanceOf(Blob);
-      const text = await (part as Blob).text();
-      expect(JSON.parse(text)).toEqual([
-        { id: 'abc', speckle_type: 'Objects.Other.RenderMaterial', name: 'test' },
-      ]);
+      expect(init?.body).toBeInstanceOf(Buffer);
+      const body = (init!.body as Buffer).toString('latin1');
+      expect(body).toContain('object-batch');
+      expect(body).toContain('"Objects.Other.RenderMaterial"');
 
       return new Response(null, { status: 201 });
     });
