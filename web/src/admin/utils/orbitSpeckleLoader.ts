@@ -171,7 +171,7 @@ function collectReferencedIds(value: unknown, into: Set<string>): void {
 }
 
 /** Last path segment of a (possibly chain-encoded) speckle_type. */
-function shortSpeckleType(t: unknown): string {
+export function shortSpeckleType(t: unknown): string {
   if (typeof t !== 'string' || !t) return 'unknown';
   // ORBIT chains are colon-separated ("A:B"); the converter keys off the last
   // dot-segment of each, so mirror that to get the renderer's view of the type.
@@ -338,7 +338,7 @@ const CLOSURE_MAX_DEPTH = 64;
  * the converter resolves every chunk from memory with no closure dependency and
  * no download-pipeline teardown race.
  */
-async function loadFullObjectClosure(
+export async function loadFullObjectClosure(
   serverUrl: string,
   projectId: string,
   rootObjectId: string,
