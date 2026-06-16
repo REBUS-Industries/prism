@@ -113,15 +113,16 @@ const QUAD_VIEWS = [
 .quad-stage {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  container-type: size;
   padding: 8px;
 }
 .quad-preview {
-  width: min(100cqw, 100cqh);
-  aspect-ratio: 1;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
