@@ -26,7 +26,7 @@ const { SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, GITHUB_TOKEN } = process.env;
 const DEFAULT_REPO = 'REBUS-Industries/prism';
 const PORT = 3456;
 const STATE_FILE = process.env.STATE_FILE || '/data/state.json';
-const CI_WATCH_MINUTES = 12;
+const CI_WATCH_MINUTES = 20;
 // If none of a repo's watched deploy workflows have started within this window
 // after merge, the changed paths didn't trigger a deploy (e.g. agent-only,
 // infra-only, or ci-only PRs). Report "merged, nothing to deploy" instead of
@@ -651,8 +651,8 @@ function formatCiResultMessage(label, result, deploysToDev, pullUrl = null) {
   if (result.conclusion === 'timeout') {
     const timeoutDetail = result.errors
       ? result.errors
-      : 'No completed CI workflows detected within 12 minutes. Check GitHub Actions manually.';
-    return formatFailureMessage(`*${label} merged but CI did not finish within 12 minutes.*${detail}${ciLink}${prLink}`, timeoutDetail);
+      : `No completed CI workflows detected within ${CI_WATCH_MINUTES} minutes. Check GitHub Actions manually.`;
+    return formatFailureMessage(`*${label} merged but CI did not finish within ${CI_WATCH_MINUTES} minutes.*${detail}${ciLink}${prLink}`, timeoutDetail);
   }
 
   return formatFailureMessage(`*${label} merged but CI ended with ${result.conclusion}.*${detail}${ciLink}${prLink}`, result.errors);
