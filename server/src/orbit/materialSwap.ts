@@ -53,6 +53,132 @@ export interface MaterialSwapResult {
   idRemap: Record<string, string>;
 }
 
+export interface MaterialSwapBatchAssignment {
+  prismMaterialId: string;
+  objectId?: string;
+  applicationId?: string;
+}
+
+export interface MaterialSwapBatchInput {
+  projectId: string;
+  modelId: string;
+  versionId?: string;
+  orbitTarget?: OrbitTarget;
+  message?: string;
+  assignments: MaterialSwapBatchAssignment[];
+}
+
+export interface MaterialSwapBatchResult {
+  target: OrbitTarget;
+  projectId: string;
+  modelId: string;
+  previousVersionId: string;
+  newVersionId: string;
+  newRootObjectId: string;
+  appliedCount: number;
+  uploadedObjectCount: number;
+  uploadedBlobCount: number;
+  idRemap: Record<string, string>;
+}
+
+export async function swapOrbitMaterialsBatch(
+  principal: Principal | undefined,
+  input: MaterialSwapBatchInput,
+): Promise<MaterialSwapBatchResult> {
+  if (!input.assignments.length) {
+    throw new OrbitClientError(400, 'assignments must not be empty');
+  }
+
+  for (const [i, a] of input.assignments.entries()) {
+    if (!a.objectId && !a.applicationId) {
+      throw new OrbitClientError(400, `assignments[${i}]: objectId or applicationId is required`);
+    }
+  }
+
+  const target = input.orbitTarget ?? 'prod';
+  const creds = await resolveOrbitCredsForRequest(target, principal);
+
+  const version = await resolveModelVersion(
+    target,
+    input.projectId,
+    input.modelId,
+    input.versionId,
+  );
+
+  const originalIds = new Set<string>();
+  const objects = await downloadObjectGraph(creds, input.projectId, version.rootObjectId);
+  for (const id of objects.keys()) originalIds.add(id);
+
+  const materialCache = new Map<string, NonNullable<Awaited<ReturnType<typeof loadMaterialDetail>>>>();
+  const blobCache = new Map<string, OrbitTextureRefs>();
+  let totalBlobCount = 0;
+  let appliedCount = 0;
+
+  for (const assignment of input.assignments) {
+    const material = await loadCachedMaterial(assignment.prismMaterialId, materialCache);
+    if (!material) {
+      throw new OrbitClientError(404, `PRISM material ${assignment.prismMaterialId} not found`);
+    }
+
+    let blobRefs = blobCache.get(assignment.prismMaterialId);
+    if (!blobRefs) {
+      blobRefs = await uploadPrismMaterialTextures(creds, input.projectId, material);
+      blobCache.set(assignment.prismMaterialId, blobRefs);
+      totalBlobCount += Object.keys(blobRefs).length;
+    }
+
+    const { mesh } = findMeshInGraph(objects, {
+      objectId: assignment.objectId,
+      applicationId: assignment.applicationId,
+    });
+
+    mesh.renderMaterial = buildOrbitRenderMaterial(material, blobRefs);
+    appliedCount += 1;
+  }
+
+  const { rootObjectId, toUpload, idMap } = rehashGraphAfterMutation(objects, originalIds);
+
+  await uploadObjects(creds, input.projectId, toUpload);
+
+  const closureSize = Object.keys(
+    (objects.get(rootObjectId)?.__closure ?? {}) as Record<string, unknown>,
+  ).length;
+
+  const newVersion = await createVersion(creds, {
+    projectId: input.projectId,
+    modelId: input.modelId,
+    objectId: rootObjectId,
+    message: input.message ?? `PRISM material sync (${appliedCount} mesh${appliedCount === 1 ? '' : 'es'})`,
+    sourceApplication: 'PRISM',
+    totalChildrenCount: closureSize,
+  });
+
+  return {
+    target,
+    projectId: input.projectId,
+    modelId: input.modelId,
+    previousVersionId: version.versionId,
+    newVersionId: newVersion.id,
+    newRootObjectId: rootObjectId,
+    appliedCount,
+    uploadedObjectCount: toUpload.length,
+    uploadedBlobCount: totalBlobCount,
+    idRemap: Object.fromEntries(idMap),
+  };
+}
+
+async function loadCachedMaterial(
+  id: string,
+  cache: Map<string, NonNullable<Awaited<ReturnType<typeof loadMaterialDetail>>>>,
+): Promise<NonNullable<Awaited<ReturnType<typeof loadMaterialDetail>>> | null> {
+  const cached = cache.get(id);
+  if (cached) return cached;
+  const material = await loadMaterialDetail(id);
+  if (!material) return null;
+  cache.set(id, material);
+  return material;
+}
+
 export async function swapOrbitMaterial(
   principal: Principal | undefined,
   input: MaterialSwapInput,
