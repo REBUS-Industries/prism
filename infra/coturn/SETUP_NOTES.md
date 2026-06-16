@@ -2,7 +2,7 @@
 
 Date created: 2026-05-27 | Last updated: 2026-05-27 (relay range narrowed to `52000-56999` to avoid WireGuard 51820/udp; public DNS A record live)
 
-`coturn` on VM 211 provides WebRTC media relay for the PRISM Visualiser
+`coturn` on VM 212 provides WebRTC media relay for the PRISM Visualiser
 feature. End users' browsers (anywhere on the public internet) connect
 to `visualiser.rebus.industries`; coturn relays the WebRTC media to a
 workstation behind PRISM running Unreal Engine 5.7 + Pixel Streaming 2.
@@ -18,7 +18,7 @@ repo carries matching env defaults (`PRISM/infra/.env.example`) and a
 
 | Property | Value |
 |---|---|
-| **Host** | VM 211 (`10.0.200.211`), Ubuntu 24.04 |
+| **Host** | VM 212 (`10.0.200.212`), Ubuntu 24.04 |
 | **Image** | `coturn/coturn:4.6` |
 | **Networking** | host (relay range is too wide for bridge mode) |
 | **Public hostname** | `visualiser.rebus.industries` |
@@ -30,7 +30,7 @@ repo carries matching env defaults (`PRISM/infra/.env.example`) and a
 | **Realm** | `visualiser.rebus.industries` |
 
 The **same** `static-auth-secret` value MUST be set in:
-1. `turnserver.conf` here on VM 211, and
+1. `turnserver.conf` here on VM 212, and
 2. `~rebus/prism/.env` as `TURN_SECRET=` (consumed by `prism-server` via
    `server/src/visualiser/turnCredentials.ts`).
 
@@ -55,23 +55,23 @@ openssl rand -hex 32
 Save it somewhere durable (1Password, ops vault, etc.) — it appears in
 two places below.
 
-### 2. Stage the config on VM 211
+### 2. Stage the config on VM 212
 
 ```bash
 # From your laptop:
 scp -i id_ed25519_rebus \
     "infra/coturn/docker-compose.yml" \
     "infra/coturn/turnserver.conf" \
-    rebus@10.0.200.211:~/coturn/
+    rebus@10.0.200.212:~/coturn/
 ```
 
-(SSH into VM 211 first if `~/coturn` doesn't exist:
+(SSH into VM 212 first if `~/coturn` doesn't exist:
 `mkdir -p ~/coturn`.)
 
 ### 3. Substitute the placeholder
 
 ```bash
-ssh rebus@10.0.200.211
+ssh rebus@10.0.200.212
 cd ~/coturn
 # Replace <TURN_SECRET_PLACEHOLDER> with the secret from step 1.
 sed -i "s/<TURN_SECRET_PLACEHOLDER>/$YOUR_SECRET/" turnserver.conf
@@ -152,23 +152,23 @@ without hairpinning out to the public IP:
 ```powershell
 # On RB-DA2-DC1, elevated PowerShell:
 Add-DnsServerResourceRecordA -ZoneName "rebus.industries" `
-    -Name "visualiser" -IPv4Address "10.0.200.211" -CreatePtr
+    -Name "visualiser" -IPv4Address "10.0.200.212" -CreatePtr
 ```
 
 ### 9. TLS cert (`turns://` on 5349)
 
-Default approach: **certbot `--standalone`** on VM 211. UniFi port 80
-must briefly be allowed inbound to `10.0.200.211:80` for HTTP-01.
+Default approach: **certbot `--standalone`** on VM 212. UniFi port 80
+must briefly be allowed inbound to `10.0.200.212:80` for HTTP-01.
 
 ```bash
 # One-off issue (Caddy on the proxy LXCs is NOT serving 185.48.165.165:80
-# for this host — port-forward must hit VM 211 directly during renewal).
-ssh rebus@10.0.200.211
+# for this host — port-forward must hit VM 212 directly during renewal).
+ssh rebus@10.0.200.212
 
 # Install certbot if not present:
 sudo apt update && sudo apt install -y certbot
 
-# Temporarily stop anything bound to :80 on VM 211 (PRISM server is on
+# Temporarily stop anything bound to :80 on VM 212 (PRISM router is on
 # :8765 so this is usually a no-op):
 sudo ss -lntp | grep ':80 ' && echo "stop the listener first!"
 
@@ -198,7 +198,7 @@ certbot's package installs a `certbot.timer` systemd unit on Ubuntu
 > separately, the proxy pair already manages a cert for the host (via
 > the new Caddyfile block) and you can rsync
 > `/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/visualiser.rebus.industries/`
-> to VM 211 on a timer. The certbot path is preferred for v1 because
+> to VM 212 on a timer. The certbot path is preferred for v1 because
 > coturn ships on a different host from Caddy and we want a single
 > source of truth for the cert.
 
@@ -224,7 +224,7 @@ curl -s -X POST https://prism.rebus.industries/api/visualiser/streams \
 If `relay` candidates never appear:
 - check `docker logs coturn` for `441 (Wrong Credentials)` — secret mismatch
 - check the UniFi inbound rules — `nc -uvz 185.48.165.165 3478` must succeed
-- check the firewall on VM 211 itself (`sudo ufw status`) — coturn host
+- check the firewall on VM 212 itself (`sudo ufw status`) — coturn host
   networking means UFW rules apply if the firewall is enabled
 
 ---
@@ -236,9 +236,9 @@ If `relay` candidates never appear:
 ```bash
 NEW=$(openssl rand -hex 32)
 # 1. Update coturn:
-ssh rebus@10.0.200.211 "sed -i \"s/^static-auth-secret=.*/static-auth-secret=$NEW/\" ~/coturn/turnserver.conf && cd ~/coturn && docker compose restart"
+ssh rebus@10.0.200.212 "sed -i \"s/^static-auth-secret=.*/static-auth-secret=$NEW/\" ~/coturn/turnserver.conf && cd ~/coturn && docker compose restart"
 # 2. Update PRISM:
-ssh rebus@10.0.200.211 "sed -i \"s/^TURN_SECRET=.*/TURN_SECRET=$NEW/\" /opt/prism/.env && cd /opt/prism && docker compose restart prism-server"
+ssh rebus@10.0.200.212 "sed -i \"s/^TURN_SECRET=.*/TURN_SECRET=$NEW/\" /opt/prism/.env && cd /opt/prism && docker compose restart prism-server"
 ```
 
 Active streams during the swap will fail their next ICE round; the
@@ -254,7 +254,7 @@ effectively empty. Active allocations show up in
 ### Bandwidth monitoring
 
 Each 1080p60 H.264 Pixel Streaming session is approximately 5–10 Mbps
-relayed bidirectionally. The VM 211 WAN feed (185.48.165.165) has
+relayed bidirectionally. The VM 212 WAN feed (185.48.165.165) has
 finite headroom — Phase K is planned to surface
 `max_active_visualiser_streams` in the PRISM admin UI. Until then,
 treat the deployment as a 1-2 concurrent-stream system.
@@ -265,7 +265,7 @@ treat the deployment as a 1-2 concurrent-stream system.
 
 - TLS is delivered by certbot rather than Caddy. The proxy pair runs
   Caddy and could in principle export certs via DNS-01, but coturn is
-  on a different host (VM 211, not the proxy LXCs) so a cert-rsync
+  on a different host (VM 212, not the proxy LXCs) so a cert-rsync
   step is required regardless. Certbot-standalone is simplest for v1.
 - coturn 4.6 is the current stable line. Plan to bump to 4.7 once it
   ships and a 4.6 → 4.7 changelog review is done.

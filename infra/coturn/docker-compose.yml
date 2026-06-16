@@ -1,16 +1,16 @@
 # coturn deployment for PRISM Visualiser (Phase H).
 #
-# Target host:  VM 211  (10.0.200.211)
+# Target host:  VM 212  (10.0.200.212)
 # Public DNS:   visualiser.rebus.industries -> 185.48.165.165
-# UniFi NAT:    185.48.165.165 -> 10.0.200.211 (see UNIFI_RULES.md)
+# UniFi NAT:    185.48.165.165 -> 10.0.200.212 (see UNIFI_RULES.md)
 #
 # Companion docs:
 #   SETUP_NOTES.md            step-by-step deploy + cert acquisition
 #   UNIFI_RULES.md            port-forward rules the gateway needs
 #   turnserver.conf           coturn configuration
-#   sync-visualiser-cert.sh   /usr/local/bin/ on VM 211 — Caddy cert mirror
+#   sync-visualiser-cert.sh   /usr/local/bin/ on VM 212 — Caddy cert mirror
 #
-# Cert flow (the operative path on VM 211 today):
+# Cert flow (the operative path on VM 212 today):
 #   Caddy on Proxy1 LXC ACMEs visualiser.rebus.industries via HTTP-01,
 #   then sync-visualiser-cert.sh (rebus's @daily cron) rsync-mirrors the
 #   cert+key from Proxy1's Caddy data dir into ~rebus/coturn/certs/ on
@@ -33,7 +33,7 @@ services:
     # bridge networking would force us to publish the entire range
     # (5000 ports) which Docker handles poorly. With host networking
     # the container binds straight to the host's interfaces — UniFi
-    # DNATs 185.48.165.165:* back to 10.0.200.211:* and traffic lands
+    # DNATs 185.48.165.165:* back to 10.0.200.212:* and traffic lands
     # on the listener directly.
     network_mode: host
     volumes:

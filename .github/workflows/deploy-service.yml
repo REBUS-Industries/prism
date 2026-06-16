@@ -4,13 +4,12 @@
 # (prism-materials-service, prism-fixtures-service, prism-models-service,
 # prism-agent-service,
 # prism-visualiser-service, prism-server-polyrepo).  Pulls and restarts a single named service on
-# VM 212 (prism-dev.rebus.industries).
+# VM 212 (prism.rebus.industries — prod split stack).
 #
 # Payload:  {"event_type":"deploy-dev-service","client_payload":{"service":"<name>"}}
 # Services: prism-materials | prism-fixtures | prism-models | prism-permissions | prism-agent | prism-visualiser | prism-server
 #
-# The self-hosted runner (LXC 261) has SSH access to prism-dev via the
-# runner-local prism_deploy_ed25519 key and the ~/.ssh/config alias.
+# The self-hosted runner has SSH access via the `prism-prod` alias (-> VM 212).
 
 on:
   repository_dispatch:
@@ -36,11 +35,11 @@ jobs:
             echo "::error::client_payload.service is empty — cannot deploy"
             exit 1
           fi
-          echo "Deploying ${SERVICE} to prism-dev (VM 212)..."
-          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev "
+          echo "Deploying ${SERVICE} to prism-prod (VM 212)..."
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod "
             set -euo pipefail
             cd /opt/prism
-            docker compose -f docker-compose.dev.yml pull ${SERVICE}
-            docker compose -f docker-compose.dev.yml up -d ${SERVICE}
-            docker compose -f docker-compose.dev.yml ps ${SERVICE}
+            docker compose pull ${SERVICE}
+            docker compose up -d ${SERVICE}
+            docker compose ps ${SERVICE}
           "

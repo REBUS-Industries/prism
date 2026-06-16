@@ -1,7 +1,7 @@
 name: web-image
 
 # Builds the PRISM admin/convert/viewer SPA as a standalone nginx container
-# (prism-web) and deploys it to VM 212 (prism-dev.rebus.industries) only.
+# (prism-web) on VM 212 (prism.rebus.industries). Prod deploy is tag-gated.
 # Server API changes deploy via server-image (separate workflow).
 
 on:
@@ -73,29 +73,26 @@ jobs:
           cache-from: ${{ github.event_name == 'workflow_dispatch' && '' || 'type=gha' }}
           cache-to: type=gha,mode=max
 
-  deploy-dev:
+  deploy:
     needs: build-and-push
     runs-on: [self-hosted, prism-deploy]
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     concurrency:
       group: prism-deploy-vm212
-      # Queue rather than cancel — never kill an in-progress deploy.
       cancel-in-progress: false
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync split compose + deploy prism-web to VM 212
+      - name: Sync split compose + deploy prism-web to VM 212 (prod)
         run: |
-          # Sync the dev split compose file and router config.
-          # docker-compose.dev.yml becomes docker-compose.yml on VM 212.
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             infra/docker-compose.dev.yml \
-            prism-dev:/opt/prism/docker-compose.dev.yml
+            prism-prod:/opt/prism/docker-compose.dev.yml
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             infra/nginx.router.conf \
-            prism-dev:/opt/prism/nginx.router.conf
-          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev <<'REMOTE'
+            prism-prod:/opt/prism/nginx.router.conf
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod <<'REMOTE'
             set -euo pipefail
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
@@ -103,11 +100,9 @@ jobs:
             docker compose up -d prism-web prism-fixtures prism-models prism-permissions prism-router
             docker exec prism-router nginx -s reload
             docker compose ps prism-web prism-fixtures prism-models prism-permissions prism-router
-            # Keep VM 212 disk healthy — remove images older than 24h
             docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
 
-      # Clean up the runner workspace AFTER deploy to prevent disk fill on CT 261.
       - name: Clean runner workspace
         if: always()
         run: find "$GITHUB_WORKSPACE/.." -mindepth 1 -maxdepth 1 ! -samefile "$GITHUB_WORKSPACE" -exec rm -rf {} + 2>/dev/null || true

@@ -1,8 +1,7 @@
 name: server-image
 
-# Builds + pushes the PRISM server container to GHCR and deploys to VM 212 (dev)
-# when `main` is pushed with server-relevant path changes.
-# Prod (VM 211) deploy is tag-gated only.
+# Builds + pushes the PRISM server container to GHCR.
+# Prod deploy (VM 212 split stack) is tag-gated only.
 #
 # Image:      ghcr.io/rebus-industries/prism-server
 # Tags:       latest (on main), <branch>, <short-sha>, <tag-name> (on tag push)
@@ -78,71 +77,29 @@ jobs:
 
   deploy:
     needs: build-and-push
-    # Runs on the LAN-local self-hosted runner (LXC 261, 10.0.200.61) so the
-    # SSH hop to VM 211 stays inside VLAN 200.  The runner has its own ed25519
-    # deploy key (~runner/.ssh/prism_deploy_ed25519) authorized on
-    # ~rebus/.ssh/authorized_keys on VM 211, plus an ~runner/.ssh/config alias
-    # `prism-prod` -> rebus@10.0.200.211 with the right IdentityFile, so we no
-    # longer depend on the PROD_VM_HOST / PROD_VM_USER / PROD_VM_SSH_KEY
-    # secrets for this step.
+    # LAN-local self-hosted runner (org Default group). SSH alias `prism-prod`
+    # -> rebus@10.0.200.212 (PRISM prod split stack).
     #
-    # PROD GATE: only deploy to VM 211 on a version tag push (`v*`) or an
-    # explicit workflow_dispatch.  Main-branch pushes build + push the image
-    # (for dev/staging pickup) but must NOT auto-deploy to production.
+    # PROD GATE: only deploy on a version tag push (`v*`) or workflow_dispatch.
     runs-on: [self-hosted, prism-deploy]
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
-      # Need the workspace so we can sync infra/docker-compose.yml.  /opt/prism
-      # on VM 211 is not a git checkout, so the file has to be scp'd whenever
-      # it changes (e.g. service additions, env tweaks).
       - uses: actions/checkout@v4
 
-      - name: Sync compose + restart prism-server on VM 211
+      - name: Sync split compose + deploy prism-server on VM 212 (prod)
         run: |
           scp -o BatchMode=yes -o ConnectTimeout=10 \
-            infra/docker-compose.yml \
-            prism-prod:/opt/prism/docker-compose.yml
+            infra/docker-compose.dev.yml \
+            prism-prod:/opt/prism/docker-compose.dev.yml
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/nginx.router.conf \
+            prism-prod:/opt/prism/nginx.router.conf
           ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod <<'REMOTE'
             set -euo pipefail
             cd /opt/prism
-            docker compose pull prism-server
-            docker compose up -d prism-server
-            docker compose ps prism-server
-          REMOTE
-
-  deploy-dev:
-    needs: build-and-push
-    runs-on: [self-hosted, prism-deploy]
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    concurrency:
-      group: prism-deploy-vm212
-      # Queue rather than cancel — never kill an in-progress deploy.
-      cancel-in-progress: false
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Update prism-server on VM 212 (dev split stack)
-        run: |
-          # Sync split compose + router config, then pull new server image.
-          # The full dev stack (prism-web + prism-router) is also restarted
-          # so they remain consistent with the updated server.
-          scp -o BatchMode=yes -o ConnectTimeout=10 \
-            infra/docker-compose.dev.yml \
-            prism-dev:/opt/prism/docker-compose.dev.yml
-          scp -o BatchMode=yes -o ConnectTimeout=10 \
-            infra/nginx.router.conf \
-            prism-dev:/opt/prism/nginx.router.conf
-          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev <<'REMOTE'
-            set -euo pipefail
-            cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
-            docker compose pull prism-server prism-materials prism-visualiser
+            docker compose pull prism-server prism-materials prism-visualiser prism-agent
             docker compose up -d prism-server prism-materials prism-visualiser prism-agent prism-web prism-router
             docker compose ps prism-server prism-materials prism-visualiser prism-agent prism-web prism-router
             docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
-
-      - name: Clean runner workspace
-        if: always()
-        run: find "$GITHUB_WORKSPACE/.." -mindepth 1 -maxdepth 1 ! -samefile "$GITHUB_WORKSPACE" -exec rm -rf {} + 2>/dev/null || true
