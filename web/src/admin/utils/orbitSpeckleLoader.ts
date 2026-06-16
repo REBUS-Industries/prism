@@ -164,6 +164,153 @@ function collectReferencedIds(value: unknown, into: Set<string>): void {
   }
 }
 
+/** Last path segment of a (possibly chain-encoded) speckle_type. */
+function shortSpeckleType(t: unknown): string {
+  if (typeof t !== 'string' || !t) return 'unknown';
+  // ORBIT chains are colon-separated ("A:B"); the converter keys off the last
+  // dot-segment of each, so mirror that to get the renderer's view of the type.
+  const tail = t.split(':').pop() ?? t;
+  return tail.split('.').pop() ?? tail;
+}
+
+/**
+ * Describe the on-the-wire shape of a value the stock SpeckleConverter cares
+ * about (vertices/faces/displayValue). Distinguishes the cases that decide
+ * whether `MeshToNode` will early-return:
+ *   - `number[]`  — inline geometry (what ORBIT's serialiser emits)
+ *   - `ref[]`     — detached `{ referencedId }` chunk/mesh stubs
+ *   - `chunk[]`   — already-dechunked `{ data:[…] }` wrappers
+ *   - `empty[]`   — present but zero-length (→ "no vertex position data")
+ *   - `missing`   — field absent entirely
+ */
+function describeGeomField(v: unknown): { kind: string; length: number; sample?: unknown } {
+  if (v === undefined || v === null) return { kind: 'missing', length: 0 };
+  if (Array.isArray(v)) {
+    if (v.length === 0) return { kind: 'empty[]', length: 0 };
+    const first = v[0] as unknown;
+    if (typeof first === 'number') {
+      return { kind: 'number[]', length: v.length, sample: v.slice(0, 6) };
+    }
+    if (first && typeof first === 'object') {
+      const f = first as Record<string, unknown>;
+      if (typeof f.referencedId === 'string') return { kind: 'ref[]', length: v.length, sample: f };
+      if (Array.isArray(f.data)) return { kind: 'chunk[]', length: v.length };
+      return { kind: `${typeof first}[]`, length: v.length, sample: first };
+    }
+    return { kind: `${typeof first}[]`, length: v.length };
+  }
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (typeof o.referencedId === 'string') return { kind: 'ref', length: 1, sample: o };
+    return { kind: 'object', length: 1 };
+  }
+  return { kind: typeof v, length: 0 };
+}
+
+/**
+ * One-shot geometry diagnostic. The stock @speckle/viewer 2.31 SpeckleConverter
+ * routes `Objects.Geometry.Mesh` → `MeshToNode`, traverses `displayValue` on
+ * wrapper objects (incl. `Objects.Data.*:…RhinoObject`), and `dechunk()` accepts
+ * inline `number[]` vertices — so a black screen with `Mesh > 0` nodes but
+ * `batchCount: 0` can only mean the meshes reaching the converter carry
+ * empty/absent `vertices`/`faces`. This dumps the ACTUAL wire shape of a real
+ * Mesh + RhinoObject (and aggregate counts) so we can tell a producer problem
+ * (headless tessellation emitted empty display meshes; ORBIT renders the native
+ * `rawEncoding` instead) from a loader/normalisation problem (geometry present
+ * but stored under a shape the converter rejects).
+ */
+function dumpOrbitGeometryDiagnostics(objects: RawSpeckleObject[]): void {
+  const byId = new Map<string, RawSpeckleObject>();
+  for (const o of objects) if (o.id) byId.set(o.id, o);
+
+  const resolve = (entry: unknown): RawSpeckleObject | null => {
+    if (!entry || typeof entry !== 'object') return null;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.referencedId === 'string') return byId.get(e.referencedId) ?? null;
+    if (typeof e.speckle_type === 'string') return e as RawSpeckleObject;
+    return null;
+  };
+
+  let meshTotal = 0;
+  let meshWithVerts = 0;
+  let meshWithFaces = 0;
+  let firstMesh: RawSpeckleObject | null = null;
+  let firstWrapper: RawSpeckleObject | null = null;
+  const typeTally: Record<string, number> = {};
+
+  for (const obj of objects) {
+    const short = shortSpeckleType(obj.speckle_type);
+    typeTally[short] = (typeTally[short] ?? 0) + 1;
+
+    if (short === 'Mesh') {
+      meshTotal += 1;
+      const vKind = describeGeomField(obj.vertices);
+      const fKind = describeGeomField(obj.faces);
+      if (vKind.kind === 'number[]' && vKind.length > 0) meshWithVerts += 1;
+      if (fKind.kind === 'number[]' && fKind.length > 0) meshWithFaces += 1;
+      if (!firstMesh) firstMesh = obj;
+    }
+
+    const stLower = typeof obj.speckle_type === 'string' ? obj.speckle_type.toLowerCase() : '';
+    const hasDisplay = obj.displayValue !== undefined || obj['@displayValue'] !== undefined;
+    if (!firstWrapper && (short === 'RhinoObject' || stLower.includes('objects.data') || (hasDisplay && short !== 'Mesh'))) {
+      firstWrapper = obj;
+    }
+  }
+
+  console.log(`${ORBIT_VIEWER_LOG} [${ts()}] diag:orbit-geometry summary`, {
+    objectCount: objects.length,
+    typeTally,
+    meshTotal,
+    meshWithNonEmptyVertices: meshWithVerts,
+    meshWithNonEmptyFaces: meshWithFaces,
+    verdict: meshTotal === 0
+      ? 'no-mesh-objects'
+      : meshWithVerts === 0
+        ? 'meshes-present-but-EMPTY-geometry (producer/convert-pipeline issue: display meshes have no vertices)'
+        : meshWithVerts < meshTotal
+          ? 'partial-geometry'
+          : 'meshes-have-geometry (investigate converter/units/build, not vertex presence)',
+  });
+
+  if (firstMesh) {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] diag:mesh-sample`, {
+      id: firstMesh.id,
+      speckle_type: firstMesh.speckle_type,
+      keys: Object.keys(firstMesh),
+      units: firstMesh.units,
+      vertices: describeGeomField(firstMesh.vertices),
+      faces: describeGeomField(firstMesh.faces),
+      vertexNormals: describeGeomField(firstMesh.vertexNormals),
+      colors: describeGeomField(firstMesh.colors),
+      hasRenderMaterial: firstMesh.renderMaterial !== undefined,
+    });
+  }
+
+  if (firstWrapper) {
+    const dvRaw = (firstWrapper.displayValue ?? firstWrapper['@displayValue']) as unknown;
+    const dv = describeGeomField(dvRaw);
+    const dvEntries = Array.isArray(dvRaw) ? dvRaw : dvRaw ? [dvRaw] : [];
+    const sampleMesh = dvEntries.length ? resolve(dvEntries[0]) : null;
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] diag:rhinoobject-sample`, {
+      id: firstWrapper.id,
+      speckle_type: firstWrapper.speckle_type,
+      keys: Object.keys(firstWrapper),
+      units: firstWrapper.units,
+      displayValue: dv,
+      displayValueResolvedMesh: sampleMesh
+        ? {
+            id: sampleMesh.id,
+            speckle_type: sampleMesh.speckle_type,
+            vertices: describeGeomField(sampleMesh.vertices),
+            faces: describeGeomField(sampleMesh.faces),
+          }
+        : '(unresolved or none)',
+      hasRawEncoding: firstWrapper.rawEncoding !== undefined || firstWrapper['@rawEncoding'] !== undefined,
+    });
+  }
+}
+
 const CLOSURE_BATCH_SIZE = 500;
 const CLOSURE_MAX_DEPTH = 64;
 
@@ -339,6 +486,15 @@ export class OrbitProxySpeckleLoader extends Loader {
         chunkCount,
         ms: Math.round(performance.now() - closureStart),
       });
+      // Decisive evidence dump: prints the real wire shape of a Mesh +
+      // RhinoObject and whether any mesh actually carries vertices/faces. This
+      // is what tells us if the black screen is empty producer geometry vs a
+      // converter/normalisation mismatch (see fn docstring).
+      try {
+        dumpOrbitGeometryDiagnostics(objects);
+      } catch (diagErr) {
+        console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] diag:orbit-geometry failed`, diagErr);
+      }
       if (objects.length === 0 || !objects[0]?.id) {
         throw new Error('ORBIT version root object could not be resolved.');
       }
