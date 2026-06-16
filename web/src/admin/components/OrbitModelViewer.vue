@@ -11,6 +11,7 @@ import {
   Viewer,
   DefaultViewerParams,
   CameraController,
+  type CanonicalView,
   LoaderEvent,
   SpeckleType,
   UpdateFlags,
@@ -23,6 +24,8 @@ import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckle
 import { applyOrbitViewerTheme } from '../utils/orbitViewerTheme';
 import Icon from '../../shared/Icon.vue';
 
+export type OrbitViewPreset = 'top' | 'front' | 'side' | 'iso';
+
 const props = withDefaults(defineProps<{
   orbitRef: ModelOrbitRef;
   /** Non-secret admin settings (server URLs). */
@@ -31,11 +34,14 @@ const props = withDefaults(defineProps<{
   /** Library card / thumbnail — hide chrome, fill parent, no pointer interaction. */
   compact?: boolean;
   interactive?: boolean;
+  /** Fixed camera angle for quad ortho panes (iso keeps perspective orbit). */
+  viewPreset?: OrbitViewPreset;
 }>(), {
   settings: () => ({}),
   fill: false,
   compact: false,
   interactive: true,
+  viewPreset: 'iso',
 });
 
 const hostRef = ref<HTMLDivElement | null>(null);
@@ -135,12 +141,44 @@ function styleViewerCanvas(v: Viewer): void {
   container.style.cursor = props.interactive ? 'grab' : 'default';
 }
 
+function orbitCanonicalView(preset: OrbitViewPreset): CanonicalView {
+  if (preset === 'top') return 'top';
+  if (preset === 'front') return 'front';
+  if (preset === 'side') return 'right';
+  return '3d';
+}
+
+/** Apply top / front / side ortho or iso perspective after load or preset change. */
+function applyViewPreset(v: Viewer, reason: string): void {
+  if (!v.hasExtension(CameraController)) return;
+  const camera = v.getExtension(CameraController);
+  const preset = props.viewPreset;
+  try {
+    if (preset === 'iso') {
+      camera.setPerspectiveCameraOn();
+      if (modelHasGeometry) {
+        camera.setCameraView('3d', false);
+      } else {
+        camera.setCameraView(undefined, false);
+      }
+    } else {
+      camera.setOrthoCameraOn();
+      camera.setCameraView(orbitCanonicalView(preset), false);
+    }
+    requestViewerRedraw(v, `view-preset:${preset}`);
+    logStep(`viewer:view-preset=${preset} (${reason})`);
+  } catch (err) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] view-preset failed`, { preset, err });
+  }
+}
+
 /** Wire Speckle CameraController (orbit / pan / zoom) to the interactive prop. */
 function syncCameraInteractivity(v: Viewer, reason: string): void {
   if (!v.hasExtension(CameraController)) return;
   const camera = v.getExtension(CameraController);
-  camera.enabled = props.interactive;
-  if (props.interactive) {
+  const allowInteraction = props.interactive && props.viewPreset === 'iso';
+  camera.enabled = allowInteraction;
+  if (allowInteraction) {
     camera.enableRotations();
     camera.options = {
       ...camera.options,
@@ -149,16 +187,18 @@ function syncCameraInteractivity(v: Viewer, reason: string): void {
       enablePan: true,
       touchAction: 'none',
     };
+  } else {
+    camera.disableRotations();
   }
   styleViewerCanvas(v);
   if (import.meta.env.DEV) {
-    logStep(`camera:interactive=${props.interactive} (${reason})`);
+    logStep(`camera:interactive=${allowInteraction} (${reason})`);
   }
 }
 
 function zoomToExtents(): void {
   if (!viewer) return;
-  frameLoadedModel(viewer);
+  applyViewPreset(viewer, 'zoom-extents');
 }
 
 function resetCameraView(): void {
@@ -166,11 +206,7 @@ function resetCameraView(): void {
   const camera = viewer.getExtension(CameraController);
   try {
     camera.default();
-    if (modelHasGeometry) {
-      frameLoadedModel(viewer);
-    } else {
-      requestViewerRedraw(viewer, 'reset-view');
-    }
+    applyViewPreset(viewer, 'reset-view');
     logStep('viewer:reset-view');
   } catch (err) {
     console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] reset-view failed`, err);
@@ -313,25 +349,6 @@ function logSceneDiagnostics(v: Viewer, reason: string): { hasGeometry: boolean 
   }
 
   return { hasGeometry };
-}
-
-/** Frame the loaded model. setCameraView(undefined, …) zooms to scene extents. */
-function frameLoadedModel(v: Viewer): void {
-  if (!v.hasExtension(CameraController)) {
-    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] zoom:skip — no CameraController`);
-    return;
-  }
-  const camera = v.getExtension(CameraController);
-  try {
-    camera.setCameraView(undefined, false);
-    logStep('viewer:zoom-extents', {
-      target: vec3(camera.getTarget()),
-      position: vec3(camera.getPosition()),
-    });
-    requestViewerRedraw(v, 'zoom-extents');
-  } catch (err) {
-    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] zoom:setCameraView failed`, err);
-  }
 }
 
 async function waitForHostLayout(host: HTMLElement, reason: string): Promise<{ width: number; height: number } | null> {
@@ -565,9 +582,8 @@ async function loadModel(): Promise<void> {
     // model against the final FBO size. loadObject(…, true) already requests a
     // zoom, but it runs before our forced resize; re-framing here is the fix
     // for the "geometry loaded but off-screen / black canvas" case.
-    if (hasGeometry) {
-      frameLoadedModel(viewer);
-    } else {
+    applyViewPreset(viewer, 'post-load');
+    if (!hasGeometry) {
       console.warn(
         `${ORBIT_VIEWER_LOG} [${ts()}] viewer:zoom-skip — no renderable geometry to frame`,
       );
@@ -651,6 +667,13 @@ watch(resolvedTheme, () => {
 
 watch(() => props.interactive, () => {
   if (viewer) syncCameraInteractivity(viewer, 'interactive-prop');
+});
+
+watch(() => props.viewPreset, () => {
+  if (viewer) {
+    applyViewPreset(viewer, 'view-preset-prop');
+    syncCameraInteractivity(viewer, 'view-preset-prop');
+  }
 });
 </script>
 
