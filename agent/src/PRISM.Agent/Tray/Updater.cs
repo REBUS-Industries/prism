@@ -255,9 +255,10 @@ public static class Updater
 
     /// <summary>
     /// Downloads the update zip, then launches a foreground PowerShell
-    /// script that waits for this process to exit, extracts the zip over
-    /// the install directory, and relaunches the agent.
-    /// Calls <see cref="Application.Exit"/> after scheduling the script.
+    /// script that waits for this process to exit, quiesces the
+    /// <c>PRISM.Agent</c> scheduled task, extracts the zip to a staging
+    /// directory, swaps it into the install directory, and relaunches the
+    /// agent. Calls <see cref="Application.Exit"/> after scheduling the script.
     /// </summary>
     /// <remarks>
     /// v0.1.34: the PowerShell helper window is now intentionally VISIBLE
@@ -378,6 +379,17 @@ public static class Updater
         var logPath    = UpdateLogPath;
         var tag        = info.TagName;
 
+        // The new payload is unzipped HERE first, never straight over the live
+        // install dir. Extraction into a fresh dir can never trip the loaded-
+        // image lock that makes an in-place overwrite of a WinForms DLL such as
+        // Accessibility.dll fail with "Access to the path ... is denied". This
+        // sits under %LOCALAPPDATA%\PRISM.Agent\, which docs/ANTIVIRUS_EXCLUSIONS.md
+        // already lists as an exclusion path, so Defender will not hold freshly
+        // written DLLs mid-scan during the subsequent robocopy swap.
+        var stagingDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "PRISM.Agent", "update-staging");
+
         // Wipe any stale log from a previous attempt so the diagnostic-on-
         // next-startup hook only sees this run.
         try { if (File.Exists(logPath)) File.Delete(logPath); } catch { /* nop */ }
@@ -386,25 +398,28 @@ public static class Updater
         // "Updated to vX.Y.Z" tray balloon without text-matching the log.
         try { File.WriteAllText(NewVersionMarkerPath, tag); } catch { /* nop */ }
 
-        // v0.1.36 PS-side fixes:
-        //   1. Extraction uses Expand-Archive -Force instead of
-        //      [System.IO.Compression.ZipFile]::ExtractToDirectory(zip,
-        //      dir, $true). The 3-arg ExtractToDirectory overload that
-        //      takes a bool only exists on .NET Core 3.0+; the .NET
-        //      Framework 4.x assembly loaded by Windows PowerShell 5.1
-        //      only has the (string, string, Encoding) overload, so
-        //      method binding coerces $true -> Encoding and crashes
-        //      immediately ("Cannot convert value 'True' to type
-        //      'System.Text.Encoding'"). Every v0.1.34/v0.1.35 in-app
-        //      update tripped this; nothing was ever extracted.
-        //      Expand-Archive has been overwrite-aware since PS 5.0 and
-        //      ships with every supported Windows PowerShell.
-        //   2. Post-extract verification: Test-Path on PRISM.Agent.exe
-        //      and read its ProductVersion so the log includes the
-        //      newly-extracted version stamp BEFORE we relaunch. If the
-        //      EXE is missing we mark FATAL and pause the window so the
-        //      operator sees the failure instead of getting the old
-        //      agent silently relaunched.
+        // The helper performs a STAGED swap rather than an in-place
+        // Expand-Archive over the running install dir. Root cause of the
+        // "Access to the path 'C:\Program Files\PRISM.Agent\Accessibility.dll'
+        // is denied" loop seen on RB-DA2-PC01 (which already runs the
+        // kill-holders-by-name + retry code from v0.3.15): the old flow left
+        // the `PRISM.Agent` scheduled task ENABLED, so its AtLogOn/AtStartup
+        // triggers + RestartCount=3 relaunched the agent mid-extract, re-mapping
+        // the WinForms images (Accessibility.dll et al.) as image sections —
+        // and an open-for-write over a mapped image returns ERROR_ACCESS_DENIED
+        // regardless of ACLs. The new flow:
+        //   1. Disables the scheduled task (best-effort) so the OS cannot
+        //      relaunch the agent during the swap, then ends any running task.
+        //   2. Stops every lingering holder and waits for handles to drop.
+        //   3. Extracts the zip to a FRESH staging dir (can never hit a lock).
+        //   4. Verifies the staged PRISM.Agent.exe exists, then robocopies
+        //      staging -> install, re-killing any relaunched holder each pass
+        //      (robocopy also retries per-file for AV transients).
+        //   5. Re-enables + starts the task (falling back to launching the exe).
+        // Expand-Archive (not [IO.Compression.ZipFile]::ExtractToDirectory) is
+        // still used: the 3-arg overwrite overload only exists on .NET Core, so
+        // Windows PowerShell 5.1 would coerce $true -> Encoding and crash;
+        // Expand-Archive has been overwrite-aware since PS 5.0.
         var ps = $@"
 $ErrorActionPreference = 'Stop'
 $log = '{Esc(logPath)}'
@@ -418,7 +433,20 @@ function W($m) {{
 W 'PRISM Agent updater — keep this window open until it closes itself'
 W 'target version: {Esc(tag)}'
 
-$fatal = $false
+$fatal           = $false
+$taskName        = 'PRISM.Agent'
+$taskWasDisabled = $false
+$holderNames = @('PRISM.Agent','prism-visualiser','UnrealEditor','UnrealEditor-Cmd','UnrealEditor-Win64-DebugGame','CrashReportClient')
+
+function Stop-Holders {{
+    foreach ($n in $holderNames) {{
+        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {{
+            try {{ $_.CloseMainWindow() | Out-Null }} catch {{ }}
+            try {{ Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }} catch {{ }}
+        }}
+    }}
+}}
+
 try {{
     W 'update script started'
     $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
@@ -433,77 +461,100 @@ try {{
 
     $zip        = '{Esc(tempZip)}'
     $installDir = '{Esc(installDir)}'
+    $staging    = '{Esc(stagingDir)}'
     $exePath    = '{Esc(exePath)}'
 
-    # Hardening: the spawning agent pid exiting is necessary but NOT
-    # sufficient.  A second PRISM.Agent.exe instance (a scheduled-task
-    # relaunch race) or a live child the visualiser job spawned
-    # (prism-visualiser.exe / UnrealEditor*) keeps its modules memory-mapped,
-    # so the very first locked DLL (classically Accessibility.dll) makes
-    # Expand-Archive -Force abort the entire update with 'Access to the path
-    # ... is denied'.  Stop every such holder — gracefully, then forcibly —
-    # and wait for the handles to drop before extracting.
-    $holderNames = @('PRISM.Agent','prism-visualiser','UnrealEditor','UnrealEditor-Cmd','UnrealEditor-Win64-DebugGame','CrashReportClient')
+    # 1. Quiesce the scheduled task so the OS cannot resurrect the agent while
+    #    we swap files. The AtLogOn/AtStartup triggers + RestartCount on the
+    #    'PRISM.Agent' task were relaunching the agent mid-extract, re-locking
+    #    Accessibility.dll and the other WinForms images. Disable is best-effort:
+    #    a non-admin run-as user may lack the right, in which case the per-attempt
+    #    kill-loop in step 4 is the fallback.
+    W ""disabling scheduled task '$taskName' so it cannot relaunch the agent mid-swap""
+    try {{
+        & schtasks.exe /Change /TN $taskName /DISABLE 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {{ $taskWasDisabled = $true; W '  scheduled task disabled' }}
+        else {{ W ""  WARN: could not disable task (schtasks exit $LASTEXITCODE); relying on kill-loop fallback"" }}
+    }} catch {{ W ""  WARN: disabling task threw: $($_.Exception.Message)"" }}
+    try {{ & schtasks.exe /End /TN $taskName 2>&1 | Out-Null }} catch {{ }}
+
+    # 2. Stop every lingering holder, then wait for the handles to drop. A child
+    #    the visualiser spawned (prism-visualiser.exe / UnrealEditor*) can also
+    #    keep modules memory-mapped under the install dir.
     W 'stopping any lingering agent/orchestrator/UE processes that could lock install files'
-    foreach ($n in $holderNames) {{
-        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {{
-            W (""  closing "" + $n + "" pid "" + $_.Id)
-            try {{ $_.CloseMainWindow() | Out-Null }} catch {{ }}
-        }}
-    }}
-    Start-Sleep -Seconds 1
-    foreach ($n in $holderNames) {{
-        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {{
-            try {{ Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }} catch {{ }}
-        }}
-    }}
+    Stop-Holders
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {{
         $alive = @($holderNames | ForEach-Object {{ Get-Process -Name $_ -ErrorAction SilentlyContinue }})
         if ($alive.Count -eq 0) {{ break }}
         Start-Sleep -Seconds 1
     }}
-    $alive = @($holderNames | ForEach-Object {{ Get-Process -Name $_ -ErrorAction SilentlyContinue }})
-    if ($alive.Count -gt 0) {{ W (""WARN: "" + $alive.Count + "" holder process(es) still alive after stop; will retry extraction anyway"") }}
-    else {{ W 'all holder processes stopped' }}
 
-    W ""extracting $zip -> $installDir""
-    # Retry-with-backoff: rides out transient locks (a handle being released
-    # slightly after the process exits, or antivirus mid-scan of a freshly
-    # written DLL) instead of failing the whole update on the first sharing
-    # violation.
+    # 3. Extract the new payload into a FRESH staging dir. Because nothing is
+    #    loaded from staging, the extract can never hit the loaded-image lock
+    #    that made the old in-place Expand-Archive fail on Accessibility.dll.
+    if (Test-Path -LiteralPath $staging) {{
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    }}
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    W ""extracting $zip -> $staging""
+    Expand-Archive -LiteralPath $zip -DestinationPath $staging -Force -ErrorAction Stop
+    W 'extraction to staging complete'
+
+    $stagedExe = Join-Path $staging 'PRISM.Agent.exe'
+    if (-not (Test-Path -LiteralPath $stagedExe)) {{
+        throw ""staged payload is missing PRISM.Agent.exe — the download may be corrupt""
+    }}
+
+    # 4. Mirror staging -> install dir. robocopy retries locked files itself
+    #    (/R /W); we additionally re-kill any holder the task may have relaunched
+    #    before each attempt. /E (not /MIR) overwrites + adds without deleting
+    #    unrelated files, matching the old Expand-Archive -Force semantics.
+    #    robocopy exit codes < 8 are success.
+    W ""installing $staging -> $installDir""
     $maxAttempts = 5
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {{
-        try {{
-            Expand-Archive -LiteralPath $zip -DestinationPath $installDir -Force -ErrorAction Stop
-            W ""extraction complete (attempt $attempt)""
+        Stop-Holders
+        Start-Sleep -Milliseconds 800
+        & robocopy.exe $staging $installDir /E /R:3 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+        $rc = $LASTEXITCODE
+        if ($rc -lt 8) {{
+            W ""install complete (attempt $attempt, robocopy code $rc)""
             break
-        }} catch {{
-            if ($attempt -ge $maxAttempts) {{ throw }}
-            $delay = 2 * $attempt
-            W ""extract attempt $attempt failed: $($_.Exception.Message); retrying in $delay s""
-            Start-Sleep -Seconds $delay
         }}
+        if ($attempt -ge $maxAttempts) {{
+            throw ""robocopy failed after $maxAttempts attempts (last exit $rc) — an install file stayed locked""
+        }}
+        $delay = 2 * $attempt
+        W ""install attempt $attempt failed (robocopy exit $rc); retrying in $delay s""
+        Start-Sleep -Seconds $delay
     }}
 
     if (-not (Test-Path $exePath)) {{
         $fatal = $true
-        W ""FATAL: extraction did not produce $exePath""
+        W ""FATAL: install did not produce $exePath""
     }} else {{
         try {{
             $newVersion = (Get-Item $exePath).VersionInfo.ProductVersion
-            W ""extracted version: $newVersion""
+            W ""installed version: $newVersion""
         }} catch {{
             W ""WARN: could not read version stamp from $exePath ($_)""
         }}
-        W 'launching new agent'
-        Start-Process -FilePath $exePath
-        W 'launched'
     }}
 }} catch {{
     $fatal = $true
     W ""FATAL: $_""
     if ($_.ScriptStackTrace) {{ W $_.ScriptStackTrace }}
+}}
+
+# Always re-enable the scheduled task we disabled, so a failed update can never
+# leave the workstation permanently agentless (the AtStartup trigger then
+# recovers it on the next boot even if this window is closed before relaunch).
+if ($taskWasDisabled) {{
+    try {{
+        & schtasks.exe /Change /TN $taskName /ENABLE 2>&1 | Out-Null
+        W ""re-enabled scheduled task '$taskName'""
+    }} catch {{ W ""WARN: could not re-enable task '$taskName': $($_.Exception.Message)"" }}
 }}
 
 if ($fatal) {{
@@ -515,8 +566,17 @@ if ($fatal) {{
     Write-Host '------------------------------------------------------------'
     try {{ [void](Read-Host 'Press Enter to close') }} catch {{ Start-Sleep -Seconds 30 }}
 }} else {{
-    # Brief grace so the user sees the 'launched' line before the
-    # window closes itself.
+    # Relaunch via the scheduled task (correct principal / RunLevel Highest);
+    # fall back to launching the exe directly if the task did not bring it up.
+    W 'launching new agent'
+    try {{ & schtasks.exe /Run /TN $taskName 2>&1 | Out-Null }} catch {{ }}
+    Start-Sleep -Milliseconds 800
+    if (-not (Get-Process -Name 'PRISM.Agent' -ErrorAction SilentlyContinue)) {{
+        W 'scheduled task did not bring the agent up; launching exe directly'
+        Start-Process -FilePath $exePath
+    }}
+    W 'launched'
+    # Brief grace so the user sees the 'launched' line before the window closes.
     Start-Sleep -Seconds 2
 }}
 ";
