@@ -14,7 +14,7 @@ import {
 } from '@speckle/viewer';
 import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
-import { OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
+import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
 
 const props = withDefaults(defineProps<{
   orbitRef: ModelOrbitRef;
@@ -35,6 +35,31 @@ let viewer: Viewer | null = null;
 let activeLoader: OrbitProxySpeckleLoader | null = null;
 let resizeObs: ResizeObserver | null = null;
 let loadToken = 0;
+let loadStep = 0;
+
+function ts(): string {
+  return new Date().toISOString().slice(11, 23);
+}
+
+function hostDims(el: HTMLElement | null): Record<string, number> | null {
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  return {
+    clientW: Math.round(rect.width),
+    clientH: Math.round(rect.height),
+    offsetW: el.offsetWidth,
+    offsetH: el.offsetHeight,
+  };
+}
+
+function logStep(message: string, detail?: unknown): void {
+  loadStep += 1;
+  if (detail !== undefined) {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] #${loadStep} ${message}`, detail);
+  } else {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] #${loadStep} ${message}`);
+  }
+}
 
 const orbitWebUrl = buildOrbitModelViewerUrl(
   orbitServerBaseUrl(props.settings, props.orbitRef.target),
@@ -45,20 +70,25 @@ const showSettingsLink = computed(() => Boolean(
   error.value && /settings|token|configured|access denied/i.test(error.value),
 ));
 
-function viewerResize(): void {
-  if (viewer && hostRef.value) viewer.resize();
+function viewerResize(reason: string): void {
+  if (!viewer || !hostRef.value) return;
+  const dims = hostDims(hostRef.value);
+  console.log(`${ORBIT_VIEWER_LOG} [${ts()}] resize`, { reason, dims });
+  viewer.resize();
 }
 
 function setupResizeObserver(): void {
   resizeObs?.disconnect();
   const el = hostRef.value;
   if (!el) return;
-  resizeObs = new ResizeObserver(() => viewerResize());
+  logStep('resize-observer:setup', hostDims(el));
+  resizeObs = new ResizeObserver(() => viewerResize('resize-observer'));
   resizeObs.observe(el);
-  requestAnimationFrame(() => viewerResize());
+  requestAnimationFrame(() => viewerResize('setup-raf'));
 }
 
-async function disposeViewer(): Promise<void> {
+async function disposeViewer(reason: string): Promise<void> {
+  logStep('dispose', { reason, hadViewer: Boolean(viewer), hadLoader: Boolean(activeLoader) });
   activeLoader?.cancel();
   activeLoader?.dispose();
   activeLoader = null;
@@ -83,32 +113,67 @@ function formatLoadError(err: unknown, target: 'prod' | 'dev'): string {
 
 async function loadModel(): Promise<void> {
   const token = ++loadToken;
+  loadStep = 0;
+  logStep('loadModel:start', {
+    loadToken: token,
+    orbitRef: {
+      target: props.orbitRef.target,
+      projectId: props.orbitRef.projectId,
+      modelId: props.orbitRef.modelId,
+      versionId: props.orbitRef.versionId,
+    },
+    fill: props.fill,
+  });
+
   await nextTick();
   const host = hostRef.value;
-  if (!host) return;
+  if (!host) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:abort — host ref missing`);
+    return;
+  }
+  logStep('host:ready', hostDims(host));
 
   loading.value = true;
   progress.value = 0;
   error.value = null;
-  await disposeViewer();
+  await disposeViewer('reload');
   host.replaceChildren();
   setupResizeObserver();
 
   try {
+    logStep('resolveViewerVersion:start', {
+      target: props.orbitRef.target,
+      projectId: props.orbitRef.projectId,
+      modelId: props.orbitRef.modelId,
+      versionId: props.orbitRef.versionId ?? '(latest)',
+    });
     const resolved = await orbitApi.resolveViewerVersion(
       props.orbitRef.target,
       props.orbitRef.projectId,
       props.orbitRef.modelId,
       props.orbitRef.versionId,
     );
-    if (token !== loadToken) return;
+    if (token !== loadToken) {
+      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:stale after resolve`, { loadToken: token });
+      return;
+    }
+    logStep('resolveViewerVersion:ok', {
+      projectId: resolved.projectId,
+      modelId: resolved.modelId,
+      versionId: resolved.versionId,
+      rootObjectId: `${resolved.rootObjectId.slice(0, 12)}…`,
+    });
 
     const params = { ...DefaultViewerParams, verbose: import.meta.env.DEV };
+    logStep('viewer:new', { verbose: params.verbose, hostDims: hostDims(host) });
     viewer = new Viewer(host, params);
+    logStep('viewer:init start');
     await viewer.init();
+    logStep('viewer:init complete');
     viewer.createExtension(CameraController);
-    viewerResize();
-    requestAnimationFrame(() => viewerResize());
+    logStep('viewer:CameraController attached');
+    viewerResize('post-init');
+    requestAnimationFrame(() => viewerResize('post-init-raf'));
 
     activeLoader = new OrbitProxySpeckleLoader(viewer.getWorldTree(), {
       target: props.orbitRef.target,
@@ -120,27 +185,48 @@ async function loadModel(): Promise<void> {
       progress.value = Math.round((payload.progress ?? 0) * 100);
     });
 
+    logStep('viewer:loadObject start', { resource: activeLoader.resource });
     await viewer.loadObject(activeLoader, true);
-    if (token !== loadToken) return;
-    viewerResize();
-    requestAnimationFrame(() => viewerResize());
+    if (token !== loadToken) {
+      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:stale after loadObject`, { loadToken: token });
+      return;
+    }
+    logStep('viewer:loadObject complete', {
+      resource: activeLoader.resource,
+      finished: activeLoader.finished,
+      progress: progress.value,
+    });
+    viewerResize('post-load');
+    requestAnimationFrame(() => viewerResize('post-load-raf'));
   } catch (err) {
     if (token !== loadToken) return;
+    console.error(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:error`, {
+      loadToken: token,
+      orbitRef: props.orbitRef,
+      error: err,
+      apiStatus: (err as ApiError)?.status,
+      message: (err as Error)?.message,
+    });
     error.value = formatLoadError(err, props.orbitRef.target);
   } finally {
-    if (token === loadToken) loading.value = false;
+    if (token === loadToken) {
+      loading.value = false;
+      logStep('loadModel:done', { error: error.value, progress: progress.value });
+    }
   }
 }
 
 onMounted(() => {
+  logStep('mounted', { hostDims: hostDims(hostRef.value), orbitRef: props.orbitRef });
   void loadModel();
 });
 
 onBeforeUnmount(() => {
+  logStep('unmount');
   loadToken += 1;
   resizeObs?.disconnect();
   resizeObs = null;
-  void disposeViewer();
+  void disposeViewer('unmount');
 });
 
 watch(
@@ -150,7 +236,10 @@ watch(
     props.orbitRef.modelId,
     props.orbitRef.versionId,
   ],
-  () => { void loadModel(); },
+  (next, prev) => {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] orbitRef changed`, { prev, next });
+    void loadModel();
+  },
 );
 </script>
 

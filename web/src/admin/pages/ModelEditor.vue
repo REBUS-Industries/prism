@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import {
   modelsApi,
@@ -73,6 +73,18 @@ const orbitViewerUrl = computed(() => {
 const useOrbitViewer = computed(() => Boolean(modelOrbitRef.value));
 const showLocalPreview = computed(() => !useOrbitViewer.value && Boolean(previewUrl.value));
 
+function logViewerMode(reason: string): void {
+  const mode = useOrbitViewer.value ? 'orbit' : (showLocalPreview.value ? 'glb' : 'none');
+  console.log('[OrbitViewer] ModelEditor viewer mode', {
+    reason,
+    mode,
+    orbitRef: modelOrbitRef.value,
+    hasPreview: Boolean(previewUrl.value),
+  });
+}
+
+watch([modelOrbitRef, useOrbitViewer, showLocalPreview], () => logViewerMode('watch'));
+
 async function loadMaterials(): Promise<void> {
   try {
     const res = await materialsApi.list({ limit: 500 });
@@ -99,6 +111,7 @@ async function reload(): Promise<void> {
     }));
     modelTransform.value = ensureModelTransform(res.model.definition.transform);
     sourceUnits.value = ensureModelSourceUnits(res.model.definition.sourceUnits);
+    logViewerMode('reload');
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load model';
   } finally {

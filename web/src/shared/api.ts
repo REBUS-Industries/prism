@@ -892,25 +892,40 @@ export const orbitApi = {
       { target, name },
     ),
   /** Resolve ORBIT version → root object hash for embedded viewers. */
-  resolveViewerVersion: (
+  resolveViewerVersion: async (
     target: 'prod' | 'dev',
     projectId: string,
     modelId: string,
     versionId?: string,
   ) => {
+    const params = { target, projectId, modelId, versionId: versionId ?? '(latest)' };
+    console.log('[OrbitViewer] resolveViewerVersion request', params);
     const qs = new URLSearchParams({
       target,
       projectId,
       modelId,
       ...(versionId ? { versionId } : {}),
     });
-    return api.get<{
-      target: string;
-      projectId: string;
-      modelId: string;
-      versionId: string;
-      rootObjectId: string;
-    }>(`/api/orbit/viewer/resolve?${qs.toString()}`);
+    try {
+      const result = await api.get<{
+        target: string;
+        projectId: string;
+        modelId: string;
+        versionId: string;
+        rootObjectId: string;
+      }>(`/api/orbit/viewer/resolve?${qs.toString()}`);
+      console.log('[OrbitViewer] resolveViewerVersion ok', {
+        target: result.target,
+        projectId: result.projectId,
+        modelId: result.modelId,
+        versionId: result.versionId,
+        rootObjectId: `${result.rootObjectId.slice(0, 12)}…`,
+      });
+      return result;
+    } catch (err) {
+      console.error('[OrbitViewer] resolveViewerVersion failed', { params, error: err });
+      throw err;
+    }
   },
 };
 

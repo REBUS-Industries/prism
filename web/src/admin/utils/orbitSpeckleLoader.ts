@@ -7,6 +7,40 @@ import type { ObjectLoader2 } from '@speckle/objectloader2';
 import { Loader, LoaderEvent, SpeckleConverter, type SpeckleObject } from '@speckle/viewer';
 import type { WorldTree } from '@speckle/viewer';
 
+export const ORBIT_VIEWER_LOG = '[OrbitViewer]';
+
+function ts(): string {
+  return new Date().toISOString().slice(11, 23);
+}
+
+/** Redact token-like query params before logging URLs. */
+export function redactOrbitLogUrl(input: RequestInfo | URL): string {
+  const raw = typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.href
+      : input instanceof Request
+        ? input.url
+        : String(input);
+  try {
+    const u = new URL(raw, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    for (const key of ['token', 'access_token', 'pat', 'authorization']) {
+      if (u.searchParams.has(key)) u.searchParams.set(key, '[REDACTED]');
+    }
+    return `${u.pathname}${u.search}`;
+  } catch {
+    return raw.replace(/(token|access_token|pat)=[^&]+/gi, '$1=[REDACTED]');
+  }
+}
+
+function classifyProxyFetch(path: string): string {
+  if (path.includes('/resolve')) return 'resolve';
+  if (path.includes('/objects/') && path.includes('/single')) return 'single';
+  if (path.includes('/objects/') && path.includes('/stream')) return 'object-stream';
+  if (path.includes('/blob')) return 'blob';
+  return 'other';
+}
+
 export function orbitViewerProxyBase(target: 'prod' | 'dev'): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   return `${origin}/api/orbit/viewer/${target}`;
@@ -14,7 +48,72 @@ export function orbitViewerProxyBase(target: 'prod' | 'dev'): string {
 
 /** Custom fetch that forwards admin session cookies to the PRISM proxy. */
 export function orbitViewerFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, { ...init, credentials: 'same-origin' });
+  const url = redactOrbitLogUrl(input);
+  const kind = classifyProxyFetch(url);
+  const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+  const t0 = performance.now();
+  console.log(`${ORBIT_VIEWER_LOG} [${ts()}] fetch:${kind} start`, { method, url });
+
+  return fetch(input, { ...init, credentials: 'same-origin' }).then(async (res) => {
+    const ms = Math.round(performance.now() - t0);
+    const contentType = res.headers.get('content-type') ?? '';
+    const contentLength = res.headers.get('content-length');
+    let objectCount: number | undefined;
+    let extra: Record<string, unknown> | undefined;
+
+    if (res.ok && contentType.includes('application/json')) {
+      try {
+        const clone = res.clone();
+        const body = await clone.json() as unknown;
+        if (Array.isArray(body)) {
+          objectCount = body.length;
+        } else if (body && typeof body === 'object') {
+          const record = body as Record<string, unknown>;
+          if (typeof record.totalChildrenCount === 'number') {
+            objectCount = record.totalChildrenCount;
+          } else if (Array.isArray(record.closures)) {
+            objectCount = record.closures.length;
+          } else if (Array.isArray(record.objects)) {
+            objectCount = record.objects.length;
+          } else if (typeof record.id === 'string') {
+            objectCount = 1;
+            extra = { objectId: `${record.id.slice(0, 12)}…` };
+          }
+        }
+      } catch {
+        // Non-fatal: logging must not break loading.
+      }
+    }
+
+    const logPayload = {
+      method,
+      url,
+      status: res.status,
+      ok: res.ok,
+      ms,
+      contentType: contentType || undefined,
+      contentLength: contentLength ?? undefined,
+      objectCount,
+      ...extra,
+    };
+
+    if (!res.ok) {
+      console.error(`${ORBIT_VIEWER_LOG} [${ts()}] fetch:${kind} failed`, logPayload);
+    } else if (objectCount === 0 && (kind === 'single' || kind === 'object-stream')) {
+      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] fetch:${kind} empty payload`, logPayload);
+    } else {
+      console.log(`${ORBIT_VIEWER_LOG} [${ts()}] fetch:${kind} ok`, logPayload);
+    }
+    return res;
+  }).catch((err) => {
+    console.error(`${ORBIT_VIEWER_LOG} [${ts()}] fetch:${kind} error`, {
+      method,
+      url,
+      ms: Math.round(performance.now() - t0),
+      error: err,
+    });
+    throw err;
+  });
 }
 
 function mapOrbitLoaderError(err: unknown): Error {
@@ -56,8 +155,18 @@ export class OrbitProxySpeckleLoader extends Loader {
     super(label);
     this.tree = tree;
     this._resource = label;
+
+    const serverUrl = orbitViewerProxyBase(params.target);
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:init`, {
+      target: params.target,
+      projectId: params.projectId,
+      rootObjectId: `${params.rootObjectId.slice(0, 12)}…`,
+      serverUrl,
+      resourceLabel: label,
+    });
+
     this.loader = ObjectLoader2Factory.createFromUrl({
-      serverUrl: orbitViewerProxyBase(params.target),
+      serverUrl,
       streamId: params.projectId,
       objectId: params.rootObjectId,
       token: '',
@@ -83,50 +192,84 @@ export class OrbitProxySpeckleLoader extends Loader {
     let finalize: Promise<void> | null = null;
     let loaded = 0;
 
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:load start`, { resource: this.resource });
+
+    let total = 0;
     try {
-      const total = await this.loader.getTotalObjectCount();
+      total = await this.loader.getTotalObjectCount();
+      console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:object-count`, { total });
+
       for await (const obj of this.loader.getObjectIterator()) {
         if (this.isCancelled) {
+          console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] loader:cancelled`, { loaded });
           this.emit(LoaderEvent.LoadCancelled, this.resource);
           return false;
         }
         if (first) {
+          const rootType = (obj as SpeckleObject)?.speckle_type ?? (obj as SpeckleObject)?.type ?? 'unknown';
+          console.log(`${ORBIT_VIEWER_LOG} [${ts()}] converter:traverse start`, {
+            resource: this.resource,
+            rootType,
+          });
           finalize = this.converter.traverse(this.resource, obj as SpeckleObject, (count) => {
             this.emit(LoaderEvent.Traversed, { count });
           });
           first = false;
         }
         loaded += 1;
+        if (loaded === 1 || loaded % 50 === 0 || loaded === total) {
+          console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:progress`, {
+            loaded,
+            total,
+            pct: total > 0 ? Math.round((loaded / total) * 100) : 0,
+          });
+        }
         this.emit(LoaderEvent.LoadProgress, {
           progress: loaded / (total + 1),
           id: this.resource,
         });
       }
     } catch (err) {
+      console.error(`${ORBIT_VIEWER_LOG} [${ts()}] loader:load error`, {
+        resource: this.resource,
+        loaded,
+        error: err,
+      });
       throw mapOrbitLoaderError(err);
     }
 
-    if (finalize) await finalize;
+    if (finalize) {
+      console.log(`${ORBIT_VIEWER_LOG} [${ts()}] converter:traverse finalize`);
+      await finalize;
+    }
+
     if (loaded === 0) {
+      console.error(`${ORBIT_VIEWER_LOG} [${ts()}] loader:empty-geometry`, {
+        resource: this.resource,
+        totalReported: total,
+      });
       throw new Error(
         'No renderable geometry in this ORBIT version. Confirm the model has a published version and your Settings token can read it.',
       );
     }
+
     this.isFinished = true;
     this.emit(LoaderEvent.Converted, { count: loaded });
-    if (import.meta.env.DEV) {
-      console.debug(
-        `[OrbitProxySpeckleLoader] converted ${this.resource} in ${((performance.now() - started) / 1000).toFixed(1)}s`,
-      );
-    }
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:load complete`, {
+      resource: this.resource,
+      objects: loaded,
+      ms: Math.round(performance.now() - started),
+    });
     return true;
   }
 
   cancel(): void {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] loader:cancel requested`, { resource: this.resource });
     this.isCancelled = true;
   }
 
   override dispose(): void {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:dispose`, { resource: this.resource });
     void this.loader.disposeAsync();
     super.dispose();
   }
