@@ -489,7 +489,7 @@ onMounted(() => {
         commit a new ORBIT version visible in the viewer.
       </p>
 
-      <div v-if="useOrbitViewer" class="orbit-sync-bar">
+      <div class="orbit-sync-bar">
         <button
           type="button"
           class="primary"
@@ -498,11 +498,16 @@ onMounted(() => {
         >
           {{ orbitSyncing ? 'Syncing to ORBIT…' : 'Sync to ORBIT' }}
         </button>
-        <span v-if="assignedMaterialCount" class="muted small">
+        <span v-if="useOrbitViewer && assignedMaterialCount" class="muted small">
           {{ assignedMaterialCount }} assignment{{ assignedMaterialCount === 1 ? '' : 's' }} — commits one new ORBIT version
         </span>
-        <span v-else class="muted small">
+        <span v-else-if="useOrbitViewer" class="muted small">
           Assign PRISM materials below, then sync to commit a new ORBIT version.
+        </span>
+        <span v-else class="muted small">
+          No ORBIT link on this model — geometry is GLB preview only.
+          <RouterLink :to="{ name: 'model-import' }">Re-import the file</RouterLink>
+          to upload to ORBIT and enable sync.
         </span>
       </div>
       <p v-if="orbitSyncMessage" class="muted small sync-ok">{{ orbitSyncMessage }}</p>
