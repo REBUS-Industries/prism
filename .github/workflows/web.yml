@@ -1,7 +1,7 @@
 name: web-image
 
 # Builds the PRISM admin/convert/viewer SPA as a standalone nginx container
-# (prism-web) on VM 212 (prism.rebus.industries). Prod deploy is tag-gated.
+# (prism-web) on VM 212 (prism.rebus.industries). Deploys on push to main.
 # Server API changes deploy via server-image (separate workflow).
 
 on:
@@ -76,7 +76,7 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: [self-hosted, prism-deploy]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     concurrency:
       group: prism-deploy-vm212
       cancel-in-progress: false

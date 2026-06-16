@@ -1,7 +1,7 @@
 name: server-image
 
 # Builds + pushes the PRISM server container to GHCR.
-# Prod deploy (VM 212 split stack) is tag-gated only.
+# Deploys to VM 212 (prism.rebus.industries) on push to main.
 #
 # Image:      ghcr.io/rebus-industries/prism-server
 # Tags:       latest (on main), <branch>, <short-sha>, <tag-name> (on tag push)
@@ -77,12 +77,9 @@ jobs:
 
   deploy:
     needs: build-and-push
-    # LAN-local self-hosted runner (org Default group). SSH alias `prism-prod`
-    # -> rebus@10.0.200.212 (PRISM prod split stack).
-    #
-    # PROD GATE: only deploy on a version tag push (`v*`) or workflow_dispatch.
+    # Deploy on main merge, version tags, or manual dispatch.
     runs-on: [self-hosted, prism-deploy]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
 

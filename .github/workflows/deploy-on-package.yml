@@ -32,6 +32,7 @@ jobs:
             # published to GHCR but never pulled/restarted on the VM.
             *prism-assimp*) echo "service=prism-assimp" >> "$GITHUB_OUTPUT" ;;
             *prism-server*) echo "service=prism-server" >> "$GITHUB_OUTPUT" ;;
+            *prism-web*) echo "service=prism-web" >> "$GITHUB_OUTPUT" ;;
             *) echo "service=" >> "$GITHUB_OUTPUT" ;;
           esac
 

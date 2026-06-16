@@ -69,7 +69,7 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: [self-hosted, prism-deploy]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
 
