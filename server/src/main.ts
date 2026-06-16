@@ -141,6 +141,7 @@ async function buildApp() {
   await app.register(import('./api/receive.js'),       { prefix: '/api/receive' });
   await app.register(import('./api/webhooks.js'),      { prefix: '/api/webhooks' });
   await app.register(import('./api/orbit.js'),         { prefix: '/api/orbit' });
+  await app.register(import('./api/orbitMaterialSwap.js'), { prefix: '/api/orbit/material-swap' });
   await app.register(import('./api/visualiser.js'),    { prefix: '/api/visualiser' });
   // Phase J — portal users upload MVR/GDTF lighting files here and the
   // visualiser dispatcher forwards download URLs to the orchestrator.
