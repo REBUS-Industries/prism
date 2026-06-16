@@ -4,6 +4,7 @@ using Orbit.Sdk.Api;
 using Orbit.Sdk.Transport;
 using OrbitConnector.Rhino.Models;
 using OrbitConnector.Rhino.Pipeline;
+using PRISM.Agent.Config;
 using PRISM.Agent.Rhino;
 using PRISM.Agent.Ws;
 using PRISM.Contracts;
@@ -21,10 +22,11 @@ public sealed class ConvertJob
     readonly RhinoFileOpener _opener;
     readonly WsClient _ws;
     readonly RhinoVersionSelector _rhinoSelector;
+    readonly AgentConfig _cfg;
 
-    public ConvertJob(ILogger<ConvertJob> log, RhinoHost host, RhinoFileOpener opener, WsClient ws, RhinoVersionSelector rhinoSelector)
+    public ConvertJob(ILogger<ConvertJob> log, RhinoHost host, RhinoFileOpener opener, WsClient ws, RhinoVersionSelector rhinoSelector, AgentConfig cfg)
     {
-        _log = log; _host = host; _opener = opener; _ws = ws; _rhinoSelector = rhinoSelector;
+        _log = log; _host = host; _opener = opener; _ws = ws; _rhinoSelector = rhinoSelector; _cfg = cfg;
     }
 
     public async Task RunAsync(AssignData assign, CancellationToken ct)
@@ -126,7 +128,12 @@ public sealed class ConvertJob
             }
 
             await Progress(assign.JobId, "opening", 5, "opening in Rhino");
-            var doc = _opener.OpenInto(_host, effectivePath, effectiveFormat, pipelineLog);
+            // Bound the typed File*.Read with the configured watchdog so a
+            // wedged importer (the FBX hang that took the agent down) fails
+            // this job instead of hanging the agent/WS. FBX convert imports
+            // the whole model via the batch-mode read in RhinoFileOpener.
+            var readTimeout = TimeSpan.FromSeconds(Math.Clamp(_cfg.RhinoReadTimeoutSeconds, 30, 1800));
+            var doc = _opener.OpenInto(_host, effectivePath, effectiveFormat, pipelineLog, readTimeout);
 
             // Apply the optional Y↔Z axis swap BEFORE the connector touches
             // the doc. Render-mesh caches and per-object texture mappings

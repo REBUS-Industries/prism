@@ -2,6 +2,7 @@ using System.Net.Http;
 using global::Rhino;
 using global::Rhino.DocObjects;
 using Microsoft.Extensions.Logging;
+using PRISM.Agent.Config;
 using PRISM.Agent.Rhino;
 using PRISM.Agent.Ws;
 using PRISM.Contracts;
@@ -30,10 +31,11 @@ public sealed class PollLayersJob
     readonly RhinoHost _host;
     readonly WsClient _ws;
     readonly RhinoVersionSelector _rhinoSelector;
+    readonly AgentConfig _cfg;
 
-    public PollLayersJob(ILogger<PollLayersJob> log, RhinoHost host, WsClient ws, RhinoVersionSelector rhinoSelector)
+    public PollLayersJob(ILogger<PollLayersJob> log, RhinoHost host, WsClient ws, RhinoVersionSelector rhinoSelector, AgentConfig cfg)
     {
-        _log = log; _host = host; _ws = ws; _rhinoSelector = rhinoSelector;
+        _log = log; _host = host; _ws = ws; _rhinoSelector = rhinoSelector; _cfg = cfg;
     }
 
     public async Task RunAsync(PollLayersData poll, CancellationToken ct)
@@ -118,14 +120,47 @@ public sealed class PollLayersJob
                     ? Path.GetExtension(tempPath)
                     : poll.Format).ToLowerInvariant();
 
+            // FBX layer-selection gate (default ON).
+            //
+            // Headless FBX layer extraction is the exact path that wedged
+            // Rhino's FBX importer and took the agent's WebSocket down in the
+            // field. FileFbxReadOptions has no BatchMode to force the importer
+            // non-interactive, so until the batch-mode FBX read has been
+            // verified on a given workstation we do NOT subject a layer-poll
+            // to it. Fail fast with a clear, non-retryable message so the user
+            // re-runs the conversion without selecting layers (which imports
+            // the whole model) instead of waiting out the read watchdog. Set
+            // AllowFbxLayerExtraction=true in agent-config.json on a verified
+            // workstation to opt back in (the read is then watchdog-protected).
+            if (ext == ".fbx" && !_cfg.AllowFbxLayerExtraction)
+            {
+                diag("[OBJ-IMPORT] FBX layer extraction gated (allowFbxLayerExtraction=false); " +
+                     "failing pollLayers with guidance instead of attempting the headless FBX read");
+                _log.LogWarning("pollLayers: gating FBX layer extraction for job {JobId} ({Path})",
+                    poll.JobId, effectivePath);
+                await _ws.SendAsync(MessageType.Fail, new FailData
+                {
+                    JobId = poll.JobId,
+                    Error = "FBX layer selection is not available on this workstation. Headless FBX import " +
+                            "cannot reliably enumerate layers, so re-run the conversion without selecting " +
+                            "layers to import the whole model.",
+                    Retryable = false,
+                });
+                return;
+            }
+
+            var readTimeout = TimeSpan.FromSeconds(Math.Clamp(_cfg.RhinoReadTimeoutSeconds, 30, 1800));
+
             // Native .3dm uses the typed RhinoCommon API (full interactive
             // context, RDK, render-mesh cache). Everything else funnels
             // through the shared RhinoFileOpener.ImportIntoFreshDoc so the
             // pollLayers path produces identical [OBJ-IMPORT] diagnostics
-            // and identical error shapes to ConvertJob.
+            // and identical error shapes to ConvertJob. The read watchdog
+            // (readTimeout) bounds the typed File*.Read so a wedged importer
+            // fails this job rather than hanging the agent.
             doc = ext == ".3dm"
                 ? RhinoFileOpener.OpenAsActiveDoc(effectivePath, diag)
-                : RhinoFileOpener.ImportIntoFreshDoc(_host, effectivePath, ext, diag);
+                : RhinoFileOpener.ImportIntoFreshDoc(_host, effectivePath, ext, diag, readTimeout);
 
             await Progress(poll.JobId, "extracting-layers", 70, "walking layer table");
 
@@ -137,13 +172,16 @@ public sealed class PollLayersJob
         }
         catch (Exception err)
         {
+            // A read-watchdog timeout means the importer is wedged on this
+            // file — retrying would just hang again, so mark it non-retryable.
+            var retryable = err is not RhinoReadTimeoutException;
             _log.LogError(err, "pollLayers failed for job {JobId}", poll.JobId);
             await _ws.SendAsync(MessageType.Fail, new FailData
             {
                 JobId = poll.JobId,
                 Error = err.Message,
                 Stack = err.StackTrace,
-                Retryable = true,
+                Retryable = retryable,
             });
         }
         finally
