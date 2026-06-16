@@ -47,6 +47,7 @@ async function buildAccessLoginUrl(redirectUri: string): Promise<string> {
   }
   const url = new URL(authorizeBase);
   url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('prompt', 'select_account');
   return url.toString();
 }
 
