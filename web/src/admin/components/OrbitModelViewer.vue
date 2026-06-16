@@ -25,9 +25,14 @@ const props = withDefaults(defineProps<{
   /** Non-secret admin settings (server URLs). */
   settings?: Record<string, string>;
   fill?: boolean;
+  /** Library card / thumbnail — hide chrome, fill parent, no pointer interaction. */
+  compact?: boolean;
+  interactive?: boolean;
 }>(), {
   settings: () => ({}),
   fill: false,
+  compact: false,
+  interactive: true,
 });
 
 const hostRef = ref<HTMLDivElement | null>(null);
@@ -547,8 +552,8 @@ watch(loading, (isLoading, wasLoading) => {
 </script>
 
 <template>
-  <div class="orbit-model-viewer" :class="{ fill }">
-    <div class="orbit-toolbar">
+  <div class="orbit-model-viewer" :class="{ fill: fill || compact, compact, static: !interactive }">
+    <div v-if="!compact" class="orbit-toolbar">
       <span class="orbit-badge">ORBIT viewer</span>
       <a
         v-if="orbitWebUrl"
@@ -561,11 +566,14 @@ watch(loading, (isLoading, wasLoading) => {
       </a>
     </div>
     <div ref="hostRef" class="orbit-canvas-host" />
-    <div v-if="loading" class="overlay muted">
-      Loading ORBIT geometry…
-      <span v-if="progress > 0" class="progress">{{ progress }}%</span>
+    <div v-if="loading" class="overlay muted" :class="{ compact }">
+      <template v-if="compact">…</template>
+      <template v-else>
+        Loading ORBIT geometry…
+        <span v-if="progress > 0" class="progress">{{ progress }}%</span>
+      </template>
     </div>
-    <div v-else-if="error" class="overlay error-panel">
+    <div v-else-if="error && !compact" class="overlay error-panel">
       <p class="error-box">{{ error }}</p>
       <RouterLink v-if="showSettingsLink" :to="{ name: 'settings' }" class="settings-link">
         Open Settings →
@@ -589,6 +597,15 @@ watch(loading, (isLoading, wasLoading) => {
   min-height: 0;
   height: 100%;
   border-radius: 0;
+}
+.orbit-model-viewer.compact {
+  min-height: 0;
+  height: 100%;
+  border-radius: 0;
+  background: transparent;
+}
+.orbit-model-viewer.static {
+  pointer-events: none;
 }
 .orbit-toolbar {
   display: flex;
@@ -622,7 +639,8 @@ watch(loading, (isLoading, wasLoading) => {
   overflow: hidden;
   background: #0e0e12;
 }
-.orbit-model-viewer.fill .orbit-canvas-host {
+.orbit-model-viewer.fill .orbit-canvas-host,
+.orbit-model-viewer.compact .orbit-canvas-host {
   min-height: 0;
   height: 100%;
 }
@@ -638,6 +656,11 @@ watch(loading, (isLoading, wasLoading) => {
   text-align: center;
   background: rgba(14, 14, 18, 0.82);
   z-index: 1;
+}
+.overlay.compact {
+  inset: 0;
+  background: rgba(14, 14, 18, 0.55);
+  font-size: 18px;
 }
 .error-panel .error-box {
   max-width: 420px;
