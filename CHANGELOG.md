@@ -111,6 +111,11 @@ through unchanged. Lines preceding the first `## v` header (including the
   `PRISM/docs/VISUALISER_CONNECTOR_IMPORT.md`.
 - Agentâ†”server protocol is unchanged (backward-compatible).
 
+## v0.3.43 -- 2026-06-16 -- FBX layer-read watchdog + staged-swap self-updater
+
+- **FBX layer extraction (headless).** Typed Rhino reads during conversion are now wrapped in a read watchdog so the agent no longer hangs indefinitely when extracting layers from FBX files in headless / scheduled-task mode; headless FBX layer extraction is handled explicitly (#153).
+- **Self-update via staged swap.** The in-app updater now stages the new payload and swaps it into place rather than overwriting in-place, dodging the locked-DLL "access denied" failure that could break an in-place update (#155).
+
 ## v0.3.42 -- 2026-06-10 -- Live server URL reconnect
 
 - Live server URL reconnect -- changing PrismServerUrl in settings or tray now reconnects immediately without requiring a reinstall
