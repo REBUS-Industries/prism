@@ -11,8 +11,10 @@ import {
   DefaultViewerParams,
   CameraController,
   LoaderEvent,
+  SpeckleType,
   UpdateFlags,
 } from '@speckle/viewer';
+import type { Vector3 } from 'three';
 import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
 import { readContainerCssSize } from '../utils/threeResize';
@@ -125,6 +127,134 @@ function requestViewerRedraw(v: Viewer, reason: string): void {
   v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
   if (import.meta.env.DEV) {
     console.log(`${ORBIT_VIEWER_LOG} [${ts()}] requestRender (${reason})`);
+  }
+}
+
+/** Speckle types that produce drawable geometry; used to count render views. */
+const RENDERABLE_SPECKLE_TYPES: SpeckleType[] = [
+  SpeckleType.Mesh,
+  SpeckleType.Brep,
+  SpeckleType.Pointcloud,
+  SpeckleType.Point,
+  SpeckleType.Line,
+  SpeckleType.Polyline,
+  SpeckleType.Polycurve,
+  SpeckleType.Curve,
+  SpeckleType.Circle,
+  SpeckleType.Arc,
+  SpeckleType.Ellipse,
+  SpeckleType.Box,
+  SpeckleType.Text,
+];
+
+function vec3(v: Vector3 | null | undefined): Record<string, number> | null {
+  if (!v) return null;
+  return {
+    x: Number(v.x.toFixed(3)),
+    y: Number(v.y.toFixed(3)),
+    z: Number(v.z.toFixed(3)),
+  };
+}
+
+/**
+ * Logs what actually made it into the scene after load so we can tell a
+ * camera-framing problem (geometry exists, bbox finite) from a converter
+ * problem (zero batches / empty bbox => no renderable meshes were produced).
+ */
+function logSceneDiagnostics(v: Viewer, reason: string): { hasGeometry: boolean } {
+  const tree = v.getWorldTree();
+  const renderer = v.getRenderer();
+
+  let nodesWithRenderView = 0;
+  const typeCounts: Record<string, number> = {};
+  try {
+    tree.walk((node) => {
+      const data = (node as { model?: { renderView?: unknown; raw?: Record<string, unknown> } }).model;
+      if (data?.renderView) nodesWithRenderView += 1;
+      const speckleType = data?.raw?.speckle_type;
+      if (typeof speckleType === 'string') {
+        const short = speckleType.split('.').pop() ?? speckleType;
+        typeCounts[short] = (typeCounts[short] ?? 0) + 1;
+      }
+      return true;
+    });
+  } catch (err) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] diag:walk failed`, err);
+  }
+
+  let renderableRenderViews = 0;
+  try {
+    const renderTree = tree.getRenderTree();
+    renderableRenderViews = renderTree
+      ? renderTree.getRenderableRenderViews(...RENDERABLE_SPECKLE_TYPES).length
+      : 0;
+  } catch (err) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] diag:renderViews failed`, err);
+  }
+
+  let batchCount = 0;
+  let meshObjectCount = 0;
+  try {
+    batchCount = renderer.getBatchIds().length;
+    meshObjectCount = renderer.getObjects().length;
+  } catch (err) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] diag:batches failed`, err);
+  }
+
+  const box = renderer.sceneBox;
+  const sphere = renderer.sceneSphere;
+  const boxEmpty = !box || box.isEmpty();
+  const size = boxEmpty
+    ? null
+    : {
+        x: Number((box.max.x - box.min.x).toFixed(3)),
+        y: Number((box.max.y - box.min.y).toFixed(3)),
+        z: Number((box.max.z - box.min.z).toFixed(3)),
+      };
+
+  const hasGeometry = batchCount > 0 && !boxEmpty;
+
+  logStep(`diag:scene (${reason})`, {
+    nodeCount: tree.nodeCount,
+    nodesWithRenderView,
+    renderableRenderViews,
+    batchCount,
+    meshObjectCount,
+    typeCounts,
+    sceneBoxEmpty: boxEmpty,
+    sceneBox: boxEmpty ? null : { min: vec3(box.min), max: vec3(box.max), size },
+    sceneCenter: vec3(renderer.sceneCenter),
+    sphereRadius: sphere ? Number(sphere.radius.toFixed(3)) : null,
+    hasGeometry,
+  });
+
+  if (!hasGeometry) {
+    console.warn(
+      `${ORBIT_VIEWER_LOG} [${ts()}] diag:no-renderable-geometry — ${batchCount} batches, `
+        + `sceneBoxEmpty=${boxEmpty}. The converter produced no drawable meshes for this `
+        + 'ORBIT version (likely Rhino breps/curves without mesh display values).',
+    );
+  }
+
+  return { hasGeometry };
+}
+
+/** Frame the loaded model. setCameraView(undefined, …) zooms to scene extents. */
+function frameLoadedModel(v: Viewer): void {
+  if (!v.hasExtension(CameraController)) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] zoom:skip — no CameraController`);
+    return;
+  }
+  const camera = v.getExtension(CameraController);
+  try {
+    camera.setCameraView(undefined, false);
+    logStep('viewer:zoom-extents', {
+      target: vec3(camera.getTarget()),
+      position: vec3(camera.getPosition()),
+    });
+    requestViewerRedraw(v, 'zoom-extents');
+  } catch (err) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] zoom:setCameraView failed`, err);
   }
 }
 
@@ -347,10 +477,22 @@ async function loadModel(): Promise<void> {
       finished: activeLoader.finished,
       progress: progress.value,
     });
+    const { hasGeometry } = logSceneDiagnostics(viewer, 'post-load');
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     viewerResize('post-load', { force: true });
     scheduleViewerResize('post-load-raf');
+    // Explicit zoom-to-fit after the post-load resize so the camera frames the
+    // model against the final FBO size. loadObject(…, true) already requests a
+    // zoom, but it runs before our forced resize; re-framing here is the fix
+    // for the "geometry loaded but off-screen / black canvas" case.
+    if (hasGeometry) {
+      frameLoadedModel(viewer);
+    } else {
+      console.warn(
+        `${ORBIT_VIEWER_LOG} [${ts()}] viewer:zoom-skip — no renderable geometry to frame`,
+      );
+    }
   } catch (err) {
     if (token !== loadToken) return;
     console.error(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:error`, {

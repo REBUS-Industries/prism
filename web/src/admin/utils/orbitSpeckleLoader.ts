@@ -254,6 +254,9 @@ export class OrbitProxySpeckleLoader extends Loader {
     }
 
     this.isFinished = true;
+    // Emit a final 100% — the per-object progress uses (total + 1) as the
+    // denominator so it tops out at ~98% even after every object is loaded.
+    this.emit(LoaderEvent.LoadProgress, { progress: 1, id: this.resource });
     this.emit(LoaderEvent.Converted, { count: loaded });
     console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:load complete`, {
       resource: this.resource,
