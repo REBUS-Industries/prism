@@ -21,6 +21,7 @@ import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitView
 import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
 import { applyOrbitViewerTheme } from '../utils/orbitViewerTheme';
+import Icon from '../../shared/Icon.vue';
 
 const props = withDefaults(defineProps<{
   orbitRef: ModelOrbitRef;
@@ -50,6 +51,7 @@ let lastResizeW = 0;
 let lastResizeH = 0;
 let loadToken = 0;
 let loadStep = 0;
+let modelHasGeometry = false;
 let systemThemeMq: MediaQueryList | null = null;
 let onSystemThemeChange: ((e: MediaQueryListEvent) => void) | null = null;
 
@@ -123,10 +125,56 @@ function syncHostLayoutFromContainer(host: HTMLElement): { width: number; height
 
 function styleViewerCanvas(v: Viewer): void {
   const canvas = v.getCanvas();
+  const container = v.getContainer();
   canvas.style.display = 'block';
   canvas.style.width = '100%';
   canvas.style.height = '100%';
   canvas.style.touchAction = 'none';
+  canvas.style.pointerEvents = props.interactive ? 'auto' : 'none';
+  container.style.touchAction = 'none';
+  container.style.cursor = props.interactive ? 'grab' : 'default';
+}
+
+/** Wire Speckle CameraController (orbit / pan / zoom) to the interactive prop. */
+function syncCameraInteractivity(v: Viewer, reason: string): void {
+  if (!v.hasExtension(CameraController)) return;
+  const camera = v.getExtension(CameraController);
+  camera.enabled = props.interactive;
+  if (props.interactive) {
+    camera.enableRotations();
+    camera.options = {
+      ...camera.options,
+      enableOrbit: true,
+      enableZoom: true,
+      enablePan: true,
+      touchAction: 'none',
+    };
+  }
+  styleViewerCanvas(v);
+  if (import.meta.env.DEV) {
+    logStep(`camera:interactive=${props.interactive} (${reason})`);
+  }
+}
+
+function zoomToExtents(): void {
+  if (!viewer) return;
+  frameLoadedModel(viewer);
+}
+
+function resetCameraView(): void {
+  if (!viewer?.hasExtension(CameraController)) return;
+  const camera = viewer.getExtension(CameraController);
+  try {
+    camera.default();
+    if (modelHasGeometry) {
+      frameLoadedModel(viewer);
+    } else {
+      requestViewerRedraw(viewer, 'reset-view');
+    }
+    logStep('viewer:reset-view');
+  } catch (err) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] reset-view failed`, err);
+  }
 }
 
 function logWebGlDimensions(v: Viewer, host: HTMLElement, reason: string): void {
@@ -416,6 +464,7 @@ async function loadModel(): Promise<void> {
   loading.value = true;
   progress.value = 0;
   error.value = null;
+  modelHasGeometry = false;
   await disposeViewer('reload');
   host.replaceChildren();
   host.style.width = '';
@@ -472,6 +521,7 @@ async function loadModel(): Promise<void> {
     await viewer.init();
     logStep('viewer:init complete');
     viewer.createExtension(CameraController);
+    syncCameraInteractivity(viewer, 'post-create');
     logStep('viewer:CameraController attached');
     // Disable the Speckle shadowcatcher BEFORE loading geometry. Its render
     // target is sized from the model's bounding box (textureSize / aspect); a
@@ -506,6 +556,7 @@ async function loadModel(): Promise<void> {
       progress: progress.value,
     });
     const { hasGeometry } = logSceneDiagnostics(viewer, 'post-load');
+    modelHasGeometry = hasGeometry;
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     viewerResize('post-load', { force: true });
@@ -521,6 +572,7 @@ async function loadModel(): Promise<void> {
         `${ORBIT_VIEWER_LOG} [${ts()}] viewer:zoom-skip — no renderable geometry to frame`,
       );
     }
+    syncCameraInteractivity(viewer, 'post-load');
   } catch (err) {
     if (token !== loadToken) return;
     console.error(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:error`, {
@@ -596,23 +648,58 @@ watch(loading, (isLoading, wasLoading) => {
 watch(resolvedTheme, () => {
   syncViewerTheme('theme-toggle');
 });
+
+watch(() => props.interactive, () => {
+  if (viewer) syncCameraInteractivity(viewer, 'interactive-prop');
+});
 </script>
 
 <template>
   <div class="orbit-model-viewer" :class="{ fill: fill || compact, compact, static: !interactive }">
     <div v-if="!compact" class="orbit-toolbar">
-      <span class="orbit-badge">ORBIT viewer</span>
-      <a
-        v-if="orbitWebUrl"
-        :href="orbitWebUrl"
-        class="orbit-open"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Open in Orbit ↗
-      </a>
+      <div class="orbit-toolbar-start">
+        <span class="orbit-badge">ORBIT viewer</span>
+        <span v-if="interactive" class="orbit-controls-hint muted small">
+          Drag to orbit · Shift+drag to pan · Scroll to zoom
+        </span>
+      </div>
+      <div class="orbit-toolbar-actions">
+        <button
+          v-if="interactive"
+          type="button"
+          class="orbit-nav-btn"
+          title="Zoom to fit"
+          :disabled="loading || !!error"
+          @click="zoomToExtents"
+        >
+          <Icon name="fit_screen" :size="16" />
+        </button>
+        <button
+          v-if="interactive"
+          type="button"
+          class="orbit-nav-btn"
+          title="Reset view"
+          :disabled="loading || !!error"
+          @click="resetCameraView"
+        >
+          <Icon name="restart_alt" :size="16" />
+        </button>
+        <a
+          v-if="orbitWebUrl"
+          :href="orbitWebUrl"
+          class="orbit-open"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open in Orbit ↗
+        </a>
+      </div>
     </div>
-    <div ref="hostRef" class="orbit-canvas-host" />
+    <div
+      ref="hostRef"
+      class="orbit-canvas-host"
+      :class="{ interactive }"
+    />
     <div v-if="loading" class="overlay muted" :class="{ compact }">
       <template v-if="compact">…</template>
       <template v-else>
@@ -665,6 +752,43 @@ watch(resolvedTheme, () => {
   flex-shrink: 0;
   z-index: 2;
 }
+.orbit-toolbar-start {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.orbit-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.orbit-controls-hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.orbit-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted, #9aa0a6);
+  cursor: pointer;
+}
+.orbit-nav-btn:hover:not(:disabled) {
+  background: var(--color-bg-hover, #2a2a32);
+  color: inherit;
+}
+.orbit-nav-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .orbit-badge {
   font-size: 11px;
   font-weight: 600;
@@ -685,6 +809,10 @@ watch(resolvedTheme, () => {
   position: relative;
   overflow: hidden;
   background: var(--orbit-viewer-canvas-bg, #e8eaed);
+  touch-action: none;
+}
+.orbit-canvas-host.interactive:active {
+  cursor: grabbing;
 }
 [data-theme="dark"] .orbit-canvas-host {
   --orbit-viewer-canvas-bg: #1a1a1f;

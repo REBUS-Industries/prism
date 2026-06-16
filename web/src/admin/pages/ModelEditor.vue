@@ -332,7 +332,8 @@ onMounted(() => {
           <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
         </div>
         <p v-if="useOrbitViewer" class="muted small gizmo-hint">
-          Canonical geometry is loaded from ORBIT via the embedded Speckle viewer. Configure ORBIT URL + token in Settings if loading fails.
+          Drag to orbit · Shift+drag to pan · Scroll to zoom. Use the viewer toolbar for zoom extents and reset.
+          Configure ORBIT URL + token in Settings if loading fails.
         </p>
         <p v-else-if="showLocalPreview" class="muted small gizmo-hint">Drag the gizmo to move / rotate / scale · numeric edits in the panel · persist with <strong>Save</strong>.</p>
       </div>
