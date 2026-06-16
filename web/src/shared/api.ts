@@ -891,6 +891,27 @@ export const orbitApi = {
       `/api/orbit/projects/${encodeURIComponent(projectId)}/models`,
       { target, name },
     ),
+  /** Resolve ORBIT version → root object hash for embedded viewers. */
+  resolveViewerVersion: (
+    target: 'prod' | 'dev',
+    projectId: string,
+    modelId: string,
+    versionId?: string,
+  ) => {
+    const qs = new URLSearchParams({
+      target,
+      projectId,
+      modelId,
+      ...(versionId ? { versionId } : {}),
+    });
+    return api.get<{
+      target: string;
+      projectId: string;
+      modelId: string;
+      versionId: string;
+      rootObjectId: string;
+    }>(`/api/orbit/viewer/resolve?${qs.toString()}`);
+  },
 };
 
 // ---------------------------------------------------------------- Project attachments
