@@ -31,10 +31,13 @@ const staticUrl = computed(() =>
   props.hasPreview ? modelsApi.previewUrl(props.modelId) : null,
 );
 
-const showStaticImage = computed(() => Boolean(staticUrl.value && !imgFailed.value));
+const showStaticImage = computed(() =>
+  shouldRender.value
+  && Boolean(staticUrl.value && !imgFailed.value && !orbitRef.value && detailChecked.value),
+);
 
 const showOrbit = computed(() =>
-  shouldRender.value && Boolean(orbitRef.value) && (!showStaticImage.value || imgFailed.value),
+  shouldRender.value && Boolean(orbitRef.value),
 );
 
 const showGlbViewer = computed(() =>
@@ -56,7 +59,6 @@ let observer: IntersectionObserver | null = null;
 
 async function loadPreviewSource(): Promise<void> {
   if (detailChecked.value || loading.value) return;
-  if (showStaticImage.value) return;
   loading.value = true;
   try {
     const res = await modelsApi.get(props.modelId);
@@ -77,11 +79,10 @@ function onImgError(): void {
 function beginLazyLoad(): void {
   if (shouldRender.value) return;
   shouldRender.value = true;
-  if (!showStaticImage.value) void loadPreviewSource();
+  void loadPreviewSource();
 }
 
 onMounted(() => {
-  if (showStaticImage.value) return;
   const el = rootRef.value;
   if (!el || typeof IntersectionObserver === 'undefined') {
     beginLazyLoad();
@@ -126,6 +127,7 @@ onBeforeUnmount(() => {
       :url="modelsApi.previewUrl(modelId)"
       view-preset="iso"
       :interactive="false"
+      light-background
       fill
     />
     <Icon v-else-if="showPlaceholder" name="deployed_code" :size="40" class="thumb-fallback" />

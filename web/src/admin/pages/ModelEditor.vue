@@ -32,6 +32,7 @@ import {
   orbitServerBaseUrl,
   readModelOrbitRef,
 } from '../utils/orbitViewerUrl';
+import { fetchOrbitMaterialSlots, mergeMaterialSlots } from '../utils/orbitModelMeshSlots';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -51,6 +52,8 @@ const status = ref<'draft' | 'published'>('draft');
 /** Editable copy of the model's material slots (drives the preview + Save). */
 const materialSlots = ref<ModelMaterialSlot[]>([]);
 const materials = ref<MaterialListItem[]>([]);
+const slotsLoading = ref(false);
+const slotsOrbitHydrated = ref(false);
 /** Root transform for preview + persistence on Save. */
 const modelTransform = ref<ModelTransform>(ensureModelTransform(null));
 /** Mesh vertex units (GLB coordinate space); preview scales to metres. */
@@ -85,12 +88,37 @@ function logViewerMode(reason: string): void {
 
 watch([modelOrbitRef, useOrbitViewer, showLocalPreview], () => logViewerMode('watch'));
 
+watch(activeTab, (tab) => {
+  if (tab === 'materials') void hydrateMaterialSlotsFromOrbit();
+});
+
 async function loadMaterials(): Promise<void> {
   try {
     const res = await materialsApi.list({ limit: 500 });
     materials.value = res.materials;
   } catch {
     // Non-fatal: the picker just shows no options.
+  }
+}
+
+async function hydrateMaterialSlotsFromOrbit(): Promise<void> {
+  const ref = modelOrbitRef.value;
+  if (!ref || slotsLoading.value || slotsOrbitHydrated.value) return;
+  if (materialSlots.value.length > 0) {
+    slotsOrbitHydrated.value = true;
+    return;
+  }
+
+  slotsLoading.value = true;
+  try {
+    const discovered = await fetchOrbitMaterialSlots(ref);
+    if (!discovered.length || materialSlots.value.length > 0) return;
+    materialSlots.value = mergeMaterialSlots(materialSlots.value, discovered);
+  } catch {
+    // Non-fatal — Materials tab keeps the empty-state message.
+  } finally {
+    slotsLoading.value = false;
+    slotsOrbitHydrated.value = true;
   }
 }
 
@@ -109,9 +137,13 @@ async function reload(): Promise<void> {
       name: s.name,
       materialId: s.materialId ?? null,
     }));
+    slotsOrbitHydrated.value = materialSlots.value.length > 0;
     modelTransform.value = ensureModelTransform(res.model.definition.transform);
     sourceUnits.value = ensureModelSourceUnits(res.model.definition.sourceUnits);
     logViewerMode('reload');
+    if (materialSlots.value.length === 0 && modelOrbitRef.value) {
+      void hydrateMaterialSlotsFromOrbit();
+    }
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load model';
   } finally {
@@ -325,6 +357,10 @@ onMounted(() => {
           </select>
         </div>
       </div>
+      <p v-else-if="slotsLoading" class="muted small">Loading mesh parts from ORBIT…</p>
+      <p v-else-if="useOrbitViewer" class="muted small">
+        No assignable mesh parts found in this ORBIT model.
+      </p>
       <p v-else class="muted small">
         No material slots — re-import this model to detect slots from the mesh.
       </p>

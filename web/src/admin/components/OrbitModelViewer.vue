@@ -709,8 +709,11 @@ watch(resolvedTheme, () => {
 }
 .overlay.compact {
   inset: 0;
-  background: rgba(14, 14, 18, 0.55);
+  background: color-mix(in srgb, var(--color-bg-elevated) 72%, transparent);
   font-size: 18px;
+}
+[data-theme="dark"] .overlay.compact {
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
 }
 .error-panel .error-box {
   max-width: 420px;

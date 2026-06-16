@@ -144,7 +144,10 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-3, #14141a);
+  background: var(--orbit-viewer-canvas-bg, #e8eaed);
+}
+[data-theme="dark"] .thumb {
+  --orbit-viewer-canvas-bg: #1a1a1f;
 }
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
 .meta { padding: 8px 10px; }
