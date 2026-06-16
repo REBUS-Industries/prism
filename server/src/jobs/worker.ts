@@ -36,11 +36,19 @@ export function startConvertWorker(log: FastifyBaseLogger): Worker<ConvertJobPay
       if (noAgentAttempts >= MAX_NO_AGENT_RETRIES) {
         // Give up — mark job failed (the agent protocol handler updates jobs.status
         // when an agent reports complete/fail; here we own the "never picked up" path).
+        //
+        // Guard the UPDATE with a non-terminal status filter. A stale BullMQ
+        // retry chain can keep re-firing tryDispatch for a job that has ALREADY
+        // reached a terminal state via the agent (observed: a `complete` job
+        // whose `:retry:N` delayed entry kept looping for hours). Without this
+        // WHERE guard the give-up branch would eventually clobber that finished
+        // job back to `failed`, wiping result_url / outputs / completed_at.
+        // Only fail jobs that are genuinely still waiting for an agent.
         const { db } = await import('../db/client.js');
         const { jobs } = await import('../db/schema.js');
-        const { eq } = await import('drizzle-orm');
+        const { and, eq, inArray } = await import('drizzle-orm');
         const { broadcastJobUpdate } = await import('../ws/adminProtocol.js');
-        await db
+        const gaveUp = await db
           .update(jobs)
           .set({
             status: 'failed',
@@ -48,9 +56,15 @@ export function startConvertWorker(log: FastifyBaseLogger): Worker<ConvertJobPay
             completedAt: new Date(),
             updatedAt: new Date(),
           })
-          .where(eq(jobs.id, job.data.jobId));
-        broadcastJobUpdate(job.data.jobId, { status: 'failed', error: `no eligible agent` });
-        return { dispatched: false, gaveUp: true };
+          .where(and(
+            eq(jobs.id, job.data.jobId),
+            inArray(jobs.status, ['queued', 'dispatched']),
+          ))
+          .returning({ id: jobs.id });
+        if (gaveUp.length > 0) {
+          broadcastJobUpdate(job.data.jobId, { status: 'failed', error: `no eligible agent` });
+        }
+        return { dispatched: false, gaveUp: gaveUp.length > 0 };
       }
 
       // Re-enqueue with backoff and a bumped attempt counter.

@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { FastifyBaseLogger } from 'fastify';
-import { and, eq, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { agentSessions, jobLogs, jobs, visualiserRuns, workstations } from '../db/schema.js';
 import { sessionRegistry, type AgentConn } from './sessionRegistry.js';
@@ -24,6 +24,7 @@ import {
 import { broadcastJobUpdate, broadcastWorkstationUpdate } from './adminProtocol.js';
 import { dispatchJobEvent } from '../webhooks/dispatcher.js';
 import { releaseVisualiserSlot, tryDispatch } from '../jobs/dispatcher.js';
+import { convertQueue, enqueueConvert } from '../jobs/queue.js';
 import { visualiserRunRegistry } from '../visualiser/runRegistry.js';
 import { appendVisualiserRunLog } from '../visualiser/runLog.js';
 import { signallingProxyRegistry } from './signallingProxyRegistry.js';
@@ -110,14 +111,27 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
   socket.on('close', async (code, reason) => {
     clearInterval(pingInterval);
     if (conn) {
-      childLog.info({ sessionId: conn.sessionId, nodeName: conn.nodeName, code, reason: reason.toString() }, 'agent ws closed');
-      await sessionRegistry.removeAgent(conn.sessionId);
-      await redisRegistry.unsubscribeFromDispatch(conn.workstationId);
+      const deadConn = conn;
+      childLog.info({ sessionId: deadConn.sessionId, nodeName: deadConn.nodeName, code, reason: reason.toString() }, 'agent ws closed');
+      // Remove the dead agent from the registry FIRST so the re-dispatch
+      // sweep below can never hand a requeued job back to the socket that
+      // just dropped.
+      await sessionRegistry.removeAgent(deadConn.sessionId);
+      await redisRegistry.unsubscribeFromDispatch(deadConn.workstationId);
       try {
-        await db.delete(agentSessions).where(eq(agentSessions.id, conn.sessionId));
-        broadcastWorkstationUpdate({ id: conn.workstationId, online: false });
+        await db.delete(agentSessions).where(eq(agentSessions.id, deadConn.sessionId));
+        broadcastWorkstationUpdate({ id: deadConn.workstationId, online: false });
       } catch (err) {
         childLog.warn({ err }, 'failed to delete agent_sessions row on close');
+      }
+      // Rescue any jobs still attributed to this now-dead session. Previously
+      // the server did nothing here, so a job that was mid-conversion when the
+      // agent crashed (e.g. headless Rhino's FileFbx.Read hanging during layer
+      // extraction, WS close 1006) stayed orphaned in `processing` forever.
+      try {
+        await reconcileJobsForDeadSession(deadConn.sessionId, childLog);
+      } catch (err) {
+        childLog.error({ err, sessionId: deadConn.sessionId }, 'failed to reconcile jobs after agent disconnect');
       }
     }
   });
@@ -211,6 +225,11 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
             updatedAt: new Date(),
           })
           .where(eq(jobs.id, msg.data.jobId));
+        // Free the agent's conversion slot now rather than waiting for the
+        // next heartbeat to reconcile slotsBusy. On single-slot agents that
+        // lag delays the next dispatch by up to a full heartbeat interval;
+        // heartbeat reconciliation still corrects any drift either way.
+        await sessionRegistry.releaseConversionSlot(conn.workstationId);
         broadcastJobUpdate(msg.data.jobId, { status: 'complete', resultUrl: msg.data.versionUrl, outputs: msg.data.outputs });
         void dispatchJobEvent('job.complete', msg.data.jobId).catch((err) => childLog.warn({ err }, 'webhook dispatch failed'));
         return;
@@ -226,6 +245,9 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
             completedAt: new Date(),
           })
           .where(eq(jobs.id, msg.data.jobId));
+        // Free the agent's conversion slot now (see `complete` above) so the
+        // next queued job can dispatch without waiting for a heartbeat.
+        await sessionRegistry.releaseConversionSlot(conn.workstationId);
         broadcastJobUpdate(msg.data.jobId, { status: 'failed', error: msg.data.error });
         void dispatchJobEvent('job.failed', msg.data.jobId).catch((err) => childLog.warn({ err }, 'webhook dispatch failed'));
         return;
@@ -436,6 +458,99 @@ export async function handleAgentSocket(socket: WebSocket, remoteAddrRaw: string
     } catch (err) {
       childLog.warn({ err }, 'post-hello dispatch sweep failed');
     }
+  }
+}
+
+/**
+ * Reconcile jobs that were still attributed to an agent session when its
+ * socket dropped. Called from the WS `close` handler after the dead agent has
+ * been removed from the registry.
+ *
+ * Attribution key is `jobs.agent_session_id` (stamped at dispatch time), NOT
+ * the workstation/node, so a reconnect that races the old socket's close event
+ * only ever touches the OLD session's jobs — the freshly connected session
+ * keeps its own in-flight work.
+ *
+ * Two buckets, distinguished by `status`:
+ *
+ *   - `processing` / `uploading` (the agent had already started work)
+ *       -> FAIL. Re-dispatching a job that was mid-conversion is unsafe: the
+ *          input may be a "poison" file that hangs or crashes the headless
+ *          converter (exactly the FBX `FileFbx.Read` hang that orphaned job
+ *          6883f884 and crashed RB-DA2-PC02). Requeuing it would just take
+ *          down the next agent too, so a running job that loses its agent is
+ *          treated as terminal.
+ *
+ *   - `dispatched` (sent to the agent but no progress reported yet)
+ *       -> REQUEUE. The agent never began work, so the job is safe to hand to
+ *          another eligible agent. We clear its dead-session attribution, set
+ *          it back to `queued`, then try an immediate re-dispatch (falling
+ *          back to the BullMQ queue if no agent is free right now).
+ *
+ * `awaiting_selection`, `queued`, and terminal states are intentionally left
+ * untouched — they hold no agent slot or are already final.
+ *
+ * There is deliberately no auto-requeue of `processing` jobs even with a retry
+ * counter: the poison-input failure mode makes "fail fast, surface to the
+ * operator" the safe default. A bounded per-job dispatch-attempt counter could
+ * later allow limited requeues, but that needs a schema column and is out of
+ * scope for this fix.
+ */
+async function reconcileJobsForDeadSession(sessionId: string, log: FastifyBaseLogger): Promise<void> {
+  // 1. Fail jobs that were already running on the dead agent.
+  const failed = await db
+    .update(jobs)
+    .set({
+      status: 'failed',
+      error: 'agent disconnected during processing',
+      currentStage: 'failed',
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(jobs.agentSessionId, sessionId),
+      inArray(jobs.status, ['processing', 'uploading']),
+    ))
+    .returning({ id: jobs.id });
+
+  for (const { id } of failed) {
+    broadcastJobUpdate(id, { status: 'failed', error: 'agent disconnected during processing' });
+    void dispatchJobEvent('job.failed', id).catch((err) => log.warn({ err }, 'webhook dispatch failed'));
+  }
+  if (failed.length > 0) {
+    log.warn({ sessionId, count: failed.length, jobIds: failed.map((j) => j.id) }, 'failed in-flight jobs after agent disconnect');
+  }
+
+  // 2. Requeue jobs that were dispatched but never started.
+  const requeued = await db
+    .update(jobs)
+    .set({
+      status: 'queued',
+      nodeName: null,
+      agentSessionId: null,
+      currentStage: 'queued',
+      lastMessage: 'requeued after agent disconnect',
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(jobs.agentSessionId, sessionId),
+      eq(jobs.status, 'dispatched'),
+    ))
+    .returning({ id: jobs.id });
+
+  for (const { id } of requeued) {
+    broadcastJobUpdate(id, { status: 'queued', currentStage: 'queued', lastMessage: 'requeued after agent disconnect' });
+    // Drop any stale BullMQ entry for this id, then try an immediate dispatch
+    // to another online agent; fall back to the queue (worker retries with
+    // backoff) when none is free.
+    try { await convertQueue.remove(id); } catch { /* not present */ }
+    const outcome = await tryDispatch(id, log);
+    if (!outcome.dispatched) {
+      await enqueueConvert({ jobId: id });
+    }
+  }
+  if (requeued.length > 0) {
+    log.info({ sessionId, count: requeued.length, jobIds: requeued.map((j) => j.id) }, 'requeued not-yet-started jobs after agent disconnect');
   }
 }
 
