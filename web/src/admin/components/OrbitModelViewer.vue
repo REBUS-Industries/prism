@@ -5,6 +5,7 @@
  * See https://orbit.rebus.industries/docs/building-a-3rd-party-viewer
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { resolveTheme, themePref, type ResolvedTheme } from '../../shared/theme';
 import { RouterLink } from 'vue-router';
 import {
   Viewer,
@@ -19,6 +20,7 @@ import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
 import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
+import { applyOrbitViewerTheme } from '../utils/orbitViewerTheme';
 
 const props = withDefaults(defineProps<{
   orbitRef: ModelOrbitRef;
@@ -43,6 +45,8 @@ let lastResizeW = 0;
 let lastResizeH = 0;
 let loadToken = 0;
 let loadStep = 0;
+let systemThemeMq: MediaQueryList | null = null;
+let onSystemThemeChange: ((e: MediaQueryListEvent) => void) | null = null;
 
 const HOST_LAYOUT_MAX_FRAMES = 90;
 
@@ -78,6 +82,25 @@ const orbitWebUrl = buildOrbitModelViewerUrl(
 const showSettingsLink = computed(() => Boolean(
   error.value && /settings|token|configured|access denied/i.test(error.value),
 ));
+
+const systemPrefersDark = ref(
+  typeof window !== 'undefined'
+    && !!window.matchMedia
+    && window.matchMedia('(prefers-color-scheme: dark)').matches,
+);
+
+const resolvedTheme = computed<ResolvedTheme>(() => {
+  if (themePref.value !== 'system') return resolveTheme(themePref.value);
+  return systemPrefersDark.value ? 'dark' : 'light';
+});
+
+function syncViewerTheme(reason: string): void {
+  if (!viewer) return;
+  applyOrbitViewerTheme(viewer, resolvedTheme.value);
+  if (import.meta.env.DEV) {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] theme:${resolvedTheme.value} (${reason})`);
+  }
+}
 
 /** Speckle Viewer.resize() reads container.offsetWidth/offsetHeight — sync those from layout. */
 function syncHostLayoutSize(host: HTMLElement, size: { width: number; height: number }): void {
@@ -451,8 +474,8 @@ async function loadModel(): Promise<void> {
     // bakes a 0-size FBO and floods the context with "Framebuffer is
     // incomplete: Attachment has zero size" every frame. It renders outside
     // SpeckleRenderer.resize(), which is why prior resize fixes had no effect.
-    viewer.setLightConfiguration({ shadowcatcher: false });
-    logStep('viewer:shadowcatcher disabled');
+    syncViewerTheme('post-init');
+    logStep('viewer:theme applied', { theme: resolvedTheme.value });
     viewerResize('post-init', { force: true });
     scheduleViewerResize('post-init-raf');
 
@@ -513,11 +536,31 @@ async function loadModel(): Promise<void> {
 
 onMounted(() => {
   logStep('mounted', { hostDims: hostDims(hostRef.value), orbitRef: props.orbitRef });
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    systemThemeMq = window.matchMedia('(prefers-color-scheme: dark)');
+    onSystemThemeChange = (e: MediaQueryListEvent): void => {
+      systemPrefersDark.value = e.matches;
+    };
+    if (typeof systemThemeMq.addEventListener === 'function') {
+      systemThemeMq.addEventListener('change', onSystemThemeChange);
+    } else if (typeof systemThemeMq.addListener === 'function') {
+      systemThemeMq.addListener(onSystemThemeChange);
+    }
+  }
   void loadModel();
 });
 
 onBeforeUnmount(() => {
   logStep('unmount');
+  if (systemThemeMq && onSystemThemeChange) {
+    if (typeof systemThemeMq.removeEventListener === 'function') {
+      systemThemeMq.removeEventListener('change', onSystemThemeChange);
+    } else if (typeof systemThemeMq.removeListener === 'function') {
+      systemThemeMq.removeListener(onSystemThemeChange);
+    }
+  }
+  systemThemeMq = null;
+  onSystemThemeChange = null;
   loadToken += 1;
   if (resizeRaf) cancelAnimationFrame(resizeRaf);
   resizeRaf = 0;
@@ -543,6 +586,10 @@ watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && viewer) {
     scheduleViewerResize('loading-overlay-removed');
   }
+});
+
+watch(resolvedTheme, () => {
+  syncViewerTheme('theme-toggle');
 });
 </script>
 
@@ -583,7 +630,7 @@ watch(loading, (isLoading, wasLoading) => {
   min-height: 320px;
   border-radius: 8px;
   overflow: hidden;
-  background: var(--surface-2, #1a1a1f);
+  background: var(--color-bg-elevated);
 }
 .orbit-model-viewer.fill {
   min-height: 0;
@@ -596,8 +643,8 @@ watch(loading, (isLoading, wasLoading) => {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--color-border, #2a2a32);
-  background: var(--surface-1, #121216);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
   flex-shrink: 0;
   z-index: 2;
 }
@@ -620,7 +667,10 @@ watch(loading, (isLoading, wasLoading) => {
   width: 100%;
   position: relative;
   overflow: hidden;
-  background: #0e0e12;
+  background: var(--orbit-viewer-canvas-bg, #e8eaed);
+}
+[data-theme="dark"] .orbit-canvas-host {
+  --orbit-viewer-canvas-bg: #1a1a1f;
 }
 .orbit-model-viewer.fill .orbit-canvas-host {
   min-height: 0;
@@ -636,7 +686,7 @@ watch(loading, (isLoading, wasLoading) => {
   gap: 10px;
   padding: 16px;
   text-align: center;
-  background: rgba(14, 14, 18, 0.82);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
   z-index: 1;
 }
 .error-panel .error-box {
