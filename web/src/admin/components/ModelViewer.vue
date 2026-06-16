@@ -197,12 +197,12 @@ async function applyModelSlotMaterials(): Promise<void> {
   if (!slots?.length || !loadedRoot) return;
 
   const maxAniso = renderer?.capabilities.getMaxAnisotropy() ?? 1;
-  const { bySlotName, built } = await fetchSlotMaterials(slots, texLoader, maxAniso);
+  const { built, ...maps } = await fetchSlotMaterials(slots, texLoader, maxAniso);
   if (!loadedRoot) {
     for (const bm of built) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
     return;
   }
-  paintModelMaterialSlots(loadedRoot, slots, bySlotName);
+  paintModelMaterialSlots(loadedRoot, slots, { ...maps, built });
   builtMaterials = builtMaterials.concat(built);
 }
 

@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FixturePart, FixtureModel, ModelMaterialSlot, ModelTransform } from '../../shared/api';
-import { paintModelMaterialSlots } from './modelMaterialSlots';
+import { paintModelMaterialSlots, type SlotMaterialMaps } from './modelMaterialSlots';
 import { applyModelTransform, ensureModelTransform } from './modelTransform';
 import { isModelLengthUnit, unitScaleToMetres } from './modelUnits';
 import {
@@ -73,8 +73,8 @@ export interface FixtureAssemblyInput {
    * the fixture part's `materialId`.
    */
   clampMaterialSlots?: ModelMaterialSlot[];
-  /** Built slot materials keyed by slot name (from fetchSlotMaterials). */
-  clampSlotMaterialsByName?: Map<string, THREE.Material>;
+  /** Built slot material maps (from fetchSlotMaterials). */
+  clampSlotMaterialMaps?: SlotMaterialMaps;
   /**
    * Model Library root transform for the linked clamp GLB (metres, degrees).
    * Applied before fixture clamp placement (mirror Z, rotate Z on ClampRig).
@@ -505,9 +505,14 @@ export async function buildFixtureAssembly(
         if (
           isRebusClampPart(part) && clampUrl
           && input.clampMaterialSlots?.length
-          && input.clampSlotMaterialsByName?.size
+          && input.clampSlotMaterialMaps
+          && (
+            input.clampSlotMaterialMaps.byMeshName.size
+            || input.clampSlotMaterialMaps.bySourceMaterialName.size
+            || input.clampSlotMaterialMaps.byLegacyName.size
+          )
         ) {
-          paintModelMaterialSlots(wrapped, input.clampMaterialSlots, input.clampSlotMaterialsByName);
+          paintModelMaterialSlots(wrapped, input.clampMaterialSlots, input.clampSlotMaterialMaps);
         } else {
           paintMaterial(wrapped, part);
         }
