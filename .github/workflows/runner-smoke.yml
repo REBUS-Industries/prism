@@ -1,9 +1,0 @@
-name: runner-smoke
-on:
-  workflow_dispatch:
-jobs:
-  smoke:
-    runs-on: [self-hosted, prism-deploy]
-    timeout-minutes: 5
-    steps:
-      - run: echo "runner-smoke OK on $(hostname) at $(date -u)"
