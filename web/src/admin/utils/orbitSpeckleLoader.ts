@@ -17,6 +17,19 @@ export function orbitViewerFetch(input: RequestInfo | URL, init?: RequestInit): 
   return fetch(input, { ...init, credentials: 'same-origin' });
 }
 
+function mapOrbitLoaderError(err: unknown): Error {
+  const message = (err as Error)?.message ?? String(err);
+  if (/do not have access|401|403|unauthor/i.test(message)) {
+    return new Error(
+      'ORBIT access denied — add a valid API token (PAT) in Settings for this environment.',
+    );
+  }
+  if (/credentials not configured|412/i.test(message)) {
+    return new Error('ORBIT URL + token not configured — set them in Settings.');
+  }
+  return err instanceof Error ? err : new Error(message);
+}
+
 /**
  * Loads an ORBIT version root object into a Speckle WorldTree via the PRISM
  * object proxy. Mirrors SpeckleLoader but uses ObjectLoader2Factory directly
@@ -70,28 +83,34 @@ export class OrbitProxySpeckleLoader extends Loader {
     let finalize: Promise<void> | null = null;
     let loaded = 0;
 
-    const total = await this.loader.getTotalObjectCount();
-    for await (const obj of this.loader.getObjectIterator()) {
-      if (this.isCancelled) {
-        this.emit(LoaderEvent.LoadCancelled, this.resource);
-        return false;
-      }
-      if (first) {
-        finalize = this.converter.traverse(this.resource, obj as SpeckleObject, (count) => {
-          this.emit(LoaderEvent.Traversed, { count });
+    try {
+      const total = await this.loader.getTotalObjectCount();
+      for await (const obj of this.loader.getObjectIterator()) {
+        if (this.isCancelled) {
+          this.emit(LoaderEvent.LoadCancelled, this.resource);
+          return false;
+        }
+        if (first) {
+          finalize = this.converter.traverse(this.resource, obj as SpeckleObject, (count) => {
+            this.emit(LoaderEvent.Traversed, { count });
+          });
+          first = false;
+        }
+        loaded += 1;
+        this.emit(LoaderEvent.LoadProgress, {
+          progress: loaded / (total + 1),
+          id: this.resource,
         });
-        first = false;
       }
-      loaded += 1;
-      this.emit(LoaderEvent.LoadProgress, {
-        progress: loaded / (total + 1),
-        id: this.resource,
-      });
+    } catch (err) {
+      throw mapOrbitLoaderError(err);
     }
 
     if (finalize) await finalize;
     if (loaded === 0) {
-      this.emit(LoaderEvent.LoadWarning, { message: 'No renderable geometry in ORBIT version.' });
+      throw new Error(
+        'No renderable geometry in this ORBIT version. Confirm the model has a published version and your Settings token can read it.',
+      );
     }
     this.isFinished = true;
     this.emit(LoaderEvent.Converted, { count: loaded });

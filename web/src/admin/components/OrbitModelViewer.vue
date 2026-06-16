@@ -4,7 +4,8 @@
  * ORBIT via the PRISM server proxy (GraphQL version resolve + REST objects).
  * See https://orbit.rebus.industries/docs/building-a-3rd-party-viewer
  */
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { RouterLink } from 'vue-router';
 import {
   Viewer,
   DefaultViewerParams,
@@ -32,12 +33,30 @@ const error = ref<string | null>(null);
 
 let viewer: Viewer | null = null;
 let activeLoader: OrbitProxySpeckleLoader | null = null;
+let resizeObs: ResizeObserver | null = null;
 let loadToken = 0;
 
 const orbitWebUrl = buildOrbitModelViewerUrl(
   orbitServerBaseUrl(props.settings, props.orbitRef.target),
   props.orbitRef,
 );
+
+const showSettingsLink = computed(() => Boolean(
+  error.value && /settings|token|configured|access denied/i.test(error.value),
+));
+
+function viewerResize(): void {
+  if (viewer && hostRef.value) viewer.resize();
+}
+
+function setupResizeObserver(): void {
+  resizeObs?.disconnect();
+  const el = hostRef.value;
+  if (!el) return;
+  resizeObs = new ResizeObserver(() => viewerResize());
+  resizeObs.observe(el);
+  requestAnimationFrame(() => viewerResize());
+}
 
 async function disposeViewer(): Promise<void> {
   activeLoader?.cancel();
@@ -49,8 +68,22 @@ async function disposeViewer(): Promise<void> {
   }
 }
 
+function formatLoadError(err: unknown, target: 'prod' | 'dev'): string {
+  const e = err as ApiError;
+  if (e.status === 412) {
+    return `ORBIT ${target} not configured — set server URL + API token in Settings.`;
+  }
+  if (e.status === 401 || e.status === 403) {
+    return `ORBIT ${target} token rejected — update the API token in Settings.`;
+  }
+  const msg = e.message ?? (err as Error)?.message;
+  if (msg) return msg;
+  return 'Failed to load ORBIT model';
+}
+
 async function loadModel(): Promise<void> {
   const token = ++loadToken;
+  await nextTick();
   const host = hostRef.value;
   if (!host) return;
 
@@ -59,6 +92,7 @@ async function loadModel(): Promise<void> {
   error.value = null;
   await disposeViewer();
   host.replaceChildren();
+  setupResizeObserver();
 
   try {
     const resolved = await orbitApi.resolveViewerVersion(
@@ -73,6 +107,8 @@ async function loadModel(): Promise<void> {
     viewer = new Viewer(host, params);
     await viewer.init();
     viewer.createExtension(CameraController);
+    viewerResize();
+    requestAnimationFrame(() => viewerResize());
 
     activeLoader = new OrbitProxySpeckleLoader(viewer.getWorldTree(), {
       target: props.orbitRef.target,
@@ -86,14 +122,11 @@ async function loadModel(): Promise<void> {
 
     await viewer.loadObject(activeLoader, true);
     if (token !== loadToken) return;
+    viewerResize();
+    requestAnimationFrame(() => viewerResize());
   } catch (err) {
     if (token !== loadToken) return;
-    const e = err as ApiError;
-    if (e.status === 412) {
-      error.value = `ORBIT ${props.orbitRef.target} not configured — set URL + token in Settings.`;
-    } else {
-      error.value = e.message ?? 'Failed to load ORBIT model';
-    }
+    error.value = formatLoadError(err, props.orbitRef.target);
   } finally {
     if (token === loadToken) loading.value = false;
   }
@@ -105,6 +138,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   loadToken += 1;
+  resizeObs?.disconnect();
+  resizeObs = null;
   void disposeViewer();
 });
 
@@ -138,7 +173,12 @@ watch(
       Loading ORBIT geometry…
       <span v-if="progress > 0" class="progress">{{ progress }}%</span>
     </div>
-    <div v-else-if="error" class="overlay error-box">{{ error }}</div>
+    <div v-else-if="error" class="overlay error-panel">
+      <p class="error-box">{{ error }}</p>
+      <RouterLink v-if="showSettingsLink" :to="{ name: 'settings' }" class="settings-link">
+        Open Settings →
+      </RouterLink>
+    </div>
   </div>
 </template>
 
@@ -184,9 +224,12 @@ watch(
 .orbit-open:hover { text-decoration: underline; }
 .orbit-canvas-host {
   flex: 1;
-  min-height: 0;
+  min-height: 240px;
   width: 100%;
   background: #0e0e12;
+}
+.orbit-model-viewer.fill .orbit-canvas-host {
+  min-height: 0;
 }
 .overlay {
   position: absolute;
@@ -195,11 +238,21 @@ watch(
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 10px;
   padding: 16px;
   text-align: center;
   background: rgba(14, 14, 18, 0.82);
   z-index: 1;
 }
+.error-panel .error-box {
+  max-width: 420px;
+  margin: 0;
+}
+.settings-link {
+  font-size: 13px;
+  color: var(--orbit-primary, #ff8800);
+  text-decoration: none;
+}
+.settings-link:hover { text-decoration: underline; }
 .progress { font-variant-numeric: tabular-nums; font-size: 12px; }
 </style>
