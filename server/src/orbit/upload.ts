@@ -1,6 +1,7 @@
 /**
  * ORBIT REST upload helpers — object batches and texture blobs.
  */
+import FormData from 'form-data';
 import type { OrbitCreds } from './client.js';
 import { computeBlobContentHash } from './objectHash.js';
 import type { OrbitObjectJson } from './graphWalker.js';
@@ -74,6 +75,16 @@ const OBJECT_BATCH_FIELD = 'object-batch';
 /** ORBIT hard limit per POST /objects/{projectId} request (Speckle REST API). */
 const MAX_OBJECT_UPLOAD_BYTES = 50 * 1024 * 1024;
 
+/** Build a Speckle-compatible multipart body for POST /objects/{projectId}. */
+function buildObjectBatchMultipart(json: string): { body: Buffer; headers: Record<string, string> } {
+  const form = new FormData();
+  form.append(OBJECT_BATCH_FIELD, Buffer.from(json, 'utf8'), {
+    filename: 'batch.json',
+    contentType: 'application/json',
+  });
+  return { body: form.getBuffer(), headers: form.getHeaders() as Record<string, string> };
+}
+
 /** Upload one or more serialised objects (`POST /objects/{projectId}`). */
 export async function uploadObjects(
   creds: OrbitCreds,
@@ -89,18 +100,15 @@ export async function uploadObjects(
     );
   }
 
-  const form = new FormData();
-  form.append(
-    OBJECT_BATCH_FIELD,
-    new Blob([json], { type: 'application/json' }),
-    'batch.json',
-  );
-
+  const { body, headers } = buildObjectBatchMultipart(json);
   const path = `objects/${encodeURIComponent(projectId)}`;
   const res = await fetch(`${creds.url}/${path}`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${creds.token}` },
-    body: form,
+    headers: {
+      authorization: `Bearer ${creds.token}`,
+      ...headers,
+    },
+    body,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -120,13 +128,15 @@ export async function uploadBlob(
   contentType: string,
 ): Promise<string> {
   const form = new FormData();
-  const blob = new Blob([bytes], { type: contentType });
-  form.append('files', blob, filename);
+  form.append('files', bytes, { filename, contentType });
 
   const res = await fetch(`${creds.url}/api/stream/${encodeURIComponent(projectId)}/blob`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${creds.token}` },
-    body: form,
+    headers: {
+      authorization: `Bearer ${creds.token}`,
+      ...(form.getHeaders() as Record<string, string>),
+    },
+    body: form.getBuffer(),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

@@ -57,7 +57,9 @@ const plugin: FastifyPluginAsync = async (app) => {
       if (err instanceof OrbitClientError) {
         return reply.code(err.status || 502).send({ ok: false, error: err.message, detail: err.detail });
       }
-      return reply.code(500).send({ ok: false, error: (err as Error).message ?? 'internal error' });
+      const message = (err as Error).message ?? 'internal error';
+      const status = message.startsWith('ORBIT ') ? 502 : 500;
+      return reply.code(status).send({ ok: false, error: message });
     }
   });
 
@@ -76,7 +78,9 @@ const plugin: FastifyPluginAsync = async (app) => {
       if (err instanceof OrbitClientError) {
         return reply.code(err.status || 502).send({ ok: false, error: err.message, detail: err.detail });
       }
-      return reply.code(500).send({ ok: false, error: (err as Error).message ?? 'internal error' });
+      const message = (err as Error).message ?? 'internal error';
+      const status = message.startsWith('ORBIT ') ? 502 : 500;
+      return reply.code(status).send({ ok: false, error: message });
     }
   });
 };
