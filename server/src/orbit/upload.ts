@@ -68,6 +68,12 @@ async function gqlWithCreds<T>(creds: OrbitCreds, query: string, variables?: Rec
   return json.data;
 }
 
+/** Speckle/ORBIT object batch field name (`@speckle/objectsender` ServerTransport). */
+const OBJECT_BATCH_FIELD = 'object-batch';
+
+/** ORBIT hard limit per POST /objects/{projectId} request (Speckle REST API). */
+const MAX_OBJECT_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 /** Upload one or more serialised objects (`POST /objects/{projectId}`). */
 export async function uploadObjects(
   creds: OrbitCreds,
@@ -75,11 +81,31 @@ export async function uploadObjects(
   objects: OrbitObjectJson[],
 ): Promise<void> {
   if (!objects.length) return;
-  await orbitFetch(creds, `objects/${encodeURIComponent(projectId)}`, {
+
+  const json = JSON.stringify(objects);
+  if (json.length > MAX_OBJECT_UPLOAD_BYTES) {
+    throw new Error(
+      `ORBIT object batch exceeds ${MAX_OBJECT_UPLOAD_BYTES} bytes — split the upload`,
+    );
+  }
+
+  const form = new FormData();
+  form.append(
+    OBJECT_BATCH_FIELD,
+    new Blob([json], { type: 'application/json' }),
+    'batch.json',
+  );
+
+  const path = `objects/${encodeURIComponent(projectId)}`;
+  const res = await fetch(`${creds.url}/${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(objects),
+    headers: { authorization: `Bearer ${creds.token}` },
+    body: form,
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`ORBIT POST ${path} returned ${res.status}: ${text}`);
+  }
 }
 
 /**
