@@ -32,7 +32,19 @@ import {
   orbitServerBaseUrl,
   readModelOrbitRef,
 } from '../utils/orbitViewerUrl';
-import { fetchOrbitMaterialSlots, mergeMaterialSlots } from '../utils/orbitModelMeshSlots';
+import {
+  fetchOrbitMaterialSlots,
+  fetchOrbitSourceMaterialSlots,
+  mergeMaterialSlots,
+} from '../utils/orbitModelMeshSlots';
+import {
+  discoverGlbSlotNames,
+  mergeMaterialSlotsWithKind,
+  mergePersistedMaterialSlots,
+  meshNamesFromDefinition,
+  namesToMaterialSlots,
+  splitPersistedMaterialSlots,
+} from '../utils/modelMaterialAssignment';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -49,11 +61,13 @@ const tags = ref('');
 const description = ref('');
 const status = ref<'draft' | 'published'>('draft');
 
-/** Editable copy of the model's material slots (drives the preview + Save). */
-const materialSlots = ref<ModelMaterialSlot[]>([]);
+/** Editable mesh-object and source-material slot lists (merged on Save). */
+const meshSlots = ref<ModelMaterialSlot[]>([]);
+const sourceMaterialSlots = ref<ModelMaterialSlot[]>([]);
+const materialAssignMode = ref<'mesh' | 'sourceMaterial'>('mesh');
 const materials = ref<MaterialListItem[]>([]);
 const slotsLoading = ref(false);
-const slotsOrbitHydrated = ref(false);
+const slotsHydrated = ref(false);
 /** Root transform for preview + persistence on Save. */
 const modelTransform = ref<ModelTransform>(ensureModelTransform(null));
 /** Mesh vertex units (GLB coordinate space); preview scales to metres. */
@@ -76,6 +90,21 @@ const orbitViewerUrl = computed(() => {
 const useOrbitViewer = computed(() => Boolean(modelOrbitRef.value));
 const showLocalPreview = computed(() => !useOrbitViewer.value && Boolean(previewUrl.value));
 
+const materialSlots = computed(() =>
+  mergePersistedMaterialSlots(meshSlots.value, sourceMaterialSlots.value),
+);
+
+const activeMaterialSlots = computed(() =>
+  materialAssignMode.value === 'mesh' ? meshSlots.value : sourceMaterialSlots.value,
+);
+
+function applyPersistedMaterialSlots(slots: ModelMaterialSlot[]): void {
+  const split = splitPersistedMaterialSlots(slots);
+  meshSlots.value = split.mesh;
+  sourceMaterialSlots.value = split.sourceMaterial;
+  slotsHydrated.value = split.mesh.length > 0 || split.sourceMaterial.length > 0;
+}
+
 function logViewerMode(reason: string): void {
   const mode = useOrbitViewer.value ? 'orbit' : (showLocalPreview.value ? 'glb' : 'none');
   console.log('[OrbitViewer] ModelEditor viewer mode', {
@@ -89,7 +118,7 @@ function logViewerMode(reason: string): void {
 watch([modelOrbitRef, useOrbitViewer, showLocalPreview], () => logViewerMode('watch'));
 
 watch(activeTab, (tab) => {
-  if (tab === 'materials') void hydrateMaterialSlotsFromOrbit();
+  if (tab === 'materials') void hydrateMaterialSlots();
 });
 
 async function loadMaterials(): Promise<void> {
@@ -101,24 +130,57 @@ async function loadMaterials(): Promise<void> {
   }
 }
 
-async function hydrateMaterialSlotsFromOrbit(): Promise<void> {
-  const ref = modelOrbitRef.value;
-  if (!ref || slotsLoading.value || slotsOrbitHydrated.value) return;
-  if (materialSlots.value.length > 0) {
-    slotsOrbitHydrated.value = true;
+async function hydrateMaterialSlots(): Promise<void> {
+  if (slotsLoading.value) return;
+
+  const needMesh = meshSlots.value.length === 0;
+  const needSource = sourceMaterialSlots.value.length === 0;
+  if (!needMesh && !needSource) {
+    slotsHydrated.value = true;
     return;
   }
 
+  const ref = modelOrbitRef.value;
+  const glbUrl = previewUrl.value;
+  if (!ref && !glbUrl) return;
+
   slotsLoading.value = true;
   try {
-    const discovered = await fetchOrbitMaterialSlots(ref);
-    if (!discovered.length || materialSlots.value.length > 0) return;
-    materialSlots.value = mergeMaterialSlots(materialSlots.value, discovered);
+    if (ref) {
+      const [meshDiscovered, sourceDiscovered] = await Promise.all([
+        needMesh ? fetchOrbitMaterialSlots(ref) : Promise.resolve([]),
+        needSource ? fetchOrbitSourceMaterialSlots(ref) : Promise.resolve([]),
+      ]);
+      if (needMesh && meshDiscovered.length) {
+        meshSlots.value = mergeMaterialSlots(meshSlots.value, meshDiscovered);
+      }
+      if (needSource && sourceDiscovered.length) {
+        sourceMaterialSlots.value = mergeMaterialSlots(sourceMaterialSlots.value, sourceDiscovered);
+      }
+    } else if (glbUrl) {
+      const { meshNames, sourceMaterialNames } = await discoverGlbSlotNames(glbUrl);
+      const defMeshNames = meshNamesFromDefinition(model.value?.definition);
+      const mergedMeshNames = [...new Set([...defMeshNames, ...meshNames])];
+      if (needMesh && mergedMeshNames.length) {
+        meshSlots.value = mergeMaterialSlotsWithKind(
+          meshSlots.value,
+          namesToMaterialSlots(mergedMeshNames, 'mesh'),
+          'mesh',
+        );
+      }
+      if (needSource && sourceMaterialNames.length) {
+        sourceMaterialSlots.value = mergeMaterialSlotsWithKind(
+          sourceMaterialSlots.value,
+          namesToMaterialSlots(sourceMaterialNames, 'sourceMaterial'),
+          'sourceMaterial',
+        );
+      }
+    }
   } catch {
     // Non-fatal — Materials tab keeps the empty-state message.
   } finally {
     slotsLoading.value = false;
-    slotsOrbitHydrated.value = true;
+    slotsHydrated.value = true;
   }
 }
 
@@ -133,16 +195,15 @@ async function reload(): Promise<void> {
     tags.value = res.model.tags.join(', ');
     description.value = res.model.description ?? '';
     status.value = res.model.status;
-    materialSlots.value = (res.model.definition.materialSlots ?? []).map((s) => ({
-      name: s.name,
-      materialId: s.materialId ?? null,
-    }));
-    slotsOrbitHydrated.value = materialSlots.value.length > 0;
+    applyPersistedMaterialSlots(res.model.definition.materialSlots ?? []);
     modelTransform.value = ensureModelTransform(res.model.definition.transform);
     sourceUnits.value = ensureModelSourceUnits(res.model.definition.sourceUnits);
     logViewerMode('reload');
-    if (materialSlots.value.length === 0 && modelOrbitRef.value) {
-      void hydrateMaterialSlotsFromOrbit();
+    if (
+      (meshSlots.value.length === 0 || sourceMaterialSlots.value.length === 0)
+      && (modelOrbitRef.value || previewUrl.value)
+    ) {
+      void hydrateMaterialSlots();
     }
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load model';
@@ -174,10 +235,7 @@ async function save(): Promise<void> {
       },
     });
     model.value = res.model;
-    materialSlots.value = (res.model.definition.materialSlots ?? []).map((s) => ({
-      name: s.name,
-      materialId: s.materialId ?? null,
-    }));
+    applyPersistedMaterialSlots(res.model.definition.materialSlots ?? []);
     modelTransform.value = ensureModelTransform(res.model.definition.transform);
     sourceUnits.value = ensureModelSourceUnits(res.model.definition.sourceUnits);
   } catch (err) {
@@ -343,11 +401,36 @@ onMounted(() => {
     <section v-else-if="activeTab === 'materials'" class="card mt page-fill__scroll">
       <h3>Materials</h3>
       <p class="muted small intro">
-        Assign a PRISM material to each slot detected in the mesh. Assignments render in the
-        preview and persist on <strong>Save</strong>.
+        Assign PRISM library materials by mesh object or by the model's existing material
+        definitions. Assignments render in the GLB preview and persist on <strong>Save</strong>.
       </p>
-      <div v-if="materialSlots.length" class="slot-list">
-        <div v-for="(slot, i) in materialSlots" :key="slot.name + i" class="slot-row">
+
+      <nav class="assign-mode-bar">
+        <button
+          type="button"
+          :class="{ active: materialAssignMode === 'mesh' }"
+          @click="materialAssignMode = 'mesh'"
+        >
+          By mesh / object
+        </button>
+        <button
+          type="button"
+          :class="{ active: materialAssignMode === 'sourceMaterial' }"
+          @click="materialAssignMode = 'sourceMaterial'"
+        >
+          By model material
+        </button>
+      </nav>
+
+      <p v-if="materialAssignMode === 'mesh'" class="muted small mode-hint">
+        One row per mesh part or object name. Applies to that object only.
+      </p>
+      <p v-else class="muted small mode-hint">
+        One row per glTF or ORBIT material name. Replaces that material on every mesh that uses it.
+      </p>
+
+      <div v-if="activeMaterialSlots.length" class="slot-list">
+        <div v-for="(slot, i) in activeMaterialSlots" :key="slot.name + i" class="slot-row">
           <div class="slot-meta">
             <span class="slot-name">{{ slot.name }}</span>
           </div>
@@ -357,14 +440,22 @@ onMounted(() => {
           </select>
         </div>
       </div>
-      <p v-else-if="slotsLoading" class="muted small">Loading mesh parts from ORBIT…</p>
-      <p v-else-if="useOrbitViewer" class="muted small">
+      <p v-else-if="slotsLoading" class="muted small">
+        {{ useOrbitViewer ? 'Loading from ORBIT…' : 'Scanning preview mesh…' }}
+      </p>
+      <p v-else-if="materialAssignMode === 'mesh' && useOrbitViewer" class="muted small">
         No assignable mesh parts found in this ORBIT model.
       </p>
-      <p v-else class="muted small">
-        No material slots — re-import this model to detect slots from the mesh.
+      <p v-else-if="materialAssignMode === 'sourceMaterial' && useOrbitViewer" class="muted small">
+        No ORBIT renderMaterial names found in this model.
       </p>
-      <p v-if="materialSlots.length && !materials.length" class="muted small">
+      <p v-else-if="materialAssignMode === 'mesh'" class="muted small">
+        No mesh parts detected — re-import this model or open the Materials tab with a preview GLB.
+      </p>
+      <p v-else class="muted small">
+        No model materials detected — re-import this model to capture glTF material names.
+      </p>
+      <p v-if="activeMaterialSlots.length && !materials.length" class="muted small">
         No materials yet — create some in <RouterLink :to="{ name: 'materials' }">Materials</RouterLink>.
       </p>
     </section>
@@ -432,6 +523,26 @@ onMounted(() => {
 .version-list { list-style: none; padding: 0; margin: 0; }
 .version-list li { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--color-border, #2a2a32); }
 .intro { margin: 4px 0 12px; max-width: 640px; line-height: 1.5; }
+.assign-mode-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border, #2a2a32);
+}
+.assign-mode-bar button {
+  background: none;
+  border: none;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: inherit;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+}
+.assign-mode-bar button.active {
+  border-bottom-color: var(--accent, #ff8800);
+  font-weight: 600;
+}
+.mode-hint { margin: 0 0 12px; max-width: 640px; line-height: 1.45; }
 .slot-list { display: flex; flex-direction: column; gap: 4px; }
 .slot-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--color-border, #2a2a32); }
 .slot-row:last-child { border-bottom: none; }

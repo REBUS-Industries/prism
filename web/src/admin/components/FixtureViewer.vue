@@ -16,7 +16,7 @@ import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, type MotionNode } from '../utils/fixtureAssembly';
 import type { ClampPlacement } from '../utils/fixturePlacement';
 import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
-import { fetchSlotMaterials, paintModelMaterialSlots } from '../utils/modelMaterialSlots';
+import { fetchSlotMaterials, paintModelMaterialSlots, type SlotMaterialMaps } from '../utils/modelMaterialSlots';
 import { fixturesApi, materialsApi, type FixturePart, type FixtureModel, type ModelMaterialSlot, type ModelTransform, type MotionAxis, type Vec3 } from '../../shared/api';
 
 /** Gizmo edit emitted to the parent (GDTF local space: position metres, rotation degrees). */
@@ -554,12 +554,12 @@ async function applyModelSlotMaterials(): Promise<void> {
   if (!slots?.length || !loadedRoot) return;
 
   const maxAniso = renderer?.capabilities.getMaxAnisotropy() ?? 1;
-  const { bySlotName, built } = await fetchSlotMaterials(slots, texLoader, maxAniso);
+  const { built, ...maps } = await fetchSlotMaterials(slots, texLoader, maxAniso);
   if (!loadedRoot) {
     for (const bm of built) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
     return;
   }
-  paintModelMaterialSlots(loadedRoot, slots, bySlotName);
+  paintModelMaterialSlots(loadedRoot, slots, { ...maps, built });
   builtMaterials = builtMaterials.concat(built);
 }
 
@@ -583,12 +583,12 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     }
   }));
 
-  let clampSlotMaterialsByName: Map<string, THREE.Material> | undefined;
+  let clampSlotMaterialMaps: SlotMaterialMaps | undefined;
   if (a.clampModelUrl && a.clampMaterialSlots?.length) {
-    const { bySlotName, built } = await fetchSlotMaterials(a.clampMaterialSlots, texLoader, maxAniso);
-    if (bySlotName.size) {
-      clampSlotMaterialsByName = bySlotName;
-      newBuilt.push(...built);
+    const maps = await fetchSlotMaterials(a.clampMaterialSlots, texLoader, maxAniso);
+    if (maps.byMeshName.size || maps.bySourceMaterialName.size || maps.byLegacyName.size) {
+      clampSlotMaterialMaps = maps;
+      newBuilt.push(...maps.built);
     }
   }
 
@@ -603,7 +603,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     clampMaterialSlots: a.clampMaterialSlots,
     clampModelTransform: a.clampModelTransform,
     clampSourceUnits: a.clampSourceUnits,
-    clampSlotMaterialsByName,
+    clampSlotMaterialMaps,
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });

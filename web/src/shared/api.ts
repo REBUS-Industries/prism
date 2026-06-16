@@ -2218,9 +2218,14 @@ export interface ModelMeshRef {
   format?: 'glb';
 }
 
+/** How a slot name is matched when painting materials onto geometry. */
+export type ModelMaterialSlotKind = 'mesh' | 'sourceMaterial';
+
 export interface ModelMaterialSlot {
   name: string;
   materialId?: string | null;
+  /** When absent, legacy dual-match (mesh name or glTF/ORBIT material name). */
+  kind?: ModelMaterialSlotKind;
 }
 
 /** Async import lifecycle when routed through the PRISM convert pipeline. */
