@@ -63,7 +63,7 @@ public sealed class RhinoFileOpener
     /// summary + per-material RDK hydration probe) so callers can forward
     /// them to the WS log channel in addition to the agent's Serilog file.
     /// </summary>
-    public RhinoDoc OpenInto(RhinoHost host, string path, string formatHint, Action<string>? diag = null)
+    public RhinoDoc OpenInto(RhinoHost host, string path, string formatHint, Action<string>? diag = null, TimeSpan? readTimeout = null)
     {
         var ext = string.IsNullOrEmpty(formatHint)
             ? Path.GetExtension(path).ToLowerInvariant()
@@ -97,8 +97,10 @@ public sealed class RhinoFileOpener
             // Non-3dm path: fresh doc + Rhino's `-_Import` command. Detailed
             // diagnostics + per-process plugin probe live inside
             // ImportIntoFreshDoc so the convert and pollLayers code paths
-            // share exactly the same import behaviour and log shape.
-            doc = ImportIntoFreshDoc(host, path, ext, diag);
+            // share exactly the same import behaviour and log shape. The
+            // read watchdog (readTimeout) bounds the typed File*.Read so a
+            // wedged importer fails this job instead of hanging the agent.
+            doc = ImportIntoFreshDoc(host, path, ext, diag, readTimeout);
             _log.LogInformation(
                 "imported {Path}: {ObjectCount} objects doc={DocRuntimeSerial}",
                 path, doc.Objects.Count, doc.RuntimeSerialNumber);
@@ -284,8 +286,10 @@ public sealed class RhinoFileOpener
     /// workstation.
     /// </para>
     /// </summary>
-    public static RhinoDoc ImportIntoFreshDoc(RhinoHost host, string path, string ext, Action<string>? diag = null)
+    public static RhinoDoc ImportIntoFreshDoc(RhinoHost host, string path, string ext, Action<string>? diag = null, TimeSpan? readTimeout = null)
     {
+        var effectiveReadTimeout = readTimeout ?? RhinoReadWatchdog.DefaultTimeout;
+
         // host.CreateDoc() returns a fresh doc that becomes ActiveDoc — that's
         // what makes the non-doc-serial RunScript fallback (and the typed
         // File*.Read calls that touch ActiveDoc internally) work headlessly.
@@ -323,7 +327,14 @@ public sealed class RhinoFileOpener
         //           path that motivated this rewrite and falling back to it
         //           would just produce a confusing second error)
         //   null  — no typed API exists for this extension; try RunScript
-        bool? typed = TryReadViaTypedApi(doc, path, ext, diag);
+        //
+        // NOTE: when the read watchdog fires, TryReadViaTypedApi throws
+        // RhinoReadTimeoutException straight out of this method. We do NOT
+        // dispose `doc` on that path: the abandoned read thread may still be
+        // writing into it, so disposing here would be a use-after-free in
+        // native code. Leaking the doc is the safe choice — the job fails and
+        // the agent stays alive (see RhinoReadWatchdog).
+        bool? typed = TryReadViaTypedApi(doc, path, ext, effectiveReadTimeout, diag);
 
         // ── Fallback: RunScript("-_Import …") ─────────────────────────────
         // Only run when no typed API is registered for this extension. The
@@ -468,7 +479,7 @@ public sealed class RhinoFileOpener
     /// command interactively inside a full Rhino install.
     /// </para>
     /// </summary>
-    static bool? TryReadViaTypedApi(RhinoDoc doc, string path, string ext, Action<string>? diag)
+    static bool? TryReadViaTypedApi(RhinoDoc doc, string path, string ext, TimeSpan readTimeout, Action<string>? diag)
     {
         // FileReadOptions seed for any per-format options class that
         // accepts one (currently FileObjReadOptions only). BatchMode
@@ -483,22 +494,14 @@ public sealed class RhinoFileOpener
             OpenMode = false,
         };
 
-        bool Invoke(string api, Func<bool> reader)
-        {
-            diag?.Invoke($"[OBJ-IMPORT] invoking {api} (BatchMode=True, ImportMode=True)");
-            try
-            {
-                var result = reader();
-                diag?.Invoke($"[OBJ-IMPORT] {api} returned {result}");
-                return result;
-            }
-            catch (Exception err)
-            {
-                diag?.Invoke(
-                    $"[OBJ-IMPORT] {api} threw {err.GetType().Name}: {err.Message}");
-                return false;
-            }
-        }
+        // Every typed read funnels through the watchdog so a wedged native
+        // importer (the FBX hang that took the agent down in the field, or
+        // any future malformed file that blocks a reader) fails THIS job
+        // after `readTimeout` instead of hanging the slot — and therefore the
+        // whole agent — forever. Same return/throw contract as before plus a
+        // RhinoReadTimeoutException on the timeout path. See RhinoReadWatchdog.
+        bool Invoke(string api, Func<bool> reader) =>
+            RhinoReadWatchdog.Run(api, reader, readTimeout, diag);
 
         switch (ext)
         {
@@ -547,8 +550,41 @@ public sealed class RhinoFileOpener
             }
             case ".fbx":
             {
-                var opts = new FileFbxReadOptions();
-                return Invoke("Rhino.FileIO.FileFbx.Read", () => FileFbx.Read(path, doc, opts));
+                // FBX is the format that hung the agent in the field: the
+                // typed FileFbx.Read takes a FileFbxReadOptions, which exposes
+                // NO BatchMode knob (only ImportCameras / ImportLights /
+                // ImportMeshesAsSubD / MapFbxYtoRhinoZ / Unweld / UnweldAngle),
+                // so it cannot suppress the importer's interactive options
+                // dialog under headless Rhino.Inside — and with no message
+                // pump on the slot thread that dialog blocks forever.
+                //
+                // Force the read non-interactive by routing through
+                // RhinoDoc.ReadFile with FileReadOptions.BatchMode=true — the
+                // SAME batch flag the .3dm OpenAsActiveDoc path relies on, and
+                // the flag the native FBX importer checks to skip its dialog.
+                // ImportMode=true merges into the fresh doc, which
+                // ImportIntoFreshDoc has already promoted to ActiveDoc
+                // (RhinoDoc.ReadFile always targets ActiveDoc). If the batch
+                // reader does not route to / accept the FBX importer we fall
+                // back to the original typed FileFbx.Read so we never regress
+                // a file the old path could read. BOTH attempts share this
+                // call's read watchdog, so even a wedged importer fails the
+                // job instead of the agent.
+                var fbxBatchOpts = new FileReadOptions
+                {
+                    ImportMode = true,
+                    BatchMode = true,
+                    NewMode = false,
+                    OpenMode = false,
+                };
+                return Invoke("Rhino.FileIO.RhinoDoc.ReadFile[fbx,BatchMode]", () =>
+                {
+                    if (RhinoDoc.ReadFile(path, fbxBatchOpts)) return true;
+                    diag?.Invoke(
+                        "[OBJ-IMPORT] RhinoDoc.ReadFile[fbx,BatchMode] returned false; " +
+                        "falling back to typed FileFbx.Read(FileFbxReadOptions)");
+                    return FileFbx.Read(path, doc, new FileFbxReadOptions());
+                });
             }
             case ".stl":
             {

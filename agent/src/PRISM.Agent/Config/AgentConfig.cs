@@ -22,6 +22,30 @@ public sealed class AgentConfig
     /// </summary>
     public string RhinoVersion { get; set; } = "auto";
 
+    /// <summary>
+    /// Hard upper bound (seconds) on a single Rhino typed <c>File*.Read</c>
+    /// (OBJ / FBX / STL / STEP / DWG / …). A read that exceeds this is
+    /// abandoned on its worker thread and the job is failed, so a wedged
+    /// importer — classically an FBX file that triggers an interactive
+    /// import-options dialog under headless Rhino.Inside — can no longer hang
+    /// the agent's WebSocket / heartbeat indefinitely (the field incident that
+    /// took the agent process down with WS close code 1006). Clamped to
+    /// 30–1800s at use; default 150s sits mid-range of the 120–180s window.
+    /// </summary>
+    public int RhinoReadTimeoutSeconds { get; set; } = 150;
+
+    /// <summary>
+    /// When <c>false</c> (default) the agent refuses FBX <c>pollLayers</c>
+    /// (layer-selection) requests with a clear, non-retryable message instead
+    /// of attempting the headless FBX layer extraction that wedged the
+    /// importer and took the agent down in the field. Convert jobs still
+    /// import FBX (batch-mode read + the read watchdog). Flip to <c>true</c>
+    /// on a workstation to re-enable FBX layer extraction once the headless
+    /// batch-mode FBX read has been verified there; the read remains
+    /// watchdog-protected either way.
+    /// </summary>
+    public bool AllowFbxLayerExtraction { get; set; } = false;
+
     public string LogDir { get; set; } = @"C:\ProgramData\PRISM.Agent\logs";
 
     /// <summary>
