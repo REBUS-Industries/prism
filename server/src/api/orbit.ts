@@ -14,9 +14,13 @@ import { requireAuth } from '../auth/middleware.js';
 import {
   createModel as createModelFn,
   createProject as createProjectFn,
+  fetchBlob,
+  fetchObjectBatch,
+  fetchObjectJson,
   listModels,
   listProjects,
   OrbitClientError,
+  resolveModelVersion,
   testConnection,
   type OrbitTarget,
 } from '../orbit/client.js';
@@ -109,7 +113,85 @@ const plugin: FastifyPluginAsync = async (app) => {
       }
     },
   );
+
+  /* ---------------------------------------------------------------------- */
+  /* 3rd-party viewer proxy — Speckle ObjectLoader2 / @speckle/viewer       */
+  /* ---------------------------------------------------------------------- */
+
+  // GET /api/orbit/viewer/resolve?target=&projectId=&modelId=&versionId=
+  app.get<{
+    Querystring: { target?: string; projectId?: string; modelId?: string; versionId?: string };
+  }>('/viewer/resolve', async (req, reply) => {
+    const target = pickTarget(req.query);
+    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId.trim() : '';
+    const modelId = typeof req.query.modelId === 'string' ? req.query.modelId.trim() : '';
+    const versionId = typeof req.query.versionId === 'string' && req.query.versionId.trim()
+      ? req.query.versionId.trim()
+      : undefined;
+    if (!projectId || !modelId) {
+      return reply.code(400).send({ error: 'projectId and modelId are required' });
+    }
+    try {
+      const version = await resolveModelVersion(target, projectId, modelId, versionId);
+      return reply.send({ target, ...version });
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // GET /api/orbit/viewer/:target/objects/:projectId/:objectId/single
+  app.get<{ Params: { target: string; projectId: string; objectId: string } }>(
+    '/viewer/:target/objects/:projectId/:objectId/single',
+    async (req, reply) => {
+      const target = parseViewerTarget(req.params.target);
+      if (!target) return reply.code(400).send({ error: 'target must be prod or dev' });
+      try {
+        const json = await fetchObjectJson(target, req.params.projectId, req.params.objectId);
+        return reply.type('text/plain').send(json);
+      } catch (err) {
+        return errorReply(reply, err);
+      }
+    },
+  );
+
+  // POST /api/orbit/viewer/:target/api/v2/projects/:projectId/object-stream/
+  app.post<{
+    Params: { target: string; projectId: string };
+    Body: { objectIds?: string[] };
+  }>('/viewer/:target/api/v2/projects/:projectId/object-stream/', async (req, reply) => {
+    const target = parseViewerTarget(req.params.target);
+    if (!target) return reply.code(400).send({ error: 'target must be prod or dev' });
+    const objectIds = Array.isArray(req.body?.objectIds)
+      ? req.body.objectIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+    if (!objectIds.length) return reply.code(400).send({ error: 'objectIds is required' });
+    try {
+      const body = await fetchObjectBatch(target, req.params.projectId, objectIds);
+      return reply.type('text/plain').send(body);
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // GET /api/orbit/viewer/:target/api/stream/:projectId/blob/:blobId
+  app.get<{ Params: { target: string; projectId: string; blobId: string } }>(
+    '/viewer/:target/api/stream/:projectId/blob/:blobId',
+    async (req, reply) => {
+      const target = parseViewerTarget(req.params.target);
+      if (!target) return reply.code(400).send({ error: 'target must be prod or dev' });
+      try {
+        const buf = await fetchBlob(target, req.params.projectId, req.params.blobId);
+        return reply.send(buf);
+      } catch (err) {
+        return errorReply(reply, err);
+      }
+    },
+  );
 };
+
+function parseViewerTarget(raw: string): OrbitTarget | null {
+  return raw === 'prod' || raw === 'dev' ? raw : null;
+}
 
 function clampInt(raw: string | undefined, min: number, max: number, fallback: number): number {
   const n = Number(raw);

@@ -254,6 +254,42 @@ export async function getLatestVersionId(
   projectId: string,
   modelId: string,
 ): Promise<string | null> {
+  const latest = await getLatestVersionDescriptor(target, projectId, modelId);
+  return latest?.versionId ?? null;
+}
+
+const VERSION_QUERY = `query Version($projectId: String!, $versionId: String!) {
+  project(id: $projectId) {
+    version(id: $versionId) {
+      id
+      referencedObject
+      model { id }
+    }
+  }
+}`;
+
+interface VersionResult {
+  project: {
+    version: {
+      id: string;
+      referencedObject: string | null;
+      model: { id: string } | null;
+    } | null;
+  } | null;
+}
+
+export interface OrbitVersionDescriptor {
+  projectId: string;
+  modelId: string;
+  versionId: string;
+  rootObjectId: string;
+}
+
+async function getLatestVersionDescriptor(
+  target: OrbitTarget,
+  projectId: string,
+  modelId: string,
+): Promise<OrbitVersionDescriptor | null> {
   const creds = await getOrbitCreds(target);
   if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
 
@@ -263,8 +299,144 @@ export async function getLatestVersionId(
   });
   if (!data.project) throw new OrbitClientError(404, `project ${projectId} not found`);
   if (!data.project.model) throw new OrbitClientError(404, `model ${modelId} not found in project ${projectId}`);
-  const items = data.project.model.versions.items;
-  return items.length > 0 ? (items[0]?.id ?? null) : null;
+  const item = data.project.model.versions.items[0];
+  if (!item?.id || !item.referencedObject) return null;
+  return {
+    projectId,
+    modelId,
+    versionId: item.id,
+    rootObjectId: item.referencedObject,
+  };
+}
+
+/**
+ * Resolve a model version to its root object hash for third-party viewers.
+ * When `versionId` is omitted, uses the latest commit on the model.
+ */
+export async function resolveModelVersion(
+  target: OrbitTarget,
+  projectId: string,
+  modelId: string,
+  versionId?: string,
+): Promise<OrbitVersionDescriptor> {
+  if (!versionId) {
+    const latest = await getLatestVersionDescriptor(target, projectId, modelId);
+    if (!latest) {
+      throw new OrbitClientError(404, `model ${modelId} has no versions on ORBIT ${target}`);
+    }
+    return latest;
+  }
+
+  const creds = await getOrbitCreds(target);
+  if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
+
+  const data = await gql<VersionResult>(creds, VERSION_QUERY, { projectId, versionId });
+  const node = data.project?.version;
+  if (!node?.referencedObject) {
+    throw new OrbitClientError(404, `version ${versionId} not found in project ${projectId}`);
+  }
+  return {
+    projectId,
+    modelId: node.model?.id ?? modelId,
+    versionId: node.id,
+    rootObjectId: node.referencedObject,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Object + blob fetch (3rd-party viewer proxy)                                */
+/* -------------------------------------------------------------------------- */
+
+async function orbitFetch(creds: OrbitCreds, path: string, init?: RequestInit): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(`${creds.url}/${path.replace(/^\/+/, '')}`, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${creds.token}`,
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    throw new OrbitClientError(0, `cannot reach ORBIT at ${creds.url}: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    const isAuth = res.status === 401 || res.status === 403;
+    throw new OrbitClientError(
+      isAuth ? 401 : res.status || 502,
+      `ORBIT GET ${path} returned ${res.status}`,
+      text,
+    );
+  }
+  return res;
+}
+
+/** Download one object JSON body (`GET /objects/{projectId}/{id}/single`). */
+export async function fetchObjectJson(
+  target: OrbitTarget,
+  projectId: string,
+  objectId: string,
+): Promise<string> {
+  const creds = await getOrbitCreds(target);
+  if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
+  const res = await orbitFetch(
+    creds,
+    `objects/${encodeURIComponent(projectId)}/${encodeURIComponent(objectId)}/single`,
+  );
+  return res.text();
+}
+
+/** Download a texture/attachment blob (`GET /api/stream/{projectId}/blob/{id}`). */
+export async function fetchBlob(
+  target: OrbitTarget,
+  projectId: string,
+  blobId: string,
+): Promise<Buffer> {
+  const creds = await getOrbitCreds(target);
+  if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
+  const res = await orbitFetch(
+    creds,
+    `api/stream/${encodeURIComponent(projectId)}/blob/${encodeURIComponent(blobId)}`,
+  );
+  const ab = await res.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+const OBJECT_BATCH_CONCURRENCY = 8;
+
+/**
+ * Speckle ObjectLoader2 batch download adapter. ORBIT production exposes
+ * per-object `/single` GETs; upstream Speckle v2 expects NDJSON from
+ * `POST /api/v2/projects/{id}/object-stream/`.
+ */
+export async function fetchObjectBatch(
+  target: OrbitTarget,
+  projectId: string,
+  objectIds: string[],
+): Promise<string> {
+  const unique = [...new Set(objectIds.filter(Boolean))];
+  if (!unique.length) return '';
+
+  const lines: string[] = new Array(unique.length);
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = next++;
+      if (idx >= unique.length) return;
+      const id = unique[idx]!;
+      const json = await fetchObjectJson(target, projectId, id);
+      lines[idx] = `${id}\t${json}`;
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(OBJECT_BATCH_CONCURRENCY, unique.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return `${lines.join('\n')}\n`;
 }
 
 /* -------------------------------------------------------------------------- */

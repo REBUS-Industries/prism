@@ -70,7 +70,7 @@ const orbitViewerUrl = computed(() => {
   const serverUrl = orbitServerBaseUrl(orbitSettings.value, ref.target);
   return buildOrbitModelViewerUrl(serverUrl, ref);
 });
-const useOrbitViewer = computed(() => Boolean(modelOrbitRef.value && orbitViewerUrl.value));
+const useOrbitViewer = computed(() => Boolean(modelOrbitRef.value));
 const showLocalPreview = computed(() => !useOrbitViewer.value && Boolean(previewUrl.value));
 
 async function loadMaterials(): Promise<void> {
@@ -206,8 +206,9 @@ onMounted(() => {
         </div>
         <div class="viewer-wrap">
           <OrbitModelViewer
-            v-if="useOrbitViewer && orbitViewerUrl"
-            :url="orbitViewerUrl"
+            v-if="useOrbitViewer && modelOrbitRef"
+            :orbit-ref="modelOrbitRef"
+            :settings="orbitSettings"
             fill
           />
           <ModelViewer
@@ -228,7 +229,7 @@ onMounted(() => {
           <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
         </div>
         <p v-if="useOrbitViewer" class="muted small gizmo-hint">
-          Canonical geometry is served from Orbit. Sign in to Orbit in this browser if the viewer prompts for auth.
+          Canonical geometry is loaded from ORBIT via the embedded Speckle viewer. Configure ORBIT URL + token in Settings if loading fails.
         </p>
         <p v-else-if="showLocalPreview" class="muted small gizmo-hint">Drag the gizmo to move / rotate / scale · numeric edits in the panel · persist with <strong>Save</strong>.</p>
       </div>
