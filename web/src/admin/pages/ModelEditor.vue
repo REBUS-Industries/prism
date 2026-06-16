@@ -12,7 +12,7 @@ import {
   type ApiError,
 } from '../../shared/api';
 import ModelViewer from '../components/ModelViewer.vue';
-import OrbitModelViewer from '../components/OrbitModelViewer.vue';
+import OrbitQuadPreview from '../components/OrbitQuadPreview.vue';
 import ModelTransformPanel from '../components/ModelTransformPanel.vue';
 import Icon from '../../shared/Icon.vue';
 import { cloneModelTransform, ensureModelTransform } from '../utils/modelTransform';
@@ -308,11 +308,10 @@ onMounted(() => {
           <button type="button" class="gizmo-btn space" :title="`Gizmo space: ${gizmoSpace}`" @click="gizmoSpace = gizmoSpace === 'local' ? 'world' : 'local'">{{ gizmoSpace === 'local' ? 'LOCAL' : 'WORLD' }}</button>
         </div>
         <div class="viewer-wrap">
-          <OrbitModelViewer
+          <OrbitQuadPreview
             v-if="useOrbitViewer && modelOrbitRef"
             :orbit-ref="modelOrbitRef"
             :settings="orbitSettings"
-            fill
           />
           <ModelViewer
             v-else-if="showLocalPreview && previewUrl"
@@ -332,7 +331,7 @@ onMounted(() => {
           <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
         </div>
         <p v-if="useOrbitViewer" class="muted small gizmo-hint">
-          Drag to orbit · Shift+drag to pan · Scroll to zoom. Use the viewer toolbar for zoom extents and reset.
+          Top / Front / Side / Iso quad view — drag to orbit in the ISO pane · Shift+drag to pan · Scroll to zoom.
           Configure ORBIT URL + token in Settings if loading fails.
         </p>
         <p v-else-if="showLocalPreview" class="muted small gizmo-hint">Drag the gizmo to move / rotate / scale · numeric edits in the panel · persist with <strong>Save</strong>.</p>
