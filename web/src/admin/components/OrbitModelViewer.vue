@@ -14,6 +14,7 @@ import {
 } from '@speckle/viewer';
 import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
+import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
 
 const props = withDefaults(defineProps<{
@@ -34,8 +35,13 @@ const error = ref<string | null>(null);
 let viewer: Viewer | null = null;
 let activeLoader: OrbitProxySpeckleLoader | null = null;
 let resizeObs: ResizeObserver | null = null;
+let resizeRaf = 0;
+let lastResizeW = 0;
+let lastResizeH = 0;
 let loadToken = 0;
 let loadStep = 0;
+
+const HOST_LAYOUT_MAX_FRAMES = 90;
 
 function ts(): string {
   return new Date().toISOString().slice(11, 23);
@@ -70,11 +76,59 @@ const showSettingsLink = computed(() => Boolean(
   error.value && /settings|token|configured|access denied/i.test(error.value),
 ));
 
+/** Speckle Viewer.resize() reads container.offsetWidth/offsetHeight — sync those from layout. */
+function syncHostLayoutSize(host: HTMLElement, size: { width: number; height: number }): void {
+  host.style.width = `${size.width}px`;
+  host.style.height = `${size.height}px`;
+}
+
+function styleViewerCanvas(v: Viewer): void {
+  const canvas = v.getCanvas();
+  canvas.style.display = 'block';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.touchAction = 'none';
+}
+
+async function waitForHostLayout(host: HTMLElement, reason: string): Promise<{ width: number; height: number } | null> {
+  for (let frame = 0; frame < HOST_LAYOUT_MAX_FRAMES; frame += 1) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const size = readContainerCssSize(host);
+    if (size) {
+      syncHostLayoutSize(host, size);
+      logStep(`host:layout-ready (${reason})`, { ...hostDims(host), applied: size, frame });
+      return size;
+    }
+  }
+  const size = readContainerCssSize(host);
+  if (size) syncHostLayoutSize(host, size);
+  logStep(`host:layout-timeout (${reason})`, hostDims(host));
+  return size;
+}
+
 function viewerResize(reason: string): void {
   if (!viewer || !hostRef.value) return;
-  const dims = hostDims(hostRef.value);
-  console.log(`${ORBIT_VIEWER_LOG} [${ts()}] resize`, { reason, dims });
+  const host = hostRef.value;
+  const size = readContainerCssSize(host);
+  if (!size) return;
+  if (size.width === lastResizeW && size.height === lastResizeH && reason === 'resize-observer') return;
+
+  syncHostLayoutSize(host, size);
+  lastResizeW = size.width;
+  lastResizeH = size.height;
+
+  if (import.meta.env.DEV) {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] resize`, { reason, dims: hostDims(host), applied: size });
+  }
   viewer.resize();
+}
+
+function scheduleViewerResize(reason: string): void {
+  if (resizeRaf) cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = 0;
+    viewerResize(reason);
+  });
 }
 
 function setupResizeObserver(): void {
@@ -82,12 +136,13 @@ function setupResizeObserver(): void {
   const el = hostRef.value;
   if (!el) return;
   logStep('resize-observer:setup', hostDims(el));
-  resizeObs = new ResizeObserver(() => viewerResize('resize-observer'));
+  resizeObs = new ResizeObserver(() => scheduleViewerResize('resize-observer'));
   resizeObs.observe(el);
-  requestAnimationFrame(() => viewerResize('setup-raf'));
+  scheduleViewerResize('setup-raf');
 }
 
 async function disposeViewer(reason: string): Promise<void> {
+  if (!viewer && !activeLoader) return;
   logStep('dispose', { reason, hadViewer: Boolean(viewer), hadLoader: Boolean(activeLoader) });
   activeLoader?.cancel();
   activeLoader?.dispose();
@@ -96,6 +151,8 @@ async function disposeViewer(reason: string): Promise<void> {
     viewer.dispose();
     viewer = null;
   }
+  lastResizeW = 0;
+  lastResizeH = 0;
 }
 
 function formatLoadError(err: unknown, target: 'prod' | 'dev'): string {
@@ -138,7 +195,17 @@ async function loadModel(): Promise<void> {
   error.value = null;
   await disposeViewer('reload');
   host.replaceChildren();
+  host.style.width = '';
+  host.style.height = '';
   setupResizeObserver();
+
+  const initialLayout = await waitForHostLayout(host, 'pre-resolve');
+  if (token !== loadToken) return;
+  if (!initialLayout) {
+    error.value = 'Viewer area has no size yet — wait for layout or widen the preview pane.';
+    loading.value = false;
+    return;
+  }
 
   try {
     logStep('resolveViewerVersion:start', {
@@ -164,16 +231,26 @@ async function loadModel(): Promise<void> {
       rootObjectId: `${resolved.rootObjectId.slice(0, 12)}…`,
     });
 
+    const layout = await waitForHostLayout(host, 'pre-viewer');
+    if (token !== loadToken) {
+      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:stale after layout`, { loadToken: token });
+      return;
+    }
+    if (!layout) {
+      throw new Error('Viewer container collapsed to zero size before init.');
+    }
+
     const params = { ...DefaultViewerParams, verbose: import.meta.env.DEV };
-    logStep('viewer:new', { verbose: params.verbose, hostDims: hostDims(host) });
+    logStep('viewer:new', { verbose: params.verbose, hostDims: hostDims(host), layout });
     viewer = new Viewer(host, params);
+    styleViewerCanvas(viewer);
     logStep('viewer:init start');
     await viewer.init();
     logStep('viewer:init complete');
     viewer.createExtension(CameraController);
     logStep('viewer:CameraController attached');
     viewerResize('post-init');
-    requestAnimationFrame(() => viewerResize('post-init-raf'));
+    scheduleViewerResize('post-init-raf');
 
     activeLoader = new OrbitProxySpeckleLoader(viewer.getWorldTree(), {
       target: props.orbitRef.target,
@@ -197,7 +274,7 @@ async function loadModel(): Promise<void> {
       progress: progress.value,
     });
     viewerResize('post-load');
-    requestAnimationFrame(() => viewerResize('post-load-raf'));
+    scheduleViewerResize('post-load-raf');
   } catch (err) {
     if (token !== loadToken) return;
     console.error(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:error`, {
@@ -224,6 +301,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   logStep('unmount');
   loadToken += 1;
+  if (resizeRaf) cancelAnimationFrame(resizeRaf);
+  resizeRaf = 0;
   resizeObs?.disconnect();
   resizeObs = null;
   void disposeViewer('unmount');
@@ -315,10 +394,13 @@ watch(
   flex: 1;
   min-height: 240px;
   width: 100%;
+  position: relative;
+  overflow: hidden;
   background: #0e0e12;
 }
 .orbit-model-viewer.fill .orbit-canvas-host {
   min-height: 0;
+  height: 100%;
 }
 .overlay {
   position: absolute;
