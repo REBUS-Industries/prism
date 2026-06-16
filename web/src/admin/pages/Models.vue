@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { modelsApi, type ModelListItem, type ApiError } from '../../shared/api';
+import { modelsApi, settingsApi, type ModelListItem, type ApiError } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
+import ModelCardPreview from '../components/ModelCardPreview.vue';
 
 const router = useRouter();
 const models = ref<ModelListItem[]>([]);
@@ -10,6 +11,7 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const search = ref('');
 const nextCursor = ref<string | null>(null);
+const orbitSettings = ref<Record<string, string>>({});
 const PAGE = 36;
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -48,7 +50,18 @@ async function createBlank(): Promise<void> {
 
 const isEmpty = computed(() => !loading.value && models.value.length === 0);
 
-onMounted(() => void load(true));
+async function loadOrbitSettings(): Promise<void> {
+  try {
+    orbitSettings.value = (await settingsApi.list()).settings;
+  } catch {
+    // Non-fatal — OrbitModelViewer falls back to default server URLs.
+  }
+}
+
+onMounted(() => {
+  void load(true);
+  void loadOrbitSettings();
+});
 </script>
 
 <template>
@@ -82,8 +95,12 @@ onMounted(() => void load(true));
       class="model-card"
     >
       <div class="thumb">
-        <img v-if="m.hasPreview" :src="modelsApi.previewUrl(m.id)" alt="" loading="lazy" @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')" />
-        <Icon v-else name="deployed_code" :size="40" class="thumb-fallback" />
+        <ModelCardPreview
+          :model-id="m.id"
+          :has-preview="m.hasPreview"
+          :alt="m.name"
+          :orbit-settings="orbitSettings"
+        />
       </div>
       <div class="meta">
         <div class="name" :title="m.name">{{ m.name }}</div>
@@ -130,7 +147,6 @@ onMounted(() => void load(true));
   background: var(--surface-3, #14141a);
 }
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
-.thumb-fallback { opacity: 0.3; }
 .meta { padding: 8px 10px; }
 .name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
