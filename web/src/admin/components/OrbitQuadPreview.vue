@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { ModelOrbitRef } from '../../shared/api';
 import OrbitModelViewer from './OrbitModelViewer.vue';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
+import {
+  fetchOrbitViewerSession,
+  type OrbitViewerSession,
+} from '../utils/orbitViewerSession';
 
 const props = defineProps<{
   orbitRef: ModelOrbitRef;
@@ -14,12 +18,46 @@ const orbitWebUrl = computed(() => buildOrbitModelViewerUrl(
   props.orbitRef,
 ));
 
+const session = ref<OrbitViewerSession | null>(null);
+const sessionLoading = ref(false);
+const sessionError = ref<string | null>(null);
+let loadToken = 0;
+
 const QUAD_VIEWS = [
   ['top', 'Top'],
   ['front', 'Front'],
   ['side', 'Side'],
   ['iso', 'ISO'],
 ] as const;
+
+async function loadSession(): Promise<void> {
+  const token = ++loadToken;
+  sessionLoading.value = true;
+  sessionError.value = null;
+  session.value = null;
+
+  try {
+    const next = await fetchOrbitViewerSession(props.orbitRef);
+    if (token !== loadToken) return;
+    session.value = next;
+  } catch (err) {
+    if (token !== loadToken) return;
+    sessionError.value = (err as Error).message ?? 'Failed to load ORBIT geometry';
+  } finally {
+    if (token === loadToken) sessionLoading.value = false;
+  }
+}
+
+watch(
+  () => [
+    props.orbitRef.target,
+    props.orbitRef.projectId,
+    props.orbitRef.modelId,
+    props.orbitRef.versionId,
+  ],
+  () => { void loadSession(); },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -42,7 +80,13 @@ const QUAD_VIEWS = [
       </a>
     </div>
     <div class="quad-stage">
-      <div class="quad-preview">
+      <div v-if="sessionLoading" class="quad-loading muted">
+        Loading ORBIT geometry…
+      </div>
+      <div v-else-if="sessionError" class="quad-loading error-box">
+        {{ sessionError }}
+      </div>
+      <div v-else-if="session" class="quad-preview">
         <div
           v-for="view in QUAD_VIEWS"
           :key="view[0]"
@@ -55,6 +99,7 @@ const QUAD_VIEWS = [
               :settings="settings"
               :view-preset="view[0]"
               :interactive="view[0] === 'iso'"
+              :preloaded-session="session"
               fill
               compact
             />
@@ -116,6 +161,14 @@ const QUAD_VIEWS = [
   min-width: 0;
   display: flex;
   padding: 8px;
+}
+.quad-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
 }
 .quad-preview {
   flex: 1;

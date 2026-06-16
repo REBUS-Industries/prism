@@ -3,12 +3,9 @@
  * `definition.materialSlots` was not populated at import (common for
  * ORBIT-linked models whose meshes live in Orbit, not in a local GLB).
  */
-import { orbitApi, type ModelMaterialSlot, type ModelMaterialSlotKind, type ModelOrbitRef } from '../../shared/api';
-import {
-  loadFullObjectClosure,
-  orbitViewerProxyBase,
-  shortSpeckleType,
-} from './orbitSpeckleLoader';
+import { type ModelMaterialSlot, type ModelMaterialSlotKind, type ModelOrbitRef } from '../../shared/api';
+import { shortSpeckleType } from './orbitSpeckleLoader';
+import { fetchOrbitViewerSession } from './orbitViewerSession';
 
 type RawSpeckleObject = Record<string, unknown> & {
   id?: string;
@@ -263,19 +260,8 @@ export function orbitObjectsToMaterialSlots(
 }
 
 async function fetchOrbitObjects(ref: ModelOrbitRef): Promise<RawSpeckleObject[]> {
-  const resolved = await orbitApi.resolveViewerVersion(
-    ref.target,
-    ref.projectId,
-    ref.modelId,
-    ref.versionId,
-  );
-  const serverUrl = orbitViewerProxyBase(ref.target);
-  const { objects } = await loadFullObjectClosure(
-    serverUrl,
-    resolved.projectId,
-    resolved.rootObjectId,
-  );
-  return objects;
+  const session = await fetchOrbitViewerSession(ref);
+  return session.objects as RawSpeckleObject[];
 }
 
 /** Resolve ORBIT version + download closure, return mesh-part slot stubs. */
