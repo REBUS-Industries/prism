@@ -4,6 +4,7 @@ import { RouterLink, useRouter } from 'vue-router';
 import {
   modelsApi,
   materialsApi,
+  settingsApi,
   type ModelDetail,
   type ModelMaterialSlot,
   type ModelTransform,
@@ -11,6 +12,7 @@ import {
   type ApiError,
 } from '../../shared/api';
 import ModelViewer from '../components/ModelViewer.vue';
+import OrbitModelViewer from '../components/OrbitModelViewer.vue';
 import ModelTransformPanel from '../components/ModelTransformPanel.vue';
 import Icon from '../../shared/Icon.vue';
 import { cloneModelTransform, ensureModelTransform } from '../utils/modelTransform';
@@ -25,6 +27,11 @@ import {
   ensureModelSourceUnits,
   type ModelLengthUnit,
 } from '../utils/modelUnits';
+import {
+  buildOrbitModelViewerUrl,
+  orbitServerBaseUrl,
+  readModelOrbitRef,
+} from '../utils/orbitViewerUrl';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -54,6 +61,17 @@ const gizmoSpace = ref<'world' | 'local'>('local');
 
 const previewUrl = computed(() => (model.value?.hasPreview ? modelsApi.previewUrl(props.id) : null));
 const categoryOptions = computed(() => modelCategorySelectOptions(category.value));
+
+const orbitSettings = ref<Record<string, string>>({});
+const modelOrbitRef = computed(() => readModelOrbitRef(model.value?.definition));
+const orbitViewerUrl = computed(() => {
+  const ref = modelOrbitRef.value;
+  if (!ref) return null;
+  const serverUrl = orbitServerBaseUrl(orbitSettings.value, ref.target);
+  return buildOrbitModelViewerUrl(serverUrl, ref);
+});
+const useOrbitViewer = computed(() => Boolean(modelOrbitRef.value && orbitViewerUrl.value));
+const showLocalPreview = computed(() => !useOrbitViewer.value && Boolean(previewUrl.value));
 
 async function loadMaterials(): Promise<void> {
   try {
@@ -137,9 +155,18 @@ async function removeModel(): Promise<void> {
 
 const dims = computed(() => model.value?.dimensions ?? null);
 
+async function loadOrbitSettings(): Promise<void> {
+  try {
+    orbitSettings.value = (await settingsApi.list()).settings;
+  } catch {
+    // Non-fatal: fall back to default Orbit hostnames.
+  }
+}
+
 onMounted(() => {
   void reload();
   void loadMaterials();
+  void loadOrbitSettings();
 });
 </script>
 
@@ -170,7 +197,7 @@ onMounted(() => {
 
     <div v-if="activeTab === 'overview'" class="overview page-fill__body">
       <div class="viewer-col">
-        <div v-if="previewUrl" class="gizmo-toolbar">
+        <div v-if="showLocalPreview" class="gizmo-toolbar">
           <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'translate' }" title="Move" @click="gizmoMode = 'translate'"><Icon name="open_with" :size="16" /></button>
           <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'rotate' }" title="Rotate" @click="gizmoMode = 'rotate'"><Icon name="3d_rotation" :size="16" /></button>
           <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'scale' }" title="Scale" @click="gizmoMode = 'scale'"><Icon name="zoom_out_map" :size="16" /></button>
@@ -178,8 +205,13 @@ onMounted(() => {
           <button type="button" class="gizmo-btn space" :title="`Gizmo space: ${gizmoSpace}`" @click="gizmoSpace = gizmoSpace === 'local' ? 'world' : 'local'">{{ gizmoSpace === 'local' ? 'LOCAL' : 'WORLD' }}</button>
         </div>
         <div class="viewer-wrap">
+          <OrbitModelViewer
+            v-if="useOrbitViewer && orbitViewerUrl"
+            :url="orbitViewerUrl"
+            fill
+          />
           <ModelViewer
-            v-if="previewUrl"
+            v-else-if="showLocalPreview && previewUrl"
             :url="previewUrl"
             :model-material-slots="materialSlots"
             :transform="modelTransform"
@@ -195,7 +227,10 @@ onMounted(() => {
           />
           <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
         </div>
-        <p v-if="previewUrl" class="muted small gizmo-hint">Drag the gizmo to move / rotate / scale · numeric edits in the panel · persist with <strong>Save</strong>.</p>
+        <p v-if="useOrbitViewer" class="muted small gizmo-hint">
+          Canonical geometry is served from Orbit. Sign in to Orbit in this browser if the viewer prompts for auth.
+        </p>
+        <p v-else-if="showLocalPreview" class="muted small gizmo-hint">Drag the gizmo to move / rotate / scale · numeric edits in the panel · persist with <strong>Save</strong>.</p>
       </div>
       <aside class="side-panels">
         <div class="card">
@@ -213,6 +248,15 @@ onMounted(() => {
             <dd v-if="dims">{{ dims.length }} × {{ dims.width }} × {{ dims.height }}</dd>
             <dt>Mesh units</dt>
             <dd>{{ sourceUnits }}</dd>
+            <template v-if="modelOrbitRef">
+              <dt>Orbit</dt>
+              <dd>
+                <span class="mono">{{ modelOrbitRef.projectId }}/{{ modelOrbitRef.modelId }}</span>
+                <span v-if="orbitViewerUrl">
+                  · <a :href="orbitViewerUrl" target="_blank" rel="noopener noreferrer">Open</a>
+                </span>
+              </dd>
+            </template>
           </dl>
         </div>
       </aside>
