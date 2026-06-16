@@ -22,6 +22,10 @@ import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitView
 import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
 import { applyOrbitViewerTheme } from '../utils/orbitViewerTheme';
+import {
+  OrbitWorldHelpers,
+  sceneSpanFromViewer,
+} from '../utils/orbitViewerWorldHelpers';
 import Icon from '../../shared/Icon.vue';
 
 export type OrbitViewPreset = 'top' | 'front' | 'side' | 'iso';
@@ -36,12 +40,15 @@ const props = withDefaults(defineProps<{
   interactive?: boolean;
   /** Fixed camera angle for quad ortho panes (iso keeps perspective orbit). */
   viewPreset?: OrbitViewPreset;
+  /** World-origin grid + axes; defaults off in compact library thumbnails. */
+  showWorldHelpers?: boolean;
 }>(), {
   settings: () => ({}),
   fill: false,
   compact: false,
   interactive: true,
   viewPreset: 'iso',
+  showWorldHelpers: undefined,
 });
 
 const hostRef = ref<HTMLDivElement | null>(null);
@@ -58,6 +65,7 @@ let lastResizeH = 0;
 let loadToken = 0;
 let loadStep = 0;
 let modelHasGeometry = false;
+let worldHelpers: OrbitWorldHelpers | null = null;
 let systemThemeMq: MediaQueryList | null = null;
 let onSystemThemeChange: ((e: MediaQueryListEvent) => void) | null = null;
 
@@ -107,9 +115,35 @@ const resolvedTheme = computed<ResolvedTheme>(() => {
   return systemPrefersDark.value ? 'dark' : 'light';
 });
 
+function shouldShowWorldHelpers(): boolean {
+  if (props.showWorldHelpers === false) return false;
+  if (props.showWorldHelpers === true) return true;
+  return !props.compact;
+}
+
+function disposeWorldHelpers(): void {
+  worldHelpers?.dispose();
+  worldHelpers = null;
+}
+
+function syncWorldHelpers(v: Viewer, reason: string): void {
+  if (!shouldShowWorldHelpers()) {
+    disposeWorldHelpers();
+    return;
+  }
+  if (!worldHelpers) worldHelpers = new OrbitWorldHelpers();
+  worldHelpers.attach(v);
+  const span = sceneSpanFromViewer(v);
+  worldHelpers.rebuild(span, resolvedTheme.value);
+  requestViewerRedraw(v, `world-helpers:${reason}`);
+  logStep(`viewer:world-helpers (${reason})`, { span });
+}
+
 function syncViewerTheme(reason: string): void {
   if (!viewer) return;
   applyOrbitViewerTheme(viewer, resolvedTheme.value);
+  worldHelpers?.syncTheme(resolvedTheme.value);
+  if (worldHelpers) requestViewerRedraw(viewer, `world-helpers-theme:${reason}`);
   if (import.meta.env.DEV) {
     console.log(`${ORBIT_VIEWER_LOG} [${ts()}] theme:${resolvedTheme.value} (${reason})`);
   }
@@ -430,8 +464,9 @@ function setupResizeObserver(): void {
 }
 
 async function disposeViewer(reason: string): Promise<void> {
-  if (!viewer && !activeLoader) return;
+  if (!viewer && !activeLoader && !worldHelpers) return;
   logStep('dispose', { reason, hadViewer: Boolean(viewer), hadLoader: Boolean(activeLoader) });
+  disposeWorldHelpers();
   activeLoader?.cancel();
   activeLoader?.dispose();
   activeLoader = null;
@@ -548,6 +583,7 @@ async function loadModel(): Promise<void> {
     // SpeckleRenderer.resize(), which is why prior resize fixes had no effect.
     syncViewerTheme('post-init');
     logStep('viewer:theme applied', { theme: resolvedTheme.value });
+    syncWorldHelpers(viewer, 'post-init');
     viewerResize('post-init', { force: true });
     scheduleViewerResize('post-init-raf');
 
@@ -583,6 +619,7 @@ async function loadModel(): Promise<void> {
     // zoom, but it runs before our forced resize; re-framing here is the fix
     // for the "geometry loaded but off-screen / black canvas" case.
     applyViewPreset(viewer, 'post-load');
+    syncWorldHelpers(viewer, 'post-load');
     if (!hasGeometry) {
       console.warn(
         `${ORBIT_VIEWER_LOG} [${ts()}] viewer:zoom-skip — no renderable geometry to frame`,
