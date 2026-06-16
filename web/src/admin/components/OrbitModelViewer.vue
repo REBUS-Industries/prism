@@ -26,6 +26,7 @@ import {
   OrbitWorldHelpers,
   sceneSpanFromViewer,
 } from '../utils/orbitViewerWorldHelpers';
+import type { OrbitViewerSession } from '../utils/orbitViewerSession';
 import Icon from '../../shared/Icon.vue';
 
 export type OrbitViewPreset = 'top' | 'front' | 'side' | 'iso';
@@ -42,6 +43,8 @@ const props = withDefaults(defineProps<{
   viewPreset?: OrbitViewPreset;
   /** World-origin grid + axes; defaults off in compact library thumbnails. */
   showWorldHelpers?: boolean;
+  /** Quad view: shared resolve + closure from parent (avoids 4× network download). */
+  preloadedSession?: OrbitViewerSession | null;
 }>(), {
   settings: () => ({}),
   fill: false,
@@ -532,28 +535,46 @@ async function loadModel(): Promise<void> {
   }
 
   try {
-    logStep('resolveViewerVersion:start', {
-      target: props.orbitRef.target,
-      projectId: props.orbitRef.projectId,
-      modelId: props.orbitRef.modelId,
-      versionId: props.orbitRef.versionId ?? '(latest)',
-    });
-    const resolved = await orbitApi.resolveViewerVersion(
-      props.orbitRef.target,
-      props.orbitRef.projectId,
-      props.orbitRef.modelId,
-      props.orbitRef.versionId,
-    );
+    let resolved: {
+      projectId: string;
+      modelId: string;
+      versionId: string;
+      rootObjectId: string;
+    };
+
+    if (props.preloadedSession) {
+      resolved = props.preloadedSession.resolved;
+      logStep('resolveViewerVersion:preloaded', {
+        projectId: resolved.projectId,
+        versionId: resolved.versionId,
+        rootObjectId: `${resolved.rootObjectId.slice(0, 12)}…`,
+      });
+    } else {
+      logStep('resolveViewerVersion:start', {
+        target: props.orbitRef.target,
+        projectId: props.orbitRef.projectId,
+        modelId: props.orbitRef.modelId,
+        versionId: props.orbitRef.versionId ?? '(latest)',
+      });
+      const r = await orbitApi.resolveViewerVersion(
+        props.orbitRef.target,
+        props.orbitRef.projectId,
+        props.orbitRef.modelId,
+        props.orbitRef.versionId,
+      );
+      resolved = r;
+      logStep('resolveViewerVersion:ok', {
+        projectId: resolved.projectId,
+        modelId: resolved.modelId,
+        versionId: resolved.versionId,
+        rootObjectId: `${resolved.rootObjectId.slice(0, 12)}…`,
+      });
+    }
+
     if (token !== loadToken) {
       console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] loadModel:stale after resolve`, { loadToken: token });
       return;
     }
-    logStep('resolveViewerVersion:ok', {
-      projectId: resolved.projectId,
-      modelId: resolved.modelId,
-      versionId: resolved.versionId,
-      rootObjectId: `${resolved.rootObjectId.slice(0, 12)}…`,
-    });
 
     const layout = await waitForHostLayout(host, 'pre-viewer');
     if (token !== loadToken) {
@@ -592,6 +613,7 @@ async function loadModel(): Promise<void> {
       projectId: resolved.projectId,
       rootObjectId: resolved.rootObjectId,
       resourceLabel: `${resolved.projectId}/${resolved.versionId.slice(0, 8)}`,
+      preloadedObjects: props.preloadedSession?.objects,
     });
     activeLoader.on(LoaderEvent.LoadProgress, (payload) => {
       progress.value = Math.round((payload.progress ?? 0) * 100);

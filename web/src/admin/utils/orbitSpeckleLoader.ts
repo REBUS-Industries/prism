@@ -135,7 +135,7 @@ function mapOrbitLoaderError(err: unknown): Error {
   return err instanceof Error ? err : new Error(message);
 }
 
-type RawSpeckleObject = Record<string, unknown> & {
+export type RawSpeckleObject = Record<string, unknown> & {
   id?: string;
   speckle_type?: string;
   __closure?: Record<string, number>;
@@ -430,6 +430,7 @@ export class OrbitProxySpeckleLoader extends Loader {
   private readonly projectId: string;
   private readonly rootObjectId: string;
   private readonly serverUrl: string;
+  private readonly preloadedObjects: RawSpeckleObject[] | null;
 
   constructor(
     tree: WorldTree,
@@ -438,6 +439,8 @@ export class OrbitProxySpeckleLoader extends Loader {
       projectId: string;
       rootObjectId: string;
       resourceLabel?: string;
+      /** When set, skip network closure download (quad-view shared session). */
+      preloadedObjects?: RawSpeckleObject[];
     },
   ) {
     const label = params.resourceLabel
@@ -449,6 +452,7 @@ export class OrbitProxySpeckleLoader extends Loader {
     this.projectId = params.projectId;
     this.rootObjectId = params.rootObjectId;
     this.serverUrl = orbitViewerProxyBase(params.target);
+    this.preloadedObjects = params.preloadedObjects ?? null;
 
     console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:init`, {
       target: params.target,
@@ -456,6 +460,7 @@ export class OrbitProxySpeckleLoader extends Loader {
       rootObjectId: `${params.rootObjectId.slice(0, 12)}…`,
       serverUrl: this.serverUrl,
       resourceLabel: label,
+      preloaded: Boolean(this.preloadedObjects),
     });
   }
 
@@ -481,11 +486,27 @@ export class OrbitProxySpeckleLoader extends Loader {
     // omits from `__closure` and leaves meshes geometry-less (0 batches).
     try {
       const closureStart = performance.now();
-      const { objects, chunkCount } = await loadFullObjectClosure(
-        this.serverUrl,
-        this.projectId,
-        this.rootObjectId,
-      );
+      let objects: RawSpeckleObject[];
+      let chunkCount = 0;
+      if (this.preloadedObjects) {
+        objects = this.preloadedObjects;
+        chunkCount = objects.filter(
+          (o) => typeof o.speckle_type === 'string' && o.speckle_type.includes('DataChunk'),
+        ).length;
+        console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:closure-preloaded`, {
+          resource: this.resource,
+          objectCount: objects.length,
+          chunkCount,
+        });
+      } else {
+        const closure = await loadFullObjectClosure(
+          this.serverUrl,
+          this.projectId,
+          this.rootObjectId,
+        );
+        objects = closure.objects;
+        chunkCount = closure.chunkCount;
+      }
       console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:closure-resolved`, {
         resource: this.resource,
         objectCount: objects.length,
