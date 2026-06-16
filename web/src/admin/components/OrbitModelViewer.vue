@@ -315,6 +315,14 @@ async function loadModel(): Promise<void> {
     logStep('viewer:init complete');
     viewer.createExtension(CameraController);
     logStep('viewer:CameraController attached');
+    // Disable the Speckle shadowcatcher BEFORE loading geometry. Its render
+    // target is sized from the model's bounding box (textureSize / aspect); a
+    // flat or empty ORBIT model gives a zero-height aspect, so the catcher
+    // bakes a 0-size FBO and floods the context with "Framebuffer is
+    // incomplete: Attachment has zero size" every frame. It renders outside
+    // SpeckleRenderer.resize(), which is why prior resize fixes had no effect.
+    viewer.setLightConfiguration({ shadowcatcher: false });
+    logStep('viewer:shadowcatcher disabled');
     viewerResize('post-init', { force: true });
     scheduleViewerResize('post-init-raf');
 
