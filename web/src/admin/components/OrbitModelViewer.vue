@@ -11,6 +11,7 @@ import {
   DefaultViewerParams,
   CameraController,
   LoaderEvent,
+  UpdateFlags,
 } from '@speckle/viewer';
 import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
@@ -82,12 +83,49 @@ function syncHostLayoutSize(host: HTMLElement, size: { width: number; height: nu
   host.style.height = `${size.height}px`;
 }
 
+/** Keep host offsetWidth/offsetHeight in sync even before the Speckle viewer exists. */
+function syncHostLayoutFromContainer(host: HTMLElement): { width: number; height: number } | null {
+  const size = readContainerCssSize(host);
+  if (!size) return null;
+  syncHostLayoutSize(host, size);
+  return size;
+}
+
 function styleViewerCanvas(v: Viewer): void {
   const canvas = v.getCanvas();
   canvas.style.display = 'block';
   canvas.style.width = '100%';
   canvas.style.height = '100%';
   canvas.style.touchAction = 'none';
+}
+
+function logWebGlDimensions(v: Viewer, host: HTMLElement, reason: string): void {
+  const canvas = v.getCanvas();
+  const container = v.getContainer();
+  logStep(`webgl-dims (${reason})`, {
+    host: hostDims(host),
+    container: {
+      offsetW: container.offsetWidth,
+      offsetH: container.offsetHeight,
+      clientW: container.clientWidth,
+      clientH: container.clientHeight,
+    },
+    canvas: {
+      bufferW: canvas.width,
+      bufferH: canvas.height,
+      cssW: canvas.clientWidth,
+      cssH: canvas.clientHeight,
+      offsetW: canvas.offsetWidth,
+      offsetH: canvas.offsetHeight,
+    },
+  });
+}
+
+function requestViewerRedraw(v: Viewer, reason: string): void {
+  v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
+  if (import.meta.env.DEV) {
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] requestRender (${reason})`);
+  }
 }
 
 async function waitForHostLayout(host: HTMLElement, reason: string): Promise<{ width: number; height: number } | null> {
@@ -106,21 +144,45 @@ async function waitForHostLayout(host: HTMLElement, reason: string): Promise<{ w
   return size;
 }
 
-function viewerResize(reason: string): void {
+/**
+ * Resize Speckle's WebGL pipeline using explicit CSS dimensions.
+ * viewer.resize() only reads offsetWidth/offsetHeight; in flex panes those can
+ * lag getBoundingClientRect. SpeckleRenderer.resize(w,h) sizes the FBOs directly.
+ */
+function viewerResize(reason: string, opts?: { force?: boolean }): void {
   if (!viewer || !hostRef.value) return;
   const host = hostRef.value;
-  const size = readContainerCssSize(host);
-  if (!size) return;
-  if (size.width === lastResizeW && size.height === lastResizeH && reason === 'resize-observer') return;
+  const size = syncHostLayoutFromContainer(host);
+  if (!size) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] resize:skip (${reason}) — zero container`);
+    return;
+  }
+  if (
+    !opts?.force
+    && size.width === lastResizeW
+    && size.height === lastResizeH
+    && reason === 'resize-observer'
+  ) {
+    return;
+  }
 
-  syncHostLayoutSize(host, size);
   lastResizeW = size.width;
   lastResizeH = size.height;
 
-  if (import.meta.env.DEV) {
-    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] resize`, { reason, dims: hostDims(host), applied: size });
-  }
+  console.log(`${ORBIT_VIEWER_LOG} [${ts()}] resize`, { reason, dims: hostDims(host), applied: size });
+  viewer.getRenderer().resize(size.width, size.height);
   viewer.resize();
+  logWebGlDimensions(viewer, host, reason);
+
+  const canvas = viewer.getCanvas();
+  if (canvas.width <= 0 || canvas.height <= 0) {
+    console.error(`${ORBIT_VIEWER_LOG} [${ts()}] resize:zero-buffer (${reason})`, {
+      applied: size,
+      canvas: { bufferW: canvas.width, bufferH: canvas.height },
+    });
+  } else {
+    requestViewerRedraw(viewer, reason);
+  }
 }
 
 function scheduleViewerResize(reason: string): void {
@@ -136,7 +198,10 @@ function setupResizeObserver(): void {
   const el = hostRef.value;
   if (!el) return;
   logStep('resize-observer:setup', hostDims(el));
-  resizeObs = new ResizeObserver(() => scheduleViewerResize('resize-observer'));
+  resizeObs = new ResizeObserver(() => {
+    syncHostLayoutFromContainer(el);
+    scheduleViewerResize('resize-observer');
+  });
   resizeObs.observe(el);
   scheduleViewerResize('setup-raf');
 }
@@ -244,12 +309,13 @@ async function loadModel(): Promise<void> {
     logStep('viewer:new', { verbose: params.verbose, hostDims: hostDims(host), layout });
     viewer = new Viewer(host, params);
     styleViewerCanvas(viewer);
+    viewerResize('post-constructor', { force: true });
     logStep('viewer:init start');
     await viewer.init();
     logStep('viewer:init complete');
     viewer.createExtension(CameraController);
     logStep('viewer:CameraController attached');
-    viewerResize('post-init');
+    viewerResize('post-init', { force: true });
     scheduleViewerResize('post-init-raf');
 
     activeLoader = new OrbitProxySpeckleLoader(viewer.getWorldTree(), {
@@ -273,7 +339,9 @@ async function loadModel(): Promise<void> {
       finished: activeLoader.finished,
       progress: progress.value,
     });
-    viewerResize('post-load');
+    await nextTick();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    viewerResize('post-load', { force: true });
     scheduleViewerResize('post-load-raf');
   } catch (err) {
     if (token !== loadToken) return;
@@ -320,6 +388,12 @@ watch(
     void loadModel();
   },
 );
+
+watch(loading, (isLoading, wasLoading) => {
+  if (wasLoading && !isLoading && viewer) {
+    scheduleViewerResize('loading-overlay-removed');
+  }
+});
 </script>
 
 <template>
