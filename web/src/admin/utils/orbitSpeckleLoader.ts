@@ -4,7 +4,13 @@
  */
 import { ObjectLoader2Factory } from '@speckle/objectloader2';
 import type { ObjectLoader2 } from '@speckle/objectloader2';
-import { Loader, LoaderEvent, SpeckleConverter, type SpeckleObject } from '@speckle/viewer';
+import {
+  Loader,
+  LoaderEvent,
+  SpeckleConverter,
+  SpeckleGeometryConverter,
+  type SpeckleObject,
+} from '@speckle/viewer';
 import type { WorldTree } from '@speckle/viewer';
 
 export const ORBIT_VIEWER_LOG = '[OrbitViewer]';
@@ -575,11 +581,49 @@ export class OrbitProxySpeckleLoader extends Loader {
       );
     }
 
+    // `converter.traverse` only populates the WorldTree (nodes + dechunked
+    // geometry on `node.model.raw`). It does NOT create render views — that is
+    // a SEPARATE post-traverse pass the stock SpeckleLoader runs and which this
+    // loader was missing entirely. Without it, every node's `renderView` stays
+    // null, so `Viewer.loadObject` → `speckleRenderer.addRenderTree` builds 0
+    // batches and the canvas is black even though the mesh geometry is valid
+    // (diag:orbit-geometry confirmed all 12 meshes carry vertices/faces, yet
+    // diag:scene reported batchCount 0 / nodesWithRenderView 0). Mirror the
+    // stock loader: resolve instances + materials, then build the render tree
+    // through SpeckleGeometryConverter, which sets `renderView` on each node.
+    try {
+      await converter.convertInstances();
+      await converter.applyMaterials();
+      await converter.handleDuplicates();
+
+      const renderTree = this.tree.getRenderTree(this.resource);
+      if (!renderTree) {
+        throw new Error('ORBIT render tree could not be resolved for the loaded resource.');
+      }
+      const geometryConverter = new SpeckleGeometryConverter();
+      let renderNodeCount = 0;
+      await renderTree.buildRenderTree(geometryConverter, (count) => {
+        renderNodeCount = count;
+        // Converted is the event Viewer/extensions expect once render views
+        // exist; the stock loader emits it from this same callback.
+        this.emit(LoaderEvent.Converted, { count });
+      });
+      console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:render-tree built`, {
+        resource: this.resource,
+        renderNodeCount,
+      });
+    } catch (err) {
+      console.error(`${ORBIT_VIEWER_LOG} [${ts()}] loader:render-tree error`, {
+        resource: this.resource,
+        error: err,
+      });
+      throw mapOrbitLoaderError(err);
+    }
+
     this.isFinished = true;
     // Emit a final 100% — the per-object progress uses (total + 1) as the
     // denominator so it tops out at ~98% even after every object is loaded.
     this.emit(LoaderEvent.LoadProgress, { progress: 1, id: this.resource });
-    this.emit(LoaderEvent.Converted, { count: loaded });
     console.log(`${ORBIT_VIEWER_LOG} [${ts()}] loader:load complete`, {
       resource: this.resource,
       objects: loaded,
