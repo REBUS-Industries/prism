@@ -21,7 +21,7 @@ import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
 import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
-import { applyOrbitViewerTheme } from '../utils/orbitViewerTheme';
+import { applyOrbitViewerMaterialsStyle, applyOrbitViewerTheme } from '../utils/orbitViewerTheme';
 import {
   OrbitWorldHelpers,
   sceneSpanFromViewer,
@@ -632,6 +632,9 @@ async function loadModel(): Promise<void> {
     });
     const { hasGeometry } = logSceneDiagnostics(viewer, 'post-load');
     modelHasGeometry = hasGeometry;
+    applyOrbitViewerMaterialsStyle(viewer);
+    syncViewerTheme('post-load-materials');
+    logStep('viewer:materials render style (SHADED)');
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     viewerResize('post-load', { force: true });

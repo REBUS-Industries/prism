@@ -1,4 +1,4 @@
-import { UpdateFlags, type Viewer } from '@speckle/viewer';
+import { UpdateFlags, ViewMode, ViewModes, type Viewer } from '@speckle/viewer';
 import type { ResolvedTheme } from '../../shared/theme';
 
 /** Canvas / edge-pass colours aligned with ModelViewer & FixtureViewer. */
@@ -42,6 +42,18 @@ const CLEAR_COLOR_PASS_NAMES = new Set([
 ]);
 
 /**
+ * ORBIT / Speckle "Shaded" view mode — renders mesh `renderMaterial` PBR colours
+ * and textures instead of the default edge-outline technical drawing style.
+ * Must run after geometry batches exist (post-`loadObject`).
+ */
+export function applyOrbitViewerMaterialsStyle(v: Viewer): void {
+  const viewModes = v.hasExtension(ViewModes)
+    ? v.getExtension(ViewModes)
+    : v.createExtension(ViewModes);
+  viewModes.setViewMode(ViewMode.SHADED, { edges: false });
+}
+
+/**
  * Sync Speckle pipeline background + sun/IBL to the PRISM admin theme.
  * Safe to call after `viewer.init()` and on every theme toggle.
  */
@@ -54,6 +66,10 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
     if (CLEAR_COLOR_PASS_NAMES.has(pass.displayName)) {
       pass.setClearColor(bg, 1);
     }
+  }
+
+  for (const pass of pipeline.getPass('SHADED')) {
+    pass.setClearColor(bg, 1);
   }
 
   for (const pass of pipeline.getPass('EDGES')) {
