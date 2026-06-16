@@ -27,6 +27,11 @@ const DEFAULT_REPO = 'REBUS-Industries/prism';
 const PORT = 3456;
 const STATE_FILE = process.env.STATE_FILE || '/data/state.json';
 const CI_WATCH_MINUTES = 12;
+// If none of a repo's watched deploy workflows have started within this window
+// after merge, the changed paths didn't trigger a deploy (e.g. agent-only,
+// infra-only, or ci-only PRs). Report "merged, nothing to deploy" instead of
+// waiting the full CI_WATCH_MINUTES and posting a misleading timeout.
+const NO_DEPLOY_GRACE_MS = 150_000;
 
 const REPOS = [
   { label: 'prism (web / server)',      value: 'REBUS-Industries/prism' },
@@ -450,7 +455,15 @@ async function pollDeploys(repo, afterIso, maxMinutes = CI_WATCH_MINUTES) {
     firstPass = false;
 
     const primary = await getWorkflowBatch(repo, afterIso, config.workflows);
-    if (!primary.started) continue;
+    if (!primary.started) {
+      // No watched workflow has appeared. Triggered runs register within
+      // seconds, so after the grace window this means the merge's changed paths
+      // didn't trigger any deploy workflow — report success rather than hang.
+      if (config.workflows?.length && Date.now() - new Date(afterIso).getTime() > NO_DEPLOY_GRACE_MS) {
+        return { conclusion: 'no_deploy', url: null, detail: 'no deploy workflow triggered for changed files', errors: '' };
+      }
+      continue;
+    }
     if (primary.pending) continue;
     if (primary.failedRun) {
       const errors = await safeGetRunFailureSummary(repo, primary.failedRun);
@@ -624,6 +637,11 @@ function formatCiResultMessage(label, result, deploysToDev, pullUrl = null) {
     const done = deploysToDev ? 'is deployed to prism-dev' : 'CI passed on main';
     const successPrLink = pullUrl ? ` <${pullUrl}|View PR>` : '';
     return `:white_check_mark: *${label} ${done}.*${detail}${ciLink}${successPrLink}`;
+  }
+
+  if (result.conclusion === 'no_deploy') {
+    const successPrLink = pullUrl ? ` <${pullUrl}|View PR>` : '';
+    return `:white_check_mark: *${label} merged.* No deploy workflow ran for the changed files — nothing to deploy.${successPrLink}`;
   }
 
   if (result.conclusion === 'failure') {
