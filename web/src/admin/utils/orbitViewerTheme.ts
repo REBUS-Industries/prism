@@ -57,10 +57,10 @@ function viewModesExtension(v: Viewer): ViewModes {
 
 /**
  * Switch the Speckle pipeline to Rendered (SHADED). Must run after geometry
- * batches exist for best results, but safe to call repeatedly post-`init()`.
+ * batches exist. Speckle dedupes identical mode/options internally — safe to
+ * call after resize / view-preset (never from LoadComplete).
  */
 export function applyOrbitViewerMaterialsStyle(v: Viewer): void {
-  if (isOrbitViewerRenderedMode(v)) return;
   try {
     const viewModes = viewModesExtension(v);
     viewModes.setViewMode(ORBIT_VIEWER_RENDER_MODE, RENDER_MODE_OPTIONS);
@@ -85,11 +85,9 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
     }
   }
 
-  // SHADED / EDGES passes exist only after the matching view mode is active.
-  if (isOrbitViewerRenderedMode(v)) {
-    for (const pass of pipeline.getPass('SHADED')) {
-      pass.setClearColor(bg, 1);
-    }
+  // SHADED passes exist only after ViewMode.SHADED is active.
+  for (const pass of pipeline.getPass('SHADED')) {
+    pass.setClearColor(bg, 1);
   }
 
   for (const pass of pipeline.getPass('EDGES')) {
@@ -101,6 +99,12 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
   }
 
   v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
+}
+
+/** Rendered (SHADED) display mode + PRISM theme — call after geometry + final resize. */
+export function applyOrbitViewerRenderStyle(v: Viewer, theme: ResolvedTheme): void {
+  applyOrbitViewerMaterialsStyle(v);
+  applyOrbitViewerTheme(v, theme);
 }
 
 /** True when the viewer pipeline is on Rendered (SHADED) with edges off. */
