@@ -69,7 +69,7 @@ importing the model at runtime.
    `.glb`, and glTFRuntime loads it into the streamed world.
 6. **Streaming transport:** per-run Cirrus/Wilbur signalling with distinct
    **streamer / player / SFU** ports, the PS2 **WebRTC data channel** (inherent to
-   the streamer), and **coturn TURN** on VM 211 for NAT traversal. The browser
+   the streamer), and **coturn TURN** on VM 212 for NAT traversal. The browser
    viewer connects through the PRISM signalling proxy.
 
 **PRISM's contract with the UE project is simply:** *launch it `-game` with PS2 +
@@ -90,7 +90,7 @@ enabled is driven identically and auto-detected — no PRISM change required.
 - **Data channel:** part of the PS2 streamer by default. The portal's
   `emitUIInteraction` control descriptors ride this channel and are delivered to
   UE's `PixelStreamingInput.OnInputEvent`. **PRISM requires no change to carry it.**
-- **TURN:** coturn on VM 211 (`visualiser.rebus.industries`), credentials minted
+- **TURN:** coturn on VM 212 (`visualiser.rebus.industries`), credentials minted
   per session, for browsers that can't reach the host directly. Bundle:
   `turn:visualiser.rebus.industries:3478` + `turns:…:5349`, HMAC-SHA1 credential
   over `<expiry>:<runid-seg>`, `ttl 86400`; relay UDP range `52000–56999`.

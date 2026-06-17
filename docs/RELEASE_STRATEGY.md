@@ -14,7 +14,7 @@ PRISM ships, and how subsequent maintenance releases follow.
 | **PRISM Server (Node, Docker image)** | `v0.2.0` → `ghcr.io/rebus-industries/prism-server:v0.2.0` | `server/package.json`                              | Fastify REST + WS gateway, signalling proxy, visualiser API.    |
 | **Visualiser Orchestrator (.NET)**    | `visualiser-v0.2.0` *(see below)*  | `visualiser/Directory.Build.props`                 | `prism-visualiser.exe` standalone EXE bundled into the agent.   |
 | **REBUS-Industries/orbit-ue-template**     | `v0.1.0-ue5.7-scaffold` (NO BUMP)  | Separate repo                                      | UE 5.7 project template; v1.0.0 gated on artist work — see [Open items](#open-items). |
-| **coturn (`turnserver.conf` + `docker-compose.yml`)** | n/a — config-only deploy   | `infra/turn/` (lands in Phase H)                   | TURN relay on VM 211. Deployed via runbook, not auto-tagged.    |
+| **coturn (`turnserver.conf` + `docker-compose.yml`)** | n/a — config-only deploy   | `infra/turn/` (lands in Phase H)                   | TURN relay on VM 212. Deployed via runbook, not auto-tagged.    |
 
 `v0.2.0` on the PRISM repo (`REBUS-Industries/prism`) is the canonical
 "Visualiser GA" tag. It fires the `agent.yml` + `server.yml` workflows
@@ -70,7 +70,7 @@ may or may not coincide with `visualiser-v0.6.0`.
     ```
     -   `visualiser-msi.yml` (filtered on `visualiser-v*`) builds the
         orchestrator EXE and uploads it to the release.
-4.  **Deploy coturn** to VM 211 per the Phase H runbook
+4.  **Deploy coturn** to VM 212 per the Phase H runbook
     (`infra/turn/README.md`, lands with Phase H). Requires operator
     authorisation; not automated.
 5.  **Validate end-to-end** with the artist-populated UE template — see

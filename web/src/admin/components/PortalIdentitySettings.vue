@@ -287,9 +287,9 @@ onMounted(async () => {
       <ol class="setup-steps">
         <li>Create a <strong>Web application</strong> OAuth client in Google Cloud Console.</li>
         <li>Add these authorized redirect URIs:
-          <code>https://prism-dev.rebus.industries/admin/?portal_callback=1</code> and
-          <code>https://prism-dev.rebus.industries/api/admin/directory-oauth/callback</code>
-          (add the <code>prism.rebus.industries</code> equivalents when prod goes live).
+          <code>https://prism.rebus.industries/admin/?portal_callback=1</code> and
+          <code>https://prism.rebus.industries/api/admin/directory-oauth/callback</code>
+          (plus the <code>http://localhost:29364/</code> equivalents for local dev).
         </li>
         <li>Paste the client ID + secret above and save.</li>
         <li>Click <strong>Authorize directory sync</strong> and sign in as a Workspace super-admin.</li>

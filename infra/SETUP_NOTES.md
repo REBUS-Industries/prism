@@ -1,4 +1,4 @@
-# PRISM server — infrastructure setup notes
+# PRISM server â€” infrastructure setup notes
 
 Companion to `DEPLOY.md`. Where `DEPLOY.md` is the *runbook* for putting
 PRISM server on VM 212, this file documents the **adjacent infra
@@ -19,26 +19,26 @@ The Visualiser feature needs three pieces of infrastructure that PRISM
 server itself does not provision:
 
 1. **coturn TURN/STUN server.** Required for the browser-to-workstation
-   WebRTC media relay. Deployed on VM 212 alongside PRISM.
+   WebRTC media relay. Deployed on VM 212 alongside PRISM server.
    - Deployment files:
      `infra/coturn/docker-compose.yml`
      `infra/coturn/turnserver.conf`
    - Runbook: `infra/coturn/SETUP_NOTES.md`
-   - Public DNS: `visualiser.rebus.industries` → `185.48.165.165`
+   - Public DNS: `visualiser.rebus.industries` â†’ `185.48.165.165`
      (NAT'd to `10.0.200.212`).
 
 2. **UniFi gateway port-forwards.** Open the public ports coturn needs.
    - Rule table: `infra/coturn/UNIFI_RULES.md`
-   - Applied via UniFi Console → Settings → Internet → Port Forwarding.
+   - Applied via UniFi Console â†’ Settings â†’ Internet â†’ Port Forwarding.
    - Without these rules, `POST /api/visualiser/streams` returns valid
      credentials but browsers cannot reach the relay (ICE candidate
      gathering completes but no `relay` candidates appear).
 
 3. **Caddy ACME-only block for `visualiser.rebus.industries`.** Caddy
-   does NOT proxy TURN — it only serves the HTTP-01 challenge so the
+   does NOT proxy TURN â€” it only serves the HTTP-01 challenge so the
    hostname has a cert. Block lives in:
    `D:\Documents\Claude\REBUS System\proxy\Caddyfile`
-   coturn obtains its own cert via certbot on VM 211; the Caddy-issued
+   coturn obtains its own cert via certbot on VM 212; the Caddy-issued
    cert is currently unused and is held as a fallback / future option.
 
 ### TURN_SECRET wiring
@@ -48,20 +48,20 @@ PRISM server consumes `TURN_SECRET` via
 
 ```
 infra/.env.example                docs the variable (commit-safe template)
-   │
-   ▼
-/opt/prism/.env on VM 211         operator-edited at deploy time
-   │
-   ▼
+   â”‚
+   â–¼
+/opt/prism/.env on VM 212         operator-edited at deploy time
+   â”‚
+   â–¼
 infra/docker-compose.yml          passes ${TURN_SECRET:-} into container
-   │
-   ▼
+   â”‚
+   â–¼
 prism-server container env        process.env.TURN_SECRET
-   │
-   ▼
+   â”‚
+   â–¼
 turnCredentials.ts                base64(HMAC-SHA1(TURN_SECRET, "<exp>:<tag>"))
-   │
-   ▼
+   â”‚
+   â–¼
 POST /api/visualiser/streams      .turn.{urls, username, credential, ttl}
 ```
 
@@ -88,10 +88,10 @@ When standing up the Visualiser stack for the first time, follow this
 order:
 
 1. Read `infra/coturn/SETUP_NOTES.md` end to
-   end before touching anything — it's the source of truth.
+   end before touching anything â€” it's the source of truth.
 2. Generate `TURN_SECRET` and `JWT_SIGNALLING_SECRET` (two separate
    `openssl rand -hex 32` runs).
-3. Edit `/opt/prism/.env` on VM 211 to set both, plus
+3. Edit `/opt/prism/.env` on VM 212 to set both, plus
    `TURN_REALM=visualiser.rebus.industries` and
    `VISUALISER_START_TIMEOUT_MS=180000`.
 4. Stage and start coturn per the TURN folder's runbook (steps 2-5).
@@ -113,7 +113,7 @@ must be present on both proxies; full proxy operations live in
 `D:\Documents\Claude\REBUS System\proxy\SETUP_NOTES.md`.
 
 WebSocket support is required (`/ws/agent` for agents,
-`/ws/visualiser/:runId/signalling` for Phase H+) — the snippet's `@ws`
+`/ws/visualiser/:runId/signalling` for Phase H+) â€” the snippet's `@ws`
 matcher takes care of that.
 
 ---

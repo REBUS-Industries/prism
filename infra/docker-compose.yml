@@ -1,4 +1,6 @@
-# PRISM Server stack — runs on VM 211.
+# PRISM Server stack — legacy single-host monolith compose.
+# Production now runs the split stack on VM 212 (docker-compose.dev.yml);
+# the monolith on VM 211 was decommissioned 2026-06-16 (VM 211 is ORBIT-only).
 #
 # Three services:
 #   prism-server   the Fastify + WS orchestrator (built from server/ + web/)
@@ -43,7 +45,7 @@ services:
       # extensions in ASSIMP_EXTS.
       ASSIMP_SERVICE_URL: "${ASSIMP_SERVICE_URL:-http://prism-assimp:8088}"
       # --- Visualiser (Phase H wires real coturn) ---------------------
-      # TURN_SECRET MUST match coturn's static-auth-secret on VM 211
+      # TURN_SECRET MUST match coturn's static-auth-secret on VM 212
       # (see infra/coturn/SETUP_NOTES.md).
       # When empty, server/src/visualiser/turnCredentials.ts returns the
       # `turn: null` sentinel and the portal/admin SPA falls back to

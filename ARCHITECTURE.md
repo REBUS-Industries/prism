@@ -124,7 +124,7 @@ sync — wired into CI as the `schemas` job.
 - `.github/workflows/agent.yml`  — builds the C# agent as a self-contained
   single-file Windows publish, signs it (when CODE_SIGN_* secrets are set),
   and attaches the zip to a GH Release on tag push
-- `.github/workflows/deploy.yml` — SSHes to VM 211 / 212, pulls the new
+- `.github/workflows/deploy.yml` — SSHes to VM 212, pulls the new
   image, runs `docker compose up -d`
 - `infra/docker-compose.yml`     — production compose: prism-server +
   postgres + redis
@@ -134,7 +134,7 @@ See `DEPLOY.md` and `AGENT_INSTALL.md` for runbook detail.
 
 ## External materials (Fab + Cloudflare)
 
-Materials editor browse/import calls Fab from the **server** (VM 211/212). Cloudflare blocks
+Materials editor browse/import calls Fab from the **server** (VM 212). Cloudflare blocks
 typical datacenter IPs; PRISM uses **FlareSolverr** on the same VM to obtain `cf_clearance`
 cookies before Fab API requests (`FAB_FLARESOLVERR_URL`, default
 `http://127.0.0.1:8191/v1`). Epic OAuth (`FAB_EPIC_REFRESH_TOKEN`) is for asset **import**

@@ -4,7 +4,7 @@ PRISM defines the integration contract now; the portal team implements to match.
 
 Canonical types: `shared/contracts/portal-access.ts` (+ `.json`).
 
-## Portal → PRISM (assumed REST)
+## Portal â†’ PRISM (assumed REST)
 
 ### `GET /portal/me`
 
@@ -38,8 +38,8 @@ Levels: `viewer` | `contributor` | `owner` | `admin`.
 Exchange authorization code (when portal owns OAuth directly):
 
 ```json
-{ "code": "…", "redirectUri": "http://localhost:29364/", "grantType": "authorization_code" }
-→ { "accessToken": "…" }
+{ "code": "â€¦", "redirectUri": "http://localhost:29364/", "grantType": "authorization_code" }
+â†’ { "accessToken": "â€¦" }
 ```
 
 ## PRISM permissions service
@@ -54,13 +54,13 @@ Exchange authorization code (when portal owns OAuth directly):
 }
 ```
 
-→ `{ "manifest": { … ConnectorManifest … } }`
+â†’ `{ "manifest": { â€¦ ConnectorManifest â€¦ } }`
 
 See `ConnectorManifest` in `portal-access.ts`.
 
 ## Mock adapter
 
-Set `PORTAL_ADAPTER=mock` (default on local/mock setups). Accepts codes `mock:alice`, `mock:bob`.
+Set `PORTAL_ADAPTER=mock` (default on prism.rebus.industries). Accepts codes `mock:alice`, `mock:bob`.
 
 ## Identity mapping
 

@@ -1,10 +1,10 @@
 # Handoff: Model Library Workstream
 
 **Branch:** `feat/model-library` (REBUS-Industries/prism)
-**Owned by:** Dedicated agent seat — coordinate with fixture-builder and materials-editor devs on shared files.
-**Pairs with:** `feat/fixture-builder` · `feat/materials-editor` · **`prism-models-service`** polyrepo
+**Owned by:** Dedicated agent seat â€” coordinate with fixture-builder and materials-editor devs on shared files.
+**Pairs with:** `feat/fixture-builder` Â· `feat/materials-editor` Â· **`prism-models-service`** polyrepo
 
-**Read first:** `.cursor/plans/AGENT-GIT-INSTRUCTIONS.md` — merge via `/prism-merge <PR#>` in #prism-dev; confirm deploy workflows finished before testing on dev.
+**Read first:** `.cursor/plans/AGENT-GIT-INSTRUCTIONS.md` â€” merge via `/prism-merge <PR#>` in #prism-dev; confirm deploy workflows finished before testing on prism.rebus.industries.
 
 ---
 
@@ -25,9 +25,9 @@ git clone https://github.com/REBUS-Industries/prism-models-service.git
 
 Open the `prism` folder in Cursor. Rule file: `.cursor/rules/model-library-workstream.mdc`.
 
-**Prod/dev servers:**
-- Dev (VM 212): https://prism.rebus.industries
-- Prod (VM 211): tag-gated — don't touch.
+**Server:**
+- PRISM (VM 212): https://prism.rebus.industries â€” single environment, auto-deploys from `main` on merge
+- VM 211 is ORBIT-only â€” don't touch.
 
 **Deploy this branch to dev for review:**
 
@@ -73,10 +73,10 @@ See **`docs/MODEL_LIBRARY.md`** for data model and API design targets.
 | Components | `web/src/admin/components/ModelViewer.vue`, tree/preview helpers under `components/` + `utils/` |
 | Routes | `web/src/admin/main.ts` |
 | Nav | `web/src/admin/App.vue` |
-| Client API | `web/src/shared/api.ts` — `modelsApi` block at end |
+| Client API | `web/src/shared/api.ts` â€” `modelsApi` block at end |
 | Types | `web/src/admin/utils/modelTypes.ts` |
 | Docs | `docs/MODEL_LIBRARY.md` |
-| Scopes | `server/src/api/keys.ts` — `models:*` scopes only |
+| Scopes | `server/src/api/keys.ts` â€” `models:*` scopes only |
 
 ### Polyrepo (`prism-models-service`)
 
@@ -114,12 +114,12 @@ See **`docs/MODEL_LIBRARY.md`** for data model and API design targets.
 
 ## 6. First implementation milestones
 
-1. **Infra** — merge monorepo PR with compose + nginx + merge-bot + deploy wiring (scaffold PR on `feat/model-library`).
-2. **Create `prism-models-service` repo** — push `scaffold/prism-models-service/`; set `PRISM_DISPATCH_TOKEN` secret.
-3. **Contracts** — define `ModelDefinition`, `ModelInstance`, storage layout in `prism-shared` (or monorepo mirror types like fixtures).
-4. **API** — `GET/POST /api/models`, `GET/PUT/DELETE /api/models/:id`, import endpoint.
-5. **UI** — library grid + editor shell (reuse patterns from `Materials.vue` / `PrismLibrary.vue`).
-6. **Connectors** — later: ORBIT object types for placed model instances (see `docs/FIXTURE_LIBRARY.md` connector section).
+1. **Infra** â€” merge monorepo PR with compose + nginx + merge-bot + deploy wiring (scaffold PR on `feat/model-library`).
+2. **Create `prism-models-service` repo** â€” push `scaffold/prism-models-service/`; set `PRISM_DISPATCH_TOKEN` secret.
+3. **Contracts** â€” define `ModelDefinition`, `ModelInstance`, storage layout in `prism-shared` (or monorepo mirror types like fixtures).
+4. **API** â€” `GET/POST /api/models`, `GET/PUT/DELETE /api/models/:id`, import endpoint.
+5. **UI** â€” library grid + editor shell (reuse patterns from `Materials.vue` / `PrismLibrary.vue`).
+6. **Connectors** â€” later: ORBIT object types for placed model instances (see `docs/FIXTURE_LIBRARY.md` connector section).
 
 ---
 
@@ -144,7 +144,7 @@ Merge polyrepo PRs with: `/prism-merge prism-models-service#1`
 
 ---
 
-## 8. Deploy — web + models API must stay in sync
+## 8. Deploy â€” web + models API must stay in sync
 
 | What changed | Repo | Workflow | Deploys |
 |---|---|---|---|
@@ -159,7 +159,7 @@ gh workflow run web-image --repo REBUS-Industries/prism --ref feat/model-library
 gh workflow run models-image --repo REBUS-Industries/prism-models-service --ref <branch>
 ```
 
-After `/prism-merge`, wait for **web-image** and **models-image** (+ **deploy-dev-service**) before testing on prism-dev.
+After `/prism-merge`, wait for **web-image** and **models-image** (+ **deploy-dev-service**) before testing on prism.rebus.industries.
 
 ---
 
