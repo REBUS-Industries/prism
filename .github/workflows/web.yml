@@ -86,9 +86,9 @@ jobs:
 
       - name: Sync split compose + deploy prism-web to VM 212 (prod)
         env:
-          # Must match Caddy upstream in infra/Caddyfile.snippet (10.0.200.212:8765).
-          # Do not use the prism-prod SSH alias — runner config may point elsewhere.
-          DEPLOY_HOST: rebus@10.0.200.212
+          # prism-dev SSH alias on deploy runners -> VM 212 (Caddy upstream).
+          # Do not use prism-prod — it pointed at a shadow stack, not live traffic.
+          DEPLOY_HOST: prism-dev
         run: |
           WEB_TAG="sha-${GITHUB_SHA:0:7}"
           ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" hostname
