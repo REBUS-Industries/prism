@@ -42,10 +42,13 @@ const CLEAR_COLOR_PASS_NAMES = new Set([
 ]);
 
 /**
- * Speckle {@link ViewMode.SHADED} — the same display style Rhino / ORBIT call
- * "Rendered": PBR `renderMaterial` colours and textures, no technical edges.
+ * Speckle {@link ViewMode.DEFAULT} with edges off — the GeometryPass that
+ * renders real `SpeckleStandardMaterial` PBR (renderMaterial colours + textures),
+ * matching ORBIT's "Rendered" display. NOTE: ViewMode.SHADED is NOT this — its
+ * pipeline draws a flat discreet-colour ramp per material (no textures, grey
+ * fallback), which is why materials looked unshaded.
  */
-export const ORBIT_VIEWER_RENDER_MODE = ViewMode.SHADED;
+export const ORBIT_VIEWER_RENDER_MODE = ViewMode.DEFAULT;
 
 const RENDER_MODE_OPTIONS = { edges: false } as const;
 
@@ -56,9 +59,9 @@ function viewModesExtension(v: Viewer): ViewModes {
 }
 
 /**
- * Switch the Speckle pipeline to Rendered (SHADED). Must run after geometry
- * batches exist. Speckle dedupes identical mode/options internally — safe to
- * call after resize / view-preset (never from LoadComplete).
+ * Switch the Speckle pipeline to Rendered (DEFAULT geometry pass, edges off).
+ * Must run after geometry batches exist. Speckle dedupes identical mode/options
+ * internally — safe to call after resize / view-preset (never from LoadComplete).
  */
 export function applyOrbitViewerMaterialsStyle(v: Viewer): void {
   try {
@@ -66,7 +69,7 @@ export function applyOrbitViewerMaterialsStyle(v: Viewer): void {
     viewModes.setViewMode(ORBIT_VIEWER_RENDER_MODE, RENDER_MODE_OPTIONS);
     v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
   } catch (err) {
-    console.warn('[OrbitViewer] SHADED view mode failed — keeping default pipeline', err);
+    console.warn('[OrbitViewer] Rendered view mode failed — keeping default pipeline', err);
   }
 }
 
@@ -85,7 +88,11 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
     }
   }
 
-  // SHADED passes exist only after ViewMode.SHADED is active.
+  // Rendered (DEFAULT) uses the GEOMETRY pass; SHADED-mode passes only exist
+  // when that mode is active. Set clear colour on whichever is present.
+  for (const pass of pipeline.getPass('GEOMETRY')) {
+    pass.setClearColor(bg, 1);
+  }
   for (const pass of pipeline.getPass('SHADED')) {
     pass.setClearColor(bg, 1);
   }
@@ -107,7 +114,7 @@ export function applyOrbitViewerRenderStyle(v: Viewer, theme: ResolvedTheme): vo
   applyOrbitViewerTheme(v, theme);
 }
 
-/** True when the viewer pipeline is on Rendered (SHADED) with edges off. */
+/** True when the viewer pipeline is on Rendered (DEFAULT geometry) with edges off. */
 export function isOrbitViewerRenderedMode(v: Viewer): boolean {
   if (!v.hasExtension(ViewModes)) return false;
   const viewModes = v.getExtension(ViewModes);
