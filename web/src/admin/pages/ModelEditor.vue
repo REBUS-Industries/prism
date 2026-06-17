@@ -13,8 +13,7 @@ import {
   type ApiError,
 } from '../../shared/api';
 import ModelViewer from '../components/ModelViewer.vue';
-import OrbitQuadPreview from '../components/OrbitQuadPreview.vue';
-import ModelTransformPanel from '../components/ModelTransformPanel.vue';
+import OrbitModelViewer from '../components/OrbitModelViewer.vue';
 import Icon from '../../shared/Icon.vue';
 import { cloneModelTransform, ensureModelTransform } from '../utils/modelTransform';
 import {
@@ -72,13 +71,10 @@ const slotsLoading = ref(false);
 const slotsHydrated = ref(false);
 const orbitSyncing = ref(false);
 const orbitSyncMessage = ref<string | null>(null);
-/** Root transform for preview + persistence on Save. */
+/** Root transform persisted on Save (no editor UI). */
 const modelTransform = ref<ModelTransform>(ensureModelTransform(null));
 /** Mesh vertex units (GLB coordinate space); preview scales to metres. */
 const sourceUnits = ref<ModelLengthUnit>(DEFAULT_MODEL_SOURCE_UNITS);
-
-const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
-const gizmoSpace = ref<'world' | 'local'>('local');
 
 const previewUrl = computed(() => (model.value?.hasPreview ? modelsApi.previewUrl(props.id) : null));
 const categoryOptions = computed(() => modelCategorySelectOptions(category.value));
@@ -222,10 +218,6 @@ async function reload(): Promise<void> {
   } finally {
     loading.value = false;
   }
-}
-
-function onTransformChange(next: ModelTransform): void {
-  modelTransform.value = cloneModelTransform(next);
 }
 
 async function syncOrbitMaterials(): Promise<void> {
@@ -382,18 +374,14 @@ onMounted(() => {
 
     <div v-if="activeTab === 'overview'" class="overview page-fill__body">
       <div class="viewer-col">
-        <div v-if="showLocalPreview" class="gizmo-toolbar">
-          <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'translate' }" title="Move" @click="gizmoMode = 'translate'"><Icon name="open_with" :size="16" /></button>
-          <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'rotate' }" title="Rotate" @click="gizmoMode = 'rotate'"><Icon name="3d_rotation" :size="16" /></button>
-          <button type="button" class="gizmo-btn" :class="{ active: gizmoMode === 'scale' }" title="Scale" @click="gizmoMode = 'scale'"><Icon name="zoom_out_map" :size="16" /></button>
-          <span class="gizmo-sep" aria-hidden="true" />
-          <button type="button" class="gizmo-btn space" :title="`Gizmo space: ${gizmoSpace}`" @click="gizmoSpace = gizmoSpace === 'local' ? 'world' : 'local'">{{ gizmoSpace === 'local' ? 'LOCAL' : 'WORLD' }}</button>
-        </div>
         <div class="viewer-wrap">
-          <OrbitQuadPreview
+          <OrbitModelViewer
             v-if="useOrbitViewer && modelOrbitRef"
             :orbit-ref="modelOrbitRef"
             :settings="orbitSettings"
+            view-preset="iso"
+            fill
+            interactive
           />
           <ModelViewer
             v-else-if="showLocalPreview && previewUrl"
@@ -405,23 +393,15 @@ onMounted(() => {
             interactive
             light-background
             fill
-            editable
-            :gizmo-mode="gizmoMode"
-            :gizmo-space="gizmoSpace"
-            @transform-change="onTransformChange"
           />
           <div v-else class="muted no-preview">No 3D preview — import a mesh for this model.</div>
         </div>
-        <p v-if="useOrbitViewer" class="muted small gizmo-hint">
-          Top / Front / Side / Iso quad view — drag to orbit in the ISO pane · Shift+drag to pan · Scroll to zoom.
+        <p v-if="useOrbitViewer" class="muted small viewer-hint">
+          Drag to orbit · Shift+drag to pan · Scroll to zoom.
           Configure ORBIT URL + token in Settings if loading fails.
         </p>
-        <p v-else-if="showLocalPreview" class="muted small gizmo-hint">Drag the gizmo to move / rotate / scale · numeric edits in the panel · persist with <strong>Save</strong>.</p>
       </div>
       <aside class="side-panels">
-        <div class="card">
-          <ModelTransformPanel v-model="modelTransform" :display-units="sourceUnits" />
-        </div>
         <div class="facts card">
           <h3>Details</h3>
           <dl>
@@ -600,33 +580,7 @@ onMounted(() => {
 .facts dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
 .facts dt { color: var(--color-text-muted, #888); }
 .facts h3 { margin: 0 0 8px; font-size: 14px; }
-.gizmo-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--surface-2, #1a1a1f);
-  border: 1px solid var(--color-border, #2a2a32);
-}
-.gizmo-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-muted, #9aa0a6);
-  cursor: pointer;
-}
-.gizmo-btn:hover { background: var(--color-bg-hover, #2a2a32); color: inherit; }
-.gizmo-btn.active { background: var(--orbit-primary, #ff8800); color: #fff; }
-.gizmo-btn.space { font-family: var(--font-mono, monospace); min-width: 52px; width: auto; padding: 0 8px; font-size: 11px; }
-.gizmo-sep { width: 1px; height: 18px; background: var(--color-border, #2a2a32); margin: 0 2px; }
-.gizmo-hint { margin: 8px 0 0; }
+.viewer-hint { margin: 8px 0 0; }
 .version-list { list-style: none; padding: 0; margin: 0; }
 .version-list li { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--color-border, #2a2a32); }
 .intro { margin: 4px 0 12px; max-width: 640px; line-height: 1.5; }
