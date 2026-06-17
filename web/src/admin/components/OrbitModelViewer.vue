@@ -134,12 +134,17 @@ function syncWorldHelpers(v: Viewer, reason: string): void {
     disposeWorldHelpers();
     return;
   }
-  if (!worldHelpers) worldHelpers = new OrbitWorldHelpers();
-  worldHelpers.attach(v);
-  const span = sceneSpanFromViewer(v);
-  worldHelpers.rebuild(span, resolvedTheme.value);
-  requestViewerRedraw(v, `world-helpers:${reason}`);
-  logStep(`viewer:world-helpers (${reason})`, { span });
+  try {
+    if (!worldHelpers) worldHelpers = new OrbitWorldHelpers();
+    worldHelpers.attach(v);
+    const span = sceneSpanFromViewer(v);
+    worldHelpers.rebuild(span, resolvedTheme.value);
+    requestViewerRedraw(v, `world-helpers:${reason}`);
+    logStep(`viewer:world-helpers (${reason})`, { span });
+  } catch (err) {
+    console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] world-helpers skipped (${reason})`, err);
+    disposeWorldHelpers();
+  }
 }
 
 function syncViewerTheme(reason: string): void {
@@ -604,7 +609,6 @@ async function loadModel(): Promise<void> {
     // SpeckleRenderer.resize(), which is why prior resize fixes had no effect.
     syncViewerTheme('post-init');
     logStep('viewer:theme applied', { theme: resolvedTheme.value });
-    syncWorldHelpers(viewer, 'post-init');
     viewerResize('post-init', { force: true });
     scheduleViewerResize('post-init-raf');
 
