@@ -170,6 +170,17 @@ function collectReferencedIds(value: unknown, into: Set<string>): void {
   }
 }
 
+/**
+ * ORBIT/Speckle object ids are 32-char MD5 hex. A version `__closure` can also
+ * contain shorter blob ids (e.g. RenderMaterial texture references); those are
+ * NOT fetchable as objects and must be skipped when seeding the download queue.
+ */
+const OBJECT_ID_RE = /^[0-9a-f]{32}$/i;
+
+export function isOrbitObjectId(id: string): boolean {
+  return OBJECT_ID_RE.test(id);
+}
+
 /** Last path segment of a (possibly chain-encoded) speckle_type. */
 export function shortSpeckleType(t: unknown): string {
   if (typeof t !== 'string' || !t) return 'unknown';
@@ -357,7 +368,13 @@ export async function loadFullObjectClosure(
   // Seed the frontier from both the (possibly partial) closure and any inline
   // reference stubs on the root.
   let pending = new Set<string>();
-  if (root.__closure) for (const id of Object.keys(root.__closure)) pending.add(id);
+  if (root.__closure) {
+    for (const id of Object.keys(root.__closure)) {
+      // Skip blob ids in the closure — only objects are fetchable via
+      // object-stream; blob ids would 404 and fail the whole batch.
+      if (isOrbitObjectId(id)) pending.add(id);
+    }
+  }
   collectReferencedIds(root, pending);
   pending.delete(root.id);
 
