@@ -22,7 +22,7 @@ import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitView
 import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
 import {
-  applyOrbitViewerMaterialsStyle,
+  applyOrbitViewerRenderStyle,
   applyOrbitViewerTheme,
   isOrbitViewerRenderedMode,
 } from '../utils/orbitViewerTheme';
@@ -168,12 +168,14 @@ function syncViewerTheme(reason: string): void {
   }
 }
 
-/** Rendered (SHADED) mode — only after geometry batches exist; never from LoadComplete. */
-function syncViewerRenderMode(reason: string): void {
+/** Rendered (SHADED) PBR mode + theme — after geometry, resize, and camera framing. */
+function syncViewerRenderStyle(reason: string): void {
   if (!viewer) return;
-  applyOrbitViewerMaterialsStyle(viewer);
+  applyOrbitViewerRenderStyle(viewer, resolvedTheme.value);
+  worldHelpers?.syncTheme(resolvedTheme.value);
+  if (worldHelpers) requestViewerRedraw(viewer, `world-helpers-theme:${reason}`);
   if (import.meta.env.DEV) {
-    logStep(`viewer:render-mode (${reason})`, {
+    logStep(`viewer:render-style (${reason})`, {
       rendered: isOrbitViewerRenderedMode(viewer),
     });
   }
@@ -230,6 +232,7 @@ function applyViewPreset(v: Viewer, reason: string): void {
       camera.setCameraView(orbitCanonicalView(preset), false);
     }
     requestViewerRedraw(v, `view-preset:${preset}`);
+    syncViewerRenderStyle(`view-preset:${reason}`);
     logStep(`viewer:view-preset=${preset} (${reason})`);
   } catch (err) {
     console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] view-preset failed`, { preset, err });
@@ -658,16 +661,6 @@ async function loadModel(): Promise<void> {
     });
     const { hasGeometry } = logSceneDiagnostics(viewer, 'post-load');
     modelHasGeometry = hasGeometry;
-    try {
-      syncViewerRenderMode('post-load');
-    } catch (err) {
-      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] render-mode skipped (post-load)`, err);
-    }
-    try {
-      syncViewerTheme('post-load');
-    } catch (err) {
-      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] theme skipped (post-load)`, err);
-    }
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     viewerResize('post-load', { force: true });
@@ -761,7 +754,10 @@ watch(loading, (isLoading, wasLoading) => {
 });
 
 watch(resolvedTheme, () => {
-  syncViewerTheme('theme-toggle');
+  if (!viewer) return;
+  applyOrbitViewerTheme(viewer, resolvedTheme.value);
+  worldHelpers?.syncTheme(resolvedTheme.value);
+  if (worldHelpers) requestViewerRedraw(viewer, 'world-helpers-theme:theme-toggle');
 });
 
 watch(() => props.interactive, () => {
