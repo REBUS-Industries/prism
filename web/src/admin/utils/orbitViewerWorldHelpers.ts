@@ -16,6 +16,9 @@ const GRID_CELL_METRES = 1;
 /** Minimum floor extent (metres) when the scene bbox is empty or tiny. */
 const DEFAULT_SPAN_METRES = 20;
 
+/** Max grid divisions — avoids huge GridHelper allocations on bad scene boxes. */
+const MAX_GRID_DIVISIONS = 200;
+
 function setOverlayLayer(obj: THREE.Object3D): void {
   obj.layers.set(HELPER_LAYER);
   obj.traverse((child) => {
@@ -98,7 +101,10 @@ export class OrbitWorldHelpers {
       cellSize * 10,
       Math.ceil((this.span * 2) / cellSize) * cellSize,
     );
-    const divisions = Math.max(1, Math.round(size / cellSize));
+    const divisions = Math.min(
+      MAX_GRID_DIVISIONS,
+      Math.max(1, Math.round(size / cellSize)),
+    );
     const [centerLine, gridColor] = gridColors(theme);
 
     this.grid = new THREE.GridHelper(size, divisions, centerLine, gridColor);

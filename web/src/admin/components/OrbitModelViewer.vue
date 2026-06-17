@@ -658,8 +658,16 @@ async function loadModel(): Promise<void> {
     });
     const { hasGeometry } = logSceneDiagnostics(viewer, 'post-load');
     modelHasGeometry = hasGeometry;
-    syncViewerRenderMode('post-load');
-    syncViewerTheme('post-load');
+    try {
+      syncViewerRenderMode('post-load');
+    } catch (err) {
+      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] render-mode skipped (post-load)`, err);
+    }
+    try {
+      syncViewerTheme('post-load');
+    } catch (err) {
+      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] theme skipped (post-load)`, err);
+    }
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     viewerResize('post-load', { force: true });
@@ -669,7 +677,11 @@ async function loadModel(): Promise<void> {
     // zoom, but it runs before our forced resize; re-framing here is the fix
     // for the "geometry loaded but off-screen / black canvas" case.
     applyViewPreset(viewer, 'post-load');
-    syncWorldHelpers(viewer, 'post-load');
+    try {
+      syncWorldHelpers(viewer, 'post-load');
+    } catch (err) {
+      console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] world-helpers skipped (post-load)`, err);
+    }
     if (!hasGeometry) {
       console.warn(
         `${ORBIT_VIEWER_LOG} [${ts()}] viewer:zoom-skip — no renderable geometry to frame`,

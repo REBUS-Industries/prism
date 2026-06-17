@@ -61,9 +61,13 @@ function viewModesExtension(v: Viewer): ViewModes {
  */
 export function applyOrbitViewerMaterialsStyle(v: Viewer): void {
   if (isOrbitViewerRenderedMode(v)) return;
-  const viewModes = viewModesExtension(v);
-  viewModes.setViewMode(ORBIT_VIEWER_RENDER_MODE, RENDER_MODE_OPTIONS);
-  v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
+  try {
+    const viewModes = viewModesExtension(v);
+    viewModes.setViewMode(ORBIT_VIEWER_RENDER_MODE, RENDER_MODE_OPTIONS);
+    v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
+  } catch (err) {
+    console.warn('[OrbitViewer] SHADED view mode failed — keeping default pipeline', err);
+  }
 }
 
 /**
@@ -81,8 +85,11 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
     }
   }
 
-  for (const pass of pipeline.getPass('SHADED')) {
-    pass.setClearColor(bg, 1);
+  // SHADED / EDGES passes exist only after the matching view mode is active.
+  if (isOrbitViewerRenderedMode(v)) {
+    for (const pass of pipeline.getPass('SHADED')) {
+      pass.setClearColor(bg, 1);
+    }
   }
 
   for (const pass of pipeline.getPass('EDGES')) {
@@ -101,5 +108,5 @@ export function isOrbitViewerRenderedMode(v: Viewer): boolean {
   if (!v.hasExtension(ViewModes)) return false;
   const viewModes = v.getExtension(ViewModes);
   return viewModes.viewMode === ORBIT_VIEWER_RENDER_MODE
-    && viewModes.viewModeOptions.edges === false;
+    && viewModes.viewModeOptions.edges !== true;
 }
