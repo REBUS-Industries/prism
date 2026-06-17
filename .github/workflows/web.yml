@@ -134,6 +134,13 @@ jobs:
             if [ -n "${ROUTER_BUNDLE}" ] && [ "${ROUTER_BUNDLE}" != "${BUNDLE}" ]; then
               echo "::warning::prism-router serves ${ROUTER_BUNDLE} but prism-web has ${BUNDLE}"
             fi
+            PUBLIC_HTML="$(curl -fsS --max-time 15 https://prism.rebus.industries/admin/ || true)"
+            PUBLIC_BUNDLE="$(printf '%s' "${PUBLIC_HTML}" | grep -oE 'admin-[A-Za-z0-9_-]+\.js' | head -1 || true)"
+            echo "public admin bundle: ${PUBLIC_BUNDLE:-<empty>}"
+            if [ -n "${PUBLIC_BUNDLE}" ] && [ "${PUBLIC_BUNDLE}" != "${BUNDLE}" ]; then
+              echo "::error::Public https://prism.rebus.industries/admin/ serves ${PUBLIC_BUNDLE} but prism-web has ${BUNDLE}"
+              exit 1
+            fi
           REMOTE
 
       - name: Clean runner workspace
