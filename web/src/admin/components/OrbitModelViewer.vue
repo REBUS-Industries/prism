@@ -15,7 +15,6 @@ import {
   LoaderEvent,
   SpeckleType,
   UpdateFlags,
-  ViewerEvent,
 } from '@speckle/viewer';
 import type { Vector3 } from 'three';
 import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
@@ -23,7 +22,8 @@ import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitView
 import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
 import {
-  applyOrbitViewerRenderStyle,
+  applyOrbitViewerMaterialsStyle,
+  applyOrbitViewerTheme,
   isOrbitViewerRenderedMode,
 } from '../utils/orbitViewerTheme';
 import {
@@ -160,11 +160,22 @@ function syncWorldHelpers(v: Viewer, reason: string): void {
 
 function syncViewerTheme(reason: string): void {
   if (!viewer) return;
-  applyOrbitViewerRenderStyle(viewer, resolvedTheme.value);
+  applyOrbitViewerTheme(viewer, resolvedTheme.value);
   worldHelpers?.syncTheme(resolvedTheme.value);
   if (worldHelpers) requestViewerRedraw(viewer, `world-helpers-theme:${reason}`);
   if (import.meta.env.DEV) {
-    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] theme:${resolvedTheme.value} rendered=${isOrbitViewerRenderedMode(viewer)} (${reason})`);
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] theme:${resolvedTheme.value} (${reason})`);
+  }
+}
+
+/** Rendered (SHADED) mode — only after geometry batches exist; never from LoadComplete. */
+function syncViewerRenderMode(reason: string): void {
+  if (!viewer) return;
+  applyOrbitViewerMaterialsStyle(viewer);
+  if (import.meta.env.DEV) {
+    logStep(`viewer:render-mode (${reason})`, {
+      rendered: isOrbitViewerRenderedMode(viewer),
+    });
   }
 }
 
@@ -219,7 +230,6 @@ function applyViewPreset(v: Viewer, reason: string): void {
       camera.setCameraView(orbitCanonicalView(preset), false);
     }
     requestViewerRedraw(v, `view-preset:${preset}`);
-    syncViewerTheme(`view-preset:${reason}`);
     logStep(`viewer:view-preset=${preset} (${reason})`);
   } catch (err) {
     console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] view-preset failed`, { preset, err });
@@ -613,13 +623,6 @@ async function loadModel(): Promise<void> {
     viewer.createExtension(CameraController);
     syncCameraInteractivity(viewer, 'post-create');
     logStep('viewer:CameraController attached');
-    viewer.on(ViewerEvent.LoadComplete, () => {
-      if (!viewer) return;
-      syncViewerTheme('load-complete');
-      logStep('viewer:render-mode after LoadComplete', {
-        rendered: isOrbitViewerRenderedMode(viewer),
-      });
-    });
     // Disable the Speckle shadowcatcher BEFORE loading geometry. Its render
     // target is sized from the model's bounding box (textureSize / aspect); a
     // flat or empty ORBIT model gives a zero-height aspect, so the catcher
@@ -655,10 +658,8 @@ async function loadModel(): Promise<void> {
     });
     const { hasGeometry } = logSceneDiagnostics(viewer, 'post-load');
     modelHasGeometry = hasGeometry;
+    syncViewerRenderMode('post-load');
     syncViewerTheme('post-load');
-    logStep('viewer:render-mode Rendered (SHADED)', {
-      rendered: isOrbitViewerRenderedMode(viewer),
-    });
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     viewerResize('post-load', { force: true });
@@ -744,7 +745,6 @@ watch(
 watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && viewer) {
     scheduleViewerResize('loading-overlay-removed');
-    syncViewerTheme('loading-overlay-removed');
   }
 });
 
