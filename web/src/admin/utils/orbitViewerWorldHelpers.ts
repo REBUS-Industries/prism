@@ -18,11 +18,7 @@ function gridColors(theme: ResolvedTheme): [number, number] {
     : [0x9aa3b0, 0xc8ced8];
 }
 
-function originColor(theme: ResolvedTheme): number {
-  return theme === 'dark' ? 0xf0f0f4 : 0x1a1a1f;
-}
-
-/** Pick a grid cell size (metres) for the loaded scene span. */
+/** Pick a grid cell size in model units for the loaded scene span. */
 function gridStepForSpan(span: number): number {
   if (span <= 20) return 1;
   if (span <= 100) return 2;
@@ -44,14 +40,13 @@ function disposeObject3D(obj: THREE.Object3D): void {
 const DEFAULT_SPAN_M = 20;
 
 /**
- * Ground grid + RGB axes + origin dot at world (0, 0, 0) for the Speckle ORBIT viewer.
+ * Ground grid + RGB axes at world (0, 0, 0) for the Speckle ORBIT viewer.
  * Objects render on {@link ObjectLayers.OVERLAY} so they appear in the viewer pipeline.
  */
 export class OrbitWorldHelpers {
   private root = new THREE.Group();
   private grid: THREE.GridHelper | null = null;
   private axes: THREE.AxesHelper | null = null;
-  private originDot: THREE.Mesh | null = null;
   private span = DEFAULT_SPAN_M;
   private attachedViewer: Viewer | null = null;
 
@@ -87,7 +82,6 @@ export class OrbitWorldHelpers {
     }
     this.grid = null;
     this.axes = null;
-    this.originDot = null;
   }
 
   /** Rebuild grid + axes sized to the loaded scene. Safe to call repeatedly. */
@@ -103,18 +97,11 @@ export class OrbitWorldHelpers {
     this.grid = new THREE.GridHelper(size, divisions, centerLine, gridColor);
     setOverlayLayer(this.grid);
 
-    const axisLen = Math.max(0.75, Math.min(this.span * 0.2, 5));
+    const axisLen = Math.max(this.span * 0.08, this.span * 1e-4);
     this.axes = new THREE.AxesHelper(axisLen);
     setOverlayLayer(this.axes);
 
-    const dotRadius = Math.max(0.04, Math.min(axisLen * 0.08, 0.2));
-    this.originDot = new THREE.Mesh(
-      new THREE.SphereGeometry(dotRadius, 12, 12),
-      new THREE.MeshBasicMaterial({ color: originColor(theme), depthTest: true }),
-    );
-    setOverlayLayer(this.originDot);
-
-    this.root.add(this.grid, this.axes, this.originDot);
+    this.root.add(this.grid, this.axes);
   }
 
   syncTheme(theme: ResolvedTheme): void {
@@ -127,13 +114,10 @@ export class OrbitWorldHelpers {
     const gridMats = Array.isArray(mats) ? mats : [mats];
     if (gridMats[0]) (gridMats[0] as THREE.LineBasicMaterial).color.setHex(centerLine);
     if (gridMats[1]) (gridMats[1] as THREE.LineBasicMaterial).color.setHex(gridColor);
-    if (this.originDot) {
-      (this.originDot.material as THREE.MeshBasicMaterial).color.setHex(originColor(theme));
-    }
   }
 }
 
-/** Scene span (metres) for sizing the ground grid from loaded ORBIT geometry. */
+/** Scene span in model units for sizing the ground grid from loaded ORBIT geometry. */
 export function sceneSpanFromViewer(v: Viewer): number {
   const box = v.getRenderer().sceneBox;
   if (!box || box.isEmpty()) return DEFAULT_SPAN_M;
