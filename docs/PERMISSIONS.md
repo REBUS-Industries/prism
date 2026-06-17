@@ -40,8 +40,12 @@ On prism-dev with the mock workspace, link domain `rebus.industries`, sync, then
 under **Settings → Integrations → PRISM Access** via `GET/PUT /api/permissions/tool-grants`.
 
 **Portal `/portal/me`** returns `role` and `customRoleId` for grant resolution.
-**PRISM admin `/api/access/me`** returns effective tools for nav gating.
-**prism-server** calls `POST /api/access/authorize` (Bearer `PERMISSIONS_INTERNAL_KEY`) per tool route.
+**PRISM admin `/api/access/me`** returns effective tools for nav gating (portal bearer) or full access (local admin cookie).
+**prism-server** enforces tool grants for API keys only; **local admin login always bypasses** tool checks.
+
+### Local admin bypass
+
+Users who sign in via **Admin → Log in** (username/password, `prism_admin` cookie) always receive all tools in the UI and on the server. Tool grants apply to portal-authenticated users and API keys, not to local PRISM admins.
 
 ## Service
 

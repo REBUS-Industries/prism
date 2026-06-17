@@ -5,7 +5,7 @@ import { AccessError, exchangePortalSession, getSessionManifest, revokeSession }
 import { resolvePortalUser } from '../access/portalUser.js';
 import { checkProvisionedAdmin } from '../workspace/service.js';
 import { getIntegrationSetting, getIntegrationSettingOr } from '../config/integrationSettings.js';
-import { authorizeTool, resolveEmailFromAdminUsername, resolveToolAccess } from '../access/tools.js';
+import { authorizeTool, fullLocalAdminToolAccess, resolveEmailFromAdminUsername, resolveToolAccess } from '../access/tools.js';
 import { requireInternalServiceKey } from '../auth/permissionsEditor.js';
 
 function publicBaseUrl(req: FastifyRequest): string {
@@ -140,7 +140,7 @@ export async function registerAccessRoutes(app: FastifyInstance, portal: PortalA
   app.get('/api/access/me', async (req, reply) => {
     const adminEmail = await resolveEmailFromAdminCookie(req);
     if (adminEmail) {
-      return resolveToolAccess({ email: adminEmail });
+      return fullLocalAdminToolAccess(adminEmail);
     }
 
     const token = bearerToken(req);
