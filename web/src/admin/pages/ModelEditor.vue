@@ -389,7 +389,6 @@ onMounted(() => {
             v-if="useOrbitViewer && modelOrbitRef"
             :orbit-ref="modelOrbitRef"
             :settings="orbitSettings"
-            :mesh-units="sourceUnits"
             view-preset="iso"
             fill
             interactive
