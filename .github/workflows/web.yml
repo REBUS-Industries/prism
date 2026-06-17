@@ -116,10 +116,17 @@ jobs:
               echo "::error::prism-web revision ${REV} != expected ${GIT_SHA}"
               exit 1
             fi
-            BUNDLE="$(docker exec prism-web wget -qO- http://127.0.0.1/admin/ | grep -oE 'admin-[A-Za-z0-9_-]+\\.js' | head -1)"
-            ROUTER_BUNDLE="$(wget -qO- http://127.0.0.1:8765/admin/ | grep -oE 'admin-[A-Za-z0-9_-]+\\.js' | head -1)"
-            echo "prism-web admin bundle: ${BUNDLE}"
-            echo "prism-router admin bundle: ${ROUTER_BUNDLE}"
+            BUNDLE=""
+            ROUTER_BUNDLE=""
+            for attempt in 1 2 3 4 5; do
+              sleep 2
+              BUNDLE="$(docker exec prism-web wget -qO- http://127.0.0.1/admin/ 2>/dev/null | grep -oE 'admin-[A-Za-z0-9_-]+\.js' | head -1 || true)"
+              ROUTER_BUNDLE="$(wget -qO- http://127.0.0.1:8765/admin/ 2>/dev/null | grep -oE 'admin-[A-Za-z0-9_-]+\.js' | head -1 || true)"
+              if [ -n "${BUNDLE}" ]; then break; fi
+              echo "waiting for prism-web admin HTML (attempt ${attempt}/5)..."
+            done
+            echo "prism-web admin bundle: ${BUNDLE:-<empty>}"
+            echo "prism-router admin bundle: ${ROUTER_BUNDLE:-<empty>}"
             if [ -z "${BUNDLE}" ]; then
               echo "::error::Could not read admin bundle from prism-web container"
               exit 1
