@@ -90,17 +90,17 @@ jobs:
           # but the public prism.rebus.industries origin does not (see web.yml).
           DEPLOY_HOST: prism-dev
         run: |
+          TAG="sha-${GITHUB_SHA:0:7}"
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             infra/docker-compose.dev.yml \
             "${DEPLOY_HOST}:/opt/prism/docker-compose.dev.yml"
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             infra/nginx.router.conf \
             "${DEPLOY_HOST}:/opt/prism/nginx.router.conf"
-          ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" <<'REMOTE'
+          ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" <<REMOTE
             set -euo pipefail
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
-            TAG="sha-${GITHUB_SHA::7}"
             if grep -q '^PRISM_IMAGE_TAG=' .env; then
               sed -i "s|^PRISM_IMAGE_TAG=.*|PRISM_IMAGE_TAG=${TAG}|" .env
             else
