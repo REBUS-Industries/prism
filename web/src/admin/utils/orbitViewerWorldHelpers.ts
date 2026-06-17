@@ -2,19 +2,8 @@
 import * as THREE from '@speckle-compat/three';
 import { ObjectLayers, type Viewer } from '@speckle/viewer';
 import type { ResolvedTheme } from '../../shared/theme';
-import {
-  DEFAULT_MODEL_SOURCE_UNITS,
-  metresToUnit,
-  type ModelLengthUnit,
-} from './modelUnits';
 
 const HELPER_LAYER = ObjectLayers.OVERLAY;
-
-/** Fixed 1 m grid cells on the floor plane. */
-const GRID_CELL_METRES = 1;
-
-/** Minimum floor extent (metres) when the scene bbox is empty or tiny. */
-const DEFAULT_SPAN_METRES = 20;
 
 function setOverlayLayer(obj: THREE.Object3D): void {
   obj.layers.set(HELPER_LAYER);
@@ -29,6 +18,14 @@ function gridColors(theme: ResolvedTheme): [number, number] {
     : [0x9aa3b0, 0xc8ced8];
 }
 
+/** Pick a grid cell size in model units for the loaded scene span. */
+function gridStepForSpan(span: number): number {
+  if (span <= 20) return 1;
+  if (span <= 100) return 2;
+  if (span <= 500) return 5;
+  return 10;
+}
+
 function disposeObject3D(obj: THREE.Object3D): void {
   obj.traverse((node) => {
     const mesh = node as THREE.Mesh;
@@ -39,16 +36,18 @@ function disposeObject3D(obj: THREE.Object3D): void {
   });
 }
 
+/** Minimum scene span used before geometry is loaded. */
+const DEFAULT_SPAN_M = 20;
+
 /**
- * Ground grid (XY plane, Z-up) + RGB axes at world origin for the Speckle ORBIT
- * viewer. Objects render on {@link ObjectLayers.OVERLAY}.
+ * Ground grid + RGB axes at world (0, 0, 0) for the Speckle ORBIT viewer.
+ * Objects render on {@link ObjectLayers.OVERLAY} so they appear in the viewer pipeline.
  */
 export class OrbitWorldHelpers {
   private root = new THREE.Group();
   private grid: THREE.GridHelper | null = null;
   private axes: THREE.AxesHelper | null = null;
-  private span = metresToUnit(DEFAULT_SPAN_METRES, DEFAULT_MODEL_SOURCE_UNITS);
-  private meshUnits: ModelLengthUnit = DEFAULT_MODEL_SOURCE_UNITS;
+  private span = DEFAULT_SPAN_M;
   private attachedViewer: Viewer | null = null;
 
   constructor() {
@@ -86,28 +85,19 @@ export class OrbitWorldHelpers {
   }
 
   /** Rebuild grid + axes sized to the loaded scene. Safe to call repeatedly. */
-  rebuild(span: number, theme: ResolvedTheme, meshUnits: ModelLengthUnit = DEFAULT_MODEL_SOURCE_UNITS): void {
-    this.meshUnits = meshUnits;
-    const cellSize = metresToUnit(GRID_CELL_METRES, meshUnits);
-    const minSpan = metresToUnit(DEFAULT_SPAN_METRES, meshUnits);
-    this.span = Math.max(span, minSpan);
-
+  rebuild(span: number, theme: ResolvedTheme): void {
+    this.span = Math.max(span, DEFAULT_SPAN_M);
     this.clearChildren();
 
-    const size = Math.max(
-      cellSize * 10,
-      Math.ceil((this.span * 2) / cellSize) * cellSize,
-    );
-    const divisions = Math.max(1, Math.round(size / cellSize));
+    const step = gridStepForSpan(this.span);
+    const size = Math.max(step * 10, Math.ceil((this.span * 2) / step) * step);
+    const divisions = Math.max(1, Math.round(size / step));
     const [centerLine, gridColor] = gridColors(theme);
 
     this.grid = new THREE.GridHelper(size, divisions, centerLine, gridColor);
-    // Three.js GridHelper defaults to the XZ plane (Y-up). ORBIT/Rhino use Z-up,
-    // so rotate the floor into the XY plane (Z vertical).
-    this.grid.rotation.x = Math.PI / 2;
     setOverlayLayer(this.grid);
 
-    const axisLen = Math.max(this.span * 0.08, cellSize * 2);
+    const axisLen = Math.max(this.span * 0.08, this.span * 1e-4);
     this.axes = new THREE.AxesHelper(axisLen);
     setOverlayLayer(this.axes);
 
@@ -116,7 +106,7 @@ export class OrbitWorldHelpers {
 
   syncTheme(theme: ResolvedTheme): void {
     if (!this.grid) {
-      this.rebuild(this.span, theme, this.meshUnits);
+      this.rebuild(this.span, theme);
       return;
     }
     const [centerLine, gridColor] = gridColors(theme);
@@ -130,10 +120,9 @@ export class OrbitWorldHelpers {
 /** Scene span in model units for sizing the ground grid from loaded ORBIT geometry. */
 export function sceneSpanFromViewer(v: Viewer): number {
   const box = v.getRenderer().sceneBox;
-  const defaultSpan = metresToUnit(DEFAULT_SPAN_METRES, DEFAULT_MODEL_SOURCE_UNITS);
-  if (!box || box.isEmpty()) return defaultSpan;
+  if (!box || box.isEmpty()) return DEFAULT_SPAN_M;
   const size = box.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z);
   const centerDist = box.getCenter(new THREE.Vector3()).length();
-  return Math.max(maxDim, centerDist + maxDim * 0.5, defaultSpan);
+  return Math.max(maxDim, centerDist + maxDim * 0.5, DEFAULT_SPAN_M);
 }
