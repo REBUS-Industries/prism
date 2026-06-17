@@ -37,6 +37,7 @@ import {
   fetchOrbitSourceMaterialSlots,
   mergeMaterialSlots,
   buildOrbitMaterialSwapAssignments,
+  refreshOrbitMaterialSlotsFromOrbit,
 } from '../utils/orbitModelMeshSlots';
 import {
   discoverGlbSlotNames,
@@ -229,6 +230,14 @@ async function syncOrbitMaterials(): Promise<void> {
   error.value = null;
 
   try {
+    const refreshed = await refreshOrbitMaterialSlotsFromOrbit(
+      ref,
+      meshSlots.value,
+      sourceMaterialSlots.value,
+    );
+    meshSlots.value = refreshed.mesh;
+    sourceMaterialSlots.value = refreshed.sourceMaterial;
+
     const [meshResult, sourceResult] = await Promise.all([
       buildOrbitMaterialSwapAssignments(ref, meshSlots.value, 'mesh'),
       buildOrbitMaterialSwapAssignments(ref, sourceMaterialSlots.value, 'sourceMaterial'),
@@ -240,12 +249,10 @@ async function syncOrbitMaterials(): Promise<void> {
     const assignments = [...merged.values()];
     const unresolved = [...new Set([...meshResult.unresolved, ...sourceResult.unresolved])];
 
-    if (unresolved.length) {
-      error.value = `Could not resolve ORBIT meshes for: ${unresolved.join(', ')}`;
-      return;
-    }
     if (!assignments.length) {
-      error.value = 'No material assignments to sync — assign PRISM materials first.';
+      error.value = unresolved.length
+        ? `Could not resolve ORBIT meshes for: ${unresolved.join(', ')}`
+        : 'No material assignments to sync — assign PRISM materials first.';
       return;
     }
 
@@ -281,7 +288,10 @@ async function syncOrbitMaterials(): Promise<void> {
 
     model.value = res.model;
     applyPersistedMaterialSlots(res.model.definition.materialSlots ?? []);
-    orbitSyncMessage.value = `Synced ${result.appliedCount} mesh${result.appliedCount === 1 ? '' : 'es'} to ORBIT (version ${result.newVersionId.slice(0, 8)}…).`;
+    const skippedNote = unresolved.length
+      ? ` Skipped ${unresolved.length} slot${unresolved.length === 1 ? '' : 's'} not in ORBIT: ${unresolved.join(', ')}.`
+      : '';
+    orbitSyncMessage.value = `Synced ${result.appliedCount} mesh${result.appliedCount === 1 ? '' : 'es'} to ORBIT (version ${result.newVersionId.slice(0, 8)}…).${skippedNote}`;
     await reload();
   } catch (err) {
     error.value = (err as ApiError).message ?? 'ORBIT material sync failed';
