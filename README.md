@@ -95,21 +95,23 @@ for the v0.2.0 milestone runbook.
 | 5 | Vue Flow live pipeline editor | done |
 | 6 | Receive (ORBIT -> .3dm/.step), IFC/3DM/GLB outputs | done |
 | 7 | Public `/v1/*` external API | done |
-| 8 | CI + deploy to VM 211 | done |
+| 8 | CI + deploy to VM 212 | done |
 | 9 | Visualiser (UE 5.7 + Pixel Streaming portal contract) | done (v0.2.0) |
 
 ## Live deployment
 
 | Surface | URL | Backing |
 |---|---|---|
-| Public UI (admin) | https://prism.rebus.industries/admin/ | `prism-server` on VM 211 |
+| Public UI (admin) | https://prism.rebus.industries/admin/ | `prism-server` on VM 212 |
 | Public UI (convert) | https://prism.rebus.industries/convert/ | same |
 | Public API | https://prism.rebus.industries/api/* and `/v1/*` | same |
 | Health | https://prism.rebus.industries/health | same |
 
-Server stack lives at `/opt/prism/` on VM 211 (`10.0.200.211`), runs three
-containers (`prism-server`, `prism-postgres`, `prism-redis`) and is fronted by
-the existing HA Caddy pair (LXC 251 / 252) — block already in `/etc/caddy/Caddyfile`.
+Server stack lives at `/opt/prism/` on VM 212 (`10.0.200.212`), runs the split
+microservices stack (`prism-router`, `prism-server`, `prism-web`, the per-domain
+services, `prism-postgres`, `prism-redis`) and is fronted by the existing HA Caddy
+pair (LXC 251 / 252) — block already in `/etc/caddy/Caddyfile`. VM 211 now hosts
+ORBIT only (the PRISM monolith there was decommissioned 2026-06-16).
 
 ## Source policy
 

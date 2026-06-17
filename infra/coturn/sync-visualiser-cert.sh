@@ -3,7 +3,7 @@
 # from Proxy1's Caddy data dir into ~rebus/coturn/certs/, and restart
 # coturn iff the cert changed.
 #
-# DEPLOYED LOCATION: /usr/local/bin/sync-visualiser-cert.sh on VM 211
+# DEPLOYED LOCATION: /usr/local/bin/sync-visualiser-cert.sh on VM 212
 # (root:root 755). This file in the workspace is the master copy.
 #
 # Runs daily via cron under the `rebus` user. Caddy ACMEs and renews

@@ -9,7 +9,7 @@ Generic 3D model assets (props, scenery, equipment meshes) managed by **`prism-m
 - **Service:** `prism-models-service` on port **8770**, routed via nginx at `/api/models`, `/api/model-import`.
 - **Database:** dedicated **`prism_models`** Postgres database, owned by the service (`src/db/schema.ts` + Drizzle migrations). Created automatically at boot (`runModelBootstrap`). Auth (`requireAuth`/`requireScope`) reuses `@rebus-industries/prism-shared` against the shared `prism` DB via `POSTGRES_URL`; the model store connects via `MODELS_POSTGRES_URL`.
 - **Storage:** `${DATA_DIR}/models/{modelId}/` on the shared `prism-data` volume — original upload + cached preview GLB after convert completes. **Canonical geometry lives in Orbit** (Model Library Project); local files are a preview cache.
-- **Import pipeline:** Same as [`/convert/`](https://prism-dev.rebus.industries/convert/) — assimp pre-convert (when applicable) → PRISM agent (Rhino) → Orbit upload. Not the legacy assimp-only sidecar path (unless `MODEL_IMPORT_LEGACY_ASSIMP=1`).
+- **Import pipeline:** Same as [`/convert/`](https://prism.rebus.industries/convert/) — assimp pre-convert (when applicable) → PRISM agent (Rhino) → Orbit upload. Not the legacy assimp-only sidecar path (unless `MODEL_IMPORT_LEGACY_ASSIMP=1`).
 - **Orbit project:** `ORBIT_MODEL_LIBRARY_PROJECT_ID` (default `e86589cc1e` — [Model Library Project](https://orbit.rebus.industries/projects/e86589cc1e)). Each import creates an Orbit model in that project; `definition.metadata.orbit` stores `{ projectId, modelId, versionId, resultUrl }`.
 - **Contracts:** `prism-models-service/src/contracts/models.ts`, mirrored on the web in `web/src/shared/api.ts` (+ `web/src/admin/utils/modelTypes.ts`).
 
@@ -84,7 +84,7 @@ Orbit URL/token come from admin Settings (`orbit_server_url`, `orbit_token`) via
 | Port | 8769 | 8766 | **8770** |
 | PR CI | No (post-merge image build) | No | **No** |
 
-## Deploy (dev VM 212)
+## Deploy (VM 212)
 
 Split stack via `PRISM/infra/docker-compose.dev.yml` — `prism-models` service + nginx router block.
 

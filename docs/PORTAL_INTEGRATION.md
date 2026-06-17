@@ -45,7 +45,7 @@ input events are all interactive in real time.
 ## Architecture
 
 ```
-   Your portal browser           PRISM server (VM 211)         REBUS workstation
+   Your portal browser           PRISM server (VM 212)         REBUS workstation
    ───────────────────           ──────────────────────         ─────────────────
    1. POST /streams ───────────► REST handler                   PRISM.Agent.exe
                                        │ enqueue                       │
@@ -75,7 +75,7 @@ Two planes to keep in mind:
 
 -   **Control plane** (HTTP + WS): your portal ↔ PRISM server ↔ agent ↔
     orchestrator. Round-trip ~2-3 s once UE is warm; ~30-90 s cold.
--   **Media plane** (WebRTC + TURN): browser ↔ coturn (VM 211, public) ↔
+-   **Media plane** (WebRTC + TURN): browser ↔ coturn (VM 212, public) ↔
     workstation UE. Latency budget ~80-150 ms across the internet.
 
 ---
@@ -569,7 +569,7 @@ the signalling WS once on `connect()` and keeps it open; if it drops
 
 ## TURN credentials
 
-PRISM's coturn relay lives at `visualiser.rebus.industries` (VM 211,
+PRISM's coturn relay lives at `visualiser.rebus.industries` (VM 212,
 public IP). The portal does **not** see coturn directly — PRISM mints
 RFC 7635-compatible long-term credentials from a server-side shared
 secret and returns them in the `turn` field of the ready envelope.

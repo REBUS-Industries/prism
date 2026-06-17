@@ -70,7 +70,7 @@ Do NOT edit fixture viewer / assembly files; those belong to the fixture-builder
 ### Fab marketplace import (2026-06)
 - Admin **Materials** page: **Import from Fab** opens search → preview → import modal.
 - Server routes: `GET /api/fab/search`, `GET /api/fab/assets/:id`, `POST /api/fab/assets/:id/import`.
-- Search/preview use Fab public API on the **server** (VM 211/212). Cloudflare blocks datacenter IPs — run **FlareSolverr** on the VM (`FAB_FLARESOLVERR_URL=http://127.0.0.1:8191/v1` or Admin → External materials). Browser challenges on a PC do not replace FlareSolverr.
+- Search/preview use Fab public API on the **server** (VM 212). Cloudflare blocks datacenter IPs — run **FlareSolverr** on the VM (`FAB_FLARESOLVERR_URL=http://127.0.0.1:8191/v1` or Admin → External materials). Browser challenges on a PC do not replace FlareSolverr.
 - Import needs `FAB_EPIC_REFRESH_TOKEN` (Epic OAuth refresh token for an account that owns the material); bearer auth does not bypass Cloudflare for search.
 - See `docs/EXTERNAL_MATERIALS.md`, `infra/.env.example`, and `server/src/fab/`.
 - Material presets / template library (save/load a parameter set)
@@ -146,4 +146,4 @@ gh pr create --base main --title "feat(web): <feature>" --body "..."
 | `server/**` (API, migrations, etc.) | `gh workflow run server-image --repo REBUS-Industries/prism --ref feat/materials-editor` |
 | Both | Run **both** workflows; wait for both `deploy-dev` jobs |
 
-If CT 261 runner cancels, re-trigger after 2 min. Hard-refresh prism-dev after deploy completes.
+If CT 261 runner cancels, re-trigger after 2 min. Hard-refresh prism.rebus.industries after deploy completes.

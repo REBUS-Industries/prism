@@ -48,8 +48,8 @@ Streaming session of an ORBIT model, on- or off-LAN (TURN verified working).
 - Start timeouts raised to **600 s** (server + orchestrator full-editor budget).
 - **TURN/coturn verified end-to-end** for off-LAN viewers.
 
-**Where it runs:** PRISM server = VM 211 (`prism.rebus.industries:8765`). Render
-workstation = **RB-DA2-PC01** (agent + orchestrator + UE 5.7). coturn = VM 211
+**Where it runs:** PRISM server = VM 212 (`prism.rebus.industries:8765`). Render
+workstation = **RB-DA2-PC01** (agent + orchestrator + UE 5.7). coturn = VM 212
 (`visualiser.rebus.industries` → `185.48.165.165`).
 
 ---
@@ -62,11 +62,11 @@ it is a transparent relay between the browser and the agent's local Wilbur.
 ```mermaid
 sequenceDiagram
     participant P as Portal / Admin SPA / Share-link viewer (browser)
-    participant S as PRISM server (VM 211, Fastify/TS)
+    participant S as PRISM server (VM 212, Fastify/TS)
     participant A as PRISM Agent (PC01, .NET tray)
     participant O as Orchestrator (prism-visualiser.exe)
     participant U as UE 5.7 + Wilbur (PC01)
-    participant T as coturn (VM 211)
+    participant T as coturn (VM 212)
 
     P->>S: POST /api/visualiser/streams {projectId,modelId,versionId?}<br/>(API key, scope visualiser:create_stream)
     S->>S: insert visualiser_runs row (status=queued)<br/>register ready waiter (timeout 600s)
@@ -205,10 +205,10 @@ Scopes are defined in `server/src/api/keys.ts` (`visualiser:create_stream`, `vis
 
 ## 5. TURN / coturn
 
-- **Image/host:** `coturn/coturn:4.6` on VM 211, `network_mode=host` (`infra/coturn/docker-compose.yml`).
-- **DNS:** `visualiser.rebus.industries` → `185.48.165.165` → NAT'd to `10.0.200.211` by the UniFi gateway.
+- **Image/host:** `coturn/coturn:4.6` on VM 212, `network_mode=host` (`infra/coturn/docker-compose.yml`).
+- **DNS:** `visualiser.rebus.industries` → `185.48.165.165` → NAT'd to `10.0.200.212` by the UniFi gateway.
 - **Listeners:** UDP+TCP `:3478` (STUN/TURN), TLS `:5349` (`turns:`). Relay range **`52000–56999`**
-  (narrowed to dodge WireGuard `51820`). `external-ip=185.48.165.165/10.0.200.211`.
+  (narrowed to dodge WireGuard `51820`). `external-ip=185.48.165.165/10.0.200.212`.
 - **Auth scheme:** `use-auth-secret` (RFC 7635 §3 long-term). Server mints
   `username = <unix-exp>:<runid-segment>`, `credential = base64(HMAC-SHA1(static-auth-secret, username))`,
   `ttl 86400`. **`static-auth-secret` MUST byte-equal the server's `TURN_SECRET`** env var.
@@ -264,7 +264,7 @@ then legacy names / Program Files — see `VisualiserJob.CandidateOrchestratorPa
 - **Orchestrator:** bundled into the agent zip; also tagged independently as `visualiser-vX.Y.Z`
   via `visualiser-msi.yml`.
 - **Server image:** rolling deploy off `main` via `server.yml` → `ghcr.io/rebus-orbit/prism-server`,
-  deployed to `/opt/prism` on VM 211 by the self-hosted deploy runner (`runs-on: [self-hosted, prism-deploy]`).
+  deployed to `/opt/prism` on VM 212 by the self-hosted deploy runner (`runs-on: [self-hosted, prism-deploy]`).
   (Runner identity per `server.yml` comment = LXC 261 at `10.0.200.61`; see §11 re: the SRV03 naming
   discrepancy.)
 

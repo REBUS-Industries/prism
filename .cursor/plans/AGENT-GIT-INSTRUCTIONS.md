@@ -1,16 +1,16 @@
 # Git Instructions for All Agents
 
-**Start:** [README.md](./README.md) in this folder — then your workstream handoff.
+**Start:** [README.md](./README.md) in this folder â€” then your workstream handoff.
 
-**Environment:** All development targets VM 212 — `https://prism.rebus.industries` (single PRISM environment). There is no separate prism-dev host.
-**Target repo:** `REBUS-Industries/prism` (connectors agents: use `orbit-connectors` — see [HANDOFF-connectors.md](./HANDOFF-connectors.md))
-**Your branch:** see your workstream handoff doc — never commit directly to `main`.
+**Environment:** All development targets VM 212 — https://prism.rebus.industries (single PRISM environment; prism-dev 301-redirects here). There is no separate prism-dev host.
+**Target repo:** `REBUS-Industries/prism` (connectors agents: use `orbit-connectors` â€” see [HANDOFF-connectors.md](./HANDOFF-connectors.md))
+**Your branch:** see your workstream handoff doc â€” never commit directly to `main`.
 
 > **Every PRISM agent** (materials-editor, fixture-builder, etc.) must follow this doc for merge and deploy. Dev uses two workflows: **`web-image`** for `web/**` changes, **`server-image`** for `server/**` changes. If your PR touches both, run and wait for both.
 
 ---
 
-## Daily start — sync your branch with main
+## Daily start â€” sync your branch with main
 
 Always do this before starting any new work session:
 
@@ -24,7 +24,7 @@ If there are rebase conflicts: resolve them, then `git rebase --continue`.
 
 ---
 
-## Working — commit as you go
+## Working â€” commit as you go
 
 Commit small and often. Each commit should be a coherent unit (one fix, one feature component).
 
@@ -48,18 +48,18 @@ Scopes: `web`, `server`, `agent`, `assimp`, `infra`
 
 ---
 
-## Build check — run this before opening a PR
+## Build check â€” run this before opening a PR
 
 ```powershell
 cd web
 npm run build
 ```
 
-This runs TypeScript type-check + Vite build. It **must pass** before you open a PR — GitHub will block the merge if it fails on CI.
+This runs TypeScript type-check + Vite build. It **must pass** before you open a PR â€” GitHub will block the merge if it fails on CI.
 
 ---
 
-## Opening a PR — when a feature is ready
+## Opening a PR â€” when a feature is ready
 
 ```powershell
 # 1. Make sure you're up to date
@@ -72,7 +72,7 @@ npm run build
 # 3. Push your branch
 git push
 
-# 4. Open the PR — GitHub prints the PR number at the end
+# 4. Open the PR â€” GitHub prints the PR number at the end
 gh pr create --base main --title "feat(web): <feature name>" --body "Brief description of what changed and how to verify on https://prism.rebus.industries."
 ```
 
@@ -92,7 +92,7 @@ gh pr checks <PR-number>
 
 ---
 
-## Merging — use the Slack bot
+## Merging â€” use the Slack bot
 
 **Do not** run `gh pr merge` yourself. The Slack bot handles merging so only one merge runs at a time.
 
@@ -107,11 +107,11 @@ In the **#prism-dev** Slack channel, type:
 The bot will:
 1. Merge your PR into main
 2. Wait for **both** `web-image` and `server-image` deploys when they run (server changes trigger `server-image` automatically)
-3. Post back in the channel when everything is live — or if something failed
+3. Post back in the channel when everything is live â€” or if something failed
 
 After merge, GitHub runs:
-- **`web-image`** — when `web/**` changed → deploys `prism-web`
-- **`server-image`** — when `server/**`, `shared/**`, etc. changed → builds + deploys `prism-server`
+- **`web-image`** â€” when `web/**` changed â†’ deploys `prism-web`
+- **`server-image`** â€” when `server/**`, `shared/**`, etc. changed â†’ builds + deploys `prism-server`
 
 Check deploy status:
 ```powershell
@@ -170,9 +170,9 @@ If `deploy-dev` is cancelled (flaky runner), wait 2 minutes and re-trigger. Hard
 
 ## Rules
 
-- Never `git push origin main` — branch protection will reject it.
+- Never `git push origin main` â€” branch protection will reject it.
 - Never `git push --force` on your branch if others may be using it.
-- Never merge two PRs simultaneously — stagger by at least 5 minutes.
+- Never merge two PRs simultaneously â€” stagger by at least 5 minutes.
 - Always run `npm run build` locally before opening a PR.
 - If `api.ts` is changed: announce it in team chat so other agents can rebase promptly.
 - If the PR touches `server/**`: deploy/test with **`server-image`**, not only `web-image`. On merge, confirm `server-image` deploy-dev completed before assuming API changes are live on dev.

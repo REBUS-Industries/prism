@@ -7,11 +7,11 @@ connector login, mints scoped ORBIT tokens, and stores the function-policy node 
 ## Effective permissions
 
 ```
-effective = portal project grants ∩ function policy graph
+effective = portal project grants âˆ© function policy graph
 ```
 
 - **Portal** owns which ORBIT projects a user may access (`viewer` / `contributor` / `owner` / `admin`).
-- **PRISM admin → Permissions** owns which connector functions are allowed per role/user/project.
+- **PRISM admin â†’ Permissions** owns which connector functions are allowed per role/user/project.
 
 ## Connector flow
 
@@ -26,18 +26,18 @@ Use `orbit-cli auth login --server <prod|dev>` for full token capabilities (auto
 
 ## Admin login
 
-**Admin → Permissions** (`/admin/#/permissions`) — Vue Flow editor for the policy graph.
+**Admin â†’ Permissions** (`/admin/#/permissions`) â€” Vue Flow editor for the policy graph.
 
-**Admin → Users** (`/admin/#/users`) — link Google Workspace, sync directory users, and
+**Admin â†’ Users** (`/admin/#/users`) â€” link Google Workspace, sync directory users, and
 pre-provision project access / PRISM admin flags before first sign-in.
 
-**Admin login** — username/password (unchanged) or **Sign in with Google** when the user's
+**Admin login** â€” username/password (unchanged) or **Sign in with Google** when the user's
 portal email is provisioned with `isPrismAdmin` (or listed in legacy `PORTAL_ADMIN_EMAILS`).
 On prism-dev with the mock workspace, link domain `rebus.industries`, sync, then edit `alice@rebus.industries`.
 
-**Admin → Tool access** (`/admin/#/permissions/tools`) — role → PRISM tool grants
+**Admin â†’ Tool access** (`/admin/#/permissions/tools`) â€” role â†’ PRISM tool grants
 (convert, visualiser, fixture/material/model libraries). Editable from the portal
-under **Settings → Integrations → PRISM Access** via `GET/PUT /api/permissions/tool-grants`.
+under **Settings â†’ Integrations â†’ PRISM Access** via `GET/PUT /api/permissions/tool-grants`.
 
 **Portal `/portal/me`** returns `role` and `customRoleId` for grant resolution.
 **PRISM admin `/api/access/me`** returns effective tools for nav gating (portal bearer) or full access (local admin cookie).
@@ -45,7 +45,7 @@ under **Settings → Integrations → PRISM Access** via `GET/PUT /api/permissio
 
 ### Local admin bypass
 
-Users who sign in via **Admin → Log in** (username/password, `prism_admin` cookie) always receive all tools in the UI and on the server. Tool grants apply to portal-authenticated users and API keys, not to local PRISM admins.
+Users who sign in via **Admin â†’ Log in** (username/password, `prism_admin` cookie) always receive all tools in the UI and on the server. Tool grants apply to portal-authenticated users and API keys, not to local PRISM admins.
 
 ## Service
 
@@ -66,8 +66,8 @@ POST /api/access/session { "portalAuthCode": "mock:alice", "orbitTarget": "dev" 
 
 ## API key scopes (PRISM server)
 
-- `access:read` — read manifest / session metadata
-- `access:admin` — manage policy graph
+- `access:read` â€” read manifest / session metadata
+- `access:admin` â€” manage policy graph
 
 ## Token minting
 

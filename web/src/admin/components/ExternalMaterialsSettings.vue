@@ -194,7 +194,7 @@ const fabTestSearchUrl = computed(() => {
 });
 
 const flareSolverrDockerRun = [
-  '# Option A — included in docker-compose.dev.yml (VM 212 dev):',
+  '# Option A — included in docker-compose.dev.yml (VM 212):',
   '#   service name flaresolverr → http://flaresolverr:8191/v1',
   '',
   '# Option B — standalone on the VM host:',
@@ -574,7 +574,7 @@ onUnmounted(() => { stopIndexPolling(); });
 
               <h4>If Cloudflare still blocks search</h4>
               <p>
-                Fab search runs on the PRISM server (VM 211/212), not in your browser.
+                Fab search runs on the PRISM server (VM 212), not in your browser.
                 Configure <strong>FlareSolverr</strong> in the Cloudflare section below —
                 PRISM calls it to obtain <code>cf_clearance</code> cookies for server-side Fab
                 API requests. Solving a Cloudflare challenge on your PC does
@@ -607,10 +607,10 @@ onUnmounted(() => { stopIndexPolling(); });
         <fieldset class="cloudflare-block">
           <legend>Cloudflare / Fab access</legend>
           <p class="hint muted cf-intro">
-            Fab search runs on the PRISM server (VM 211 prod / VM 212 dev), not in your
+            Fab search runs on the PRISM server (VM 212), not in your
             browser. Cloudflare blocks datacenter IPs; PRISM uses
             <strong>FlareSolverr</strong> to obtain <code>cf_clearance</code> cookies for
-            server-side Fab API calls. On the dev split stack,
+            server-side Fab API calls. On the split stack,
             <code>docker-compose.dev.yml</code> includes a <code>flaresolverr</code> service —
             use <code>{{ DEFAULT_FLARESOLVERR_URL }}</code>. Do not use
             <code>{{ HOST_FLARESOLVERR_URL }}</code> from inside a container (that address is
@@ -654,7 +654,7 @@ onUnmounted(() => { stopIndexPolling(); });
             <summary>Run FlareSolverr on the server (Docker)</summary>
             <div class="help-body muted">
               <p>
-                On VM 212 dev, <code>docker-compose.dev.yml</code> already defines a
+                On VM 212, <code>docker-compose.dev.yml</code> already defines a
                 <code>flaresolverr</code> service — set
                 <code>{{ DEFAULT_FLARESOLVERR_URL }}</code> above (or leave env default).
                 For a standalone container on the VM host while PRISM runs in Docker, use

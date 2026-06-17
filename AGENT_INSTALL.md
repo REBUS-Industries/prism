@@ -63,7 +63,7 @@ Inno Setup AppId stays constant across releases).
      -LaunchNow
    ```
 
-   - `PrismUrl`: the agent WS endpoint (use `ws://10.0.200.211:8765/ws/agent`
+   - `PrismUrl`: the agent WS endpoint (use `ws://10.0.200.212:8765/ws/agent`
      for LAN-direct, bypassing Caddy)
    - `NodeName`: friendly name surfaced in the admin pool
    - `Slots`: how many concurrent conversion jobs this machine handles

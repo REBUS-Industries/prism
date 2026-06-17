@@ -634,7 +634,7 @@ function formatCiResultMessage(label, result, deploysToDev, pullUrl = null) {
   const detail = result.detail ? ` (${result.detail})` : '';
 
   if (result.conclusion === 'success') {
-    const done = deploysToDev ? 'is deployed to prism-dev' : 'CI passed on main';
+    const done = deploysToDev ? 'is deployed to prism' : 'CI passed on main';
     const successPrLink = pullUrl ? ` <${pullUrl}|View PR>` : '';
     return `:white_check_mark: *${label} ${done}.*${detail}${ciLink}${successPrLink}`;
   }
@@ -835,7 +835,7 @@ async function publishHome(userId) {
       type: 'home',
       blocks: [
         { type: 'header', text: { type: 'plain_text', text: 'PRISM Merge Bot' } },
-        { type: 'section', text: { type: 'mrkdwn', text: 'Merge a PR to `main` and deploy to prism-dev. Merges run one at a time; extra requests are queued.' } },
+        { type: 'section', text: { type: 'mrkdwn', text: 'Merge a PR to `main` and deploy to prism. Merges run one at a time; extra requests are queued.' } },
         { type: 'divider' },
         { type: 'section', text: { type: 'mrkdwn', text: statusText } },
         { type: 'actions', elements: [
@@ -858,7 +858,7 @@ async function postPinMessage(channelId) {
     blocks: [
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: '*PRISM Merge Bot* — merge a PR and deploy to prism-dev.' },
+        text: { type: 'mrkdwn', text: '*PRISM Merge Bot* — merge a PR and deploy to prism.' },
         accessory: { type: 'button', action_id: 'open_merge_modal', style: 'primary', text: { type: 'plain_text', text: '🚀  Merge a PR', emoji: true } },
       },
       {

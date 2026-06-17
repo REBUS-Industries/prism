@@ -66,9 +66,7 @@ If Google Cloud returns **Enforced organisation policy IDs: `iam.disableServiceA
 1. **APIs & Services → Credentials → Create credentials → OAuth client ID → Web application**.
 2. **Authorized redirect URIs** (must match exactly):
    - `https://prism.rebus.industries/admin/?portal_callback=1`
-   - `https://prism-dev.rebus.industries/admin/?portal_callback=1`
    - `https://prism.rebus.industries/api/admin/directory-oauth/callback`
-   - `https://prism-dev.rebus.industries/api/admin/directory-oauth/callback`
    - `http://localhost:29364/admin/?portal_callback=1` (local dev)
 3. On the OAuth consent screen, add scope `https://www.googleapis.com/auth/admin.directory.user.readonly` (directory sync).
 4. Copy **Client ID** and **Client secret** into PRISM Settings (`google_oauth_client_id`, `google_oauth_client_secret`).

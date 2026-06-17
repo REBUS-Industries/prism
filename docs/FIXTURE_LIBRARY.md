@@ -46,6 +46,6 @@ Orbit fixture publish: **Settings → Orbit** (`orbit_server_url`, `orbit_token`
 - **UE5:** `orbit-cli` writes `.fixtures.json` sidecar; `UOrbitFixtureRegistry` loads it on import.
 - **Vectorworks:** attribute key scaffold mirrors Rhino (Phase 6).
 
-## Deploy (dev VM 212)
+## Deploy (VM 212)
 
 Split stack via `PRISM/infra/docker-compose.dev.yml` — `prism-fixtures` service + nginx router. No monolith route copy in `PRISM/server`.

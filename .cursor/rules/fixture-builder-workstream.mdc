@@ -9,8 +9,8 @@ Read `.cursor/plans/HANDOFF-fixture-builder.md` before starting work. Git workfl
 
 ## Branch and repo
 
-- Repo: `REBUS-Industries/prism` — branch `feat/fixture-builder` only (never commit to `main`)
-- Fixtures API: `REBUS-Industries/prism-fixtures-service` — feature branches off `main`
+- Repo: `REBUS-Industries/prism` â€” branch `feat/fixture-builder` only (never commit to `main`)
+- Fixtures API: `REBUS-Industries/prism-fixtures-service` â€” feature branches off `main`
 - Daily sync: `git fetch origin && git rebase origin/main`
 
 ## Owned files (edit freely)
@@ -25,20 +25,20 @@ Read `.cursor/plans/HANDOFF-fixture-builder.md` before starting work. Git workfl
 - `prism/server/**`, materials editor pages/components
 - `server/src/db/schema.ts` and migrations (open an issue if schema change needed)
 
-## Shared files — coordinate before merge
+## Shared files â€” coordinate before merge
 
-- `web/src/shared/api.ts` — add types at end of relevant block; announce in team chat
-- `web/src/admin/App.vue` — routes/nav only when necessary; announce first
+- `web/src/shared/api.ts` â€” add types at end of relevant block; announce in team chat
+- `web/src/admin/App.vue` â€” routes/nav only when necessary; announce first
 
 ## Build and deploy (keep UI + API in sync)
 
 - Pre-PR check: `cd web && npm run build`
 - **Web only:** `gh workflow run web-image --repo REBUS-Industries/prism --ref feat/fixture-builder`
-- **prism `server/**` changed** (rare — avoid): also `server-image` on `prism`
+- **prism `server/**` changed** (rare â€” avoid): also `server-image` on `prism`
 - **Fixtures API changed:** merge `prism-fixtures-service` PR; `fixtures-image` auto-runs on merge to `main`, or manually:
   `gh workflow run fixtures-image --repo REBUS-Industries/prism-fixtures-service --ref <branch>`
 - Merge via `/prism-merge <PR#>` in #prism-dev; confirm **web-image** and **fixtures-image** deploy-dev completed when both repos changed
-- Dev target: https://prism.rebus.industries
+- Target (prod, VM 212): https://prism.rebus.industries
 
 ## Commit format
 

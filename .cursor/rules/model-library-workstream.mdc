@@ -9,8 +9,8 @@ Read `.cursor/plans/HANDOFF-model-library.md` before starting work. Git workflow
 
 ## Branch and repos
 
-- Monorepo: `REBUS-Industries/prism` — branch **`feat/model-library`** only
-- API polyrepo: **`REBUS-Industries/prism-models-service`** — feature branches off `main`
+- Monorepo: `REBUS-Industries/prism` â€” branch **`feat/model-library`** only
+- API polyrepo: **`REBUS-Industries/prism-models-service`** â€” feature branches off `main`
 - Bootstrap: `scaffold/prism-models-service/` if polyrepo not created yet
 - Daily sync: `git fetch origin && git rebase origin/main`
 
@@ -27,10 +27,10 @@ Read `.cursor/plans/HANDOFF-model-library.md` before starting work. Git workflow
 - Materials editor files (`Material*.vue`, `server/src/materials/**`)
 - `prism/server/**` except `server/src/api/keys.ts` for `models:*` scopes
 
-## Shared files — coordinate before merge
+## Shared files â€” coordinate before merge
 
-- `web/src/shared/api.ts` — add `modelsApi` at end; announce in team chat
-- `web/src/admin/App.vue` — nav/routes; announce first
+- `web/src/shared/api.ts` â€” add `modelsApi` at end; announce in team chat
+- `web/src/admin/App.vue` â€” nav/routes; announce first
 
 ## Build and deploy (keep UI + API in sync)
 
@@ -39,7 +39,7 @@ Read `.cursor/plans/HANDOFF-model-library.md` before starting work. Git workflow
 - **Models API:** merge `prism-models-service` PR; `models-image` on merge to `main`, or:
   `gh workflow run models-image --repo REBUS-Industries/prism-models-service --ref <branch>`
 - Merge via `/prism-merge <PR#>` or `/prism-merge prism-models-service#N`
-- Dev: https://prism.rebus.industries
+- Target (prod, VM 212): https://prism.rebus.industries
 
 ## Commit format
 

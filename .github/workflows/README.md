@@ -2,7 +2,7 @@
 
 CI pipelines for PRISM.
 
-| Workflow | Trigger | Dev deploy (VM 212) |
+| Workflow | Trigger | Deploy (VM 212) |
 |---|---|---|
 | `web-image` (`web.yml`) | push to `main`, paths `web/**`; **PR:** `npm run build` only (no image push) | Builds + deploys `prism-web` (+ `prism-fixtures`, `prism-models`, `prism-router`) |
 | `server-image` (`server.yml`) | push to `main`, paths `server/**` `shared/**` `agent/install/**` … | Builds + deploys `prism-server` (+ related services) |
@@ -17,4 +17,4 @@ gh workflow run web-image --repo REBUS-Industries/prism --ref <branch>
 gh workflow run server-image --repo REBUS-Industries/prism --ref <branch>
 ```
 
-Prod (VM 211) is tag-gated — `server-image` prod deploy runs only on `v*` tags or `workflow_dispatch`.
+There is one PRISM environment — VM 212 (`prism.rebus.industries`); merges to `main` deploy there. `v*` tags / `workflow_dispatch` produce pinned release images. VM 211 is ORBIT-only (the tag-gated PRISM monolith there was decommissioned 2026-06-16).
