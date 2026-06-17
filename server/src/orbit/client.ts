@@ -426,8 +426,18 @@ export async function fetchObjectBatch(
       const idx = next++;
       if (idx >= unique.length) return;
       const id = unique[idx]!;
-      const json = await fetchObjectJson(target, projectId, id);
-      lines[idx] = `${id}\t${json}`;
+      try {
+        const json = await fetchObjectJson(target, projectId, id);
+        lines[idx] = `${id}\t${json}`;
+      } catch (err) {
+        // A requested id may not be an object (e.g. a blob id that leaked in
+        // from a version closure). Skip it instead of failing the whole batch.
+        if (err instanceof OrbitClientError && err.status === 404) {
+          lines[idx] = '';
+          continue;
+        }
+        throw err;
+      }
     }
   }
 
@@ -436,7 +446,7 @@ export async function fetchObjectBatch(
     () => worker(),
   );
   await Promise.all(workers);
-  return `${lines.join('\n')}\n`;
+  return `${lines.filter((l) => l).join('\n')}\n`;
 }
 
 /* -------------------------------------------------------------------------- */
