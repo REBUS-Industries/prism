@@ -9,7 +9,8 @@
 # Payload:  {"event_type":"deploy-dev-service","client_payload":{"service":"<name>"}}
 # Services: prism-materials | prism-fixtures | prism-models | prism-permissions | prism-agent | prism-visualiser | prism-server
 #
-# The self-hosted runner has SSH access via the `prism-prod` alias (-> VM 212).
+# The self-hosted runner reaches the live VM 212 via the `prism-dev` SSH alias.
+# (The `prism-prod` alias points at a shadow stack — see .github/workflows/web.yml.)
 
 on:
   repository_dispatch:
@@ -35,8 +36,8 @@ jobs:
             echo "::error::client_payload.service is empty — cannot deploy"
             exit 1
           fi
-          echo "Deploying ${SERVICE} to prism-prod (VM 212)..."
-          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod "
+          echo "Deploying ${SERVICE} to live VM 212 (prism-dev alias)..."
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev "
             set -euo pipefail
             cd /opt/prism
             docker compose pull ${SERVICE}

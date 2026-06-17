@@ -41,7 +41,7 @@ jobs:
         run: |
           SERVICE="${{ steps.map.outputs.service }}"
           echo "Deploying ${SERVICE} after package publish..."
-          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod "
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-dev "
             set -euo pipefail
             cd /opt/prism
             docker compose pull ${SERVICE}
