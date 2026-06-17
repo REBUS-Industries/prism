@@ -77,6 +77,10 @@ jobs:
 
   deploy:
     needs: build-and-push
+    # Serialize VM 212 deploys with web-image/assimp (avoids prism-router :8765 races).
+    concurrency:
+      group: prism-deploy-vm212
+      cancel-in-progress: false
     # Deploy on main merge, version tags, or manual dispatch.
     runs-on: [self-hosted, prism-deploy]
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
@@ -107,7 +111,8 @@ jobs:
               echo "PRISM_IMAGE_TAG=${TAG}" >> .env
             fi
             docker compose pull prism-server prism-materials prism-visualiser prism-agent
-            docker compose up -d prism-server prism-materials prism-visualiser prism-agent prism-web prism-router
-            docker compose ps prism-server prism-materials prism-visualiser prism-agent prism-web prism-router
+            # prism-web + prism-router are owned by web-image (see web.yml).
+            docker compose up -d prism-server prism-materials prism-visualiser prism-agent
+            docker compose ps prism-server prism-materials prism-visualiser prism-agent
             docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
