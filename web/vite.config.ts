@@ -13,6 +13,11 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
+      // @speckle/viewer pins three r140; overlay helpers must share that instance
+      // or WebGLRenderer throws "material.onBuild is not a function".
+      '@speckle-compat/three': fileURLToPath(
+        new URL('./node_modules/@speckle/viewer/node_modules/three/build/three.module.js', import.meta.url),
+      ),
     },
   },
   build: {

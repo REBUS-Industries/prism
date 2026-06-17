@@ -15,7 +15,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["src/shared/*"],
+      "@speckle-compat/three": ["node_modules/@speckle/viewer/node_modules/three/build/three.module.js"]
     },
     "types": ["vite/client"]
   },
