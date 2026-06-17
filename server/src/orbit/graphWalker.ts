@@ -8,6 +8,13 @@ export type OrbitObjectJson = Record<string, unknown>;
 
 const MESH_TYPE_SUFFIXES = ['Objects.Geometry.Mesh', 'Speckle.Core.Models.Geometry.Mesh'];
 
+/** ORBIT/Speckle object ids are 32-char MD5 hex. Blob ids (in __closure) are shorter. */
+const OBJECT_ID_RE = /^[0-9a-f]{32}$/i;
+
+export function isObjectId(id: string): boolean {
+  return OBJECT_ID_RE.test(id);
+}
+
 export function isMeshObject(obj: OrbitObjectJson): boolean {
   const t = obj.speckle_type ?? obj.type;
   if (typeof t !== 'string') return false;
@@ -28,6 +35,33 @@ export function collectReferencedIds(value: unknown, out: Set<string> = new Set(
   for (const [key, child] of Object.entries(rec)) {
     if (key === '__closure' || key === 'referencedId') continue;
     collectReferencedIds(child, out);
+  }
+  return out;
+}
+
+const BLOB_REF_RE = /^blob:(.+)$/;
+
+/**
+ * Collect every Speckle blob id referenced inside an object tree. Blob refs are
+ * string property values of the form `blob:<blobId>` (e.g. RenderMaterial
+ * texture fields). Their ids must appear in the version root __closure so the
+ * blobs travel with the version and ORBIT serves them to its renderer.
+ */
+export function collectBlobIds(value: unknown, out: Set<string> = new Set()): Set<string> {
+  if (value == null) return out;
+  if (typeof value === 'string') {
+    const m = BLOB_REF_RE.exec(value);
+    if (m && m[1]) out.add(m[1]);
+    return out;
+  }
+  if (typeof value !== 'object') return out;
+  if (Array.isArray(value)) {
+    for (const item of value) collectBlobIds(item, out);
+    return out;
+  }
+  for (const [key, child] of Object.entries(value as OrbitObjectJson)) {
+    if (key === '__closure') continue;
+    collectBlobIds(child, out);
   }
   return out;
 }
@@ -66,6 +100,13 @@ function buildClosure(rootId: string, objects: Map<string, OrbitObjectJson>): Re
     if (!obj) continue;
     if (depth > 0) closure[id] = depth;
 
+    // Blob references (e.g. RenderMaterial textures) become closure entries at
+    // depth+1 so the version retains and serves them. Keep the minimum depth.
+    for (const blobId of collectBlobIds(obj)) {
+      const d = depth + 1;
+      if (closure[blobId] === undefined || d < closure[blobId]) closure[blobId] = d;
+    }
+
     const refs = collectReferencedIds(obj);
     for (const refId of refs) {
       if (!seen.has(refId)) queue.push({ id: refId, depth: depth + 1 });
@@ -95,7 +136,9 @@ export async function downloadObjectGraph(
 
     if (obj.__closure && typeof obj.__closure === 'object') {
       for (const childId of Object.keys(obj.__closure as Record<string, unknown>)) {
-        pending.add(childId);
+        // Skip blob ids — closure mixes detached object ids with blob ids, but
+        // only objects are fetchable via /objects/.../single (blobs would 404).
+        if (isObjectId(childId)) pending.add(childId);
       }
     }
     for (const refId of collectReferencedIds(obj)) pending.add(refId);

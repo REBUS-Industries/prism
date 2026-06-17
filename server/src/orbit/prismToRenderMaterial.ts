@@ -45,6 +45,11 @@ const SLOT_TO_ORBIT: Record<string, keyof OrbitTextureRefs> = {
   opacity: 'opacity',
 };
 
+/** Speckle blob reference convention — a property value of `blob:<blobId>`. */
+export function blobRef(blobId: string): string {
+  return `blob:${blobId}`;
+}
+
 export function buildOrbitRenderMaterial(
   material: MaterialDetail,
   blobIds: OrbitTextureRefs,
@@ -56,25 +61,30 @@ export function buildOrbitRenderMaterial(
     opacity: p.opacity,
     roughness: p.roughness,
     metalness: p.metallic,
+    // Keep the real base colour. Speckle/ORBIT colour-only viewers display this
+    // directly; texture-aware renderers multiply the texture over it. (Zeroing
+    // it to black made meshes render black wherever textures aren't sampled.)
     diffuse: hexColorToArgbLong(p.baseColor),
     emissive: hexColorToArgbLong(p.emissiveColor),
   };
 
   if (p.emissiveIntensity !== 1) body.emissiveIntensity = p.emissiveIntensity;
 
+  // Texture properties carry Speckle blob references (`blob:<id>`); the blob ids
+  // must also be added to the version's root __closure (see graphWalker) so the
+  // blobs travel with the version and ORBIT serves them to its renderer.
   if (blobIds.baseColor) {
-    body.baseColorTexture = blobIds.baseColor;
-    body.diffuseTexture = blobIds.baseColor;
-    body.diffuse = 4278190080; // black base — texture carries colour (connector convention)
+    body.baseColorTexture = blobRef(blobIds.baseColor);
+    body.diffuseTexture = blobRef(blobIds.baseColor);
   }
-  if (blobIds.normal) body.normalTexture = blobIds.normal;
-  if (blobIds.roughness) body.roughnessTexture = blobIds.roughness;
-  if (blobIds.metalness) body.metalnessTexture = blobIds.metalness;
+  if (blobIds.normal) body.normalTexture = blobRef(blobIds.normal);
+  if (blobIds.roughness) body.roughnessTexture = blobRef(blobIds.roughness);
+  if (blobIds.metalness) body.metalnessTexture = blobRef(blobIds.metalness);
   if (blobIds.emissive) {
-    body.emissiveTexture = blobIds.emissive;
-    body.pbrEmissionTexture = blobIds.emissive;
+    body.emissiveTexture = blobRef(blobIds.emissive);
+    body.pbrEmissionTexture = blobRef(blobIds.emissive);
   }
-  if (blobIds.opacity) body.opacityTexture = blobIds.opacity;
+  if (blobIds.opacity) body.opacityTexture = blobRef(blobIds.opacity);
 
   if (p.tilingX !== 1 || p.tilingY !== 1) {
     body.diffuseTextureRepeat = [p.tilingX, p.tilingY];
