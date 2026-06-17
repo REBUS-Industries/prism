@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+// Same three.js instance as @speckle/viewer (r140) — not the app-wide r184 copy.
+import * as THREE from '@speckle-compat/three';
 import { ObjectLayers, type Viewer } from '@speckle/viewer';
 import type { ResolvedTheme } from '../../shared/theme';
 
