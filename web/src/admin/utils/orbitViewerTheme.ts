@@ -42,20 +42,32 @@ const CLEAR_COLOR_PASS_NAMES = new Set([
 ]);
 
 /**
- * ORBIT / Speckle "Shaded" view mode — renders mesh `renderMaterial` PBR colours
- * and textures instead of the default edge-outline technical drawing style.
- * Must run after geometry batches exist (post-`loadObject`).
+ * Speckle {@link ViewMode.SHADED} — the same display style Rhino / ORBIT call
+ * "Rendered": PBR `renderMaterial` colours and textures, no technical edges.
  */
-export function applyOrbitViewerMaterialsStyle(v: Viewer): void {
-  const viewModes = v.hasExtension(ViewModes)
+export const ORBIT_VIEWER_RENDER_MODE = ViewMode.SHADED;
+
+const RENDER_MODE_OPTIONS = { edges: false } as const;
+
+function viewModesExtension(v: Viewer): ViewModes {
+  return v.hasExtension(ViewModes)
     ? v.getExtension(ViewModes)
     : v.createExtension(ViewModes);
-  viewModes.setViewMode(ViewMode.SHADED, { edges: false });
+}
+
+/**
+ * Switch the Speckle pipeline to Rendered (SHADED). Must run after geometry
+ * batches exist for best results, but safe to call repeatedly post-`init()`.
+ */
+export function applyOrbitViewerMaterialsStyle(v: Viewer): void {
+  const viewModes = viewModesExtension(v);
+  viewModes.setViewMode(ORBIT_VIEWER_RENDER_MODE, RENDER_MODE_OPTIONS);
+  v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
 }
 
 /**
  * Sync Speckle pipeline background + sun/IBL to the PRISM admin theme.
- * Safe to call after `viewer.init()` and on every theme toggle.
+ * Does not change view mode — pair with {@link applyOrbitViewerMaterialsStyle}.
  */
 export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
   const bg = VIEWER_BG[theme];
@@ -81,4 +93,18 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
   }
 
   v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
+}
+
+/** Rendered display mode + PRISM theme — call after init and whenever the scene changes. */
+export function applyOrbitViewerRenderStyle(v: Viewer, theme: ResolvedTheme): void {
+  applyOrbitViewerMaterialsStyle(v);
+  applyOrbitViewerTheme(v, theme);
+}
+
+/** True when the viewer pipeline is on Rendered (SHADED) with edges off. */
+export function isOrbitViewerRenderedMode(v: Viewer): boolean {
+  if (!v.hasExtension(ViewModes)) return false;
+  const viewModes = v.getExtension(ViewModes);
+  return viewModes.viewMode === ORBIT_VIEWER_RENDER_MODE
+    && viewModes.viewModeOptions.edges === false;
 }
