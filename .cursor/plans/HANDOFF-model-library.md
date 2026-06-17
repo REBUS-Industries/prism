@@ -26,7 +26,7 @@ git clone https://github.com/REBUS-Industries/prism-models-service.git
 Open the `prism` folder in Cursor. Rule file: `.cursor/rules/model-library-workstream.mdc`.
 
 **Prod/dev servers:**
-- Dev (VM 212): https://prism-dev.rebus.industries
+- Dev (VM 212): https://prism.rebus.industries
 - Prod (VM 211): tag-gated — don't touch.
 
 **Deploy this branch to dev for review:**
@@ -168,5 +168,5 @@ After `/prism-merge`, wait for **web-image** and **models-image** (+ **deploy-de
 - [ ] `cd web && npm run build` passes (prism)
 - [ ] If `api.ts` changed: announce in team chat
 - [ ] If UI calls new/changed `/api/models` routes: **prism-models-service PR merged + `models-image` green**
-- [ ] PR body lists verify steps on https://prism-dev.rebus.industries
+- [ ] PR body lists verify steps on https://prism.rebus.industries
 - [ ] After merge: `git fetch origin && git rebase origin/main`

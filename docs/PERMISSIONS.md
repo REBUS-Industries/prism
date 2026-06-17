@@ -15,7 +15,7 @@ effective = portal project grants ∩ function policy graph
 
 ## Connector flow
 
-1. Connector opens portal sign-in (or dev mock-login on prism-dev).
+1. Connector opens portal sign-in (or mock-login on PRISM prod).
 2. Browser callback returns `code` on `http://localhost:29364/`.
 3. Connector `POST /api/access/session` with `{ portalAuthCode, orbitTarget }`.
 4. Service validates with portal, mints scoped ORBIT token, returns `{ manifest }`.
@@ -56,7 +56,7 @@ under **Settings → Integrations → PRISM Access** via `GET/PUT /api/permissio
 ## Dev mock login
 
 ```
-GET https://prism-dev.rebus.industries/api/access/mock-login?redirect_uri=http://localhost:29364/&persona=alice
+GET https://prism.rebus.industries/api/access/mock-login?redirect_uri=http://localhost:29364/&persona=alice
 POST /api/access/session { "portalAuthCode": "mock:alice", "orbitTarget": "dev" }
 ```
 

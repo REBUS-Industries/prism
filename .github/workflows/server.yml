@@ -100,6 +100,12 @@ jobs:
             set -euo pipefail
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
+            TAG="sha-${GITHUB_SHA::7}"
+            if grep -q '^PRISM_IMAGE_TAG=' .env; then
+              sed -i "s|^PRISM_IMAGE_TAG=.*|PRISM_IMAGE_TAG=${TAG}|" .env
+            else
+              echo "PRISM_IMAGE_TAG=${TAG}" >> .env
+            fi
             docker compose pull prism-server prism-materials prism-visualiser prism-agent
             docker compose up -d prism-server prism-materials prism-visualiser prism-agent prism-web prism-router
             docker compose ps prism-server prism-materials prism-visualiser prism-agent prism-web prism-router

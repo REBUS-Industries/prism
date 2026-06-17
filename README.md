@@ -32,7 +32,7 @@ prism/
 ```text
                        prism.rebus.industries (Caddy)
                                    |
-+--------------------------- PRISM Server (VM 211) ---------------------------+
++--------------------------- PRISM Server (VM 212) ---------------------------+
 |  Fastify REST + WS gateway                                                  |
 |  Postgres (jobs/keys/settings/workstations/presets)  +  Redis (BullMQ)      |
 |  Vue 3 admin SPA (with live flow editor)  +  public Convert SPA             |
@@ -41,7 +41,7 @@ prism/
             | WSS (register / pull job / progress / log)   | ORBIT object upload
             |                                              v
 +--- PRISM.Agent.exe (Windows) ---+              +--- orbit-server ---+
-|  Rhino.Inside .NET 8            |              |  (VM 211)          |
+|  Rhino.Inside .NET 8            |              |  (VM 211, ORBIT only) |
 |  RhinoFileOpener (all formats)  |              +--------------------+
 |  OrbitConnector.Rhino.Core      |
 |  N concurrent worker slots      |

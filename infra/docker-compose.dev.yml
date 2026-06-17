@@ -1,6 +1,6 @@
-# PRISM dev split stack — VM 212 (prism-dev.rebus.industries).
-# Use this file instead of docker-compose.yml on VM 212.
-# DO NOT use this on VM 211 (prod).
+# PRISM split stack — VM 212 production (`https://prism.rebus.industries`).
+# Authoritative compose for `/opt/prism` on VM 212.
+# VM 211 runs ORBIT only — do not deploy this file there.
 
 services:
   prism-server:
@@ -16,7 +16,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8765
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       REDIS_URL: "redis://redis:6379"
       ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"
@@ -102,7 +102,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8766
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       ORBIT_SERVER_URL: "${ORBIT_SERVER_URL:-https://orbit.rebus.industries}"
       ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
@@ -148,7 +148,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8769
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
@@ -185,7 +185,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8770
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       # Shared prism DB — used only for auth (admin sessions / API keys / settings).
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       # Dedicated model store DB (created automatically at boot if missing).
@@ -230,7 +230,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8771
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       SESSION_SECRET: "${SESSION_SECRET}"
       PORTAL_ADAPTER: "${PORTAL_ADAPTER:-mock}"
@@ -267,7 +267,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8768
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       REDIS_URL: "redis://redis:6379"
       ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"
@@ -306,7 +306,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8767
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism-dev.rebus.industries}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://prism.rebus.industries}"
       POSTGRES_URL: "postgres://${POSTGRES_USER:-prism}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-prism}"
       REDIS_URL: "redis://redis:6379"
       ORBIT_SERVER_URL: "${ORBIT_SERVER_URL}"

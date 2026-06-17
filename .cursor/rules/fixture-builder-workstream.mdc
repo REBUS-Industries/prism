@@ -38,7 +38,7 @@ Read `.cursor/plans/HANDOFF-fixture-builder.md` before starting work. Git workfl
 - **Fixtures API changed:** merge `prism-fixtures-service` PR; `fixtures-image` auto-runs on merge to `main`, or manually:
   `gh workflow run fixtures-image --repo REBUS-Industries/prism-fixtures-service --ref <branch>`
 - Merge via `/prism-merge <PR#>` in #prism-dev; confirm **web-image** and **fixtures-image** deploy-dev completed when both repos changed
-- Dev target: https://prism-dev.rebus.industries
+- Dev target: https://prism.rebus.industries
 
 ## Commit format
 

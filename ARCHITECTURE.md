@@ -6,7 +6,7 @@ across two repos and three deploy targets:
 - **`REBUS-Industries/prism`** — this repo: server, web SPAs, agent, contracts
 - **`REBUS-Industries/orbit-server`** (submodule at `vendor/orbit-monorepo/`)
   — the shared C# SDK and the Rhino connector core, reused by the agent
-- **PRISM Server (VM 211)** + **`orbit-server` (VM 211)** + **Rhino
+- **PRISM Server (VM 212)** + **`orbit-server` (VM 211)** + **Rhino
   workstations (RB-DA2-PCxx)**
 
 ## Component split
@@ -19,7 +19,7 @@ External callers
   /v1/*            REST callers with X-API-Key
        │
        ▼
-Caddy (prism.rebus.industries) ──► PRISM Server (Node + Fastify, VM 211)
+Caddy (prism.rebus.industries) ──► PRISM Server (Node + Fastify, VM 212)
                                         │
                                         ├── Postgres (jobs, keys, settings, ...)
                                         ├── Redis    (BullMQ queue + SSE fan-out)

@@ -60,7 +60,7 @@ See `ConnectorManifest` in `portal-access.ts`.
 
 ## Mock adapter
 
-Set `PORTAL_ADAPTER=mock` (default on prism-dev). Accepts codes `mock:alice`, `mock:bob`.
+Set `PORTAL_ADAPTER=mock` (default on local/mock setups). Accepts codes `mock:alice`, `mock:bob`.
 
 ## Identity mapping
 

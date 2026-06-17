@@ -26,7 +26,7 @@ It serialises all merges — only one can run at a time — and posts CI status 
 5. **Create the slash command**
    - Left menu: **Slash Commands** → **Create New Command**
      - Command: `/prism-merge`
-     - Request URL: `https://merge-bot.prism-dev.rebus.industries/merge`
+     - Request URL: `https://merge-bot.prism.rebus.industries/merge`
      - Short Description: `Merge a PRISM PR and deploy to dev`
      - Usage Hint: `<PR-number>`
    - Save.
@@ -71,7 +71,7 @@ See `docker-compose.standalone.yml` and `install-caddy-vhost.sh` in this directo
 
 ## Part 4 — Expose via Caddy (do once on each proxy)
 
-The Caddy snippet at `infra/Caddyfile.snippet` already includes the `merge-bot.prism-dev.rebus.industries` block.
+The Caddy snippet at `infra/Caddyfile.snippet` already includes the `merge-bot.prism.rebus.industries` block.
 
 On LXC 251 and LXC 252 (Caddy proxies):
 
@@ -79,7 +79,7 @@ On LXC 251 and LXC 252 (Caddy proxies):
 # Add the new vhost block to Caddyfile
 # (if Caddy already has the prism-dev block, just add the merge-bot block above it)
 sudo nano /etc/caddy/Caddyfile
-# → paste the merge-bot.prism-dev.rebus.industries block from Caddyfile.snippet
+# → paste the merge-bot.prism.rebus.industries block from Caddyfile.snippet
 
 sudo systemctl reload caddy
 ```
@@ -87,7 +87,7 @@ sudo systemctl reload caddy
 Verify:
 
 ```bash
-curl https://merge-bot.prism-dev.rebus.industries/health
+curl https://merge-bot.prism.rebus.industries/health
 # → {"ok":true,"locked":false,"lock":null}
 ```
 
@@ -133,5 +133,5 @@ That's it — the bot is the only thing that merges to main.
 | `/prism-merge` says "dispatch_failed" | Check `GITHUB_TOKEN` has `repo` + `workflow` scopes |
 | Bot not responding | `docker compose logs prism-merge-bot` on VM 212 |
 | "Invalid Slack signature" in logs | `SLACK_SIGNING_SECRET` is wrong — re-copy from api.slack.com |
-| Lock stuck (bot crashed mid-merge) | `curl -X POST https://merge-bot.prism-dev.rebus.industries/unlock-admin` (add this route if needed) or restart the container: `docker compose restart prism-merge-bot` |
+| Lock stuck (bot crashed mid-merge) | `curl -X POST https://merge-bot.prism.rebus.industries/unlock-admin` (add this route if needed) or restart the container: `docker compose restart prism-merge-bot` |
 | CI deploy times out | Deploy ran fine but took > 12min — check CT 261 disk, re-trigger manually |
