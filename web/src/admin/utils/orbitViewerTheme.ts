@@ -81,20 +81,17 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
   const bg = VIEWER_BG[theme];
   v.setLightConfiguration(LIGHT_CONFIG[theme]);
 
+  // Background comes from the renderer's clear colour, NOT the geometry passes.
+  // Calling setClearColor on a GEOMETRY pass makes it clear the colour buffer
+  // (base GPass.clear() clears whenever _clearColor is set); since DEFAULT mode
+  // has multiple GEOMETRY passes (opaque + transparent) sharing a target, the
+  // later pass wipes the meshes the earlier one drew → nothing renders.
+  v.getRenderer().renderer.setClearColor(bg, 1);
   const pipeline = v.getRenderer().pipeline;
   for (const pass of pipeline.passes) {
     if (CLEAR_COLOR_PASS_NAMES.has(pass.displayName)) {
       pass.setClearColor(bg, 1);
     }
-  }
-
-  // Rendered (DEFAULT) uses the GEOMETRY pass; SHADED-mode passes only exist
-  // when that mode is active. Set clear colour on whichever is present.
-  for (const pass of pipeline.getPass('GEOMETRY')) {
-    pass.setClearColor(bg, 1);
-  }
-  for (const pass of pipeline.getPass('SHADED')) {
-    pass.setClearColor(bg, 1);
   }
 
   for (const pass of pipeline.getPass('EDGES')) {
@@ -108,7 +105,7 @@ export function applyOrbitViewerTheme(v: Viewer, theme: ResolvedTheme): void {
   v.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.RENDER | UpdateFlags.SHADOWS);
 }
 
-/** Rendered (SHADED) display mode + PRISM theme — call after geometry + final resize. */
+/** Rendered (DEFAULT geometry) display mode + PRISM theme — call after geometry + final resize. */
 export function applyOrbitViewerRenderStyle(v: Viewer, theme: ResolvedTheme): void {
   applyOrbitViewerMaterialsStyle(v);
   applyOrbitViewerTheme(v, theme);
