@@ -35,15 +35,27 @@ function readObjectName(obj: RawSpeckleObject): string | null {
   return name || null;
 }
 
-function meshHasGeometry(obj: RawSpeckleObject): boolean {
+/** Inline numeric vertices (de-chunked or small payloads). */
+function meshHasInlineGeometry(obj: RawSpeckleObject): boolean {
   const vertices = obj.vertices;
   return Array.isArray(vertices) && vertices.length > 0 && typeof vertices[0] === 'number';
+}
+
+/**
+ * ORBIT/Rhino meshes often store vertices as detached DataChunk refs in the
+ * raw closure. Treat those as mappable for slot discovery + material swap.
+ */
+function meshIsMappable(obj: RawSpeckleObject): boolean {
+  if (shortSpeckleType(obj.speckle_type) !== 'Mesh') return false;
+  if (typeof obj.id !== 'string') return false;
+  if (meshHasInlineGeometry(obj)) return true;
+  return obj.vertices !== undefined || obj.faces !== undefined;
 }
 
 /** Objects that represent user-visible parts (Rhino layers/blocks, not raw chunks). */
 function isOrbitPartObject(obj: RawSpeckleObject): boolean {
   const short = shortSpeckleType(obj.speckle_type);
-  if (short === 'Mesh') return meshHasGeometry(obj);
+  if (short === 'Mesh') return meshIsMappable(obj);
 
   const stLower = typeof obj.speckle_type === 'string' ? obj.speckle_type.toLowerCase() : '';
   const hasDisplay = obj.displayValue !== undefined || obj['@displayValue'] !== undefined;
@@ -52,11 +64,27 @@ function isOrbitPartObject(obj: RawSpeckleObject): boolean {
     || (hasDisplay && short !== 'Mesh');
 }
 
-function readRenderMaterialName(obj: RawSpeckleObject): string | null {
-  const rm = obj.renderMaterial;
-  if (!rm || typeof rm !== 'object') return null;
-  const name = (rm as Record<string, unknown>).name;
-  return typeof name === 'string' && name.trim() ? name.trim() : null;
+function readRenderMaterialName(
+  obj: RawSpeckleObject,
+  byId: Map<string, RawSpeckleObject>,
+): string | null {
+  const rmRaw = obj.renderMaterial ?? obj['@renderMaterial'];
+  if (rmRaw && typeof rmRaw === 'object') {
+    const record = rmRaw as Record<string, unknown>;
+    if (typeof record.referencedId === 'string') {
+      const resolved = byId.get(record.referencedId);
+      if (resolved) return readRenderMaterialName(resolved, byId);
+    }
+    const name = record.name;
+    if (typeof name === 'string' && name.trim()) return name.trim();
+  }
+
+  const st = typeof obj.speckle_type === 'string' ? obj.speckle_type : '';
+  if (st.includes('RenderMaterial') && typeof obj.name === 'string' && obj.name.trim()) {
+    return obj.name.trim();
+  }
+
+  return null;
 }
 
 function buildObjectIndex(objects: RawSpeckleObject[]): Map<string, RawSpeckleObject> {
@@ -78,13 +106,43 @@ function resolveReferenced(
   return null;
 }
 
+function normalizeSlotKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function lookupMeshTargets(
+  map: Map<string, OrbitMeshTarget[]>,
+  slotName: string,
+): OrbitMeshTarget[] | undefined {
+  const direct = map.get(slotName);
+  if (direct?.length) return direct;
+  const key = normalizeSlotKey(slotName);
+  for (const [name, targets] of map) {
+    if (normalizeSlotKey(name) === key && targets.length) return targets;
+  }
+  return undefined;
+}
+
+function lookupMeshIdsByMaterial(
+  map: Map<string, string[]>,
+  slotName: string,
+): string[] | undefined {
+  const direct = map.get(slotName);
+  if (direct?.length) return direct;
+  const key = normalizeSlotKey(slotName);
+  for (const [name, ids] of map) {
+    if (normalizeSlotKey(name) === key && ids.length) return ids;
+  }
+  return undefined;
+}
+
 /** Resolve a part or mesh object to drawable Mesh targets (for material swap). */
 function resolveMeshTargets(
   obj: RawSpeckleObject,
   byId: Map<string, RawSpeckleObject>,
 ): OrbitMeshTarget[] {
   const short = shortSpeckleType(obj.speckle_type);
-  if (short === 'Mesh' && meshHasGeometry(obj) && typeof obj.id === 'string') {
+  if (short === 'Mesh' && meshIsMappable(obj) && typeof obj.id === 'string') {
     const appId = typeof obj.applicationId === 'string' ? obj.applicationId : undefined;
     return [{ objectId: obj.id, applicationId: appId ?? null }];
   }
@@ -97,7 +155,7 @@ function resolveMeshTargets(
   for (const entry of entries) {
     const resolved = resolveReferenced(entry, byId);
     if (!resolved || shortSpeckleType(resolved.speckle_type) !== 'Mesh') continue;
-    if (!meshHasGeometry(resolved) || typeof resolved.id !== 'string') continue;
+    if (!meshIsMappable(resolved) || typeof resolved.id !== 'string') continue;
     if (seen.has(resolved.id)) continue;
     seen.add(resolved.id);
     const appId = typeof resolved.applicationId === 'string' ? resolved.applicationId : undefined;
@@ -105,6 +163,19 @@ function resolveMeshTargets(
   }
 
   return targets;
+}
+
+function pushSourceMaterialMeshes(
+  meshesBySourceMaterial: Map<string, string[]>,
+  matName: string,
+  targets: OrbitMeshTarget[],
+): void {
+  if (!targets.length) return;
+  const ids = meshesBySourceMaterial.get(matName) ?? [];
+  for (const target of targets) {
+    if (!ids.includes(target.objectId)) ids.push(target.objectId);
+  }
+  meshesBySourceMaterial.set(matName, ids);
 }
 
 /** Map slot names to ORBIT mesh object ids from a downloaded closure. */
@@ -128,15 +199,16 @@ export function buildOrbitMaterialSlotMap(objects: RawSpeckleObject[]): OrbitMat
   for (const obj of objects) {
     if (!isOrbitPartObject(obj)) continue;
     const name = readObjectName(obj);
-    if (!name) continue;
-    pushMeshName(name, resolveMeshTargets(obj, byId));
+    const targets = resolveMeshTargets(obj, byId);
+    if (name) pushMeshName(name, targets);
+    const matName = readRenderMaterialName(obj, byId);
+    if (matName) pushSourceMaterialMeshes(meshesBySourceMaterial, matName, targets);
   }
 
   if (meshByName.size === 0) {
     let meshIndex = 0;
     for (const obj of objects) {
-      if (shortSpeckleType(obj.speckle_type) !== 'Mesh' || !meshHasGeometry(obj)) continue;
-      if (typeof obj.id !== 'string') continue;
+      if (!meshIsMappable(obj)) continue;
       meshIndex += 1;
       const label = readObjectName(obj) ?? `Mesh ${meshIndex}`;
       pushMeshName(label, resolveMeshTargets(obj, byId));
@@ -144,13 +216,14 @@ export function buildOrbitMaterialSlotMap(objects: RawSpeckleObject[]): OrbitMat
   }
 
   for (const obj of objects) {
-    if (shortSpeckleType(obj.speckle_type) !== 'Mesh' || !meshHasGeometry(obj)) continue;
-    if (typeof obj.id !== 'string') continue;
-    const matName = readRenderMaterialName(obj);
+    if (!meshIsMappable(obj)) continue;
+    const matName = readRenderMaterialName(obj, byId);
     if (!matName) continue;
-    const ids = meshesBySourceMaterial.get(matName) ?? [];
-    if (!ids.includes(obj.id)) ids.push(obj.id);
-    meshesBySourceMaterial.set(matName, ids);
+    pushSourceMaterialMeshes(
+      meshesBySourceMaterial,
+      matName,
+      resolveMeshTargets(obj, byId),
+    );
   }
 
   return { meshByName, meshesBySourceMaterial };
@@ -174,7 +247,7 @@ export async function buildOrbitMaterialSwapAssignments(
     if (!slot.materialId) continue;
 
     if (kind === 'mesh') {
-      const targets = map.meshByName.get(slot.name);
+      const targets = lookupMeshTargets(map.meshByName, slot.name);
       if (!targets?.length) {
         unresolved.push(slot.name);
         continue;
@@ -187,7 +260,7 @@ export async function buildOrbitMaterialSwapAssignments(
         });
       }
     } else {
-      const objectIds = map.meshesBySourceMaterial.get(slot.name);
+      const objectIds = lookupMeshIdsByMaterial(map.meshesBySourceMaterial, slot.name);
       if (!objectIds?.length) {
         unresolved.push(slot.name);
         continue;
@@ -207,6 +280,7 @@ export async function buildOrbitMaterialSwapAssignments(
 
 /** Extract unique, stable slot names from a resolved ORBIT object closure. */
 export function extractOrbitMaterialSlotNames(objects: RawSpeckleObject[]): string[] {
+  const byId = buildObjectIndex(objects);
   const names: string[] = [];
   const seen = new Set<string>();
 
@@ -225,7 +299,7 @@ export function extractOrbitMaterialSlotNames(objects: RawSpeckleObject[]): stri
 
   let meshIndex = 0;
   for (const obj of objects) {
-    if (shortSpeckleType(obj.speckle_type) !== 'Mesh' || !meshHasGeometry(obj)) continue;
+    if (!meshIsMappable(obj)) continue;
     meshIndex += 1;
     push(readObjectName(obj) ?? `Mesh ${meshIndex}`);
   }
@@ -235,21 +309,23 @@ export function extractOrbitMaterialSlotNames(objects: RawSpeckleObject[]): stri
 
 /** Unique ORBIT renderMaterial names from mesh geometry in a closure. */
 export function extractOrbitSourceMaterialNames(objects: RawSpeckleObject[]): string[] {
-  const names: string[] = [];
+  const byId = buildObjectIndex(objects);
+  const map = buildOrbitMaterialSlotMap(objects);
+  const names = [...map.meshesBySourceMaterial.keys()];
+
+  if (names.length) return names.sort((a, b) => a.localeCompare(b));
+
+  const fallback: string[] = [];
   const seen = new Set<string>();
-
-  const push = (raw: string | null): void => {
-    if (!raw || seen.has(raw)) return;
-    seen.add(raw);
-    names.push(raw);
-  };
-
   for (const obj of objects) {
-    if (shortSpeckleType(obj.speckle_type) !== 'Mesh' || !meshHasGeometry(obj)) continue;
-    push(readRenderMaterialName(obj));
+    if (!meshIsMappable(obj)) continue;
+    const matName = readRenderMaterialName(obj, byId);
+    if (!matName || seen.has(matName)) continue;
+    seen.add(matName);
+    fallback.push(matName);
   }
 
-  return names;
+  return fallback.sort((a, b) => a.localeCompare(b));
 }
 
 export function orbitObjectsToMaterialSlots(
@@ -276,6 +352,24 @@ export async function fetchOrbitSourceMaterialSlots(ref: ModelOrbitRef): Promise
   return orbitObjectsToMaterialSlots(extractOrbitSourceMaterialNames(objects), 'sourceMaterial');
 }
 
+/** Refresh slot names from the live ORBIT version while keeping assignments. */
+export async function refreshOrbitMaterialSlotsFromOrbit(
+  ref: ModelOrbitRef,
+  mesh: ModelMaterialSlot[],
+  sourceMaterial: ModelMaterialSlot[],
+): Promise<{ mesh: ModelMaterialSlot[]; sourceMaterial: ModelMaterialSlot[] }> {
+  const [meshDiscovered, sourceDiscovered] = await Promise.all([
+    fetchOrbitMaterialSlots(ref),
+    fetchOrbitSourceMaterialSlots(ref),
+  ]);
+  return {
+    mesh: meshDiscovered.length ? mergeMaterialSlots(mesh, meshDiscovered) : mesh,
+    sourceMaterial: sourceDiscovered.length
+      ? mergeMaterialSlots(sourceMaterial, sourceDiscovered)
+      : sourceMaterial,
+  };
+}
+
 /** Preserve saved materialId assignments when refreshing slot names from ORBIT. */
 export function mergeMaterialSlots(
   persisted: ModelMaterialSlot[],
@@ -287,9 +381,16 @@ export function mergeMaterialSlots(
       .filter((s) => (s.kind ?? 'mesh') === kind)
       .map((s) => [s.name, s.materialId ?? null]),
   );
+  const byNormalized = new Map(
+    persisted
+      .filter((s) => (s.kind ?? 'mesh') === kind)
+      .map((s) => [normalizeSlotKey(s.name), s.materialId ?? null]),
+  );
   return discovered.map((slot) => ({
     name: slot.name,
-    materialId: byName.get(slot.name) ?? null,
+    materialId: byName.get(slot.name)
+      ?? byNormalized.get(normalizeSlotKey(slot.name))
+      ?? null,
     kind: slot.kind ?? kind,
   }));
 }
