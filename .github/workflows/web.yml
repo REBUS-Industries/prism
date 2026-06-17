@@ -86,24 +86,42 @@ jobs:
 
       - name: Sync split compose + deploy prism-web to VM 212 (prod)
         run: |
+          WEB_TAG="sha-${GITHUB_SHA:0:7}"
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             infra/docker-compose.dev.yml \
             prism-prod:/opt/prism/docker-compose.dev.yml
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             infra/nginx.router.conf \
             prism-prod:/opt/prism/nginx.router.conf
-          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod <<'REMOTE'
+          ssh -o BatchMode=yes -o ConnectTimeout=10 prism-prod \
+            "WEB_TAG=${WEB_TAG} GIT_SHA=${GITHUB_SHA}" bash -s <<'REMOTE'
             set -euo pipefail
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
-            # VM .env may pin PRISM_WEB_TAG to an old sha — always roll forward on deploy.
-            export PRISM_WEB_TAG=latest
-            docker compose pull prism-web prism-fixtures prism-models prism-permissions
-            docker compose up -d --force-recreate --pull always \
-              prism-web prism-fixtures prism-models prism-permissions prism-router
-            docker exec prism-router nginx -s reload
-            docker compose ps prism-web prism-fixtures prism-models prism-permissions prism-router
-            docker image prune -af --filter "until=24h" 2>/dev/null || true
+            # VM .env may pin PRISM_WEB_TAG to an old sha — persist the tag we just built.
+            if [ -f .env ] && grep -q '^PRISM_WEB_TAG=' .env; then
+              sed -i "s/^PRISM_WEB_TAG=.*/PRISM_WEB_TAG=${WEB_TAG}/" .env
+            else
+              echo "PRISM_WEB_TAG=${WEB_TAG}" >> .env
+            fi
+            export PRISM_WEB_TAG="${WEB_TAG}"
+            echo "Deploying prism-web:${WEB_TAG}"
+            docker compose pull prism-web
+            docker compose up -d --force-recreate --no-deps --pull always prism-web
+            docker exec prism-router nginx -s reload || docker compose up -d prism-router
+            docker compose ps prism-web prism-router
+            REV="$(docker inspect prism-web --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+            echo "prism-web image revision: ${REV}"
+            if [ "${REV}" != "${GIT_SHA}" ]; then
+              echo "::error::prism-web revision ${REV} != expected ${GIT_SHA}"
+              exit 1
+            fi
+            BUNDLE="$(docker exec prism-web wget -qO- http://127.0.0.1/src/admin/index.html | grep -oE 'admin-[A-Za-z0-9_-]+\\.js' | head -1)"
+            echo "prism-web admin bundle: ${BUNDLE}"
+            if [ -z "${BUNDLE}" ]; then
+              echo "::error::Could not read admin bundle from prism-web container"
+              exit 1
+            fi
           REMOTE
 
       - name: Clean runner workspace
