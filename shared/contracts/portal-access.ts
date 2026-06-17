@@ -30,6 +30,20 @@ export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'create_version',
 ];
 
+/** PRISM admin tools gated by role-based grants. */
+export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models';
+
+export const PRISM_TOOLS: PrismTool[] = [
+  'convert',
+  'visualiser',
+  'fixtures',
+  'materials',
+  'models',
+];
+
+/** Portal system role (from portal-app UserProfile.role). */
+export type PortalSystemRole = 'superAdmin' | 'admin' | 'staff' | 'viewer';
+
 /** Portal project access level (from REBUS portal API). */
 export type PortalProjectLevel = 'viewer' | 'contributor' | 'owner' | 'admin';
 
@@ -38,6 +52,10 @@ export interface PortalUser {
   email: string;
   googleSub?: string | null;
   displayName?: string | null;
+  /** Portal system role — used for PRISM tool grant resolution. */
+  role?: PortalSystemRole | string | null;
+  /** Optional custom role id from portal-app. */
+  customRoleId?: string | null;
 }
 
 export interface PortalProjectPermission {
@@ -81,6 +99,13 @@ export interface ConnectorManifest {
   orbitServerUrl: string;
   /** Scoped ORBIT bearer token — use for all ORBIT API calls. */
   orbitToken: string;
+  /** PRISM portal session bearer for Library/API until ORBIT projects are assigned. */
+  prismAccessToken?: string;
+  /**
+   * MVP: true for all portal users — connector treats this as full Send/Receive/List/Create
+   * on every ORBIT project. Phase 2: set ORBIT_BLANKET_ACCESS=0 and assign projects in PRISM Users.
+   */
+  orbitBlanketAccess?: boolean;
   /** Token expiry (ISO); connector should re-auth before this. */
   expiresAt: string;
   /** Session id for manifest refresh via GET /api/access/manifest. */
@@ -95,7 +120,7 @@ export interface AccessSessionResponse {
 }
 
 /** Node graph policy (admin permissions editor). */
-export type PolicyNodeType = 'role' | 'user' | 'project' | 'function';
+export type PolicyNodeType = 'role' | 'user' | 'project' | 'function' | 'tool';
 
 export interface PolicyNode {
   id: string;
@@ -124,6 +149,36 @@ export interface FunctionPolicyGraph {
 export interface PermissionsPolicyResponse {
   graph: FunctionPolicyGraph;
   defaultFunctions: ConnectorFunction[];
+}
+
+/** Role/user -> PRISM tool grants (layout-free; edited from PRISM admin or portal). */
+export interface ToolGrants {
+  roles: Record<string, PrismTool[]>;
+  users?: Record<string, PrismTool[]>;
+}
+
+export interface ToolGrantsResponse {
+  grants: ToolGrants;
+  updatedAt?: string;
+}
+
+/** Effective PRISM tool access for the signed-in admin user. */
+export interface EffectiveToolAccess {
+  email: string;
+  roles: string[];
+  isPrismAdmin: boolean;
+  tools: PrismTool[];
+}
+
+export interface ToolAuthorizeRequest {
+  email: string;
+  tool: PrismTool;
+}
+
+export interface ToolAuthorizeResponse {
+  allowed: boolean;
+  email: string;
+  tool: PrismTool;
 }
 
 /** Service-side portal integration (implemented in prism-permissions-service). */

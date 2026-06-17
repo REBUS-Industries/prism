@@ -35,6 +35,14 @@ pre-provision project access / PRISM admin flags before first sign-in.
 portal email is provisioned with `isPrismAdmin` (or listed in legacy `PORTAL_ADMIN_EMAILS`).
 On prism-dev with the mock workspace, link domain `rebus.industries`, sync, then edit `alice@rebus.industries`.
 
+**Admin → Tool access** (`/admin/#/permissions/tools`) — role → PRISM tool grants
+(convert, visualiser, fixture/material/model libraries). Editable from the portal
+under **Settings → Integrations → PRISM Access** via `GET/PUT /api/permissions/tool-grants`.
+
+**Portal `/portal/me`** returns `role` and `customRoleId` for grant resolution.
+**PRISM admin `/api/access/me`** returns effective tools for nav gating.
+**prism-server** calls `POST /api/access/authorize` (Bearer `PERMISSIONS_INTERNAL_KEY`) per tool route.
+
 ## Service
 
 | Item | Value |
