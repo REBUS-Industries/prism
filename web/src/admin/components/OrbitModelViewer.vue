@@ -15,18 +15,26 @@ import {
   LoaderEvent,
   SpeckleType,
   UpdateFlags,
+  ViewerEvent,
 } from '@speckle/viewer';
 import type { Vector3 } from 'three';
 import { orbitApi, type ApiError, type ModelOrbitRef } from '../../shared/api';
 import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
 import { readContainerCssSize } from '../utils/threeResize';
 import { ORBIT_VIEWER_LOG, OrbitProxySpeckleLoader } from '../utils/orbitSpeckleLoader';
-import { applyOrbitViewerMaterialsStyle, applyOrbitViewerTheme } from '../utils/orbitViewerTheme';
+import {
+  applyOrbitViewerRenderStyle,
+  isOrbitViewerRenderedMode,
+} from '../utils/orbitViewerTheme';
 import {
   OrbitWorldHelpers,
   sceneSpanFromViewer,
 } from '../utils/orbitViewerWorldHelpers';
 import type { OrbitViewerSession } from '../utils/orbitViewerSession';
+import {
+  DEFAULT_MODEL_SOURCE_UNITS,
+  type ModelLengthUnit,
+} from '../utils/modelUnits';
 import Icon from '../../shared/Icon.vue';
 
 export type OrbitViewPreset = 'top' | 'front' | 'side' | 'iso';
@@ -45,6 +53,8 @@ const props = withDefaults(defineProps<{
   showWorldHelpers?: boolean;
   /** Quad view: shared resolve + closure from parent (avoids 4× network download). */
   preloadedSession?: OrbitViewerSession | null;
+  /** Model mesh coordinate units — grid cell size is always 1 m in this space. */
+  meshUnits?: ModelLengthUnit;
 }>(), {
   settings: () => ({}),
   fill: false,
@@ -52,6 +62,7 @@ const props = withDefaults(defineProps<{
   interactive: true,
   viewPreset: 'iso',
   showWorldHelpers: undefined,
+  meshUnits: DEFAULT_MODEL_SOURCE_UNITS,
 });
 
 const hostRef = ref<HTMLDivElement | null>(null);
@@ -138,7 +149,7 @@ function syncWorldHelpers(v: Viewer, reason: string): void {
     if (!worldHelpers) worldHelpers = new OrbitWorldHelpers();
     worldHelpers.attach(v);
     const span = sceneSpanFromViewer(v);
-    worldHelpers.rebuild(span, resolvedTheme.value);
+    worldHelpers.rebuild(span, resolvedTheme.value, props.meshUnits);
     requestViewerRedraw(v, `world-helpers:${reason}`);
     logStep(`viewer:world-helpers (${reason})`, { span });
   } catch (err) {
@@ -149,11 +160,11 @@ function syncWorldHelpers(v: Viewer, reason: string): void {
 
 function syncViewerTheme(reason: string): void {
   if (!viewer) return;
-  applyOrbitViewerTheme(viewer, resolvedTheme.value);
+  applyOrbitViewerRenderStyle(viewer, resolvedTheme.value);
   worldHelpers?.syncTheme(resolvedTheme.value);
   if (worldHelpers) requestViewerRedraw(viewer, `world-helpers-theme:${reason}`);
   if (import.meta.env.DEV) {
-    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] theme:${resolvedTheme.value} (${reason})`);
+    console.log(`${ORBIT_VIEWER_LOG} [${ts()}] theme:${resolvedTheme.value} rendered=${isOrbitViewerRenderedMode(viewer)} (${reason})`);
   }
 }
 
@@ -208,6 +219,7 @@ function applyViewPreset(v: Viewer, reason: string): void {
       camera.setCameraView(orbitCanonicalView(preset), false);
     }
     requestViewerRedraw(v, `view-preset:${preset}`);
+    syncViewerTheme(`view-preset:${reason}`);
     logStep(`viewer:view-preset=${preset} (${reason})`);
   } catch (err) {
     console.warn(`${ORBIT_VIEWER_LOG} [${ts()}] view-preset failed`, { preset, err });
@@ -601,6 +613,13 @@ async function loadModel(): Promise<void> {
     viewer.createExtension(CameraController);
     syncCameraInteractivity(viewer, 'post-create');
     logStep('viewer:CameraController attached');
+    viewer.on(ViewerEvent.LoadComplete, () => {
+      if (!viewer) return;
+      syncViewerTheme('load-complete');
+      logStep('viewer:render-mode after LoadComplete', {
+        rendered: isOrbitViewerRenderedMode(viewer),
+      });
+    });
     // Disable the Speckle shadowcatcher BEFORE loading geometry. Its render
     // target is sized from the model's bounding box (textureSize / aspect); a
     // flat or empty ORBIT model gives a zero-height aspect, so the catcher
@@ -636,9 +655,10 @@ async function loadModel(): Promise<void> {
     });
     const { hasGeometry } = logSceneDiagnostics(viewer, 'post-load');
     modelHasGeometry = hasGeometry;
-    applyOrbitViewerMaterialsStyle(viewer);
-    syncViewerTheme('post-load-materials');
-    logStep('viewer:materials render style (SHADED)');
+    syncViewerTheme('post-load');
+    logStep('viewer:render-mode Rendered (SHADED)', {
+      rendered: isOrbitViewerRenderedMode(viewer),
+    });
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     viewerResize('post-load', { force: true });
@@ -724,6 +744,7 @@ watch(
 watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && viewer) {
     scheduleViewerResize('loading-overlay-removed');
+    syncViewerTheme('loading-overlay-removed');
   }
 });
 
@@ -740,6 +761,10 @@ watch(() => props.viewPreset, () => {
     applyViewPreset(viewer, 'view-preset-prop');
     syncCameraInteractivity(viewer, 'view-preset-prop');
   }
+});
+
+watch(() => props.meshUnits, () => {
+  if (viewer) syncWorldHelpers(viewer, 'mesh-units');
 });
 </script>
 
