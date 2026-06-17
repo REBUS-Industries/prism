@@ -41,7 +41,7 @@ import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { ZipArchive } from 'archiver';
 import { db } from '../db/client.js';
 import { materials, materialGroups, materialTextures, textures } from '../db/schema.js';
-import { requireAuth, requireScope } from '../auth/middleware.js';
+import { requireAuth, requireScope, requireTool } from '../auth/middleware.js';
 import type { Principal } from '../auth/principal.js';
 import { ALLOWED_SLOTS, isMaterialSlot } from '../materials/slots.js';
 import { importMaterialZipBuffer, MAX_MATERIAL_ZIP_BYTES } from '../materials/importZip.js';
@@ -136,6 +136,8 @@ const slotsFilledSql = sql<number>`(
 )`;
 
 const plugin: FastifyPluginAsync = async (app) => {
+  app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireTool('materials'));
   await mkdir(TEXTURES_ROOT, { recursive: true }).catch(() => { /* race-tolerant */ });
 
   /* ---------- GET /api/materials ---------- */

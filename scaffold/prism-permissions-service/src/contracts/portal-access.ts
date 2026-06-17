@@ -71,7 +71,7 @@ export interface ConnectorManifest {
   /** PRISM portal session bearer for Library/API until ORBIT projects are assigned. */
   prismAccessToken: string;
   /**
-   * MVP: true for all portal users — connector treats this as full Send/Receive/List/Create
+   * MVP: true for all portal users â€” connector treats this as full Send/Receive/List/Create
    * on every ORBIT project. Phase 2: set ORBIT_BLANKET_ACCESS=0 and assign projects in PRISM Users.
    */
   orbitBlanketAccess: boolean;
@@ -110,6 +110,34 @@ export interface FunctionPolicyGraph {
 export interface PermissionsPolicyResponse {
   graph: FunctionPolicyGraph;
   defaultFunctions: ConnectorFunction[];
+}
+
+export interface ToolGrants {
+  roles: Record<string, PrismTool[]>;
+  users?: Record<string, PrismTool[]>;
+}
+
+export interface ToolGrantsResponse {
+  grants: ToolGrants;
+  updatedAt?: string;
+}
+
+export interface EffectiveToolAccess {
+  email: string;
+  roles: string[];
+  isPrismAdmin: boolean;
+  tools: PrismTool[];
+}
+
+export interface ToolAuthorizeRequest {
+  email: string;
+  tool: PrismTool;
+}
+
+export interface ToolAuthorizeResponse {
+  allowed: boolean;
+  email: string;
+  tool: PrismTool;
 }
 
 export interface PortalAdapterConfig {

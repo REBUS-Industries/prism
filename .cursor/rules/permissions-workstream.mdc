@@ -23,7 +23,7 @@ Read `.cursor/plans/HANDOFF-permissions.md` before starting.
 
 - Web + infra: `gh workflow run web-image --repo REBUS-Industries/prism --ref feat/permissions`
 - Service: merge polyrepo → `permissions-image` auto-deploys via dispatch
-- Dev target: https://prism-dev.rebus.industries
+- Dev target: https://prism.rebus.industries
 
 ## Do not edit
 

@@ -2381,7 +2381,7 @@ export type ConnectorFunction =
   | 'create_model'
   | 'create_version';
 
-export type PolicyNodeType = 'role' | 'user' | 'project' | 'function';
+export type PolicyNodeType = 'role' | 'user' | 'project' | 'function' | 'tool';
 
 export interface PolicyNode {
   id: string;
@@ -2421,9 +2421,36 @@ export const permissionsApi = {
     'create_model',
     'create_version',
   ],
+  toolsList: (): PrismTool[] => ['convert', 'visualiser', 'fixtures', 'materials', 'models'],
   getPolicy: () => api.get<PermissionsPolicyResponse>('/api/permissions/policy'),
   savePolicy: (body: { graph: FunctionPolicyGraph; defaultFunctions?: ConnectorFunction[] }) =>
     api.put<PermissionsPolicyResponse>('/api/permissions/policy', body as Record<string, unknown>),
+  getToolGrants: () => api.get<ToolGrantsResponse>('/api/permissions/tool-grants'),
+  saveToolGrants: (grants: ToolGrants) =>
+    api.put<ToolGrantsResponse>('/api/permissions/tool-grants', { grants } as Record<string, unknown>),
+};
+
+export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models';
+
+export interface ToolGrants {
+  roles: Record<string, PrismTool[]>;
+  users?: Record<string, PrismTool[]>;
+}
+
+export interface ToolGrantsResponse {
+  grants: ToolGrants;
+  updatedAt?: string;
+}
+
+export interface EffectiveToolAccess {
+  email: string;
+  roles: string[];
+  isPrismAdmin: boolean;
+  tools: PrismTool[];
+}
+
+export const accessApi = {
+  me: () => api.get<EffectiveToolAccess>('/api/access/me'),
 };
 
 export type GoogleWorkspaceStatus = 'disconnected' | 'linked' | 'syncing';

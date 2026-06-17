@@ -2,7 +2,7 @@
 
 **Start:** [README.md](./README.md) in this folder — then your workstream handoff.
 
-**Environment:** All development targets the dev VM (VM 212 — prism-dev.rebus.industries). There is no local dev server.
+**Environment:** All development targets VM 212 — `https://prism.rebus.industries` (single PRISM environment). There is no separate prism-dev host.
 **Target repo:** `REBUS-Industries/prism` (connectors agents: use `orbit-connectors` — see [HANDOFF-connectors.md](./HANDOFF-connectors.md))
 **Your branch:** see your workstream handoff doc — never commit directly to `main`.
 
@@ -73,7 +73,7 @@ npm run build
 git push
 
 # 4. Open the PR — GitHub prints the PR number at the end
-gh pr create --base main --title "feat(web): <feature name>" --body "Brief description of what changed and how to verify on prism-dev."
+gh pr create --base main --title "feat(web): <feature name>" --body "Brief description of what changed and how to verify on https://prism.rebus.industries."
 ```
 
 Example output:
@@ -130,7 +130,7 @@ gh pr list --repo REBUS-Industries/prism
 
 ## Deploying your branch to dev (without merging)
 
-To test your branch on prism-dev before the PR is merged:
+To test your branch on https://prism.rebus.industries before the PR is merged:
 
 ```powershell
 # Web-only changes
@@ -146,7 +146,7 @@ gh run list --repo REBUS-Industries/prism --workflow=web-image --limit 3
 gh run list --repo REBUS-Industries/prism --workflow=server-image --limit 3
 ```
 
-If `deploy-dev` is cancelled (flaky runner), wait 2 minutes and re-trigger. Hard-refresh prism-dev after deploy completes.
+If `deploy-dev` is cancelled (flaky runner), wait 2 minutes and re-trigger. Hard-refresh https://prism.rebus.industries after deploy completes.
 
 ---
 

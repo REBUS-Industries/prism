@@ -32,7 +32,7 @@ git clone https://github.com/REBUS-Industries/prism-fixtures-service.git
 Open the `prism` folder in Cursor as the workspace root. The `.cursor/rules/` files auto-load context for Cursor agents.
 
 **Prod/dev servers:**
-- Dev (VM 212): https://prism-dev.rebus.industries — auto-deploys from `main` on merge
+- Dev (VM 212): https://prism.rebus.industries — auto-deploys from `main` on merge
 - Prod (VM 211): tag-gated — don't touch.
 
 **Deploy this branch to dev for review** (see also `AGENT-GIT-INSTRUCTIONS.md`):
@@ -170,5 +170,5 @@ If `deploy-dev` is cancelled (flaky CT 261 runner), wait 2 min and re-trigger.
 - [ ] `cd web && npm run build` passes (prism)
 - [ ] If `api.ts` changed: announce in team chat
 - [ ] If UI calls new/changed `/api/fixtures` or `/api/gdtf-share` routes: **prism-fixtures-service PR merged + `fixtures-image` deploy-dev green**
-- [ ] PR body lists how to verify on https://prism-dev.rebus.industries
+- [ ] PR body lists how to verify on https://prism.rebus.industries
 - [ ] After merge: `git fetch origin && git rebase origin/main`

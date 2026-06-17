@@ -19,6 +19,7 @@ import { requireAdmin } from '../auth/middleware.js';
  * scope is a deliberate two-line change here.
  */
 const KNOWN_SCOPES = [
+  'convert:run',
   'visualiser:create_stream',
   // Phase J — Portal users that upload lighting-design files (MVR scenes /
   // GDTF fixture libraries) to an ORBIT project need write access to the

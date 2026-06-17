@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import { jobs } from '../db/schema.js';
 import { enqueueConvert } from '../jobs/queue.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireTool } from '../auth/middleware.js';
 import { ASSIMP_EXTS, isAssimpExt, isPreconvertEnabled, maybePreconvert } from '../conversion/preconvert.js';
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? '/var/lib/prism/uploads';
@@ -83,6 +83,7 @@ const plugin: FastifyPluginAsync = async (app) => {
   await mkdir(UPLOAD_DIR, { recursive: true }).catch(() => { /* container restart, dir may pre-exist */ });
 
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireTool('convert'));
 
   // POST /api/convert/async  (multipart: file + fields)
   app.post('/async', async (req, reply) => {

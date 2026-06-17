@@ -51,7 +51,7 @@ import { z } from 'zod';
 import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { agentSessions, visualiserRunLogs, visualiserRuns, visualiserShareLinks, workstations, type VisualiserRun } from '../db/schema.js';
-import { requireAdmin, requireAuth, requireScope } from '../auth/middleware.js';
+import { requireAdmin, requireAuth, requireScope, requireTool } from '../auth/middleware.js';
 import { resolveProvenance } from '../auth/provenance.js';
 import { appendVisualiserRunLog } from '../visualiser/runLog.js';
 import { envelope, type CancelVisualisationData } from '../../../shared/contracts/agent-protocol.js';
@@ -225,6 +225,8 @@ async function ownerCanCancel(run: VisualiserRun, req: FastifyRequest): Promise<
 /* -------------------------------------------------------------------------- */
 
 const plugin: FastifyPluginAsync = async (app) => {
+  app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireTool('visualiser'));
   /* ---------- POST /api/visualiser/streams ---------- */
   // Portal-facing route. Requires the visualiser:create_stream scope —
   // admin sessions and ORBIT bearers bypass scope checks (see

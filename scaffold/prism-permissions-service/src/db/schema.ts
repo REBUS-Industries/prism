@@ -150,3 +150,18 @@ export const provisionedUser = pgTable(
     uniqueIndex('provisioned_user_email_idx').on(t.email),
   ],
 );
+
+export const toolGrant = pgTable(
+  'tool_grant',
+  {
+    id: text('id').primaryKey(),
+    principalType: text('principal_type').notNull(),
+    principalRef: text('principal_ref').notNull(),
+    tool: text('tool').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('tool_grant_principal_tool_idx').on(t.principalType, t.principalRef, t.tool),
+    index('tool_grant_principal_idx').on(t.principalType, t.principalRef),
+  ],
+);

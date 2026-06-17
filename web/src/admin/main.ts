@@ -30,6 +30,9 @@ import Models from './pages/Models.vue';
 import ModelImport from './pages/ModelImport.vue';
 import ModelEditor from './pages/ModelEditor.vue';
 import Permissions from './pages/Permissions.vue';
+import ToolAccess from './pages/ToolAccess.vue';
+import type { PrismTool } from '../shared/api';
+import { useToolAccess } from './useToolAccess';
 
 import '../shared/designSystem.css';
 
@@ -38,29 +41,30 @@ const router = createRouter({
   routes: [
     { path: '/',                       component: Dashboard,        name: 'dashboard' },
     { path: '/workstations',           component: Workstations,     name: 'workstations' },
-    { path: '/pipeline',               component: Pipeline,         name: 'pipeline' },
-    { path: '/visualiser',             component: Visualiser,       name: 'visualiser' },
-    { path: '/visualiser/attachments', component: ProjectAttachments, name: 'project-attachments' },
-    { path: '/visualiser/:runId',      component: VisualiserViewer, name: 'visualiser-viewer', props: true },
-    { path: '/materials',              component: Materials,        name: 'materials' },
-    { path: '/materials/:id',          component: MaterialEditor,   name: 'material-editor', props: true },
-    { path: '/textures',               component: Textures,         name: 'textures' },
+    { path: '/pipeline',               component: Pipeline,         name: 'pipeline', meta: { tool: 'convert' as PrismTool } },
+    { path: '/visualiser',             component: Visualiser,       name: 'visualiser', meta: { tool: 'visualiser' as PrismTool } },
+    { path: '/visualiser/attachments', component: ProjectAttachments, name: 'project-attachments', meta: { tool: 'visualiser' as PrismTool } },
+    { path: '/visualiser/:runId',      component: VisualiserViewer, name: 'visualiser-viewer', props: true, meta: { tool: 'visualiser' as PrismTool } },
+    { path: '/materials',              component: Materials,        name: 'materials', meta: { tool: 'materials' as PrismTool } },
+    { path: '/materials/:id',          component: MaterialEditor,   name: 'material-editor', props: true, meta: { tool: 'materials' as PrismTool } },
+    { path: '/textures',               component: Textures,         name: 'textures', meta: { tool: 'materials' as PrismTool } },
     // Two fixture libraries: `fixtures` is the GDTF Share catalog browser
     // (download source); `prism-library` is the editable PRISM-owned set the
     // ORBIT connector + ORBIT consume.
-    { path: '/fixtures',               component: Fixtures,       name: 'fixtures' },
-    { path: '/fixtures/library',       component: PrismLibrary,   name: 'prism-library' },
-    { path: '/fixtures/import',        component: FixtureImport,  name: 'fixture-import' },
-    { path: '/fixtures/materials',     component: FixtureMaterials, name: 'fixture-materials' },
-    { path: '/fixtures/:id/debug',     component: FixtureGdtfDebug, name: 'fixture-debug', props: true },
-    { path: '/fixtures/:id/dmx',       component: FixtureDmxCharts, name: 'fixture-dmx-charts', props: true },
-    { path: '/fixtures/:id',           component: FixtureEditor,    name: 'fixture-editor', props: true },
+    { path: '/fixtures',               component: Fixtures,       name: 'fixtures', meta: { tool: 'fixtures' as PrismTool } },
+    { path: '/fixtures/library',       component: PrismLibrary,   name: 'prism-library', meta: { tool: 'fixtures' as PrismTool } },
+    { path: '/fixtures/import',        component: FixtureImport,  name: 'fixture-import', meta: { tool: 'fixtures' as PrismTool } },
+    { path: '/fixtures/materials',     component: FixtureMaterials, name: 'fixture-materials', meta: { tool: 'fixtures' as PrismTool } },
+    { path: '/fixtures/:id/debug',     component: FixtureGdtfDebug, name: 'fixture-debug', props: true, meta: { tool: 'fixtures' as PrismTool } },
+    { path: '/fixtures/:id/dmx',       component: FixtureDmxCharts, name: 'fixture-dmx-charts', props: true, meta: { tool: 'fixtures' as PrismTool } },
+    { path: '/fixtures/:id',           component: FixtureEditor,    name: 'fixture-editor', props: true, meta: { tool: 'fixtures' as PrismTool } },
     // Model library (generic 3D assets) — prism-models-service.
-    { path: '/models',                 component: Models,           name: 'models' },
-    { path: '/models/library',         component: Models,           name: 'model-library' },
-    { path: '/models/import',          component: ModelImport,      name: 'model-import' },
-    { path: '/models/:id',             component: ModelEditor,      name: 'model-editor', props: true },
+    { path: '/models',                 component: Models,           name: 'models', meta: { tool: 'models' as PrismTool } },
+    { path: '/models/library',         component: Models,           name: 'model-library', meta: { tool: 'models' as PrismTool } },
+    { path: '/models/import',          component: ModelImport,      name: 'model-import', meta: { tool: 'models' as PrismTool } },
+    { path: '/models/:id',             component: ModelEditor,      name: 'model-editor', props: true, meta: { tool: 'models' as PrismTool } },
     { path: '/permissions',            component: Permissions,      name: 'permissions' },
+    { path: '/permissions/tools',      component: ToolAccess,       name: 'tool-access', meta: { requiresAdmin: true } },
     { path: '/settings',               component: Settings,         name: 'settings' },
     { path: '/keys',                   component: ApiKeys,          name: 'keys' },
     { path: '/webhooks',               component: Webhooks,         name: 'webhooks' },
@@ -70,6 +74,17 @@ const router = createRouter({
     { path: '/logs',                   component: Logs,             name: 'logs' },
     { path: '/login',                  component: Login,            name: 'login' },
   ],
+});
+
+const { refreshToolAccess, canUseTool, loaded } = useToolAccess();
+
+router.beforeEach(async (to) => {
+  if (to.name === 'login') return true;
+  const tool = to.meta.tool as PrismTool | undefined;
+  if (!tool) return true;
+  if (!loaded.value) await refreshToolAccess();
+  if (canUseTool(tool)) return true;
+  return { name: 'dashboard', query: { denied: tool } };
 });
 
 createApp(App).use(router).use(createPinia()).mount('#app');

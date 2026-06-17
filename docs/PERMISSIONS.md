@@ -15,7 +15,7 @@ effective = portal project grants ∩ function policy graph
 
 ## Connector flow
 
-1. Connector opens portal sign-in (or dev mock-login on prism-dev).
+1. Connector opens portal sign-in (or mock-login on PRISM prod).
 2. Browser callback returns `code` on `http://localhost:29364/`.
 3. Connector `POST /api/access/session` with `{ portalAuthCode, orbitTarget }`.
 4. Service validates with portal, mints scoped ORBIT token, returns `{ manifest }`.
@@ -35,6 +35,18 @@ pre-provision project access / PRISM admin flags before first sign-in.
 portal email is provisioned with `isPrismAdmin` (or listed in legacy `PORTAL_ADMIN_EMAILS`).
 On prism-dev with the mock workspace, link domain `rebus.industries`, sync, then edit `alice@rebus.industries`.
 
+**Admin → Tool access** (`/admin/#/permissions/tools`) — role → PRISM tool grants
+(convert, visualiser, fixture/material/model libraries). Editable from the portal
+under **Settings → Integrations → PRISM Access** via `GET/PUT /api/permissions/tool-grants`.
+
+**Portal `/portal/me`** returns `role` and `customRoleId` for grant resolution.
+**PRISM admin `/api/access/me`** returns effective tools for nav gating (portal bearer) or full access (local admin cookie).
+**prism-server** enforces tool grants for API keys only; **local admin login always bypasses** tool checks.
+
+### Local admin bypass
+
+Users who sign in via **Admin → Log in** (username/password, `prism_admin` cookie) always receive all tools in the UI and on the server. Tool grants apply to portal-authenticated users and API keys, not to local PRISM admins.
+
 ## Service
 
 | Item | Value |
@@ -48,7 +60,7 @@ On prism-dev with the mock workspace, link domain `rebus.industries`, sync, then
 ## Dev mock login
 
 ```
-GET https://prism-dev.rebus.industries/api/access/mock-login?redirect_uri=http://localhost:29364/&persona=alice
+GET https://prism.rebus.industries/api/access/mock-login?redirect_uri=http://localhost:29364/&persona=alice
 POST /api/access/session { "portalAuthCode": "mock:alice", "orbitTarget": "dev" }
 ```
 

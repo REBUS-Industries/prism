@@ -1,7 +1,7 @@
 # PRISM server — infrastructure setup notes
 
 Companion to `DEPLOY.md`. Where `DEPLOY.md` is the *runbook* for putting
-PRISM server on VM 211, this file documents the **adjacent infra
+PRISM server on VM 212, this file documents the **adjacent infra
 dependencies** that PRISM relies on but does not own: coturn for
 WebRTC, the Caddy proxy pair for ingress, the UniFi gateway for NAT.
 
@@ -19,13 +19,13 @@ The Visualiser feature needs three pieces of infrastructure that PRISM
 server itself does not provision:
 
 1. **coturn TURN/STUN server.** Required for the browser-to-workstation
-   WebRTC media relay. Deployed on VM 211 alongside PRISM server.
+   WebRTC media relay. Deployed on VM 212 alongside PRISM.
    - Deployment files:
      `infra/coturn/docker-compose.yml`
      `infra/coturn/turnserver.conf`
    - Runbook: `infra/coturn/SETUP_NOTES.md`
    - Public DNS: `visualiser.rebus.industries` → `185.48.165.165`
-     (NAT'd to `10.0.200.211`).
+     (NAT'd to `10.0.200.212`).
 
 2. **UniFi gateway port-forwards.** Open the public ports coturn needs.
    - Rule table: `infra/coturn/UNIFI_RULES.md`

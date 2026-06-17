@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
-import { adminApi, healthApi } from '../shared/api';
+import { adminApi, healthApi, type PrismTool } from '../shared/api';
 import ThemeToggle from '../shared/ThemeToggle.vue';
 import Icon from '../shared/Icon.vue';
 import { adminWs } from '../shared/ws';
+import { useToolAccess } from './useToolAccess';
 
 const router = useRouter();
 const route = useRoute();
@@ -12,6 +13,11 @@ const username = ref<string | null>(null);
 const serverVersion = ref<string | null>(null);
 const ready = ref(false);
 const submittingPortal = ref(false);
+const { refreshToolAccess, canUseTool } = useToolAccess();
+
+function showTool(tool: PrismTool): boolean {
+  return canUseTool(tool);
+}
 
 onMounted(async () => {
   healthApi.get().then((h) => { serverVersion.value = h.version; }).catch(() => null);
@@ -43,6 +49,7 @@ onMounted(async () => {
     const me = await adminApi.me();
     username.value = me.principal?.username ?? null;
     adminWs.connect();
+    await refreshToolAccess();
   } catch {
     // Not authenticated — bounce to login, unless we're already there.
     if (route.name !== 'login') router.replace({ name: 'login' });
@@ -70,18 +77,19 @@ async function logout() {
       <nav>
         <RouterLink :to="{ name: 'dashboard'    }"><Icon name="dashboard" :size="18" />Dashboard</RouterLink>
         <RouterLink :to="{ name: 'workstations' }"><Icon name="desktop_windows" :size="18" />Workstations</RouterLink>
-        <RouterLink :to="{ name: 'pipeline'     }"><Icon name="account_tree" :size="18" />Pipeline</RouterLink>
-        <RouterLink :to="{ name: 'visualiser'   }"><Icon name="view_in_ar" :size="18" />Visualiser</RouterLink>
-        <RouterLink :to="{ name: 'project-attachments' }" class="nav-sub"><Icon name="attachment" :size="16" />Project attachments</RouterLink>
-        <RouterLink :to="{ name: 'materials'    }"><Icon name="palette" :size="18" />Materials</RouterLink>
-        <RouterLink :to="{ name: 'textures'     }" class="nav-sub"><Icon name="texture" :size="16" />Textures</RouterLink>
-        <RouterLink :to="{ name: 'fixtures'     }"><Icon name="travel_explore" :size="18" />GDTF Share Library</RouterLink>
-        <RouterLink :to="{ name: 'prism-library' }"><Icon name="lightbulb" :size="18" />PRISM Library</RouterLink>
-        <RouterLink :to="{ name: 'fixture-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import GDTF</RouterLink>
-        <RouterLink :to="{ name: 'fixture-materials' }" class="nav-sub"><Icon name="palette" :size="16" />Fixture materials</RouterLink>
-        <RouterLink :to="{ name: 'models'       }"><Icon name="deployed_code" :size="18" />Model Library</RouterLink>
-        <RouterLink :to="{ name: 'model-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import model</RouterLink>
+        <RouterLink :to="{ name: 'pipeline'     }" v-if="showTool('convert')"><Icon name="account_tree" :size="18" />Pipeline</RouterLink>
+        <RouterLink :to="{ name: 'visualiser'   }" v-if="showTool('visualiser')"><Icon name="view_in_ar" :size="18" />Visualiser</RouterLink>
+        <RouterLink v-if="showTool('visualiser')" :to="{ name: 'project-attachments' }" class="nav-sub"><Icon name="attachment" :size="16" />Project attachments</RouterLink>
+        <RouterLink :to="{ name: 'materials'    }" v-if="showTool('materials')"><Icon name="palette" :size="18" />Materials</RouterLink>
+        <RouterLink v-if="showTool('materials')" :to="{ name: 'textures'     }" class="nav-sub"><Icon name="texture" :size="16" />Textures</RouterLink>
+        <RouterLink :to="{ name: 'fixtures'     }" v-if="showTool('fixtures')"><Icon name="travel_explore" :size="18" />GDTF Share Library</RouterLink>
+        <RouterLink :to="{ name: 'prism-library' }" v-if="showTool('fixtures')"><Icon name="lightbulb" :size="18" />PRISM Library</RouterLink>
+        <RouterLink v-if="showTool('fixtures')" :to="{ name: 'fixture-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import GDTF</RouterLink>
+        <RouterLink v-if="showTool('fixtures')" :to="{ name: 'fixture-materials' }" class="nav-sub"><Icon name="palette" :size="16" />Fixture materials</RouterLink>
+        <RouterLink :to="{ name: 'models'       }" v-if="showTool('models')"><Icon name="deployed_code" :size="18" />Model Library</RouterLink>
+        <RouterLink v-if="showTool('models')" :to="{ name: 'model-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import model</RouterLink>
         <RouterLink :to="{ name: 'permissions'  }"><Icon name="shield" :size="18" />Permissions</RouterLink>
+        <RouterLink :to="{ name: 'tool-access'  }" class="nav-sub"><Icon name="build" :size="16" />Tool access</RouterLink>
         <RouterLink :to="{ name: 'settings'     }"><Icon name="settings" :size="18" />Settings</RouterLink>
         <RouterLink :to="{ name: 'analytics'    }"><Icon name="analytics" :size="18" />Analytics</RouterLink>
         <RouterLink :to="{ name: 'logs'         }"><Icon name="receipt_long" :size="18" />Logs</RouterLink>

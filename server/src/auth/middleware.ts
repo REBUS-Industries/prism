@@ -81,3 +81,6 @@ export function requireScope(scope: string) {
     reply.code(403).send({ error: 'forbidden', scope });
   };
 }
+
+export { requireTool } from './toolAuth.js';
+export type { PrismTool } from './toolAuth.js';

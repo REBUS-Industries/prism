@@ -52,7 +52,7 @@ main  ←── feat/fixture-builder  (PR when feature complete)
 
 **All agents:** read `AGENT-GIT-INSTRUCTIONS.md` first — it covers git, merge bot, and deploy commands.
 
-Dev (VM 212 — prism-dev.rebus.industries) uses **two separate CI workflows**. Run the one(s) that match what you changed:
+Dev (VM 212 — prism.rebus.industries) uses **two separate CI workflows**. Run the one(s) that match what you changed:
 
 | You changed | Workflow | What it deploys |
 |---|---|---|

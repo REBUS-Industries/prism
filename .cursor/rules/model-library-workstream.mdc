@@ -39,7 +39,7 @@ Read `.cursor/plans/HANDOFF-model-library.md` before starting work. Git workflow
 - **Models API:** merge `prism-models-service` PR; `models-image` on merge to `main`, or:
   `gh workflow run models-image --repo REBUS-Industries/prism-models-service --ref <branch>`
 - Merge via `/prism-merge <PR#>` or `/prism-merge prism-models-service#N`
-- Dev: https://prism-dev.rebus.industries
+- Dev: https://prism.rebus.industries
 
 ## Commit format
 

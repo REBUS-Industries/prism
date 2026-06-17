@@ -15,7 +15,7 @@ ready JSON to stdout for the agent to forward.
 ## Where it fits
 
 ```
-PRISM server (VM 211)
+PRISM server (VM 212)
    │  startVisualisation envelope (WSS)
    ▼
 PRISM.Agent.exe  (on a workstation with `can_visualise = true`)

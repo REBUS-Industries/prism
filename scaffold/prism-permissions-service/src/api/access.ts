@@ -1,10 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { PortalAdapter } from '../portal/adapter.js';
-import type { AccessSessionRequest } from '../contracts/portal-access.js';
+import type { AccessSessionRequest, PrismTool, ToolAuthorizeRequest } from '../contracts/portal-access.js';
 import { AccessError, exchangePortalSession, getSessionManifest, revokeSession } from '../access/session.js';
 import { resolvePortalUser } from '../access/portalUser.js';
 import { checkProvisionedAdmin } from '../workspace/service.js';
 import { getIntegrationSetting, getIntegrationSettingOr } from '../config/integrationSettings.js';
+import { authorizeTool, fullLocalAdminToolAccess, resolveEmailFromAdminUsername, resolveToolAccess } from '../access/tools.js';
+import { requireInternalServiceKey } from '../auth/permissionsEditor.js';
 
 function publicBaseUrl(req: FastifyRequest): string {
   const env = process.env.PUBLIC_BASE_URL?.trim();
@@ -51,6 +53,32 @@ async function buildAccessLoginUrl(redirectUri: string): Promise<string> {
   return url.toString();
 }
 
+const COOKIE_NAME = 'prism_admin';
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function resolveEmailFromAdminCookie(req: FastifyRequest): Promise<string | null> {
+  const raw = req.cookies?.[COOKIE_NAME];
+  if (!raw) return null;
+  const unsigned = req.unsignCookie(raw);
+  if (!unsigned.valid || !unsigned.value) return null;
+  try {
+    const payload = JSON.parse(unsigned.value) as { username?: string; iat?: number };
+    if (!payload.username || !payload.iat) return null;
+    const ageMs = Date.now() - payload.iat;
+    if (ageMs < 0 || ageMs > SESSION_TTL_MS) return null;
+    return resolveEmailFromAdminUsername(payload.username);
+  } catch {
+    return null;
+  }
+}
+
+function bearerToken(req: FastifyRequest): string | null {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return null;
+  return auth.slice(7).trim() || null;
+}
+
+
 export async function registerAccessRoutes(app: FastifyInstance, portal: PortalAdapter) {
   /** Dev-only mock portal redirect (mock adapter). */
   app.get<{ Querystring: { redirect_uri?: string; persona?: string } }>(
@@ -68,7 +96,7 @@ export async function registerAccessRoutes(app: FastifyInstance, portal: PortalA
     },
   );
 
-  /** Connector OAuth entry — redirects to Google (or mock-login) with connector loopback callback. */
+  /** Connector OAuth entry â€” redirects to Google (or mock-login) with connector loopback callback. */
   app.get<{ Querystring: { redirect_uri?: string } }>('/api/access/login', async (req, reply) => {
     const redirectUri = req.query.redirect_uri?.trim();
     if (!redirectUri) return reply.status(400).send({ error: 'redirect_uri required' });
@@ -105,6 +133,38 @@ export async function registerAccessRoutes(app: FastifyInstance, portal: PortalA
         req.log.warn({ err }, 'portal-user exchange failed');
         return reply.status(401).send({ error: err instanceof Error ? err.message : 'Portal sign-in failed' });
       }
+    },
+  );
+
+
+  app.get('/api/access/me', async (req, reply) => {
+    const adminEmail = await resolveEmailFromAdminCookie(req);
+    if (adminEmail) {
+      return fullLocalAdminToolAccess(adminEmail);
+    }
+
+    const token = bearerToken(req);
+    if (!token) return reply.status(401).send({ error: 'authentication required' });
+    try {
+      const portalUser = await portal.getMe(token);
+      return resolveToolAccess({ email: portalUser.email, portalUser });
+    } catch (err) {
+      req.log.warn({ err }, 'access/me portal token failed');
+      return reply.status(401).send({ error: 'invalid or expired token' });
+    }
+  });
+
+  app.post<{ Body: ToolAuthorizeRequest }>(
+    '/api/access/authorize',
+    { preHandler: requireInternalServiceKey },
+    async (req, reply) => {
+      const email = req.body?.email?.trim();
+      const tool = req.body?.tool;
+      if (!email || !tool) {
+        return reply.status(400).send({ error: 'email and tool required' });
+      }
+      const allowed = await authorizeTool(email, tool as PrismTool);
+      return { allowed, email: email.toLowerCase(), tool };
     },
   );
 

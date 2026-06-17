@@ -25,14 +25,14 @@
 1. Create `prism-permissions-service` repo; set `PRISM_DISPATCH_TOKEN` org secret.
 2. Merge permissions-service to `main` → `permissions-image` builds + dispatches deploy.
 3. Merge prism `feat/permissions` → `web-image` pulls `prism-permissions` + reloads router.
-4. Verify on https://prism-dev.rebus.industries:
+4. Verify on https://prism.rebus.industries:
    - `GET /api/access/health`
    - `POST /api/access/session` with `mock:alice`
    - Admin → Permissions saves graph
 
 ## Connector smoke test
 
-Rhino panel → **Sign in with REBUS** (uses mock-login on prism-dev).
+Rhino panel → **Sign in with REBUS** (uses mock-login on PRISM prod).
 
 ## Workspace smoke test
 

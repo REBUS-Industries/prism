@@ -102,7 +102,12 @@ onMounted(async () => {
 
 function addNode(type: PolicyNodeType['type']) {
   const id = `${type}-${Date.now()}`;
-  const label = type === 'role' ? 'Role' : type === 'user' ? 'User' : type === 'project' ? 'Project' : 'Function';
+  const label =
+    type === 'role' ? 'Role'
+    : type === 'user' ? 'User'
+    : type === 'project' ? 'Project'
+    : type === 'tool' ? 'Tool'
+    : 'Function';
   const node: PolicyNodeType = { id, type, label, ref: null, position: { x: 120 + nodes.value.length * 40, y: 120 + nodes.value.length * 32 } };
   nodes.value.push({
     id,
@@ -157,6 +162,7 @@ async function savePolicy() {
         <button type="button" @click="addNode('user')"><Icon name="person" :size="16" /> User</button>
         <button type="button" @click="addNode('project')"><Icon name="folder" :size="16" /> Project</button>
         <button type="button" @click="addNode('function')"><Icon name="bolt" :size="16" /> Function</button>
+        <RouterLink :to="{ name: 'tool-access' }" class="link-btn"><Icon name="build" :size="16" /> Tool access</RouterLink>
         <button type="button" class="primary" :disabled="saving" @click="savePolicy">
           {{ saving ? 'Saving…' : 'Save policy' }}
         </button>
@@ -219,7 +225,8 @@ async function savePolicy() {
 <style scoped>
 .page { display: flex; flex-direction: column; gap: 16px; height: 100%; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-.toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.link-btn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; }
 .graph-wrap { flex: 1; min-height: 420px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .defaults { padding: 12px 0; }
 .fn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; margin-top: 8px; }
