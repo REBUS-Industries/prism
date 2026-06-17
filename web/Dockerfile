@@ -1,3 +1,4 @@
+# PRISM admin/convert/viewer SPA — redeploy via web-image on push to main.
 FROM node:22-alpine AS builder
 WORKDIR /build
 COPY package.json package-lock.json* ./
