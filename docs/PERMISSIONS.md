@@ -41,6 +41,8 @@ under **Settings â†’ Integrations â†’ PRISM Access** via `GET/PUT /api
 
 **Portal `/portal/me`** returns `roleId` and `roleIds` (role ids) for grant resolution; super-admin id is `super-admin`.
 **Portal `/portal/roles`** returns the live role catalogue; PRISM proxies it at `GET /api/permissions/tool-grants`'s sibling `GET /api/permissions/portal-roles` so the Tool access page mirrors the portal's current roles (deleted/renamed roles never linger). If the portal hasn't implemented `/portal/roles`, PRISM falls back to deriving roles from grants.
+
+**Admin → Settings → Portal access key** — paste the portal's **service** API key here (stored as `portal_api_key`, masked; base URL as `portal_base_url`). PRISM sends it as `Authorization: Bearer …` on `<base>/portal/*`. This is the portal's own service key (same one used for `POST /portal/oauth/token`), **not** a PRISM `prism_…` key. The permissions service reads these live (no restart needed), and **Save & check connection** verifies it via `/api/permissions/portal-roles`.
 **PRISM admin `/api/access/me`** returns effective tools for nav gating (portal bearer) or full access (local admin cookie).
 **prism-server** enforces tool grants for API keys only; **local admin login always bypasses** tool checks.
 
