@@ -1,14 +1,13 @@
 <script setup lang="ts">
 /**
- * Role -> PRISM tool grants editor (Vue Flow).
- * Effective admin access = portal role grants stored in prism-permissions-service.
+ * Read-only view of portal role → PRISM tool grants (Vue Flow).
+ * Grants are managed in the portal; this page polls for live updates.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import {
   VueFlow,
   MarkerType,
   Position,
-  type Connection,
   type Edge,
   type Node,
 } from '@vue-flow/core';
@@ -17,7 +16,6 @@ import { Controls } from '@vue-flow/controls';
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
-import Icon from '../../shared/Icon.vue';
 import PolicyNode from '../components/permissions/PolicyNode.vue';
 import {
   permissionsApi,
@@ -26,9 +24,7 @@ import {
 } from '../../shared/api';
 
 const loading = ref(true);
-const saving = ref(false);
 const error = ref<string | null>(null);
-const status = ref<string | null>(null);
 const grants = ref<ToolGrants>({ roles: {}, users: {} });
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
@@ -136,55 +132,6 @@ function grantsToGraph(g: ToolGrants, preservePositions = false) {
   edges.value = nextEdges;
 }
 
-function graphToGrants(): ToolGrants {
-  const roleTools: Record<string, PrismTool[]> = {};
-  const toolIds = new Set(
-    nodes.value
-      .filter((n) => n.data?.policyType === 'tool')
-      .map((n) => String(n.data?.refValue ?? '')),
-  );
-
-  for (const edge of edges.value) {
-    const source = nodes.value.find((n) => n.id === edge.source);
-    const target = nodes.value.find((n) => n.id === edge.target);
-    if (!source || !target) continue;
-    if (source.data?.policyType !== 'role' || target.data?.policyType !== 'tool') continue;
-    const role = String(source.data.refValue ?? '').trim();
-    const tool = String(target.data.refValue ?? '').trim() as PrismTool;
-    if (!role || !toolIds.has(tool)) continue;
-    const list = roleTools[role] ?? (roleTools[role] = []);
-    if (!list.includes(tool)) list.push(tool);
-  }
-
-  return { roles: roleTools, users: grants.value.users ?? {} };
-}
-
-function onConnect(conn: Connection) {
-  edges.value.push({
-    id: `e-${conn.source}-${conn.target}`,
-    source: conn.source!,
-    target: conn.target!,
-    type: 'smoothstep',
-    markerEnd: MarkerType.ArrowClosed,
-    animated: true,
-  });
-}
-
-function addRoleNode() {
-  const role = prompt('Portal role name (e.g. staff, viewer, custom role id):');
-  if (!role?.trim()) return;
-  const ref = role.trim();
-  const id = `role-${ref}`;
-  if (nodes.value.some((n) => n.id === id)) return;
-  nodes.value.push(roleNode(id, ref, { x: 80, y: 80 + nodes.value.length * 24 }));
-}
-
-function addToolNode(tool: PrismTool) {
-  const id = `tool-${tool}`;
-  if (nodes.value.some((n) => n.id === id)) return;
-  nodes.value.push(toolNode(id, tool, { x: 520, y: 80 + nodes.value.length * 24 }));
-}
-
 function seedDefaultRoles() {
   for (const role of portalRoles) {
     if (!grants.value.roles[role]) grants.value.roles[role] = [];
@@ -192,16 +139,10 @@ function seedDefaultRoles() {
   grantsToGraph(grants.value);
 }
 
-function applyRemoteGrants(g: ToolGrants, hadLocalEdits: boolean) {
+function applyRemoteGrants(g: ToolGrants) {
   remoteFingerprint = grantsFingerprint(g);
   grants.value = g;
   grantsToGraph(g, true);
-  if (hadLocalEdits) {
-    status.value = 'Synced portal changes (local unsaved edits were replaced)';
-    setTimeout(() => {
-      if (status.value?.startsWith('Synced')) status.value = null;
-    }, 4000);
-  }
 }
 
 async function loadGrants() {
@@ -221,39 +162,15 @@ async function loadGrants() {
 }
 
 async function pollGrants() {
-  if (saving.value || loading.value) return;
+  if (loading.value) return;
   try {
     const res = await permissionsApi.getToolGrants();
     const fp = grantsFingerprint(res.grants);
     if (fp === remoteFingerprint) return;
-    const hadLocalEdits = grantsFingerprint(graphToGrants()) !== remoteFingerprint;
-    applyRemoteGrants(res.grants, hadLocalEdits);
+    applyRemoteGrants(res.grants);
   } catch {
     /* keep polling */
   }
-}
-
-async function saveGrants() {
-  saving.value = true;
-  error.value = null;
-  status.value = null;
-  try {
-    const payload = graphToGrants();
-    const res = await permissionsApi.saveToolGrants(payload);
-    applyRemoteGrants(res.grants, false);
-    status.value = 'Tool grants saved';
-    setTimeout(() => (status.value = null), 2500);
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Save failed';
-  } finally {
-    saving.value = false;
-  }
-}
-
-function updateSelectedRef(value: string) {
-  const node = selectedNode.value;
-  if (!node) return;
-  node.data = { ...node.data, refValue: value, label: value || node.data?.label };
 }
 
 onMounted(() => {
@@ -274,26 +191,11 @@ onUnmounted(() => {
     <header class="page-header">
       <div>
         <h1>PRISM tool access</h1>
-        <p class="muted">Wire portal roles to PRISM functions. Super Admin / Admin / PRISM admins get all tools automatically.</p>
-      </div>
-      <div class="toolbar">
-        <button type="button" @click="addRoleNode"><Icon name="badge" :size="16" /> Role</button>
-        <button
-          v-for="tool in permissionsApi.toolsList()"
-          :key="tool"
-          type="button"
-          @click="addToolNode(tool)"
-        >
-          <Icon name="build" :size="16" /> {{ toolLabels[tool] }}
-        </button>
-        <button type="button" class="primary" :disabled="saving" @click="saveGrants">
-          {{ saving ? 'Saving…' : 'Save grants' }}
-        </button>
+        <p class="muted">Portal role grants for PRISM functions. Super Admin / Admin / PRISM admins get all tools automatically. Edit grants in the portal — changes appear here live.</p>
       </div>
     </header>
 
     <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="status" class="ok">{{ status }}</p>
 
     <div v-if="loading" class="muted">Loading tool grants…</div>
 
@@ -303,8 +205,9 @@ onUnmounted(() => {
           v-model:nodes="nodes"
           v-model:edges="edges"
           fit-view-on-init
+          :nodes-connectable="false"
+          :edges-updatable="false"
           :default-edge-options="{ markerEnd: MarkerType.ArrowClosed, type: 'smoothstep' }"
-          @connect="onConnect"
           @node-click="(evt) => (selectedNodeId = evt.node.id)"
         >
           <template #node-policyNode="nodeProps">
@@ -322,16 +225,12 @@ onUnmounted(() => {
       </div>
 
       <aside v-if="selectedNode" class="props">
-        <h2>Node properties</h2>
-        <p class="muted">{{ selectedNode.data?.policyType }} node</p>
-        <label>
-          Ref
-          <input
-            :value="String(selectedNode.data?.refValue ?? '')"
-            @input="updateSelectedRef(($event.target as HTMLInputElement).value)"
-          />
-        </label>
-        <p class="hint muted">Role ref must match portal role/customRoleId. Tool ref must be convert, visualiser, fixtures, materials, or models.</p>
+        <h2>Node</h2>
+        <p class="muted">{{ selectedNode.data?.policyType }} · {{ selectedNode.data?.label }}</p>
+        <dl v-if="selectedNode.data?.refValue" class="ref-dl">
+          <dt>Ref</dt>
+          <dd>{{ selectedNode.data.refValue }}</dd>
+        </dl>
       </aside>
     </div>
   </div>
@@ -340,7 +239,6 @@ onUnmounted(() => {
 <style scoped>
 .page { display: flex; flex-direction: column; gap: 16px; height: 100%; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-.toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
 .layout { display: grid; grid-template-columns: 1fr 260px; gap: 12px; flex: 1; min-height: 420px; }
 .graph-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; min-height: 420px; }
 .graph-wrap :deep(.vue-flow__node-policyNode) {
@@ -358,9 +256,8 @@ onUnmounted(() => {
   border: 1.5px solid var(--surface-2, #fff);
 }
 .props { border: 1px solid var(--border); border-radius: 8px; padding: 12px; align-self: start; }
-.props label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; margin-top: 8px; }
-.props input { font-weight: 400; }
+.ref-dl { margin: 12px 0 0; font-size: 13px; }
+.ref-dl dt { font-weight: 600; margin-bottom: 4px; }
+.ref-dl dd { margin: 0; font-family: var(--mono, monospace); word-break: break-all; }
 .error { color: var(--danger, #ef4444); }
-.ok { color: var(--success, #16a34a); font-size: 13px; }
-.hint { font-size: 12px; margin-top: 8px; }
 </style>
