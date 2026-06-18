@@ -3,11 +3,9 @@ name: permissions-image
 # Builds the prism-permissions-service image from scaffold/prism-permissions-service
 # and deploys the prism-permissions container on VM 212 (prism.rebus.industries).
 #
-# Builds on the self-hosted deploy runner and loads the image onto VM 212 via
-# `docker save | ssh docker load`. The GHCR package was created out-of-band, so
-# GITHUB_TOKEN cannot push updates (403). Once org admins grant the prism repo
-# write access on ghcr.io/rebus-industries/prism-permissions-service, the optional
-# GHCR push step can be re-enabled.
+# Builds on VM 212 over SSH (the self-hosted runner has no local Docker). GHCR push
+# is blocked until org admins grant the prism repo write access on the existing
+# prism-permissions-service package (403 on GITHUB_TOKEN push).
 
 on:
   push:
@@ -36,20 +34,26 @@ jobs:
           set -euo pipefail
           PERM_TAG="sha-${GITHUB_SHA:0:7}"
           IMAGE="ghcr.io/rebus-industries/prism-permissions-service:${PERM_TAG}"
+          TARBALL="/tmp/prism-permissions-build-${GITHUB_RUN_ID}.tgz"
 
-          docker build \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            -t "${IMAGE}" \
-            -f scaffold/prism-permissions-service/Dockerfile \
-            scaffold/prism-permissions-service
-
-          echo "Loading ${IMAGE} onto ${DEPLOY_HOST}..."
-          docker save "${IMAGE}" | ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" docker load
+          tar czf "${TARBALL}" -C scaffold prism-permissions-service
+          scp -o BatchMode=yes -o ConnectTimeout=10 "${TARBALL}" "${DEPLOY_HOST}:/tmp/prism-permissions-build.tgz"
 
           ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" env \
-            "PERM_TAG=${PERM_TAG}" "GIT_SHA=${GITHUB_SHA}" bash -s <<'REMOTE'
+            "PERM_TAG=${PERM_TAG}" "GIT_SHA=${GITHUB_SHA}" "IMAGE=${IMAGE}" bash -s <<'REMOTE'
             set -euo pipefail
+            BUILD_DIR="/tmp/prism-permissions-build"
+            rm -rf "${BUILD_DIR}"
+            mkdir -p "${BUILD_DIR}"
+            tar xzf /tmp/prism-permissions-build.tgz -C "${BUILD_DIR}"
+
+            docker build \
+              --label "org.opencontainers.image.revision=${GIT_SHA}" \
+              --label "org.opencontainers.image.source=https://github.com/REBUS-Industries/prism" \
+              -t "${IMAGE}" \
+              -f "${BUILD_DIR}/prism-permissions-service/Dockerfile" \
+              "${BUILD_DIR}/prism-permissions-service"
+
             cd /opt/prism
             if [ -f .env ] && grep -q '^PRISM_PERMISSIONS_TAG=' .env; then
               sed -i "s/^PRISM_PERMISSIONS_TAG=.*/PRISM_PERMISSIONS_TAG=${PERM_TAG}/" .env
@@ -84,7 +88,10 @@ jobs:
               echo "::error::/api/permissions/portal-roles missing after deploy — image is stale"
               exit 1
             fi
+            rm -rf "${BUILD_DIR}" /tmp/prism-permissions-build.tgz
           REMOTE
+
+          rm -f "${TARBALL}"
 
       - name: Clean runner workspace
         if: always()
