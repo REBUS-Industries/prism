@@ -3,7 +3,7 @@
  * Portal-style Vue Flow pin board for the permissions policy graph.
  * Matches the React Flow layout used in portal-app PeopleManagementClient.
  */
-import { onMounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import {
   VueFlow,
   Panel,
@@ -22,18 +22,24 @@ import PolicyNode from './PolicyNode.vue';
 import type { PolicyFlowEdge, PolicyFlowNode } from '../../utils/policyGraphLayout';
 import type { PolicyNodeType } from '../../../shared/api';
 
-const COLUMN_LABELS: { type: PolicyNodeType; label: string }[] = [
+const DEFAULT_COLUMN_LABELS: { type: PolicyNodeType; label: string }[] = [
   { type: 'role', label: 'Roles' },
   { type: 'user', label: 'Users' },
   { type: 'project', label: 'Projects' },
   { type: 'function', label: 'Functions' },
 ];
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   nodes: PolicyFlowNode[];
   edges: PolicyFlowEdge[];
   selectedNodeId?: string | null;
-}>();
+  readonly?: boolean;
+  legendTitle?: string;
+  columnLabels?: { type: PolicyNodeType; label: string }[];
+}>(), {
+  readonly: false,
+  legendTitle: 'Policy graph',
+});
 
 const emit = defineEmits<{
   'update:nodes': [PolicyFlowNode[]];
@@ -43,6 +49,8 @@ const emit = defineEmits<{
 }>();
 
 const { fitView } = useVueFlow();
+
+const legendColumns = computed(() => props.columnLabels ?? DEFAULT_COLUMN_LABELS);
 
 function doFit(): void {
   requestAnimationFrame(() => {
@@ -81,9 +89,10 @@ function onPaneClick(): void {
       <VueFlow
         :nodes="props.nodes"
         :edges="props.edges"
-        :nodes-draggable="true"
+        :nodes-draggable="!props.readonly"
         drag-handle=".node-drag-handle"
-        :nodes-connectable="true"
+        :nodes-connectable="!props.readonly"
+        :edges-updatable="!props.readonly"
         :elements-selectable="true"
         :zoom-on-double-click="false"
         :min-zoom="0.25"
@@ -105,10 +114,10 @@ function onPaneClick(): void {
 
         <Panel position="top-left" class="policy-board__legend">
           <span class="policy-board__legend-title">
-            <Icon name="account_tree" :size="14" /> Policy graph
+            <Icon name="account_tree" :size="14" /> {{ props.legendTitle }}
           </span>
           <span
-            v-for="col in COLUMN_LABELS"
+            v-for="col in legendColumns"
             :key="col.type"
             class="policy-board__legend-chip"
           >

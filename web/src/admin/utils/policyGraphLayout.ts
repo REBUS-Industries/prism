@@ -4,6 +4,10 @@ export interface PolicyNodeData {
   policyType: PolicyNodeType;
   label: string;
   refValue?: string | null;
+  /** Hide left target handle (e.g. role column roots). */
+  noTarget?: boolean;
+  /** Hide right source handle (e.g. tool column leaves). */
+  noSource?: boolean;
 }
 
 export interface PolicyFlowNode {
