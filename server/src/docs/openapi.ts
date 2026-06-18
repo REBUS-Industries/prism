@@ -363,6 +363,18 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         '     -H "X-API-Key: $PRISM_KEY"',
         '```',
         '',
+        '## Permissions & portal-brokered access',
+        '',
+        'PRISM brokers REBUS-portal identity into a scoped ORBIT token plus a',
+        'per-project connector-permission manifest. Portals adding "Sign in with',
+        'REBUS" and rendering a permissions node use the `/api/access/*` endpoints',
+        '(**Access** tag); the function-policy graph that backs the manifest is',
+        'under the **Permissions** tag, and Google Workspace / user provisioning',
+        'under **Workspace**. These are served by the `prism-permissions-service`',
+        'and routed under this origin by the split-stack nginx router. Effective',
+        'permissions = portal project grant ∩ function-policy graph. Narrative',
+        'companion: `docs/PORTAL_CONTRACT.md`.',
+        '',
         '## Webhooks',
         '',
         'You can register a webhook URL in the admin UI and PRISM will POST',
@@ -389,6 +401,37 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Visualiser',         description: 'Start, poll, and stop Pixel Streaming sessions of ORBIT versions, plus multi-viewer share links. Portal-facing - `POST`/`DELETE` require the `visualiser:create_stream` scope. The live signalling + control WebSocket channels (`/ws/visualiser/{runId}/signalling` and `/ws/visualiser/{runId}/control`) and the multi-viewer model cannot be modelled in OpenAPI - see [API_MULTIVIEW_SESSION_CONTROL.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/API_MULTIVIEW_SESSION_CONTROL.md) and [PORTAL_INTEGRATION.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/PORTAL_INTEGRATION.md).' },
       { name: 'Project Attachments',description: 'Upload MVR/GDTF lighting files to an ORBIT project before starting a visualiser stream. Optional second-pass import via `import_mvr.py`.' },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
+      { name: 'Access', description: [
+        'Portal-brokered identity + connector authorisation, served by the',
+        '`prism-permissions-service` and routed under this origin at `/api/access/*`.',
+        '',
+        '**Flow (portal → connector):**',
+        '1. Open `GET /api/access/login?redirect_uri=…` (or the dev `mock-login`); the',
+        '   user signs in with the REBUS portal (Google) and the browser is redirected',
+        '   back to the connector loopback with an OAuth `code`.',
+        '2. Exchange the `code` at `POST /api/access/session` → a `ConnectorManifest`:',
+        '   a scoped ORBIT bearer token plus the per-project allowed-function map.',
+        '   **Effective permissions = portal project grant ∩ function-policy graph**',
+        '   (see the **Permissions** tag).',
+        '3. Use `manifest.orbitToken` for ORBIT calls and gate UI/actions on',
+        '   `projects[].allowedFunctions` / `globalAllowedFunctions`. Refresh via',
+        '   `GET /api/access/manifest?sessionId=…` before `expiresAt`.',
+        '',
+        'These endpoints are **public** — the portal OAuth `code` / opaque `sessionId`',
+        'is the credential (no `X-API-Key`). Narrative companion: `docs/PORTAL_CONTRACT.md`.',
+      ].join('\n') },
+      { name: 'Permissions', description: [
+        'The function-policy graph — the node-based "permissions node" the admin',
+        'Permissions page edits and a portal can render. Node types are `role` /',
+        '`user` / `project` / `function`; an edge from a principal (role/user) to a',
+        '`function` node grants that `ConnectorFunction` (optionally on a `project`).',
+        'The graph is intersected with each user\'s portal project grants to produce',
+        'the manifest `allowedFunctions`.',
+        '',
+        '**Auth:** admin session cookie (`prism_admin`) — these are management',
+        'endpoints, not portal-facing.',
+      ].join('\n') },
+      { name: 'Workspace', description: 'Google Workspace linking + pre-provisioned users (admin session cookie). Provisioned users can be granted PRISM admin access and pre-assigned ORBIT project permissions + role refs before their first sign-in.' },
     ],
 
     security: [{ apiKey: [] }],
@@ -417,6 +460,18 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             'Read-only endpoints (`GET`) are gated by `requireAuth` rather than',
             '`requireScope`; any valid API key, admin cookie, or ORBIT bearer is',
             'accepted.',
+          ].join('\n'),
+        },
+        cookieAuth: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'prism_admin',
+          description: [
+            'PRISM admin session cookie, set by the admin SPA login. Gates the',
+            '`/api/permissions/*` management endpoints (function-policy graph +',
+            'Google Workspace provisioning). Not used by the portal-facing',
+            '`/api/access/*` endpoints, which authenticate with a portal OAuth',
+            'code / opaque session id instead.',
           ].join('\n'),
         },
       },
@@ -748,6 +803,197 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           required: ['attachments'],
           properties: {
             attachments: { type: 'array', items: { $ref: '#/components/schemas/ProjectAttachment' } },
+          },
+        },
+
+        // ============================================================
+        // Permissions & portal-brokered access (prism-permissions-service)
+        // ============================================================
+        ConnectorFunction: {
+          type: 'string',
+          enum: ['send', 'receive', 'list_projects', 'list_models', 'list_versions', 'create_project', 'create_model', 'create_version'],
+          description: 'A connector operation the function-policy graph can grant or deny (per project).',
+        },
+        PortalProjectLevel: {
+          type: 'string',
+          enum: ['viewer', 'contributor', 'owner', 'admin'],
+          description: 'Project access level reported by the REBUS portal.',
+        },
+        PortalUser: {
+          type: 'object',
+          required: ['userId', 'email'],
+          properties: {
+            userId:      { type: 'string' },
+            email:       { type: 'string', format: 'email' },
+            googleSub:   { type: 'string', nullable: true },
+            displayName: { type: 'string', nullable: true },
+          },
+        },
+        PortalProjectPermission: {
+          type: 'object',
+          required: ['orbitProjectId', 'level'],
+          properties: {
+            orbitProjectId: { type: 'string', description: 'ORBIT project id.' },
+            level:          { $ref: '#/components/schemas/PortalProjectLevel' },
+            projectName:    { type: 'string', nullable: true },
+          },
+        },
+        AccessSessionRequest: {
+          type: 'object',
+          required: ['portalAuthCode'],
+          properties: {
+            portalAuthCode: { type: 'string', description: 'OAuth-style code from the portal callback. The mock adapter accepts `mock:<persona>` (e.g. `mock:alice`).' },
+            orbitTarget:    { type: 'string', enum: ['prod', 'dev'], default: 'prod', description: 'Which ORBIT server to mint the scoped token against.' },
+            redirectUri:    { type: 'string', format: 'uri', description: 'Redirect URI used in the portal OAuth round-trip; must match what was registered.' },
+          },
+        },
+        ConnectorManifestProject: {
+          type: 'object',
+          required: ['orbitProjectId', 'level', 'allowedFunctions'],
+          properties: {
+            orbitProjectId:   { type: 'string' },
+            projectName:      { type: 'string', nullable: true },
+            level:            { $ref: '#/components/schemas/PortalProjectLevel' },
+            allowedFunctions: { type: 'array', items: { $ref: '#/components/schemas/ConnectorFunction' }, description: 'Effective functions for this project = portal grant ∩ function-policy graph.' },
+          },
+        },
+        ConnectorManifest: {
+          type: 'object',
+          description: 'Returned to a connector (or portal) after portal-brokered login. Schema id `rebus/connector-manifest/v1`. Carries the scoped ORBIT token plus the per-project allowed-function map a portal can render as a permissions node.',
+          required: ['schema', 'userId', 'email', 'orbitTarget', 'orbitServerUrl', 'orbitToken', 'expiresAt', 'sessionId', 'projects', 'globalAllowedFunctions'],
+          properties: {
+            schema:                 { type: 'string', example: 'rebus/connector-manifest/v1' },
+            userId:                 { type: 'string' },
+            email:                  { type: 'string', format: 'email' },
+            displayName:            { type: 'string', nullable: true },
+            orbitTarget:            { type: 'string', enum: ['prod', 'dev'] },
+            orbitServerUrl:         { type: 'string', format: 'uri' },
+            orbitToken:             { type: 'string', description: 'Scoped ORBIT bearer token — use for all ORBIT API calls. Treat as a secret.' },
+            expiresAt:              { type: 'string', format: 'date-time', description: 'Token expiry (ISO). Refresh via GET /api/access/manifest before this.' },
+            sessionId:              { type: 'string', description: 'Opaque session id for manifest refresh.' },
+            projects:               { type: 'array', items: { $ref: '#/components/schemas/ConnectorManifestProject' } },
+            globalAllowedFunctions: { type: 'array', items: { $ref: '#/components/schemas/ConnectorFunction' }, description: 'Default allowed functions when a project is not in `projects`.' },
+          },
+        },
+        AccessSessionResponse: {
+          type: 'object',
+          required: ['manifest'],
+          properties: { manifest: { $ref: '#/components/schemas/ConnectorManifest' } },
+        },
+        ProvisionedAdminCheck: {
+          type: 'object',
+          required: ['allowed', 'email'],
+          properties: {
+            allowed:            { type: 'boolean', description: 'True when the email is a provisioned PRISM admin allowed to sign into the admin SPA.' },
+            prismAdminUsername: { type: 'string', nullable: true, description: 'Local admin username the portal identity binds to.' },
+            email:              { type: 'string', format: 'email' },
+          },
+        },
+        PolicyNodeType: {
+          type: 'string',
+          enum: ['role', 'user', 'project', 'function'],
+        },
+        PolicyNode: {
+          type: 'object',
+          required: ['id', 'type', 'label', 'position'],
+          properties: {
+            id:       { type: 'string' },
+            type:     { $ref: '#/components/schemas/PolicyNodeType' },
+            label:    { type: 'string' },
+            ref:      { type: 'string', nullable: true, description: 'Role name, user email, ORBIT project id, or function id depending on `type`.' },
+            position: { type: 'object', required: ['x', 'y'], properties: { x: { type: 'number' }, y: { type: 'number' } } },
+            data:     { type: 'object', additionalProperties: true, nullable: true },
+          },
+        },
+        PolicyEdge: {
+          type: 'object',
+          required: ['id', 'source', 'target'],
+          properties: {
+            id:     { type: 'string' },
+            source: { type: 'string', description: 'Source node id (principal: role/user).' },
+            target: { type: 'string', description: 'Target node id (function, optionally on a project).' },
+            grant:  { type: 'boolean', default: true, description: 'When true (default) the edge grants the target function to the source principal.' },
+          },
+        },
+        FunctionPolicyGraph: {
+          type: 'object',
+          required: ['nodes', 'edges'],
+          properties: {
+            nodes:     { type: 'array', items: { $ref: '#/components/schemas/PolicyNode' } },
+            edges:     { type: 'array', items: { $ref: '#/components/schemas/PolicyEdge' } },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        PermissionsPolicyResponse: {
+          type: 'object',
+          required: ['graph', 'defaultFunctions'],
+          properties: {
+            graph:            { $ref: '#/components/schemas/FunctionPolicyGraph' },
+            defaultFunctions: { type: 'array', items: { $ref: '#/components/schemas/ConnectorFunction' }, description: 'Functions granted when the graph yields nothing for a principal.' },
+          },
+        },
+        GoogleWorkspaceLink: {
+          type: 'object',
+          required: ['id', 'domain', 'status', 'adapter', 'userCount'],
+          properties: {
+            id:          { type: 'string' },
+            domain:      { type: 'string', example: 'rebus.industries' },
+            displayName: { type: 'string', nullable: true },
+            status:      { type: 'string', enum: ['disconnected', 'linked', 'syncing'] },
+            adapter:     { type: 'string', example: 'mock', description: '`mock` or `google_admin_sdk`.' },
+            linkedAt:    { type: 'string', format: 'date-time', nullable: true },
+            lastSyncAt:  { type: 'string', format: 'date-time', nullable: true },
+            userCount:   { type: 'integer' },
+          },
+        },
+        ProvisionedUser: {
+          type: 'object',
+          required: ['id', 'email', 'status', 'source', 'isPrismAdmin', 'projectPermissions', 'roleRefs', 'createdAt', 'updatedAt'],
+          properties: {
+            id:                 { type: 'string', format: 'uuid' },
+            email:              { type: 'string', format: 'email' },
+            displayName:        { type: 'string', nullable: true },
+            googleSub:          { type: 'string', nullable: true },
+            status:             { type: 'string', enum: ['pending', 'active', 'suspended'] },
+            source:             { type: 'string', enum: ['manual', 'workspace_sync'] },
+            isPrismAdmin:       { type: 'boolean', description: 'Grant PRISM admin SPA access on Google sign-in.' },
+            prismAdminUsername: { type: 'string', nullable: true },
+            projectPermissions: { type: 'array', items: { $ref: '#/components/schemas/PortalProjectPermission' }, description: 'Pre-defined ORBIT project access applied before first login.' },
+            roleRefs:           { type: 'array', items: { type: 'string' }, description: 'Role refs matched against `role` nodes in the function-policy graph.' },
+            lastLoginAt:        { type: 'string', format: 'date-time', nullable: true },
+            createdAt:          { type: 'string', format: 'date-time' },
+            updatedAt:          { type: 'string', format: 'date-time' },
+          },
+        },
+        ProvisionedUserInput: {
+          type: 'object',
+          required: ['email'],
+          properties: {
+            email:              { type: 'string', format: 'email' },
+            displayName:        { type: 'string', nullable: true },
+            isPrismAdmin:       { type: 'boolean', default: false },
+            prismAdminUsername: { type: 'string', nullable: true },
+            projectPermissions: { type: 'array', items: { $ref: '#/components/schemas/PortalProjectPermission' } },
+            roleRefs:           { type: 'array', items: { type: 'string' } },
+            status:             { type: 'string', enum: ['pending', 'active', 'suspended'] },
+          },
+        },
+        WorkspaceSyncResult: {
+          type: 'object',
+          required: ['linked', 'imported', 'updated', 'unchanged'],
+          properties: {
+            linked:    { $ref: '#/components/schemas/GoogleWorkspaceLink' },
+            imported:  { type: 'integer' },
+            updated:   { type: 'integer' },
+            unchanged: { type: 'integer' },
+          },
+        },
+        WorkspaceOverview: {
+          type: 'object',
+          required: ['workspace', 'users'],
+          properties: {
+            workspace: { $ref: '#/components/schemas/GoogleWorkspaceLink', nullable: true, description: 'null when no domain is linked.' },
+            users:     { type: 'array', items: { $ref: '#/components/schemas/ProvisionedUser' } },
           },
         },
       },
@@ -1504,6 +1750,321 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { description: 'Missing `visualiser:attach_project_files` scope.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      // ================================================================
+      // Permissions & portal-brokered access
+      //
+      // Served by the `prism-permissions-service` microservice (port
+      // 8771) and routed under this origin by the split-stack nginx
+      // router (`/api/access/*`, `/api/permissions/*`). These power
+      // "Sign in with REBUS" for connectors/portals and the admin
+      // Permissions page's function-policy graph (the "permissions node").
+      //
+      // Auth models differ from the rest of this spec:
+      //   * /api/access/*       PUBLIC. No X-API-Key — the portal OAuth
+      //                         `code` / opaque `sessionId` is the credential.
+      //   * /api/permissions/*  Admin session cookie (`prism_admin`) — the
+      //                         PRISM admin SPA. Not portal-facing.
+      // ================================================================
+
+      '/api/access/login': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Access'],
+          summary: 'Begin portal-brokered sign-in (redirect)',
+          description: 'Connector/portal "Sign in with REBUS" entry point. 302-redirects the browser to the configured portal/Google OAuth (or the dev mock-login) carrying the connector loopback `redirect_uri`. After consent the browser is redirected back with a `?code=...` to exchange via `POST /api/access/session`.',
+          security: [],
+          parameters: [{ in: 'query', name: 'redirect_uri', required: true, schema: { type: 'string', format: 'uri' }, description: 'Connector loopback URI, e.g. `http://localhost:29364/`.' }],
+          responses: {
+            '302': { description: 'Redirect to the portal/Google OAuth authorize URL.' },
+            '400': { description: '`redirect_uri` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '503': { description: 'OAuth not configured (missing Google client id / portal authorize URL).', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/access/mock-login': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Access'],
+          summary: 'Dev mock portal redirect (mock adapter only)',
+          description: 'Development helper available only when `portal_adapter=mock`. 302-redirects to `redirect_uri` with `?code=mock:<persona>` so the session / portal-user flow can be exercised without a live portal. Returns 404 in production unless the mock adapter is active.',
+          security: [],
+          parameters: [
+            { in: 'query', name: 'redirect_uri', required: true, schema: { type: 'string', format: 'uri' } },
+            { in: 'query', name: 'persona', schema: { type: 'string', default: 'alice', example: 'alice' }, description: 'Mock persona (`alice` = contributor, `bob` = viewer).' },
+          ],
+          responses: {
+            '302': { description: 'Redirect carrying `?code=mock:<persona>`.' },
+            '400': { description: '`redirect_uri` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { description: 'Mock adapter not active.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/access/session': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Access'],
+          summary: 'Exchange a portal auth code for a connector manifest',
+          description: [
+            'The core portal-brokered login call. Exchanges the OAuth `code` from the',
+            'portal callback for a `ConnectorManifest` — a scoped ORBIT token plus the',
+            'per-project allowed-function map (effective = portal grant ∩ function-policy',
+            'graph).',
+            '',
+            'The returned `manifest.sessionId` can later be passed to',
+            '`GET /api/access/manifest` to refresh without re-authenticating.',
+            '',
+            '**Auth:** PUBLIC — the portal `code` is the credential; no `X-API-Key`.',
+          ].join('\n'),
+          security: [],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/AccessSessionRequest' },
+                examples: {
+                  mock:   { summary: 'Mock adapter (dev)', value: { portalAuthCode: 'mock:alice', orbitTarget: 'dev' } },
+                  portal: { summary: 'Real portal code', value: { portalAuthCode: '4/0Ad...', orbitTarget: 'prod', redirectUri: 'http://localhost:29364/' } },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Session established.', content: { 'application/json': { schema: { $ref: '#/components/schemas/AccessSessionResponse' } } } },
+            '400': { description: '`portalAuthCode` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Portal rejected the code.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '403': { description: 'User has no provisioned access.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '500': { description: 'Exchange failed (e.g. ORBIT token mint error).', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/access/manifest': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Access'],
+          summary: 'Refresh a connector manifest',
+          description: 'Returns the current `ConnectorManifest` for an existing session — use this to pick up policy/permission changes (or a refreshed ORBIT token) without a full re-login. **Auth:** PUBLIC — the opaque `sessionId` is the credential.',
+          security: [],
+          parameters: [{ in: 'query', name: 'sessionId', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Manifest.', content: { 'application/json': { schema: { $ref: '#/components/schemas/AccessSessionResponse' } } } },
+            '400': { description: '`sessionId` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Session unknown, expired, or revoked.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '500': { description: 'Failed to load manifest.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/access/revoke': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Access'],
+          summary: 'Revoke a session',
+          description: 'Invalidates a session so its `sessionId` can no longer refresh a manifest. Call on connector sign-out. **Auth:** PUBLIC.',
+          security: [],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } } } },
+          },
+          responses: {
+            '200': { description: 'Revoked (idempotent).', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean', example: true } } } } } },
+            '400': { description: '`sessionId` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/access/portal-user': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Access'],
+          summary: 'Validate a portal code → portal user (no ORBIT mint)',
+          description: 'Exchanges a portal OAuth `code` for the resolved `PortalUser` only, without minting an ORBIT token or building a manifest. Used by the PRISM admin "Sign in with Google" flow to identify the user before checking admin provisioning. **Auth:** PUBLIC.',
+          security: [],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object', required: ['portalAuthCode'], properties: { portalAuthCode: { type: 'string' }, redirectUri: { type: 'string', format: 'uri' } } } } },
+          },
+          responses: {
+            '200': { description: 'Resolved user.', content: { 'application/json': { schema: { type: 'object', required: ['user'], properties: { user: { $ref: '#/components/schemas/PortalUser' } } } } } },
+            '400': { description: '`portalAuthCode` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Portal sign-in failed.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/access/provisioned-admin': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Access'],
+          summary: 'Check whether an email may sign into the admin SPA',
+          description: 'Allow-check used by the admin Google login: returns whether the email is a provisioned PRISM admin and the local admin username it binds to. **Auth:** PUBLIC.',
+          security: [],
+          parameters: [{ in: 'query', name: 'email', required: true, schema: { type: 'string', format: 'email' } }],
+          responses: {
+            '200': { description: 'Allow-check result.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ProvisionedAdminCheck' } } } },
+            '400': { description: '`email` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/access/health': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Access'],
+          summary: 'Permissions service liveness',
+          description: 'Liveness probe for the permissions service. Reports the active portal adapter (`mock` / `google` / `real`). **Auth:** PUBLIC.',
+          security: [],
+          responses: {
+            '200': { description: 'OK.', content: { 'application/json': { schema: { type: 'object', properties: { status: { type: 'string', example: 'ok' }, adapter: { type: 'string', example: 'mock' } } } } } },
+          },
+        },
+      },
+
+      '/api/permissions/policy': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Permissions'],
+          summary: 'Read the function-policy graph',
+          description: 'Returns the node-based permissions graph (the "permissions node" editor data) plus the default functions applied when the graph yields nothing for a principal. **Auth:** admin session cookie (`prism_admin`).',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            '200': { description: 'Policy graph.', content: { 'application/json': { schema: { $ref: '#/components/schemas/PermissionsPolicyResponse' } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+        put: {
+          tags: ['Permissions'],
+          summary: 'Replace the function-policy graph',
+          description: 'Overwrites the policy graph (nodes + edges) and optionally the default functions. The full graph is replaced atomically. **Auth:** admin session cookie.',
+          security: [{ cookieAuth: [] }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object', required: ['graph'], properties: { graph: { $ref: '#/components/schemas/FunctionPolicyGraph' }, defaultFunctions: { type: 'array', items: { $ref: '#/components/schemas/ConnectorFunction' } } } } } },
+          },
+          responses: {
+            '200': { description: 'Saved graph.', content: { 'application/json': { schema: { $ref: '#/components/schemas/PermissionsPolicyResponse' } } } },
+            '400': { description: '`graph.nodes` / `graph.edges` missing.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/permissions/functions': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Permissions'],
+          summary: 'List grantable connector functions',
+          description: 'Returns the canonical list of `ConnectorFunction` values that policy `function` nodes can reference. **Auth:** admin session cookie.',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            '200': { description: 'Function list.', content: { 'application/json': { schema: { type: 'object', required: ['functions'], properties: { functions: { type: 'array', items: { $ref: '#/components/schemas/ConnectorFunction' } } } } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/permissions/workspace': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Workspace'],
+          summary: 'Get the linked Google Workspace + provisioned users',
+          description: 'Returns the current Google Workspace link (or null) and the list of pre-provisioned users. **Auth:** admin session cookie.',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            '200': { description: 'Workspace overview.', content: { 'application/json': { schema: { $ref: '#/components/schemas/WorkspaceOverview' } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/permissions/workspace/link': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Workspace'],
+          summary: 'Link a Google Workspace domain',
+          security: [{ cookieAuth: [] }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['domain'], properties: { domain: { type: 'string', example: 'rebus.industries' }, displayName: { type: 'string' } } } } } },
+          responses: {
+            '200': { description: 'Linked.', content: { 'application/json': { schema: { type: 'object', required: ['workspace'], properties: { workspace: { $ref: '#/components/schemas/GoogleWorkspaceLink' } } } } } },
+            '400': { description: 'Missing / invalid domain.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/permissions/workspace/unlink': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Workspace'],
+          summary: 'Unlink the Google Workspace domain',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            '200': { description: 'Unlinked.', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean', example: true } } } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/permissions/workspace/sync': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Workspace'],
+          summary: 'Sync users from the workspace directory',
+          description: 'Imports/updates provisioned users from the linked directory (Google Admin SDK or the mock directory). **Auth:** admin session cookie.',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            '200': { description: 'Sync counts.', content: { 'application/json': { schema: { $ref: '#/components/schemas/WorkspaceSyncResult' } } } },
+            '400': { description: 'Sync failed (e.g. no domain linked).', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/permissions/workspace/users': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Workspace'],
+          summary: 'Create a provisioned user',
+          security: [{ cookieAuth: [] }],
+          requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ProvisionedUserInput' } } } },
+          responses: {
+            '200': { description: 'Created.', content: { 'application/json': { schema: { type: 'object', required: ['user'], properties: { user: { $ref: '#/components/schemas/ProvisionedUser' } } } } } },
+            '400': { description: 'Missing email / create failed.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+
+      '/api/permissions/workspace/users/{id}': {
+        servers: [{ url: API_BASE }],
+        patch: {
+          tags: ['Workspace'],
+          summary: 'Update a provisioned user',
+          description: 'Body is a partial `ProvisionedUserInput` (any subset of fields). **Auth:** admin session cookie.',
+          security: [{ cookieAuth: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ProvisionedUserInput' } } } },
+          responses: {
+            '200': { description: 'Updated.', content: { 'application/json': { schema: { type: 'object', required: ['user'], properties: { user: { $ref: '#/components/schemas/ProvisionedUser' } } } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { description: 'User not found.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+        delete: {
+          tags: ['Workspace'],
+          summary: 'Delete a provisioned user',
+          security: [{ cookieAuth: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Deleted.', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean', example: true } } } } } },
+            '401': { description: 'Not an admin session.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { description: 'User not found.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
         },
       },
