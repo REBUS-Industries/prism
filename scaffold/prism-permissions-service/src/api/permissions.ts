@@ -12,7 +12,7 @@ import {
 } from '../contracts/portal-access.js';
 import { requireAdmin } from '../auth/adminSession.js';
 import { requirePermissionsEditor } from '../auth/permissionsEditor.js';
-import { loadToolGrants, saveToolGrants } from '../access/tools.js';
+import { loadToolGrants, pruneStaleRoleGrants, saveToolGrants } from '../access/tools.js';
 import { getDb } from '../db/client.js';
 import {
   functionPolicyEdges,
@@ -23,8 +23,32 @@ import { loadPolicyGraph } from '../access/manifest.js';
 import type { PortalAdapter } from '../portal/adapter.js';
 import type { PortalRolesResponse } from '../contracts/portal-access.js';
 
+async function pruneStaleRoleGrantsIfSupported(
+  app: FastifyInstance,
+  portalRoles: PortalRolesResponse,
+): Promise<void> {
+  if (!portalRoles.supported) return;
+  try {
+    const removed = await pruneStaleRoleGrants(portalRoles.roles.map((r) => r.id));
+    if (removed.length) {
+      app.log.info({ removed }, 'pruned stale role tool grants');
+    }
+  } catch (err) {
+    app.log.warn({ err }, 'stale role grant prune skipped');
+  }
+}
+
+async function pruneStaleRoleGrantsFromPortal(app: FastifyInstance, portal: PortalAdapter): Promise<void> {
+  try {
+    await pruneStaleRoleGrantsIfSupported(app, await portal.listRoles());
+  } catch (err) {
+    app.log.warn({ err }, 'stale role grant prune skipped');
+  }
+}
+
 export async function registerPermissionsRoutes(app: FastifyInstance, portal: PortalAdapter) {
   app.get('/api/permissions/tool-grants', { preHandler: requirePermissionsEditor }, async (): Promise<ToolGrantsResponse> => {
+    await pruneStaleRoleGrantsFromPortal(app, portal);
     const grants = await loadToolGrants();
     return { grants, updatedAt: new Date().toISOString() };
   });
@@ -35,7 +59,9 @@ export async function registerPermissionsRoutes(app: FastifyInstance, portal: Po
   // portal has not implemented GET /portal/roles yet.
   app.get('/api/permissions/portal-roles', { preHandler: requirePermissionsEditor }, async (): Promise<PortalRolesResponse> => {
     try {
-      return await portal.listRoles();
+      const portalRoles = await portal.listRoles();
+      await pruneStaleRoleGrantsIfSupported(app, portalRoles);
+      return portalRoles;
     } catch (err) {
       app.log.warn({ err }, 'portal-roles fetch failed');
       return { roles: [], supported: false, fetchedAt: new Date().toISOString() };

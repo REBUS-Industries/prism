@@ -62,6 +62,39 @@ export function fullLocalAdminToolAccess(email: string): EffectiveToolAccess {
   };
 }
 
+/** Drop role grants whose keys are absent from the portal's live role list. */
+export function filterStaleRoleGrants(
+  grants: ToolGrants,
+  liveRoleIds: readonly string[],
+): { grants: ToolGrants; removed: string[] } {
+  const live = new Set(liveRoleIds.map((id) => normalizeRole(id)).filter(Boolean));
+  const removed: string[] = [];
+  const roles: NonNullable<ToolGrants['roles']> = {};
+
+  for (const [role, tools] of Object.entries(grants.roles ?? {})) {
+    const key = normalizeRole(role);
+    if (!key) continue;
+    if (live.has(key)) {
+      roles[key] = tools;
+    } else {
+      removed.push(key);
+    }
+  }
+
+  return {
+    grants: { roles, users: grants.users ?? {} },
+    removed,
+  };
+}
+
+export async function pruneStaleRoleGrants(liveRoleIds: readonly string[]): Promise<string[]> {
+  const current = await loadToolGrants();
+  const { grants, removed } = filterStaleRoleGrants(current, liveRoleIds);
+  if (removed.length === 0) return [];
+  await saveToolGrants(grants);
+  return removed;
+}
+
 export async function loadToolGrants(): Promise<ToolGrants> {
   const db = getDb();
   const rows = await db.select().from(toolGrant);
