@@ -5,7 +5,8 @@
  * Role nodes are driven by the portal's LIVE role list
  * (GET /api/permissions/portal-roles) so deleted/renamed portal roles never
  * linger. Tool grants (GET /api/permissions/tool-grants) draw the role→tool
- * edges. A grant whose role is no longer in the portal list is shown as "stale".
+ * edges. Grants for roles no longer in the portal list are pruned automatically
+ * by the permissions service when the live role feed is available.
  * Both feeds are polled so the graph updates without a refresh.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
@@ -255,8 +256,8 @@ onUnmounted(() => {
     </p>
 
     <p v-else-if="staleRoles.length" class="muted warn-hint">
-      Stale role grant(s) for <strong>{{ staleRoles.join(', ') }}</strong> — not in the portal's current role list.
-      Re-save grants in the portal (full replace) to clear them.
+      Removing stale role grant(s) for <strong>{{ staleRoles.join(', ') }}</strong> — not in the portal's current role list.
+      They will disappear automatically on the next refresh.
     </p>
 
     <div v-if="loading" class="muted">Loading tool access…</div>
