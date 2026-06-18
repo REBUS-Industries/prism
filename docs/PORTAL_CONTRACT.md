@@ -16,13 +16,15 @@ Bearer: portal user token (after OAuth).
   "email": "alice@example.com",
   "googleSub": "google-oauth-sub",
   "displayName": "Alice",
-  "role": "staffnew",
-  "customRoleId": "staffnew"
+  "roleId": "staffnew",
+  "roleIds": ["staffnew"]
 }
 ```
 
-- `role` — the user's portal role id. **Must match a role `id` returned by `GET /portal/roles`** and the role keys used in PRISM tool grants. Case-sensitive.
-- `customRoleId` — optional custom role id; also matched against grant keys.
+- `roleId` — the user's primary role **id**. **Must match a role `id` returned by `GET /portal/roles`** and the role keys used in PRISM tool grants (`grants.roles[id]`). Case-sensitive.
+- `roleIds` — all role ids the user holds (PRISM unions them for grant resolution).
+- The super-admin role id is `super-admin` (`SUPER_ADMIN_ROLE_ID`) and is always granted all PRISM tools.
+- Legacy `role` / `customRoleId` are still accepted for older portal builds but are superseded by `roleId` / `roleIds`.
 
 ### `GET /portal/roles`
 
@@ -33,15 +35,13 @@ Returns the portal's current, authoritative role list. PRISM mirrors this on the
 ```json
 {
   "roles": [
-    { "id": "superAdmin", "name": "Super Admin", "system": true },
-    { "id": "admin",      "name": "Admin",       "system": true },
-    { "id": "viewer",     "name": "Viewer",      "system": true },
-    { "id": "staffnew",   "name": "Staff",       "system": false }
+    { "id": "super-admin", "name": "Super Admin", "system": true },
+    { "id": "staffnew",    "name": "Staff",       "system": false }
   ]
 }
 ```
 
-- `id` (**required**) — canonical role id. This is what `PortalUser.role` / `customRoleId` and PRISM tool-grant keys are matched against (case-sensitive). When a role is deleted in the portal it must disappear from this list; when renamed, change `name` but keep a stable `id` (or PRISM treats the new id as a new role).
+- `id` (**required**) — canonical role id. This is what `PortalUser.roleId` / `roleIds` and PRISM tool-grant keys (`grants.roles[id]`) are matched against (case-sensitive). When a role is deleted in the portal it must disappear from this list; when renamed, change `name` but keep a stable `id` (or PRISM treats the new id as a new role).
 - `name` (optional) — display label shown in PRISM.
 - `system` (optional) — `true` for built-in portal roles.
 
@@ -97,7 +97,7 @@ Portal email is matched to ORBIT user email. Set `ORBIT_AUTO_INVITE=1` to send s
 ## Open items for portal team
 
 - **Implement `GET /portal/roles`** (service-key auth) so PRISM mirrors the live role list. Until it exists, PRISM falls back to grant-derived roles and stale roles can linger.
-- Ensure `GET /portal/me` returns `role` (and `customRoleId` when used), with ids that match `GET /portal/roles`.
+- Ensure `GET /portal/me` returns `roleId` (and `roleIds`), with ids that match `GET /portal/roles`.
 - When a role is deleted/renamed in the portal, also send a full-replace `PUT /api/permissions/tool-grants` so its tool grants are cleared (PRISM stores grants keyed by role id).
 - OAuth client registration for connector localhost callback
 - Service-to-portal auth model (user token vs service key for project-permissions)

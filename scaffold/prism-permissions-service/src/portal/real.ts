@@ -43,13 +43,20 @@ export class RealPortalAdapter implements PortalAdapter {
       const detail = await res.text();
       throw new Error(`Portal /me failed (${res.status}): ${detail}`);
     }
-    const body = (await res.json()) as PortalUser;
+    const body = (await res.json()) as PortalUser & { roleId?: string | null; roleIds?: unknown };
     if (!body.userId || !body.email) throw new Error('Portal /me returned invalid payload');
+    const roleIds = Array.isArray(body.roleIds)
+      ? body.roleIds.filter((r): r is string => typeof r === 'string' && r.trim().length > 0)
+      : null;
     return {
       userId: body.userId,
       email: body.email,
       googleSub: body.googleSub ?? null,
       displayName: body.displayName ?? null,
+      // Portal keys everything on role ids now (GET /portal/me.roleId / roleIds).
+      roleId: body.roleId ?? null,
+      roleIds,
+      // Legacy fields kept for backward-compat with older portal builds.
       role: body.role ?? null,
       customRoleId: body.customRoleId ?? null,
     };

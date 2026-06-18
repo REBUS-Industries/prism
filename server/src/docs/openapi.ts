@@ -827,8 +827,10 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             email:       { type: 'string', format: 'email' },
             googleSub:   { type: 'string', nullable: true },
             displayName: { type: 'string', nullable: true },
-            role:        { type: 'string', nullable: true, description: 'Portal role id. Must match a `PortalRole.id` and the tool-grant keys (case-sensitive).' },
-            customRoleId:{ type: 'string', nullable: true, description: 'Optional custom role id from portal-app; also matched against grant keys.' },
+            roleId:      { type: 'string', nullable: true, description: 'Primary role id. Must match a `PortalRole.id` and the tool-grant keys (case-sensitive). super-admin gets all tools.' },
+            roleIds:     { type: 'array', items: { type: 'string' }, nullable: true, description: 'All role ids the user holds; unioned for grant resolution.' },
+            role:        { type: 'string', nullable: true, description: 'Deprecated legacy system role name; superseded by roleId.' },
+            customRoleId:{ type: 'string', nullable: true, description: 'Deprecated legacy custom role id; superseded by roleId/roleIds.' },
           },
         },
         PortalRole: {

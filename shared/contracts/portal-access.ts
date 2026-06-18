@@ -52,9 +52,16 @@ export interface PortalUser {
   email: string;
   googleSub?: string | null;
   displayName?: string | null;
-  /** Portal system role — used for PRISM tool grant resolution. */
+  /**
+   * The user's primary role id (portal `GET /portal/me.roleId`). This is the
+   * canonical key matched against PortalRole.id and tool-grant keys.
+   */
+  roleId?: string | null;
+  /** All role ids the user holds (portal `GET /portal/me.roleIds`). */
+  roleIds?: string[] | null;
+  /** @deprecated Legacy portal system role name; superseded by roleId. */
   role?: PortalSystemRole | string | null;
-  /** Optional custom role id from portal-app. */
+  /** @deprecated Legacy custom role id; superseded by roleId/roleIds. */
   customRoleId?: string | null;
 }
 
