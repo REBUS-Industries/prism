@@ -89,7 +89,7 @@ function onPaneClick(): void {
       <VueFlow
         :nodes="props.nodes"
         :edges="props.edges"
-        :nodes-draggable="!props.readonly"
+        :nodes-draggable="true"
         drag-handle=".node-drag-handle"
         :nodes-connectable="!props.readonly"
         :edges-updatable="!props.readonly"
