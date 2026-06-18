@@ -1,6 +1,10 @@
 # Merge Bot Setup Guide
 
 The bot adds a `/prism-merge <PR-number>` command to a Slack channel.
+Before each merge it auto-updates the PR branch onto the latest `main` and waits
+for required checks to pass, so a merge can never land stale code or drop
+concurrent work, and aborts cleanly on conflict (see
+"Auto-update / rebase before merge" below).
 It serialises all merges â€” only one can run at a time â€” and posts CI status back to the channel.
 
 ---
@@ -44,7 +48,7 @@ It serialises all merges â€” only one can run at a time â€” and posts 
 
 1. Go to https://github.com/settings/tokens/new (classic token)
 2. Note: `prism-merge-bot`
-3. Scopes: `repo` (full) + `workflow`
+3. Scopes: `repo` (full) + `workflow` (`repo` write access also lets the bot update/rebase PR branches onto `main` before merging — no extra scope needed)
 4. Generate â†’ copy the token (`ghp_â€¦`)
 
 ---
@@ -60,6 +64,7 @@ mkdir -p /opt/merge-bot && cd /opt/merge-bot
 # Copy infra/merge-bot/{index.js,package.json,Dockerfile,docker-compose.standalone.yml}
 # Rename docker-compose.standalone.yml â†’ docker-compose.yml
 # Create .env with SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, GITHUB_TOKEN
+# (optional) tune auto-update: AUTO_UPDATE_BRANCH, MERGE_METHOD, UPDATE_CHECKS_TIMEOUT_MINUTES, UPDATE_CHECKS_POLL_SECONDS, UPDATE_MAX_CYCLES
 docker compose up -d --build
 docker logs prism-merge-bot --tail 5
 # Should print: Merge bot listening on :3456
@@ -109,6 +114,60 @@ Expected flow:
 
 If a second `/prism-merge` comes in while one is in-flight:
 - Bot replies ephemerally (only visible to you): "ðŸ”’ Merge in progress: PR #99 by @alice (2m ago). Wait for it to complete."
+
+---
+
+## Auto-update / rebase before merge
+
+Before it merges, the bot brings the PR branch up to date with its base (`main`)
+and waits for required checks to pass. This guarantees the merged result always
+includes the latest `main` and can never overwrite or drop concurrent work that
+landed while the PR was waiting between approval and merge.
+
+**How it works (per merge request):**
+
+1. Compare the PR head against `main`. If the head is behind, call GitHub's
+   **Update branch** API (`PUT /repos/{owner}/{repo}/pulls/{n}/update-branch`),
+   which merges the latest `main` *into* the PR branch (no force-push, no history
+   rewrite).
+2. Wait for the new head commit to appear, then poll until required checks pass
+   (`mergeable_state` becomes `clean`).
+3. Merge. If `main` advanced again while waiting, repeat (bounded by
+   `UPDATE_MAX_CYCLES` so a busy `main` can't loop forever).
+
+**It ABORTS and merges nothing if:**
+
+- the branch can't be updated cleanly (merge conflict with `main`),
+- required checks fail after the update, or
+- checks don't finish within `UPDATE_CHECKS_TIMEOUT_MINUTES`.
+
+On any abort it posts a clear Slack message (e.g. "Did not merge #N: it
+conflicts with `main` and needs a manual rebase") so a human resolves it. The
+bot never force-pushes and never merges a conflicted or stale branch.
+
+**Why "Update branch" (merge) instead of a true rebase:** update-branch merges
+`main` into the branch *without* rewriting history, so no commits are ever lost
+and CI re-runs against the exact tree that will land. A force-pushed rebase would
+rewrite the contributor's branch, and GitHub's "Rebase and merge" replays commits
+at merge time onto a base CI never tested together (re-introducing the stale-code
+risk). The merged result still contains every commit from `main`, which is the
+property we care about. The final merge method is configurable via `MERGE_METHOD`.
+
+**Config (optional env vars):**
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `AUTO_UPDATE_BRANCH` | `true` | Master switch. Set `false` to restore the old merge-immediately behaviour. |
+| `MERGE_METHOD` | `merge` | Final merge method: `merge`, `squash`, or `rebase`. |
+| `UPDATE_CHECKS_TIMEOUT_MINUTES` | `15` | Max wait for checks to pass after updating. |
+| `UPDATE_CHECKS_POLL_SECONDS` | `15` | Poll interval while waiting for checks. |
+| `UPDATE_MAX_CYCLES` | `5` | Max re-updates when `main` keeps moving before aborting. |
+
+All are optional; the bot works with none of them set.
+
+**Token scope:** the existing `GITHUB_TOKEN` (`repo` + `workflow`) already has the
+write access required to update branches. A fine-grained PAT instead needs
+**Contents: write** and **Pull requests: write** on the target repos.
 
 ---
 
