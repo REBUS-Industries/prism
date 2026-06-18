@@ -6,7 +6,7 @@ name: web-image
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/permissions]
     paths:
       - 'web/**'
       - 'infra/docker-compose.dev.yml'
@@ -76,7 +76,7 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: [self-hosted, prism-deploy]
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/permissions' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     concurrency:
       group: prism-deploy-vm212
       cancel-in-progress: false
