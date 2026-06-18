@@ -5,16 +5,18 @@ defineProps<{
   label: string;
   nodeType: string;
   refValue?: string | null;
+  noTarget?: boolean;
+  noSource?: boolean;
 }>();
 </script>
 
 <template>
   <div :class="['perm-node', `perm-node--${nodeType}`]">
-    <Handle type="target" :position="Position.Left" />
+    <Handle v-if="!noTarget" type="target" :position="Position.Left" />
     <div class="perm-node__type">{{ nodeType }}</div>
     <div class="perm-node__label">{{ label }}</div>
-    <div v-if="refValue" class="perm-node__ref">{{ refValue }}</div>
-    <Handle type="source" :position="Position.Right" />
+    <div v-if="refValue && refValue !== label" class="perm-node__ref">{{ refValue }}</div>
+    <Handle v-if="!noSource" type="source" :position="Position.Right" />
   </div>
 </template>
 
@@ -48,4 +50,5 @@ defineProps<{
 .perm-node--user { border-color: #22c55e; }
 .perm-node--project { border-color: #f59e0b; }
 .perm-node--function { border-color: #ec4899; }
+.perm-node--tool { border-color: #0ea5e9; }
 </style>
