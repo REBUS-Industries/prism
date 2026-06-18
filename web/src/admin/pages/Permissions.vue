@@ -3,21 +3,19 @@
  * Node-based permissions editor — function policy graph (portal project grants
  * are read-only context; effective connector permissions = portal ∩ this graph).
  */
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { MarkerType, type Connection } from '@vue-flow/core';
 import { RouterLink } from 'vue-router';
-import {
-  VueFlow,
-  MarkerType,
-  type Connection,
-  type Edge,
-  type Node,
-} from '@vue-flow/core';
-import { Background } from '@vue-flow/background';
-import { Controls } from '@vue-flow/controls';
-import '@vue-flow/core/dist/style.css';
-import '@vue-flow/core/dist/theme-default.css';
-import '@vue-flow/controls/dist/style.css';
 import Icon from '../../shared/Icon.vue';
+import PolicyGraphBoard from '../components/permissions/PolicyGraphBoard.vue';
+import PolicyInspector from '../components/permissions/PolicyInspector.vue';
+import type { PolicyNodeData } from '../utils/policyGraphLayout';
+import {
+  policyColumnPosition,
+  policyNodeTypeLabel,
+  type PolicyFlowEdge,
+  type PolicyFlowNode,
+} from '../utils/policyGraphLayout';
 import {
   permissionsApi,
   settingsApi,
@@ -30,12 +28,32 @@ const loading = ref(true);
 const saving = ref(false);
 const error = ref<string | null>(null);
 const defaultFunctions = ref<ConnectorFunction[]>([]);
-const nodes = ref<Node[]>([]);
-const edges = ref<Edge[]>([]);
+const nodes = ref<PolicyFlowNode[]>([]);
+const edges = ref<PolicyFlowEdge[]>([]);
+const selectedNodeId = ref<string | null>(null);
 
 const grantAllProjects = ref(true);
 const savingAccess = ref(false);
 const accessStatus = ref<string | null>(null);
+
+const selectedNode = computed((): { id: string; data?: PolicyNodeData } | null => {
+  if (!selectedNodeId.value) return null;
+  for (const n of nodes.value) {
+    if (n.id === selectedNodeId.value) return { id: n.id, data: n.data };
+  }
+  return null;
+});
+
+const functionOptions = permissionsApi.functionsList();
+
+function toFlowNode(n: PolicyNodeType): PolicyFlowNode {
+  return {
+    id: n.id,
+    type: 'policy',
+    position: n.position,
+    data: { policyType: n.type, label: n.label, refValue: n.ref ?? '' },
+  };
+}
 
 async function saveAccessMode() {
   savingAccess.value = true;
@@ -64,13 +82,6 @@ function onConnect(conn: Connection) {
   });
 }
 
-const functionOptions = permissionsApi.functionsList();
-
-function nodeLabel(n: PolicyNodeType) {
-  const ref = n.ref ? ` (${n.ref})` : '';
-  return `[${n.type}] ${n.label}${ref}`;
-}
-
 onMounted(async () => {
   try {
     const s = (await settingsApi.list()).settings;
@@ -81,17 +92,13 @@ onMounted(async () => {
   try {
     const res = await permissionsApi.getPolicy();
     defaultFunctions.value = res.defaultFunctions;
-    nodes.value = res.graph.nodes.map((n) => ({
-      id: n.id,
-      label: nodeLabel(n),
-      position: n.position,
-      data: { policyType: n.type, label: n.label, refValue: n.ref },
-    }));
+    nodes.value = res.graph.nodes.map(toFlowNode);
     edges.value = res.graph.edges.map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
       markerEnd: MarkerType.ArrowClosed,
+      animated: true,
     }));
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load policy';
@@ -102,19 +109,55 @@ onMounted(async () => {
 
 function addNode(type: PolicyNodeType['type']) {
   const id = `${type}-${Date.now()}`;
-  const label =
-    type === 'role' ? 'Role'
-    : type === 'user' ? 'User'
-    : type === 'project' ? 'Project'
-    : type === 'tool' ? 'Tool'
-    : 'Function';
-  const node: PolicyNodeType = { id, type, label, ref: null, position: { x: 120 + nodes.value.length * 40, y: 120 + nodes.value.length * 32 } };
+  const label = policyNodeTypeLabel(type);
+  let indexInColumn = 0;
+  for (const n of nodes.value) {
+    if (n.data.policyType === type) indexInColumn += 1;
+  }
   nodes.value.push({
     id,
-    label: nodeLabel(node),
-    position: node.position,
+    type: 'policy',
+    position: policyColumnPosition(type, indexInColumn),
     data: { policyType: type, label, refValue: '' },
   });
+}
+
+function updateSelectedLabel(value: string) {
+  const id = selectedNodeId.value;
+  if (!id) return;
+  for (const n of nodes.value) {
+    if (n.id === id) {
+      n.data = { ...n.data, label: value };
+      break;
+    }
+  }
+}
+
+function updateSelectedRef(value: string) {
+  const id = selectedNodeId.value;
+  if (!id) return;
+  for (const n of nodes.value) {
+    if (n.id === id) {
+      n.data = { ...n.data, refValue: value };
+      break;
+    }
+  }
+}
+
+function deleteSelectedNode() {
+  if (!selectedNodeId.value) return;
+  const id = selectedNodeId.value;
+  const nextNodes: PolicyFlowNode[] = [];
+  for (const n of nodes.value) {
+    if (n.id !== id) nextNodes.push(n);
+  }
+  nodes.value = nextNodes;
+  const nextEdges: PolicyFlowEdge[] = [];
+  for (const e of edges.value) {
+    if (e.source !== id && e.target !== id) nextEdges.push(e);
+  }
+  edges.value = nextEdges;
+  selectedNodeId.value = null;
 }
 
 async function savePolicy() {
@@ -125,9 +168,9 @@ async function savePolicy() {
     for (const n of nodes.value) {
       graphNodes.push({
         id: n.id,
-        type: (n.data?.policyType as PolicyNodeType['type']) ?? 'role',
-        label: String(n.data?.label ?? n.id),
-        ref: (n.data?.refValue as string) || null,
+        type: n.data.policyType,
+        label: n.data.label,
+        ref: n.data.refValue || null,
         position: n.position,
       });
     }
@@ -196,22 +239,26 @@ async function savePolicy() {
 
     <div v-if="loading" class="muted">Loading policy…</div>
 
-    <div v-else class="graph-wrap">
-      <VueFlow
-        v-model:nodes="nodes"
-        v-model:edges="edges"
-        fit-view-on-init
-        :default-edge-options="{ markerEnd: MarkerType.ArrowClosed }"
-        @connect="onConnect"
-      >
-        <Background />
-        <Controls />
-      </VueFlow>
-    </div>
+    <PolicyGraphBoard
+      v-else
+      v-model:nodes="nodes"
+      v-model:edges="edges"
+      v-model:selected-node-id="selectedNodeId"
+      @connect="onConnect"
+    >
+      <template #inspector>
+        <PolicyInspector
+          :node="selectedNode"
+          @update-label="updateSelectedLabel"
+          @update-ref="updateSelectedRef"
+          @delete-node="deleteSelectedNode"
+        />
+      </template>
+    </PolicyGraphBoard>
 
     <section class="defaults">
       <h2>Default functions</h2>
-      <p class="muted">Applied when no graph edge matches. Set node <code>ref</code> in saved policy JSON (email, role level, project id, function id).</p>
+      <p class="muted">Applied when no graph edge matches. Set node ref in the inspector (email, role level, project id, function id).</p>
       <div class="fn-grid">
         <label v-for="fn in functionOptions" :key="fn" class="fn-check">
           <input v-model="defaultFunctions" type="checkbox" :value="fn" />
@@ -227,7 +274,6 @@ async function savePolicy() {
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .link-btn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; }
-.graph-wrap { flex: 1; min-height: 420px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .defaults { padding: 12px 0; }
 .fn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; margin-top: 8px; }
 .fn-check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
@@ -238,8 +284,4 @@ async function savePolicy() {
 .access-head h2 { margin: 0 0 2px; font-size: 15px; }
 .access-head .muted { margin: 0; }
 .switch-row { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.access-level { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
-.access-level label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; max-width: 360px; }
-.access-level select { font-weight: 400; }
-.access-level .hint { font-weight: 400; margin-top: 8px; }
 </style>
