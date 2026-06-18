@@ -21,7 +21,6 @@ const nodes = ref<PolicyFlowNode[]>([]);
 const edges = ref<PolicyFlowEdge[]>([]);
 const selectedNodeId = ref<string | null>(null);
 
-const portalRoles = ['superAdmin', 'admin', 'staff', 'viewer', 'IT Department'];
 const toolLabels: Record<PrismTool, string> = {
   convert: 'Convert',
   visualiser: 'Visualiser',
@@ -128,12 +127,7 @@ function grantsToGraph(g: ToolGrants, preservePositions = false) {
   edges.value = nextEdges;
 }
 
-function seedDefaultRoles() {
-  for (const role of portalRoles) {
-    if (!grants.value.roles[role]) grants.value.roles[role] = [];
-  }
-  grantsToGraph(grants.value);
-}
+const hasRoleGrants = computed(() => Object.keys(grants.value.roles ?? {}).length > 0);
 
 function applyRemoteGrants(g: ToolGrants) {
   remoteFingerprint = grantsFingerprint(g);
@@ -148,8 +142,7 @@ async function loadGrants() {
     const res = await permissionsApi.getToolGrants();
     remoteFingerprint = grantsFingerprint(res.grants);
     grants.value = res.grants;
-    if (Object.keys(res.grants.roles).length === 0) seedDefaultRoles();
-    else grantsToGraph(res.grants);
+    grantsToGraph(res.grants);
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load tool grants';
   } finally {
@@ -198,6 +191,10 @@ onUnmounted(() => {
 
     <div v-if="loading" class="muted">Loading tool grants…</div>
 
+    <p v-else-if="!hasRoleGrants" class="muted empty-hint">
+      No role grants configured in the portal yet. Roles shown here mirror the portal exactly — PRISM does not invent any.
+    </p>
+
     <PolicyGraphBoard
       v-else
       v-model:nodes="nodes"
@@ -218,4 +215,5 @@ onUnmounted(() => {
 .page { display: flex; flex-direction: column; gap: 16px; height: 100%; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .error { color: var(--danger, #ef4444); }
+.empty-hint { margin: 0; }
 </style>

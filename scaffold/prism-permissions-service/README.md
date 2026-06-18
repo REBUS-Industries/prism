@@ -48,7 +48,9 @@ curl -sS -b "prism_admin=..." https://prism.rebus.industries/api/access/me
 curl -sS -H "X-API-Key: prism_..." https://prism.rebus.industries/api/permissions/tool-grants
 ```
 
-Ensure migration `0002_tool_grants.sql` ran (table `tool_grant` populated with seed rows).
+Ensure migrations `0002_tool_grants.sql` (creates `tool_grant`) and
+`0003_remove_legacy_role_seed.sql` (purges the legacy lowercase `staff`/`viewer`
+demo seed) ran. Grants are owned by the portal — `tool_grant` starts empty.
 
 ## Mock login (dev)
 
