@@ -3,10 +3,11 @@
  * Role -> PRISM tool grants editor (Vue Flow).
  * Effective admin access = portal role grants stored in prism-permissions-service.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import {
   VueFlow,
   MarkerType,
+  Position,
   type Connection,
   type Edge,
   type Node,
@@ -17,9 +18,9 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import Icon from '../../shared/Icon.vue';
+import PolicyNode from '../components/permissions/PolicyNode.vue';
 import {
   permissionsApi,
-  type PolicyNode as PolicyNodeType,
   type PrismTool,
   type ToolGrants,
 } from '../../shared/api';
@@ -44,24 +45,65 @@ const toolLabels: Record<PrismTool, string> = {
 
 const selectedNode = computed(() => nodes.value.find((n) => n.id === selectedNodeId.value) ?? null);
 
-function nodeLabel(n: PolicyNodeType) {
-  const ref = n.ref ? ` (${n.ref})` : '';
-  return `[${n.type}] ${n.label}${ref}`;
+let remoteFingerprint = '';
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+function grantsFingerprint(g: ToolGrants): string {
+  const roles = Object.fromEntries(
+    Object.entries(g.roles).map(([k, v]) => [k, [...v].sort()]),
+  );
+  const users = Object.fromEntries(
+    Object.entries(g.users ?? {}).map(([k, v]) => [k, [...v].sort()]),
+  );
+  return JSON.stringify({ roles, users });
 }
 
-function grantsToGraph(g: ToolGrants) {
+function roleNode(id: string, role: string, position: { x: number; y: number }): Node {
+  return {
+    id,
+    type: 'policyNode',
+    position,
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
+    data: {
+      policyType: 'role',
+      nodeType: 'role',
+      label: role,
+      refValue: role,
+      noTarget: true,
+    },
+  };
+}
+
+function toolNode(id: string, tool: PrismTool, position: { x: number; y: number }): Node {
+  return {
+    id,
+    type: 'policyNode',
+    position,
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
+    data: {
+      policyType: 'tool',
+      nodeType: 'tool',
+      label: toolLabels[tool],
+      refValue: tool,
+      noSource: true,
+    },
+  };
+}
+
+function grantsToGraph(g: ToolGrants, preservePositions = false) {
+  const posById = preservePositions
+    ? new Map(nodes.value.map((n) => [n.id, { ...n.position }]))
+    : null;
+
   const nextNodes: Node[] = [];
   const nextEdges: Edge[] = [];
   let y = 80;
 
   for (const role of Object.keys(g.roles)) {
     const id = `role-${role}`;
-    nextNodes.push({
-      id,
-      label: nodeLabel({ id, type: 'role', label: role, ref: role, position: { x: 80, y } }),
-      position: { x: 80, y },
-      data: { policyType: 'role', label: role, refValue: role },
-    });
+    nextNodes.push(roleNode(id, role, posById?.get(id) ?? { x: 80, y }));
     y += 72;
   }
 
@@ -69,12 +111,7 @@ function grantsToGraph(g: ToolGrants) {
   let ty = 80;
   for (const tool of permissionsApi.toolsList()) {
     const id = `tool-${tool}`;
-    nextNodes.push({
-      id,
-      label: nodeLabel({ id, type: 'tool', label: toolLabels[tool], ref: tool, position: { x: tx, y: ty } }),
-      position: { x: tx, y: ty },
-      data: { policyType: 'tool', label: toolLabels[tool], refValue: tool },
-    });
+    nextNodes.push(toolNode(id, tool, posById?.get(id) ?? { x: tx, y: ty }));
     ty += 72;
     if (ty > 420) {
       ty = 80;
@@ -88,6 +125,7 @@ function grantsToGraph(g: ToolGrants) {
         id: `e-${role}-${tool}`,
         source: `role-${role}`,
         target: `tool-${tool}`,
+        type: 'smoothstep',
         markerEnd: MarkerType.ArrowClosed,
         animated: true,
       });
@@ -126,6 +164,7 @@ function onConnect(conn: Connection) {
     id: `e-${conn.source}-${conn.target}`,
     source: conn.source!,
     target: conn.target!,
+    type: 'smoothstep',
     markerEnd: MarkerType.ArrowClosed,
     animated: true,
   });
@@ -137,23 +176,13 @@ function addRoleNode() {
   const ref = role.trim();
   const id = `role-${ref}`;
   if (nodes.value.some((n) => n.id === id)) return;
-  nodes.value.push({
-    id,
-    label: nodeLabel({ id, type: 'role', label: ref, ref, position: { x: 80, y: 80 + nodes.value.length * 24 } }),
-    position: { x: 80, y: 80 + nodes.value.length * 24 },
-    data: { policyType: 'role', label: ref, refValue: ref },
-  });
+  nodes.value.push(roleNode(id, ref, { x: 80, y: 80 + nodes.value.length * 24 }));
 }
 
 function addToolNode(tool: PrismTool) {
   const id = `tool-${tool}`;
   if (nodes.value.some((n) => n.id === id)) return;
-  nodes.value.push({
-    id,
-    label: nodeLabel({ id, type: 'tool', label: toolLabels[tool], ref: tool, position: { x: 520, y: 80 + nodes.value.length * 24 } }),
-    position: { x: 520, y: 80 + nodes.value.length * 24 },
-    data: { policyType: 'tool', label: toolLabels[tool], refValue: tool },
-  });
+  nodes.value.push(toolNode(id, tool, { x: 520, y: 80 + nodes.value.length * 24 }));
 }
 
 function seedDefaultRoles() {
@@ -163,11 +192,24 @@ function seedDefaultRoles() {
   grantsToGraph(grants.value);
 }
 
+function applyRemoteGrants(g: ToolGrants, hadLocalEdits: boolean) {
+  remoteFingerprint = grantsFingerprint(g);
+  grants.value = g;
+  grantsToGraph(g, true);
+  if (hadLocalEdits) {
+    status.value = 'Synced portal changes (local unsaved edits were replaced)';
+    setTimeout(() => {
+      if (status.value?.startsWith('Synced')) status.value = null;
+    }, 4000);
+  }
+}
+
 async function loadGrants() {
   loading.value = true;
   error.value = null;
   try {
     const res = await permissionsApi.getToolGrants();
+    remoteFingerprint = grantsFingerprint(res.grants);
     grants.value = res.grants;
     if (Object.keys(res.grants.roles).length === 0) seedDefaultRoles();
     else grantsToGraph(res.grants);
@@ -178,6 +220,19 @@ async function loadGrants() {
   }
 }
 
+async function pollGrants() {
+  if (saving.value || loading.value) return;
+  try {
+    const res = await permissionsApi.getToolGrants();
+    const fp = grantsFingerprint(res.grants);
+    if (fp === remoteFingerprint) return;
+    const hadLocalEdits = grantsFingerprint(graphToGrants()) !== remoteFingerprint;
+    applyRemoteGrants(res.grants, hadLocalEdits);
+  } catch {
+    /* keep polling */
+  }
+}
+
 async function saveGrants() {
   saving.value = true;
   error.value = null;
@@ -185,7 +240,7 @@ async function saveGrants() {
   try {
     const payload = graphToGrants();
     const res = await permissionsApi.saveToolGrants(payload);
-    grants.value = res.grants;
+    applyRemoteGrants(res.grants, false);
     status.value = 'Tool grants saved';
     setTimeout(() => (status.value = null), 2500);
   } catch (e) {
@@ -199,16 +254,19 @@ function updateSelectedRef(value: string) {
   const node = selectedNode.value;
   if (!node) return;
   node.data = { ...node.data, refValue: value, label: value || node.data?.label };
-  node.label = nodeLabel({
-    id: node.id,
-    type: (node.data?.policyType as PolicyNodeType['type']) ?? 'role',
-    label: String(node.data?.label ?? node.id),
-    ref: value || null,
-    position: node.position,
-  });
 }
 
-onMounted(loadGrants);
+onMounted(() => {
+  void loadGrants();
+  pollTimer = setInterval(() => { void pollGrants(); }, 4_000);
+});
+
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+});
 </script>
 
 <template>
@@ -245,10 +303,19 @@ onMounted(loadGrants);
           v-model:nodes="nodes"
           v-model:edges="edges"
           fit-view-on-init
-          :default-edge-options="{ markerEnd: MarkerType.ArrowClosed }"
+          :default-edge-options="{ markerEnd: MarkerType.ArrowClosed, type: 'smoothstep' }"
           @connect="onConnect"
           @node-click="(evt) => (selectedNodeId = evt.node.id)"
         >
+          <template #node-policyNode="nodeProps">
+            <PolicyNode
+              :label="String(nodeProps.data.label ?? '')"
+              :node-type="String(nodeProps.data.nodeType ?? nodeProps.data.policyType ?? 'role')"
+              :ref-value="(nodeProps.data.refValue as string | null | undefined) ?? null"
+              :no-target="Boolean(nodeProps.data.noTarget)"
+              :no-source="Boolean(nodeProps.data.noSource)"
+            />
+          </template>
           <Background />
           <Controls />
         </VueFlow>
@@ -276,6 +343,20 @@ onMounted(loadGrants);
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
 .layout { display: grid; grid-template-columns: 1fr 260px; gap: 12px; flex: 1; min-height: 420px; }
 .graph-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; min-height: 420px; }
+.graph-wrap :deep(.vue-flow__node-policyNode) {
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  width: auto;
+}
+.graph-wrap :deep(.vue-flow__handle) {
+  width: 8px;
+  height: 8px;
+  background: var(--color-border-strong, #64748b);
+  border: 1.5px solid var(--surface-2, #fff);
+}
 .props { border: 1px solid var(--border); border-radius: 8px; padding: 12px; align-self: start; }
 .props label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; margin-top: 8px; }
 .props input { font-weight: 400; }
