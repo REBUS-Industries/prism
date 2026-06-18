@@ -14,7 +14,7 @@ CI pipelines for PRISM.
 
 **`feat/permissions`:** pushes that touch `web/**` auto-build and deploy to VM 212 (same as `main`).
 
-**`prism-permissions`:** the intended polyrepo `REBUS-Industries/prism-permissions-service` was never created, so `permissions-image` builds the service from `scaffold/prism-permissions-service/` in this monorepo and deploys it to VM 212. The **first** deploy is manual (`gh workflow run permissions-image --repo REBUS-Industries/prism`) since the running container predates this pipeline; afterwards scaffold changes auto-deploy. Rollback: set `PRISM_PERMISSIONS_TAG` in `/opt/prism/.env` to the prior `sha-*` and `docker compose up -d prism-permissions`.
+**`prism-permissions`:** builds on the self-hosted deploy runner and loads the image onto VM 212 via `docker save | ssh docker load` (GHCR push is blocked until org admins grant the `prism-permissions-service` package write access to this repo). Rollback: set `PRISM_PERMISSIONS_TAG` in `/opt/prism/.env` to the prior `sha-*` and `docker compose up -d prism-permissions`.
 
 **Manual deploy of other feature branches:**
 ```powershell

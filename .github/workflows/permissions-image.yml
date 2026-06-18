@@ -3,80 +3,54 @@ name: permissions-image
 # Builds the prism-permissions-service image from scaffold/prism-permissions-service
 # and deploys the prism-permissions container on VM 212 (prism.rebus.industries).
 #
-# Background: the intended polyrepo REBUS-Industries/prism-permissions-service was
-# never created, so there was no pipeline to ship permissions-service changes — the
-# running container was deployed out-of-band. This workflow builds + deploys it from
-# the monorepo scaffold so permissions changes can ship like web/server.
-#
-# First run is MANUAL (workflow_dispatch) on purpose: the running image predates this
-# pipeline, so rebuilding from the scaffold should be reviewed once. After that,
-# pushes that touch the scaffold auto-deploy. Rollback: set PRISM_PERMISSIONS_TAG in
-# /opt/prism/.env to the previous sha-* tag and `docker compose up -d prism-permissions`.
+# Builds on the self-hosted deploy runner and loads the image onto VM 212 via
+# `docker save | ssh docker load`. The GHCR package was created out-of-band, so
+# GITHUB_TOKEN cannot push updates (403). Once org admins grant the prism repo
+# write access on ghcr.io/rebus-industries/prism-permissions-service, the optional
+# GHCR push step can be re-enabled.
 
 on:
   push:
     branches: [main]
     paths:
       - 'scaffold/prism-permissions-service/**'
+      - '.github/workflows/permissions-image.yml'
   workflow_dispatch:
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/rebus-industries/prism-permissions-service
-          tags: |
-            type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: scaffold/prism-permissions-service
-          file: scaffold/prism-permissions-service/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          no-cache: ${{ github.event_name == 'workflow_dispatch' }}
-          cache-from: ${{ github.event_name == 'workflow_dispatch' && '' || 'type=gha' }}
-          cache-to: type=gha,mode=max
-
-  deploy:
-    needs: build-and-push
+  build-and-deploy:
     runs-on: [self-hosted, prism-deploy]
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     concurrency:
       group: prism-deploy-vm212
       cancel-in-progress: false
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Deploy prism-permissions to VM 212 (prod)
+      - uses: actions/checkout@v4
+
+      - name: Build and deploy prism-permissions to VM 212 (prod)
         env:
           # prism-dev SSH alias on deploy runners -> VM 212 (live Caddy upstream).
           DEPLOY_HOST: prism-dev
         run: |
+          set -euo pipefail
           PERM_TAG="sha-${GITHUB_SHA:0:7}"
-          ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" hostname
+          IMAGE="ghcr.io/rebus-industries/prism-permissions-service:${PERM_TAG}"
+
+          docker build \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            -t "${IMAGE}" \
+            -f scaffold/prism-permissions-service/Dockerfile \
+            scaffold/prism-permissions-service
+
+          echo "Loading ${IMAGE} onto ${DEPLOY_HOST}..."
+          docker save "${IMAGE}" | ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" docker load
+
           ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" env \
             "PERM_TAG=${PERM_TAG}" "GIT_SHA=${GITHUB_SHA}" bash -s <<'REMOTE'
             set -euo pipefail
             cd /opt/prism
-            # Persist the tag we just built so a later `compose up` keeps it.
             if [ -f .env ] && grep -q '^PRISM_PERMISSIONS_TAG=' .env; then
               sed -i "s/^PRISM_PERMISSIONS_TAG=.*/PRISM_PERMISSIONS_TAG=${PERM_TAG}/" .env
             else
@@ -84,8 +58,7 @@ jobs:
             fi
             export PRISM_PERMISSIONS_TAG="${PERM_TAG}"
             echo "Deploying prism-permissions:${PERM_TAG} (commit ${GIT_SHA})"
-            docker compose pull prism-permissions
-            docker compose up -d --force-recreate --no-deps --pull always prism-permissions
+            docker compose up -d --force-recreate --no-deps prism-permissions
             docker compose ps prism-permissions
             REV="$(docker inspect prism-permissions --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
             echo "prism-permissions image revision: ${REV}"
@@ -93,8 +66,6 @@ jobs:
               echo "::error::prism-permissions revision ${REV} != expected ${GIT_SHA}"
               exit 1
             fi
-            # Health gate: the permissions service must come back up and the new
-            # portal-roles route must exist (401, not 404) before we call it done.
             HEALTH=""
             for attempt in 1 2 3 4 5 6 7 8; do
               sleep 3
