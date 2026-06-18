@@ -47,6 +47,7 @@ const REPOS = [
   { label: 'orbit-ue-template',         value: 'REBUS-Industries/orbit-ue-template' },
   { label: 'orbit-server',              value: 'REBUS-Industries/orbit-server' },
   { label: 'orbit-sdk',                 value: 'REBUS-Industries/orbit-sdk' },
+  { label: 'portal-app',                value: 'REBUS-Industries/portal-app' },
 ];
 
 /** Per-repo CI workflows to watch after merge. crossRepo = deploy step on another repo. */
@@ -109,6 +110,12 @@ const REPO_CI = {
   'REBUS-Industries/orbit-sdk': {
     workflows: ['Build & Test SDK'],
     deploysToDev: false,
+  },
+  'REBUS-Industries/portal-app': {
+    workflows: ['Deploy portal-dev VM'],
+    deployBranch: 'dev',
+    deploysToDev: true,
+    deployTarget: 'portal-dev',
   },
 };
 
@@ -361,8 +368,9 @@ async function getDeployCiSnapshot(repo, afterIso) {
   const config = repoCiConfig(repo);
   const lines = [];
   const watchList = config.workflows?.length ? config.workflows.join(', ') : 'none configured';
+  const deployBranch = config.deployBranch ?? 'main';
 
-  const primary = await getWorkflowBatch(repo, afterIso, config.workflows);
+  const primary = await getWorkflowBatch(repo, afterIso, config.workflows, deployBranch);
   lines.push(`*${repo.replace('REBUS-Industries/', '')}* workflows (${watchList}): ${primary.detail || 'no runs yet'}`);
 
   if (!primary.started) {
@@ -380,7 +388,8 @@ async function getDeployCiSnapshot(repo, afterIso) {
   }
 
   for (const cross of config.crossRepo ?? []) {
-    const crossBatch = await getWorkflowBatch(cross.repo, afterIso, cross.workflows);
+    const crossBranch = repoCiConfig(cross.repo).deployBranch ?? 'main';
+    const crossBatch = await getWorkflowBatch(cross.repo, afterIso, cross.workflows, crossBranch);
     const crossWatch = cross.workflows.join(', ');
     lines.push(`${cross.repo.replace('REBUS-Industries/', '')} (${crossWatch}): ${crossBatch.detail || 'no runs yet'}`);
     if (crossBatch.pending) lines.push(':hourglass: Cross-repo deploy still running.');
@@ -445,6 +454,7 @@ async function checkPR(repo, prNumber, userName, channelId, res, isModal = false
 
 async function pollDeploys(repo, afterIso, maxMinutes = CI_WATCH_MINUTES) {
   const config = repoCiConfig(repo);
+  const deployBranch = config.deployBranch ?? 'main';
   const elapsedMs = Date.now() - new Date(afterIso).getTime();
   const remainingMs = Math.max(0, maxMinutes * 60_000 - elapsedMs);
   const deadline = Date.now() + remainingMs;
@@ -454,7 +464,7 @@ async function pollDeploys(repo, afterIso, maxMinutes = CI_WATCH_MINUTES) {
     if (!firstPass && Date.now() < deadline) await sleep(15_000);
     firstPass = false;
 
-    const primary = await getWorkflowBatch(repo, afterIso, config.workflows);
+    const primary = await getWorkflowBatch(repo, afterIso, config.workflows, deployBranch);
     if (!primary.started) {
       // No watched workflow has appeared. Triggered runs register within
       // seconds, so after the grace window this means the merge's changed paths
@@ -472,7 +482,8 @@ async function pollDeploys(repo, afterIso, maxMinutes = CI_WATCH_MINUTES) {
 
     let crossPending = false;
     for (const cross of config.crossRepo ?? []) {
-      const crossBatch = await getWorkflowBatch(cross.repo, afterIso, cross.workflows);
+      const crossBranch = repoCiConfig(cross.repo).deployBranch ?? 'main';
+      const crossBatch = await getWorkflowBatch(cross.repo, afterIso, cross.workflows, crossBranch);
       if (!crossBatch.started || crossBatch.pending) {
         crossPending = true;
         break;
@@ -493,7 +504,7 @@ async function pollDeploys(repo, afterIso, maxMinutes = CI_WATCH_MINUTES) {
   }
 
   // On timeout, report anything we can see in-flight or failed.
-  const primary = await getWorkflowBatch(repo, afterIso, config.workflows);
+  const primary = await getWorkflowBatch(repo, afterIso, config.workflows, deployBranch);
   if (primary.failedRun) {
     const errors = await safeGetRunFailureSummary(repo, primary.failedRun);
     return failResult(primary.failedRun, primary.detail, errors);
@@ -512,13 +523,13 @@ function buildTimeoutHelp(repo, config) {
   return lines.join('\n');
 }
 
-async function getWorkflowBatch(repo, afterIso, workflowNames) {
+async function getWorkflowBatch(repo, afterIso, workflowNames, deployBranch = 'main') {
   const watch = new Set(workflowNames);
   if (watch.size === 0) {
     return { started: true, pending: false, runs: [], failedRun: null, detail: 'no workflows configured' };
   }
 
-  const res = await GH(`/repos/${repo}/actions/runs?per_page=30&branch=main`);
+  const res = await GH(`/repos/${repo}/actions/runs?per_page=30&branch=${encodeURIComponent(deployBranch)}`);
   if (!res.ok) return { started: false, pending: true, runs: [], failedRun: null, detail: '' };
 
   const body = await res.json().catch(() => ({}));
@@ -628,13 +639,13 @@ function formatFailureMessage(headline, detailText, url = null, linkLabel = 'Vie
   return `:x: ${headline}${link}${formatErrorBlock(detailText)}`;
 }
 
-function formatCiResultMessage(label, result, deploysToDev, pullUrl = null) {
+function formatCiResultMessage(label, result, deploysToDev, pullUrl = null, deployTarget = null) {
   const ciLink = result.url ? ` <${result.url}|View CI run>` : '';
   const prLink = pullUrl ? ` <${pullUrl}|View PR>` : '';
   const detail = result.detail ? ` (${result.detail})` : '';
 
   if (result.conclusion === 'success') {
-    const done = deploysToDev ? 'is deployed to prism' : 'CI passed on main';
+    const done = deploysToDev ? `is deployed to ${deployTarget ?? 'prism'}` : 'CI passed on main';
     const successPrLink = pullUrl ? ` <${pullUrl}|View PR>` : '';
     return `:white_check_mark: *${label} ${done}.*${detail}${ciLink}${successPrLink}`;
   }
@@ -881,7 +892,8 @@ async function finishCiPoll(job) {
   const url = prUrl(repo, prNumber);
   try {
     const result = await pollDeploys(repo, ciStartIso, CI_WATCH_MINUTES);
-    await postToSlack(channelId, formatCiResultMessage(label, result, repoCiConfig(repo).deploysToDev, url));
+        const ciCfg = repoCiConfig(repo);
+    await postToSlack(channelId, formatCiResultMessage(label, result, ciCfg.deploysToDev, url, ciCfg.deployTarget));
     console.log(`CI finished (${label}): ${result.conclusion}`);
   } catch (err) {
     console.error('finishCiPoll error:', err);
