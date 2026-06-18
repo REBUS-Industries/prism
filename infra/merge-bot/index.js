@@ -8,6 +8,8 @@
  * /prism-merge repo#42  → direct merge in another REBUS-Industries repo
  * /prism-merge pin      → post a pinned Merge button to the channel
  *
+
+ * /portal-app-promote   -> merge portal-app dev -> master (Firebase prod)
  * Interactions handled at POST /slack/interact.
  * Events (App Home) handled at POST /slack/events.
  */
@@ -24,6 +26,9 @@ const path    = require('path');
 const { SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, GITHUB_TOKEN } = process.env;
 
 const DEFAULT_REPO = 'REBUS-Industries/prism';
+
+const PORTAL_APP_REPO = 'REBUS-Industries/portal-app';
+let portalPromoteBusy = false;
 const PORT = 3456;
 const STATE_FILE = process.env.STATE_FILE || '/data/state.json';
 const CI_WATCH_MINUTES = 20;
@@ -1207,6 +1212,95 @@ async function runActiveJob(job) {
   }
 }
 
+
+async function getBranchRef(repo, branch) {
+  const res = await GH(`/repos/${repo}/git/ref/${encodeURIComponent(`heads/${branch}`)}`);
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, sha: body.object?.sha, message: body.message ?? '' };
+}
+
+async function getCommitSubject(repo, sha) {
+  const res = await GH(`/repos/${repo}/commits/${sha}`);
+  if (!res.ok) return 'portal-app dev';
+  const body = await res.json().catch(() => ({}));
+  const msg = body.commit?.message ?? '';
+  return msg.split('\n')[0]?.trim() || 'portal-app dev';
+}
+
+/** ship-dev.sh equivalent: merge dev -> master, then fast-forward dev to master. */
+async function promotePortalApp(userName, channelId) {
+  if (portalPromoteBusy) {
+    await postToSlack(channelId, ':information_source: A *portal-app* promote is already running — wait for it to finish.');
+    return;
+  }
+  portalPromoteBusy = true;
+  const repo = PORTAL_APP_REPO;
+  const compareUrl = `https://github.com/${repo}/compare/master...dev`;
+  try {
+    const [dev, master] = await Promise.all([getBranchRef(repo, 'dev'), getBranchRef(repo, 'master')]);
+    if (!dev.ok || !master.ok) {
+      const detail = [
+        !dev.ok ? `dev: HTTP ${dev.status}${dev.message ? ` — ${dev.message}` : ''}` : null,
+        !master.ok ? `master: HTTP ${master.status}${master.message ? ` — ${master.message}` : ''}` : null,
+      ].filter(Boolean).join('\n');
+      await postToSlack(channelId, formatFailureMessage('*portal-app promote failed*', detail, compareUrl));
+      return;
+    }
+    if (dev.sha === master.sha) {
+      await postToSlack(
+        channelId,
+        `:white_check_mark: *portal-app* ` + '`dev`' + ` and ` + '`master`' + ` are already in sync at ` + `\`${dev.sha.slice(0, 7)}\`` + ` — nothing to promote.`,
+      );
+      return;
+    }
+
+    const subject = await getCommitSubject(repo, dev.sha);
+    const mergeMsg = `Merge dev: ${subject} (via /portal-app-promote by @${userName})`;
+    const mergeRes = await GH(`/repos/${repo}/merges`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base: 'master', head: 'dev', commit_message: mergeMsg }),
+    });
+    const mergeBody = await mergeRes.json().catch(() => ({}));
+    if (!mergeRes.ok) {
+      const detail = [
+        mergeBody.message,
+        ...(mergeBody.errors ?? []).map(e => (typeof e === 'string' ? e : e?.message ?? JSON.stringify(e))),
+      ].filter(Boolean).join('\n') || `HTTP ${mergeRes.status}`;
+      await postToSlack(channelId, formatFailureMessage('*portal-app promote failed*', detail, compareUrl));
+      return;
+    }
+
+    const masterSha = mergeBody.sha;
+    const syncRes = await GH(`/repos/${repo}/git/refs/heads/dev`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sha: masterSha, force: false }),
+    });
+    const syncBody = await syncRes.json().catch(() => ({}));
+    if (!syncRes.ok) {
+      await postToSlack(
+        channelId,
+        `:warning: *portal-app* merged ` + '`dev`' + ` -> ` + '`master`' + ` at ` + `\`${masterSha.slice(0, 7)}\`` + ` but could not fast-forward ` + '`dev`' + `: ${syncBody.message ?? `HTTP ${syncRes.status}`}. Prod Firebase deploy should still run; sync branches manually.`,
+      );
+      return;
+    }
+
+    await postToSlack(
+      channelId,
+      `:rocket: *portal-app* promoted by @${userName}: ` + '`dev`' + ` -> ` + '`master`' + ` (` + `\`${masterSha.slice(0, 7)}\`` + `). Firebase App Hosting is rolling out https://portal.rebus.industries — see Firebase console for status.`,
+    );
+  } catch (err) {
+    console.error('promotePortalApp error:', err);
+    await postToSlack(
+      channelId,
+      formatFailureMessage('*portal-app promote failed*', err?.message ?? String(err), compareUrl),
+    );
+  } finally {
+    portalPromoteBusy = false;
+  }
+}
+
 async function startMerge(repo, prNumber, userName, channelId, res, isModal = false) {
   const label = prLabel(repo, prNumber);
   const pr = await getPRInfo(repo, prNumber).catch(() => null);
@@ -1376,6 +1470,19 @@ app.post('/events', async (req, res) => {
     return;
   }
   res.json({ ok: true });
+});
+
+
+// portal-app prod promote (dev -> master)
+app.post('/portal-app-promote', async (req, res) => {
+  if (!verifySlackSignature(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const userName  = req.body.user_name || 'unknown';
+  const channelId = req.body.channel_id;
+  res.json({
+    response_type: 'in_channel',
+    text: `:hourglass_flowing_sand: *@${userName}* is promoting *portal-app* (` + '`dev`' + ` -> ` + '`master`' + ` / Firebase prod)...`,
+  });
+  promotePortalApp(userName, channelId).catch(err => console.error('portal-app-promote:', err));
 });
 
 // ── Slash command ─────────────────────────────────────────────────────────────
