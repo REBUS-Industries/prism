@@ -80,6 +80,9 @@ const { refreshToolAccess, canUseTool, loaded } = useToolAccess();
 
 router.beforeEach(async (to) => {
   if (to.name === 'login') return true;
+  // The legacy node-graph /permissions editor is retired; the tool-access page
+  // is the permissions page now. Redirect old links/bookmarks to it.
+  if (to.path === '/permissions') return { name: 'tool-access' };
   const tool = to.meta.tool as PrismTool | undefined;
   if (!tool) return true;
   if (!loaded.value) await refreshToolAccess();

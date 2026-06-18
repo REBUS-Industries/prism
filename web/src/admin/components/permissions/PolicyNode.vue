@@ -22,8 +22,8 @@ const subtitle = computed(() => props.data.refValue?.trim() || meta.value.kind);
 
 <template>
   <div class="policy-node node-drag-handle" :style="{ '--accent': accent }">
-    <Handle type="target" :position="Position.Left" />
-    <Handle type="source" :position="Position.Right" />
+    <Handle v-if="!data.noTarget" type="target" :position="Position.Left" />
+    <Handle v-if="!data.noSource" type="source" :position="Position.Right" />
 
     <span class="policy-node__icon">
       <Icon :name="meta.icon" :size="16" />
