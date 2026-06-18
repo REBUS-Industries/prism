@@ -8,8 +8,6 @@ import {
   VueFlow,
   MarkerType,
   type Connection,
-  type Edge,
-  type Node,
 } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -17,6 +15,7 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import Icon from '../../shared/Icon.vue';
+import type { PolicyFlowEdge, ToolFlowNode } from '../utils/policyGraphLayout';
 import {
   permissionsApi,
   type PolicyNode as PolicyNodeType,
@@ -29,8 +28,8 @@ const saving = ref(false);
 const error = ref<string | null>(null);
 const status = ref<string | null>(null);
 const grants = ref<ToolGrants>({ roles: {}, users: {} });
-const nodes = ref<Node[]>([]);
-const edges = ref<Edge[]>([]);
+const nodes = ref<ToolFlowNode[]>([]);
+const edges = ref<PolicyFlowEdge[]>([]);
 const selectedNodeId = ref<string | null>(null);
 
 const portalRoles = ['superAdmin', 'admin', 'staff', 'viewer', 'IT Department'];
@@ -42,7 +41,14 @@ const toolLabels: Record<PrismTool, string> = {
   models: 'Model Library',
 };
 
-const selectedNode = computed(() => nodes.value.find((n) => n.id === selectedNodeId.value) ?? null);
+const selectedNode = computed((): ToolFlowNode | null => {
+  const id = selectedNodeId.value;
+  if (!id) return null;
+  for (const n of nodes.value) {
+    if (n.id === id) return n;
+  }
+  return null;
+});
 
 function nodeLabel(n: PolicyNodeType) {
   const ref = n.ref ? ` (${n.ref})` : '';
@@ -50,8 +56,8 @@ function nodeLabel(n: PolicyNodeType) {
 }
 
 function grantsToGraph(g: ToolGrants) {
-  const nextNodes: Node[] = [];
-  const nextEdges: Edge[] = [];
+  const nextNodes: ToolFlowNode[] = [];
+  const nextEdges: PolicyFlowEdge[] = [];
   let y = 80;
 
   for (const role of Object.keys(g.roles)) {
@@ -100,17 +106,20 @@ function grantsToGraph(g: ToolGrants) {
 
 function graphToGrants(): ToolGrants {
   const roleTools: Record<string, PrismTool[]> = {};
-  const toolIds = new Set(
-    nodes.value
-      .filter((n) => n.data?.policyType === 'tool')
-      .map((n) => String(n.data?.refValue ?? '')),
-  );
+  const toolIds = new Set<string>();
+  for (const n of nodes.value) {
+    if (n.data.policyType === 'tool') toolIds.add(String(n.data.refValue ?? ''));
+  }
 
   for (const edge of edges.value) {
-    const source = nodes.value.find((n) => n.id === edge.source);
-    const target = nodes.value.find((n) => n.id === edge.target);
+    let source: ToolFlowNode | undefined;
+    let target: ToolFlowNode | undefined;
+    for (const n of nodes.value) {
+      if (n.id === edge.source) source = n;
+      if (n.id === edge.target) target = n;
+    }
     if (!source || !target) continue;
-    if (source.data?.policyType !== 'role' || target.data?.policyType !== 'tool') continue;
+    if (source.data.policyType !== 'role' || target.data.policyType !== 'tool') continue;
     const role = String(source.data.refValue ?? '').trim();
     const tool = String(target.data.refValue ?? '').trim() as PrismTool;
     if (!role || !toolIds.has(tool)) continue;
@@ -136,7 +145,9 @@ function addRoleNode() {
   if (!role?.trim()) return;
   const ref = role.trim();
   const id = `role-${ref}`;
-  if (nodes.value.some((n) => n.id === id)) return;
+  for (const n of nodes.value) {
+    if (n.id === id) return;
+  }
   nodes.value.push({
     id,
     label: nodeLabel({ id, type: 'role', label: ref, ref, position: { x: 80, y: 80 + nodes.value.length * 24 } }),
@@ -147,7 +158,9 @@ function addRoleNode() {
 
 function addToolNode(tool: PrismTool) {
   const id = `tool-${tool}`;
-  if (nodes.value.some((n) => n.id === id)) return;
+  for (const n of nodes.value) {
+    if (n.id === id) return;
+  }
   nodes.value.push({
     id,
     label: nodeLabel({ id, type: 'tool', label: toolLabels[tool], ref: tool, position: { x: 520, y: 80 + nodes.value.length * 24 } }),
@@ -198,11 +211,11 @@ async function saveGrants() {
 function updateSelectedRef(value: string) {
   const node = selectedNode.value;
   if (!node) return;
-  node.data = { ...node.data, refValue: value, label: value || node.data?.label };
+  node.data = { ...node.data, refValue: value, label: value || node.data.label };
   node.label = nodeLabel({
     id: node.id,
-    type: (node.data?.policyType as PolicyNodeType['type']) ?? 'role',
-    label: String(node.data?.label ?? node.id),
+    type: node.data.policyType,
+    label: node.data.label,
     ref: value || null,
     position: node.position,
   });
