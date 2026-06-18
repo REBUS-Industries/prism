@@ -5,24 +5,41 @@ import {
   type PortalRolesResponse,
   type PortalUser,
 } from '../contracts/portal-access.js';
+import { getIntegrationSetting, getIntegrationSettingOr } from '../config/integrationSettings.js';
 import type { PortalAdapter, PortalAdapterConfig } from './adapter.js';
 
 export class RealPortalAdapter implements PortalAdapter {
   constructor(private config: PortalAdapterConfig) {}
 
-  private headers(extra?: Record<string, string>) {
+  /**
+   * Base URL + service key are read live from settings (cached ~15s) so the
+   * admin can set them in Settings → Portal access key without a restart;
+   * the boot-time config is the fallback.
+   */
+  private async baseUrl(): Promise<string> {
+    return (await getIntegrationSettingOr('portal_base_url', this.config.baseUrl)).replace(/\/$/, '');
+  }
+
+  private async apiKey(): Promise<string | undefined> {
+    return (await getIntegrationSetting('portal_api_key')) ?? this.config.apiKey;
+  }
+
+  private async headers(extra?: Record<string, string>) {
     const h: Record<string, string> = {
       accept: 'application/json',
       ...extra,
     };
-    if (this.config.apiKey) h.authorization = `Bearer ${this.config.apiKey}`;
+    if (!h.authorization) {
+      const key = await this.apiKey();
+      if (key) h.authorization = `Bearer ${key}`;
+    }
     return h;
   }
 
   async exchangeAuthCode(code: string, redirectUri?: string): Promise<string> {
-    const res = await fetch(`${this.config.baseUrl}/portal/oauth/token`, {
+    const res = await fetch(`${await this.baseUrl()}/portal/oauth/token`, {
       method: 'POST',
-      headers: { ...this.headers(), 'content-type': 'application/json' },
+      headers: { ...(await this.headers()), 'content-type': 'application/json' },
       body: JSON.stringify({ code, redirectUri, grantType: 'authorization_code' }),
     });
     if (!res.ok) {
@@ -36,8 +53,8 @@ export class RealPortalAdapter implements PortalAdapter {
   }
 
   async getMe(portalToken: string): Promise<PortalUser> {
-    const res = await fetch(`${this.config.baseUrl}/portal/me`, {
-      headers: this.headers({ authorization: `Bearer ${portalToken}` }),
+    const res = await fetch(`${await this.baseUrl()}/portal/me`, {
+      headers: await this.headers({ authorization: `Bearer ${portalToken}` }),
     });
     if (!res.ok) {
       const detail = await res.text();
@@ -63,8 +80,8 @@ export class RealPortalAdapter implements PortalAdapter {
   }
 
   async getProjectPermissions(portalToken: string, userId: string): Promise<PortalProjectPermissionsResponse> {
-    const res = await fetch(`${this.config.baseUrl}/portal/users/${encodeURIComponent(userId)}/project-permissions`, {
-      headers: this.headers({ authorization: `Bearer ${portalToken}` }),
+    const res = await fetch(`${await this.baseUrl()}/portal/users/${encodeURIComponent(userId)}/project-permissions`, {
+      headers: await this.headers({ authorization: `Bearer ${portalToken}` }),
     });
     if (!res.ok) {
       const detail = await res.text();
@@ -80,7 +97,7 @@ export class RealPortalAdapter implements PortalAdapter {
   }
 
   async listRoles(): Promise<PortalRolesResponse> {
-    const res = await fetch(`${this.config.baseUrl}/portal/roles`, { headers: this.headers() });
+    const res = await fetch(`${await this.baseUrl()}/portal/roles`, { headers: await this.headers() });
     // The portal may not implement the roles endpoint yet — degrade gracefully
     // so PRISM falls back to deriving roles from existing grants.
     if (res.status === 404 || res.status === 501) {

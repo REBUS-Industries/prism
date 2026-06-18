@@ -7,6 +7,7 @@ import Icon from '../../shared/Icon.vue';
 import FixtureTypesManager from '../components/FixtureTypesManager.vue';
 import ExternalMaterialsSettings from '../components/ExternalMaterialsSettings.vue';
 import PortalIdentitySettings from '../components/PortalIdentitySettings.vue';
+import PortalAccessSettings from '../components/PortalAccessSettings.vue';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
 interface FieldDef {
@@ -59,13 +60,18 @@ const saving = reactive<Record<string, boolean>>({});
 const status = ref<string | null>(null);
 const error  = ref<string | null>(null);
 
+// Lightweight summary state for the custom Portal access key tile (it manages
+// its own form; we only need a configured/base-url hint for the tile face).
+const portalAccessConfigured = ref(false);
+const portalAccessBaseUrl = ref('');
+
 const fixtureTypesStore = useFixtureTypesStore();
 
 // ── Tile model ──────────────────────────────────────────────────────────
 // Each section is a tile; clicking either opens a modal (fields/custom) or
 // navigates to a named route (routeName).
 type TileKey = 'orbit-prod' | 'orbit-dev' | 'gdtf' | 'server' | 'workstation' | 'fixture-types'
-             | 'external-materials' | 'portal-identity'
+             | 'external-materials' | 'portal-identity' | 'portal-access'
              | 'users' | 'webhooks' | 'api-keys';
 interface TileDef {
   key: TileKey;
@@ -75,7 +81,7 @@ interface TileDef {
   description: string;
   fields?: FieldDef[];
   testTarget?: 'prod' | 'dev';
-  custom?: 'fixture-types' | 'external-materials' | 'portal-identity';
+  custom?: 'fixture-types' | 'external-materials' | 'portal-identity' | 'portal-access';
   /** Navigate to this named route instead of opening a modal. */
   routeName?: string;
 }
@@ -90,6 +96,7 @@ const tiles: TileDef[] = [
   { key: 'fixture-types',  title: 'Fixture Types',         icon: 'palette',   description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
   { key: 'external-materials', title: 'External materials', icon: 'travel_explore', description: 'Fab, Poly Haven, and ambientCG search providers + Epic OAuth token.', custom: 'external-materials' },
   { key: 'portal-identity', title: 'Portal & Google Workspace', icon: 'account_circle', description: 'Portal OAuth, Google API credentials, workspace sync, and admin Google sign-in.', custom: 'portal-identity' },
+  { key: 'portal-access', title: 'Portal access key', icon: 'vpn_key', description: 'Service API key PRISM uses to read the live role list & permissions from the portal.', custom: 'portal-access' },
   { key: 'server',         title: 'Server',                icon: 'dns',       description: 'Job retention window and maintenance mode.', fields: otherFields },
   { key: 'workstation',    title: 'Workstation agent',     icon: 'lan',       description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
   { key: 'users',          title: 'Users',                 icon: 'group',     description: 'Manage admin accounts and access.', routeName: 'users' },
@@ -115,6 +122,8 @@ async function refresh() {
     const v = all[f.key] ?? '';
     values[f.key] = { value: v, original: v };
   }
+  portalAccessConfigured.value = !!(all['portal_api_key'] ?? '').trim();
+  portalAccessBaseUrl.value = all['portal_base_url'] ?? '';
 }
 
 function isDirty(key: string): boolean {
@@ -243,6 +252,10 @@ function tileSummary(tile: TileDef): string {
       return 'Fab · Poly Haven · ambientCG';
     case 'portal-identity':
       return 'OAuth · Workspace · Google API';
+    case 'portal-access':
+      return portalAccessConfigured.value
+        ? `Key stored${portalAccessBaseUrl.value ? ` · ${portalAccessBaseUrl.value}` : ''}`
+        : 'Not configured';
     case 'users':
     case 'webhooks':
     case 'api-keys':
@@ -305,6 +318,9 @@ onMounted(() => {
 
     <!-- Portal OAuth + Google Workspace -->
     <PortalIdentitySettings v-else-if="activeTile.custom === 'portal-identity'" />
+
+    <!-- Portal service API key (role/permission feed) -->
+    <PortalAccessSettings v-else-if="activeTile.custom === 'portal-access'" />
 
     <!-- Standard key/value field sections -->
     <template v-else>
@@ -382,6 +398,9 @@ onMounted(() => {
       <button @click="closeTile">Close</button>
     </template>
     <template v-else-if="activeTile.custom === 'portal-identity'" #footer>
+      <button @click="closeTile">Close</button>
+    </template>
+    <template v-else-if="activeTile.custom === 'portal-access'" #footer>
       <button @click="closeTile">Close</button>
     </template>
     <template v-else #footer>
