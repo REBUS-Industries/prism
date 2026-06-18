@@ -16,12 +16,16 @@ const NODE_META: Record<PolicyNodeType, { icon: string; accent: string; kind: st
 const props = defineProps<{ data: PolicyNodeData }>();
 
 const meta = computed(() => NODE_META[props.data.policyType] ?? NODE_META.role);
-const accent = computed(() => meta.value.accent);
+const accent = computed(() => (props.data.stale ? '#ef4444' : meta.value.accent));
 const subtitle = computed(() => props.data.refValue?.trim() || meta.value.kind);
 </script>
 
 <template>
-  <div class="policy-node node-drag-handle" :style="{ '--accent': accent }">
+  <div
+    class="policy-node node-drag-handle"
+    :class="{ 'policy-node--stale': data.stale }"
+    :style="{ '--accent': accent }"
+  >
     <Handle v-if="!data.noTarget" type="target" :position="Position.Left" />
     <Handle v-if="!data.noSource" type="source" :position="Position.Right" />
 
@@ -32,7 +36,8 @@ const subtitle = computed(() => props.data.refValue?.trim() || meta.value.kind);
       <span class="policy-node__label">{{ data.label }}</span>
       <span class="policy-node__sub">{{ subtitle }}</span>
     </span>
-    <span class="policy-node__kind">{{ meta.kind }}</span>
+    <span v-if="data.stale" class="policy-node__kind policy-node__kind--stale" title="This role has grants but is no longer in the portal's role list">Stale</span>
+    <span v-else class="policy-node__kind">{{ meta.kind }}</span>
   </div>
 </template>
 
@@ -101,5 +106,14 @@ const subtitle = computed(() => props.data.refValue?.trim() || meta.value.kind);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   padding: 2px 7px;
   border-radius: 9px;
+}
+
+.policy-node--stale {
+  border-style: dashed;
+}
+
+.policy-node__kind--stale {
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 14%, transparent);
 }
 </style>

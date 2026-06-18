@@ -52,10 +52,38 @@ export interface PortalUser {
   email: string;
   googleSub?: string | null;
   displayName?: string | null;
-  /** Portal system role — used for PRISM tool grant resolution. */
+  /**
+   * The user's primary role id (portal `GET /portal/me.roleId`). This is the
+   * canonical key matched against PortalRole.id and tool-grant keys.
+   */
+  roleId?: string | null;
+  /** All role ids the user holds (portal `GET /portal/me.roleIds`). */
+  roleIds?: string[] | null;
+  /** @deprecated Legacy portal system role name; superseded by roleId. */
   role?: PortalSystemRole | string | null;
-  /** Optional custom role id from portal-app. */
+  /** @deprecated Legacy custom role id; superseded by roleId/roleIds. */
   customRoleId?: string | null;
+}
+
+/**
+ * A role defined in the portal. This is the live source of truth for the set
+ * of role ids; PRISM mirrors it so deleted/renamed portal roles never linger.
+ */
+export interface PortalRole {
+  /** Canonical role id matched against PortalUser.role / customRoleId and tool-grant keys. */
+  id: string;
+  /** Human-readable label (defaults to id). */
+  name?: string | null;
+  /** True for built-in portal system roles (superAdmin / admin / staff / viewer). */
+  system?: boolean;
+}
+
+/** GET /api/permissions/portal-roles — the portal's current role catalogue. */
+export interface PortalRolesResponse {
+  roles: PortalRole[];
+  /** False when the portal has not implemented `GET /portal/roles` yet. */
+  supported: boolean;
+  fetchedAt: string;
 }
 
 export interface PortalProjectPermission {
@@ -192,6 +220,8 @@ export interface PortalAdapter {
   exchangeAuthCode(code: string, redirectUri?: string): Promise<string>;
   getMe(portalToken: string): Promise<PortalUser>;
   getProjectPermissions(portalToken: string, userId: string): Promise<PortalProjectPermissionsResponse>;
+  /** List the portal's current roles (service-to-portal call; no user token). */
+  listRoles(): Promise<PortalRolesResponse>;
 }
 
 // ── Google Workspace linking + pre-provisioned users ─────────────────────────

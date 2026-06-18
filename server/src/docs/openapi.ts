@@ -827,6 +827,28 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             email:       { type: 'string', format: 'email' },
             googleSub:   { type: 'string', nullable: true },
             displayName: { type: 'string', nullable: true },
+            roleId:      { type: 'string', nullable: true, description: 'Primary role id. Must match a `PortalRole.id` and the tool-grant keys (case-sensitive). super-admin gets all tools.' },
+            roleIds:     { type: 'array', items: { type: 'string' }, nullable: true, description: 'All role ids the user holds; unioned for grant resolution.' },
+            role:        { type: 'string', nullable: true, description: 'Deprecated legacy system role name; superseded by roleId.' },
+            customRoleId:{ type: 'string', nullable: true, description: 'Deprecated legacy custom role id; superseded by roleId/roleIds.' },
+          },
+        },
+        PortalRole: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id:     { type: 'string', description: 'Canonical role id matched against PortalUser.role/customRoleId and tool-grant keys.' },
+            name:   { type: 'string', nullable: true, description: 'Human-readable label (defaults to id).' },
+            system: { type: 'boolean', description: 'True for built-in portal system roles.' },
+          },
+        },
+        PortalRolesResponse: {
+          type: 'object',
+          required: ['roles', 'supported', 'fetchedAt'],
+          properties: {
+            roles:     { type: 'array', items: { $ref: '#/components/schemas/PortalRole' } },
+            supported: { type: 'boolean', description: 'False when the portal has not implemented GET /portal/roles yet (PRISM then falls back to grant-derived roles).' },
+            fetchedAt: { type: 'string', format: 'date-time' },
           },
         },
         PortalProjectPermission: {
@@ -1922,6 +1944,20 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           security: [],
           responses: {
             '200': { description: 'OK.', content: { 'application/json': { schema: { type: 'object', properties: { status: { type: 'string', example: 'ok' }, adapter: { type: 'string', example: 'mock' } } } } } },
+          },
+        },
+      },
+
+      '/api/permissions/portal-roles': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Permissions'],
+          summary: 'List the portal\u2019s live role catalogue',
+          description: 'Proxies the portal\u2019s current role list (`GET /portal/roles`). The admin Tool access page renders role nodes from this so deleted/renamed portal roles never linger. If the portal has not implemented the endpoint, returns `supported: false` and PRISM falls back to deriving roles from existing grants. **Auth:** admin session cookie (`prism_admin`) or `access:admin` API key.',
+          security: [{ cookieAuth: [] }, { apiKey: [] }],
+          responses: {
+            '200': { description: 'Portal role list.', content: { 'application/json': { schema: { $ref: '#/components/schemas/PortalRolesResponse' } } } },
+            '401': { description: 'Not authorized.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
         },
       },

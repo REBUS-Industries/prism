@@ -2428,6 +2428,7 @@ export const permissionsApi = {
   getToolGrants: () => api.get<ToolGrantsResponse>('/api/permissions/tool-grants'),
   saveToolGrants: (grants: ToolGrants) =>
     api.put<ToolGrantsResponse>('/api/permissions/tool-grants', { grants } as Record<string, unknown>),
+  getPortalRoles: () => api.get<PortalRolesResponse>('/api/permissions/portal-roles'),
 };
 
 export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models';
@@ -2440,6 +2441,20 @@ export interface ToolGrants {
 export interface ToolGrantsResponse {
   grants: ToolGrants;
   updatedAt?: string;
+}
+
+/** A role defined in the portal — the live source of truth for role ids. */
+export interface PortalRole {
+  id: string;
+  name?: string | null;
+  system?: boolean;
+}
+
+export interface PortalRolesResponse {
+  roles: PortalRole[];
+  /** False when the portal has not implemented GET /portal/roles yet. */
+  supported: boolean;
+  fetchedAt: string;
 }
 
 export interface EffectiveToolAccess {

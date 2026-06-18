@@ -8,6 +8,8 @@ export interface PolicyNodeData {
   noTarget?: boolean;
   /** Hide right source handle (e.g. tool column leaves). */
   noSource?: boolean;
+  /** Role has grants but is no longer in the portal's live role list. */
+  stale?: boolean;
 }
 
 export interface PolicyFlowNode {

@@ -39,7 +39,8 @@ On prism-dev with the mock workspace, link domain `rebus.industries`, sync, then
 (convert, visualiser, fixture/material/model libraries). Editable from the portal
 under **Settings â†’ Integrations â†’ PRISM Access** via `GET/PUT /api/permissions/tool-grants`.
 
-**Portal `/portal/me`** returns `role` and `customRoleId` for grant resolution.
+**Portal `/portal/me`** returns `roleId` and `roleIds` (role ids) for grant resolution; super-admin id is `super-admin`.
+**Portal `/portal/roles`** returns the live role catalogue; PRISM proxies it at `GET /api/permissions/tool-grants`'s sibling `GET /api/permissions/portal-roles` so the Tool access page mirrors the portal's current roles (deleted/renamed roles never linger). If the portal hasn't implemented `/portal/roles`, PRISM falls back to deriving roles from grants.
 **PRISM admin `/api/access/me`** returns effective tools for nav gating (portal bearer) or full access (local admin cookie).
 **prism-server** enforces tool grants for API keys only; **local admin login always bypasses** tool checks.
 
