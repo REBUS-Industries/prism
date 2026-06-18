@@ -33,6 +33,31 @@ const CI_WATCH_MINUTES = 20;
 // waiting the full CI_WATCH_MINUTES and posting a misleading timeout.
 const NO_DEPLOY_GRACE_MS = 150_000;
 
+// ── Auto-update / rebase-before-merge ──────────────────────────────────────────
+// Before merging we bring the PR branch up to date with its base (main) so a
+// merge can never land stale code or silently drop concurrent commits that
+// reached main since the PR was opened/approved. We use GitHub's "Update branch"
+// API (it merges the latest base INTO the head branch) rather than a
+// force-pushed rebase: it never rewrites the contributor's history, never drops
+// commits, and lets required CI re-run against the real merged result before we
+// merge. If the update can't be done cleanly (conflict) or post-update checks
+// fail / time out, we ABORT and ask a human to resolve it — we never force.
+const AUTO_UPDATE_ENABLED = (process.env.AUTO_UPDATE_BRANCH ?? 'true').toLowerCase() !== 'false';
+// Final merge method GitHub uses once the branch is up to date and green.
+// 'merge' (default) keeps current behaviour; 'squash' / 'rebase' also valid.
+const MERGE_METHOD = (process.env.MERGE_METHOD ?? 'merge').toLowerCase();
+// How long to wait for required checks to pass after updating the branch.
+const UPDATE_CHECKS_TIMEOUT_MINUTES = Number(process.env.UPDATE_CHECKS_TIMEOUT_MINUTES ?? 15);
+const UPDATE_CHECKS_POLL_SECONDS = Number(process.env.UPDATE_CHECKS_POLL_SECONDS ?? 15);
+// Cap re-updates when main keeps moving under us so a busy main can't loop the
+// bot forever; after this we abort and ask for a retry.
+const UPDATE_MAX_CYCLES = Number(process.env.UPDATE_MAX_CYCLES ?? 5);
+const UPDATE_CHECKS_TIMEOUT_MS = UPDATE_CHECKS_TIMEOUT_MINUTES * 60_000;
+const UPDATE_CHECKS_POLL_MS = UPDATE_CHECKS_POLL_SECONDS * 1_000;
+// After the head moves to a fresh commit, give required checks this long to
+// register before treating a "blocked" state as a (non-check) protection block.
+const BLOCKED_CHECKS_GRACE_MS = 60_000;
+
 const REPOS = [
   { label: 'prism (web / server)',      value: 'REBUS-Industries/prism' },
   { label: 'prism-fixtures-service',    value: 'REBUS-Industries/prism-fixtures-service' },
@@ -279,11 +304,11 @@ async function getPRInfo(repo, prNumber) {
   return res.json();
 }
 
-async function mergePR(repo, prNumber) {
+async function mergePR(repo, prNumber, mergeMethod = MERGE_METHOD) {
   const res = await GH(`/repos/${repo}/pulls/${prNumber}/merge`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ merge_method: 'merge' }),
+    body: JSON.stringify({ merge_method: mergeMethod }),
   });
   const body = await res.json().catch(() => ({}));
   return {
@@ -292,6 +317,36 @@ async function mergePR(repo, prNumber) {
     message: body.message ?? '',
     errors: body.errors ?? [],
   };
+}
+
+/** How many commits the PR head is behind its base (0 = up to date with base). */
+async function getBehindBy(repo, pr) {
+  const base = pr?.base?.ref;
+  const headSha = pr?.head?.sha;
+  if (!base || !headSha) return 0;
+  const res = await GH(`/repos/${repo}/compare/${encodeURIComponent(base)}...${headSha}`);
+  if (!res.ok) {
+    // Compare can fail for cross-fork heads — fall back to GitHub's own signal.
+    return pr.mergeable_state === 'behind' ? 1 : 0;
+  }
+  const body = await res.json().catch(() => ({}));
+  return body.behind_by ?? 0;
+}
+
+/**
+ * Merge the latest base into the PR head branch — the "Update branch" button.
+ * Non-destructive: adds a merge commit, never rewrites or force-pushes history.
+ * Returns 202 on success (the update runs asynchronously), 422 on conflict or
+ * stale expected_head_sha.
+ */
+async function updatePrBranch(repo, prNumber, expectedHeadSha) {
+  const res = await GH(`/repos/${repo}/pulls/${prNumber}/update-branch`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(expectedHeadSha ? { expected_head_sha: expectedHeadSha } : {}),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, message: body.message ?? '' };
 }
 
 const MERGE_STATE_HELP = {
@@ -362,6 +417,34 @@ async function getCommitCheckFailures(repo, sha) {
   }
 
   return lines;
+}
+
+/** Tally check-runs + commit statuses on a SHA into pending / failed / total counts. */
+async function getHeadCheckSummary(repo, sha) {
+  const summary = { total: 0, pending: 0, failed: [] };
+  if (!sha) return summary;
+
+  const checksRes = await GH(`/repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=100`);
+  if (checksRes.ok) {
+    const body = await checksRes.json().catch(() => ({}));
+    for (const c of body.check_runs ?? []) {
+      summary.total++;
+      if (c.status !== 'completed') summary.pending++;
+      else if (['failure', 'cancelled', 'timed_out', 'action_required', 'stale'].includes(c.conclusion)) summary.failed.push(`${c.name}=${c.conclusion}`);
+    }
+  }
+
+  const statusRes = await GH(`/repos/${repo}/commits/${sha}/status`);
+  if (statusRes.ok) {
+    const status = await statusRes.json().catch(() => ({}));
+    for (const s of status.statuses ?? []) {
+      summary.total++;
+      if (s.state === 'pending') summary.pending++;
+      else if (s.state === 'failure' || s.state === 'error') summary.failed.push(`${s.context}=${s.state}`);
+    }
+  }
+
+  return summary;
 }
 
 async function getDeployCiSnapshot(repo, afterIso) {
@@ -902,6 +985,142 @@ async function finishCiPoll(job) {
   }
 }
 
+// Why we declined to merge (used to build the Slack abort message).
+const ABORT_HEADLINES = {
+  conflict: 'it conflicts with `main` and needs a manual rebase',
+  checks_failed: 'checks failed after updating with `main`',
+  checks_timeout: 'checks did not finish in time after updating with `main`',
+  update_failed: 'the branch could not be updated with `main`',
+  too_many_updates: '`main` kept advancing faster than CI could finish',
+  blocked: 'it is blocked by branch protection (required reviews or checks)',
+  draft: 'it is still a draft',
+  closed: 'it is no longer open',
+};
+
+/**
+ * Bring the PR branch up to date with its base and wait for required checks to
+ * pass, so the merge always includes the latest `main` and never lands stale or
+ * untested code, and concurrent commits on `main` are never lost. Returns:
+ *   { status: 'ready', updated }          — safe to merge now
+ *   { status: 'merged' }                  — it got merged while we waited
+ *   { status: 'abort', reason, details }  — do NOT merge; a human must act
+ * Idempotent and safe to re-run (e.g. after a bot restart mid-update).
+ */
+async function prepareBranchForMerge(job) {
+  const { repo, prNumber, channelId, label } = job;
+  const deadline = Date.now() + UPDATE_CHECKS_TIMEOUT_MS;
+  let updateCount = 0;
+  let awaitingNewHeadFrom = null;   // head sha we issued an update from; wait for it to move
+  let lastHeadSha = null;
+  let headChangedAt = Date.now();
+  let postedUpdating = false;
+  let postedWaiting = false;
+  let firstPass = true;
+
+  while (Date.now() < deadline) {
+    if (!firstPass) await sleep(UPDATE_CHECKS_POLL_MS);
+    firstPass = false;
+
+    const pr = await getPRInfo(repo, prNumber);
+    if (!pr) continue;
+    if (pr.state === 'merged' || pr.merged_at) return { status: 'merged' };
+    if (pr.state !== 'open') return { status: 'abort', reason: 'closed', details: `PR is ${pr.state}.` };
+
+    const headSha = pr.head?.sha;
+    const state = pr.mergeable_state;
+
+    if (headSha && headSha !== lastHeadSha) {
+      lastHeadSha = headSha;
+      headChangedAt = Date.now();
+    }
+
+    // Wait for a just-issued update-branch to actually move the head before re-evaluating.
+    if (awaitingNewHeadFrom) {
+      if (headSha && headSha !== awaitingNewHeadFrom) awaitingNewHeadFrom = null;
+      else continue;
+    }
+
+    // Hard conflict with base — cannot update cleanly; a human must resolve it.
+    if (state === 'dirty' || pr.mergeable === false) {
+      const details = await getMergeFailureDetails(repo, prNumber, { message: 'Branch has merge conflicts with base' });
+      return { status: 'abort', reason: 'conflict', details };
+    }
+
+    // Behind base → update before merging, regardless of branch-protection strictness.
+    const behindBy = await getBehindBy(repo, pr);
+    if (behindBy > 0 || state === 'behind') {
+      if (updateCount >= UPDATE_MAX_CYCLES) {
+        return {
+          status: 'abort',
+          reason: 'too_many_updates',
+          details: `Updated ${updateCount}× but \`main\` kept advancing. Retry when main is quieter, or rebase manually.`,
+        };
+      }
+      if (!postedUpdating) {
+        const behindText = behindBy > 0 ? ` by ${behindBy} commit(s)` : '';
+        await postToSlack(channelId, `:arrows_counterclockwise: ${label} is behind \`${pr.base?.ref ?? 'main'}\`${behindText} — updating before merge…`);
+        postedUpdating = true;
+      }
+      const upd = await updatePrBranch(repo, prNumber, headSha);
+      updateCount++;
+      if (!upd.ok) {
+        // 422 + "expected head sha" => branch moved under us (concurrent push); re-evaluate.
+        if (upd.status === 422 && /expected.*head|head.*sha/i.test(upd.message)) continue;
+        if (upd.status === 422 && /conflict/i.test(upd.message)) {
+          const details = await getMergeFailureDetails(repo, prNumber, { status: 422, message: upd.message || 'Update hit a merge conflict' });
+          return { status: 'abort', reason: 'conflict', details };
+        }
+        return { status: 'abort', reason: 'update_failed', details: `update-branch failed: HTTP ${upd.status}${upd.message ? ` — ${upd.message}` : ''}` };
+      }
+      awaitingNewHeadFrom = headSha;   // 202 Accepted: wait for the new merge commit to appear
+      continue;
+    }
+
+    // Up to date with base — decide based on mergeability / required checks.
+    switch (state) {
+      case 'clean':
+      case 'unstable':   // mergeable; only non-required checks unhappy (current behaviour merges these)
+      case 'has_hooks':
+        return { status: 'ready', updated: updateCount > 0 };
+      case 'draft':
+        return { status: 'abort', reason: 'draft', details: 'PR is a draft.' };
+      case 'blocked': {
+        const sum = await getHeadCheckSummary(repo, headSha);
+        if (sum.failed.length) {
+          const details = (await getCommitCheckFailures(repo, headSha)).join('\n') || `Failing checks: ${sum.failed.join(', ')}`;
+          return { status: 'abort', reason: 'checks_failed', details };
+        }
+        if (sum.pending > 0) {
+          if (!postedWaiting) {
+            await postToSlack(channelId, `:hourglass: ${label} updated — waiting for ${sum.pending} required check(s) to pass…`);
+            postedWaiting = true;
+          }
+          continue;
+        }
+        // Nothing pending/failing yet — let required checks register before concluding.
+        if (Date.now() - headChangedAt < BLOCKED_CHECKS_GRACE_MS) continue;
+        return { status: 'abort', reason: 'blocked', details: `mergeable_state=blocked with no pending/failing checks — likely required reviews. ${MERGE_STATE_HELP.blocked}` };
+      }
+      case 'unknown':
+      default:
+        // GitHub still computing mergeability, or a transient state — keep polling.
+        continue;
+    }
+  }
+
+  // Ran out of time waiting for checks to settle.
+  const finalPr = await getPRInfo(repo, prNumber);
+  const finalSum = await getHeadCheckSummary(repo, finalPr?.head?.sha);
+  if (finalSum.failed.length) {
+    return { status: 'abort', reason: 'checks_failed', details: `Failing: ${finalSum.failed.join(', ')}` };
+  }
+  return {
+    status: 'abort',
+    reason: 'checks_timeout',
+    details: `Still ${finalSum.pending} check(s) pending after ${UPDATE_CHECKS_TIMEOUT_MINUTES} min. Check GitHub Actions, then retry.`,
+  };
+}
+
 async function runActiveJob(job) {
   const { repo, prNumber, userName, channelId, label } = job;
   const url = prUrl(repo, prNumber);
@@ -933,6 +1152,34 @@ async function runActiveJob(job) {
       });
       await postToSlack(channelId, formatFailureMessage(`*Failed to merge ${label}*`, details, url));
       return;
+    }
+
+    // Bring the branch up to date with main and wait for checks BEFORE merging,
+    // so we never land stale code or drop concurrent commits. Abort (don't merge)
+    // if it can't be updated cleanly or post-update checks fail/time out.
+    if (AUTO_UPDATE_ENABLED) {
+      job.phase = 'updating';
+      await persistState();
+      const prep = await prepareBranchForMerge(job);
+
+      if (prep.status === 'abort') {
+        await postToSlack(channelId, formatFailureMessage(`*Did not merge ${label}* — ${ABORT_HEADLINES[prep.reason] ?? prep.reason}.`, prep.details, url));
+        return;
+      }
+      if (prep.status === 'merged') {
+        job.phase = 'polling_ci';
+        job.ciStartIso = new Date().toISOString();
+        if (!job.mergedPosted) {
+          await postToSlack(channelId, `:twisted_rightwards_arrows: ${label} was already merged — waiting for CI…`);
+          job.mergedPosted = true;
+        }
+        await persistState();
+        await finishCiPoll(job);
+        return;
+      }
+      if (prep.updated) {
+        await postToSlack(channelId, `:white_check_mark: ${label} is up to date with \`main\` and checks passed — merging…`);
+      }
     }
 
     job.phase = 'merging';
