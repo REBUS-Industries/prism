@@ -21,6 +21,24 @@
       "type": "string",
       "enum": ["viewer", "contributor", "owner", "admin"]
     },
+    "PortalRole": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "description": "Canonical role id matched against PortalUser.role/customRoleId and tool-grant keys." },
+        "name": { "type": "string", "description": "Human-readable label (defaults to id)." },
+        "system": { "type": "boolean", "description": "True for built-in portal system roles." }
+      }
+    },
+    "PortalRolesResponse": {
+      "type": "object",
+      "required": ["roles", "supported", "fetchedAt"],
+      "properties": {
+        "roles": { "type": "array", "items": { "$ref": "#/definitions/PortalRole" } },
+        "supported": { "type": "boolean", "description": "False when the portal has not implemented GET /portal/roles yet." },
+        "fetchedAt": { "type": "string", "format": "date-time" }
+      }
+    },
     "ConnectorManifest": {
       "type": "object",
       "required": ["schema", "userId", "email", "orbitTarget", "orbitServerUrl", "orbitToken", "expiresAt", "sessionId", "projects", "globalAllowedFunctions"],

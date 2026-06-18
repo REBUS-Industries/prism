@@ -1,6 +1,8 @@
 import {
   PORTAL_ACCESS_SCHEMA,
   type PortalProjectPermissionsResponse,
+  type PortalRole,
+  type PortalRolesResponse,
   type PortalUser,
 } from '../contracts/portal-access.js';
 import type { PortalAdapter, PortalAdapterConfig } from './adapter.js';
@@ -68,5 +70,27 @@ export class RealPortalAdapter implements PortalAdapter {
       projects: body.projects ?? [],
       fetchedAt: new Date().toISOString(),
     };
+  }
+
+  async listRoles(): Promise<PortalRolesResponse> {
+    const res = await fetch(`${this.config.baseUrl}/portal/roles`, { headers: this.headers() });
+    // The portal may not implement the roles endpoint yet — degrade gracefully
+    // so PRISM falls back to deriving roles from existing grants.
+    if (res.status === 404 || res.status === 501) {
+      return { roles: [], supported: false, fetchedAt: new Date().toISOString() };
+    }
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`Portal /roles failed (${res.status}): ${detail}`);
+    }
+    const body = (await res.json()) as { roles?: Array<Partial<PortalRole>> };
+    const roles: PortalRole[] = (body.roles ?? [])
+      .map((r) => ({
+        id: String(r.id ?? '').trim(),
+        name: r.name ?? null,
+        system: Boolean(r.system),
+      }))
+      .filter((r) => r.id.length > 0);
+    return { roles, supported: true, fetchedAt: new Date().toISOString() };
   }
 }

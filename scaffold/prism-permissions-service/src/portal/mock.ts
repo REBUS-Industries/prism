@@ -1,6 +1,7 @@
 import {
   PORTAL_ACCESS_SCHEMA,
   type PortalProjectPermissionsResponse,
+  type PortalRolesResponse,
   type PortalUser,
 } from '../contracts/portal-access.js';
 import type { PortalAdapter, PortalAdapterConfig } from './adapter.js';
@@ -68,5 +69,18 @@ export class MockPortalAdapter implements PortalAdapter {
       };
     }
     return { ...projects, fetchedAt: new Date().toISOString() };
+  }
+
+  async listRoles(): Promise<PortalRolesResponse> {
+    return {
+      roles: [
+        { id: 'superAdmin', name: 'Super Admin', system: true },
+        { id: 'admin', name: 'Admin', system: true },
+        { id: 'staff', name: 'Staff', system: true },
+        { id: 'viewer', name: 'Viewer', system: true },
+      ],
+      supported: true,
+      fetchedAt: new Date().toISOString(),
+    };
   }
 }
