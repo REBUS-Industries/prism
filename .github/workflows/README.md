@@ -7,6 +7,7 @@ CI pipelines for PRISM.
 | `web-image` (`web.yml`) | push to `main` or `feat/permissions`, paths `web/**`; **PR:** `npm run build` only (no image push) | Builds + deploys `prism-web` (+ `prism-fixtures`, `prism-models`, `prism-router`) |
 | `server-image` (`server.yml`) | push to `main`, paths `server/**` `shared/**` `agent/install/**` … | Builds + deploys `prism-server` (+ related services) |
 | `permissions-image` (`permissions-image.yml`) | push to `main`, paths `scaffold/prism-permissions-service/**`; **manual:** `workflow_dispatch` | Builds `prism-permissions-service` image from the scaffold + deploys `prism-permissions` |
+| `redeploy-prod` (`redeploy-prod.yml`) | **manual:** `workflow_dispatch`; **auto:** merge to `main` when this workflow file changes | Pull + restart selected VM 212 services (default: `prism-fixtures`, `prism-server`, `prism-materials`, `prism-router`) |
 | `agent.yml` | tag matching `agent-v*` | — |
 | `assimp.yml` | push to `main`, paths `assimp/**` | — |
 
@@ -21,6 +22,15 @@ CI pipelines for PRISM.
 gh workflow run web-image --repo REBUS-Industries/prism --ref <branch>
 gh workflow run server-image --repo REBUS-Industries/prism --ref <branch>
 ```
+
+**Redeploy polyrepo services without rebuilding monorepo images** (e.g. refresh `prism-fixtures-service:latest` on VM 212):
+
+```powershell
+gh workflow run redeploy-prod --repo REBUS-Industries/prism --ref main `
+  -f services="prism-fixtures prism-server prism-materials prism-router"
+```
+
+Polyrepo pulls need org secret `GHCR_PULL_TOKEN` (`read:packages`) when `GITHUB_TOKEN` is repo-scoped only.
 
 **GHCR pull on VM 212:** deploy jobs run `docker login ghcr.io` over SSH before
 `docker compose pull` (see `.github/actions/ghcr-login-vm`). Optional org secret
