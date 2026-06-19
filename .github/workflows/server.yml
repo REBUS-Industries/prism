@@ -118,9 +118,9 @@ jobs:
             else
               echo "PRISM_IMAGE_TAG=${TAG}" >> .env
             fi
-            docker compose pull prism-server prism-materials prism-visualiser prism-agent
-            # prism-web + prism-router are owned by web-image (see web.yml).
-            docker compose up -d prism-server prism-materials prism-visualiser prism-agent
-            docker compose ps prism-server prism-materials prism-visualiser prism-agent
+            docker compose pull prism-server prism-materials
+            # prism-web + prism-router: web-image. Polyrepo services: deploy-service / deploy-on-package.
+            docker compose up -d prism-server prism-materials
+            docker compose ps prism-server prism-materials
             docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
