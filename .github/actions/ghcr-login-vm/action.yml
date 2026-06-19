@@ -9,7 +9,7 @@ inputs:
     description: GHCR username (org or actor that owns the token)
     required: true
   ghcr_token:
-    description: Token with read:packages (GHCR_PULL_TOKEN or GITHUB_TOKEN)
+    description: Token with read:packages (GHCR_PULL_TOKEN, ORBIT_DEPLOY_PAT, or GITHUB_TOKEN)
     required: true
 runs:
   using: composite
