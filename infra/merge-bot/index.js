@@ -1108,6 +1108,22 @@ async function postDraftReadyPrompt(channelId, label, prNumber, repo, userName) 
   });
 }
 
+/**
+ * Replace the original Slack interactive message via response_url (fire-and-forget).
+ * Used to remove action buttons after the user has clicked one.
+ */
+function replaceOriginalMessage(responseUrl, text, blocks) {
+  if (!responseUrl) return;
+  const body = { replace_original: true, text };
+  if (blocks) body.blocks = blocks;
+  fetch(responseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(5000),
+  }).catch(err => console.error('replaceOriginalMessage error:', err));
+}
+
 // Why we declined to merge (used to build the Slack abort message).
 const ABORT_HEADLINES = {
   conflict: 'it conflicts with `main` and needs a manual rebase',
@@ -1710,6 +1726,10 @@ app.post('/interact', async (req, res) => {
         return;
       }
       const label = prLabel(repo, prNumber);
+      // Replace original message immediately (remove buttons so user cannot click again)
+      replaceOriginalMessage(payload.response_url, `:pencil2: Marking ${label} ready for review and merging…`, [
+        { type: 'section', text: { type: 'mrkdwn', text: `:pencil2: Marking *${label}* ready for review and merging…` } },
+      ]);
       await postToSlack(channelId, `:pencil2: Marking ${label} as ready for review…`);
       const ready = await markPRReady(repo, prNumber);
       if (!ready.ok) {
@@ -1741,6 +1761,10 @@ app.post('/interact', async (req, res) => {
       const repo = parts[0];
       const prNumber = parseInt(parts[1] ?? '', 10);
       const label = (repo && !isNaN(prNumber)) ? prLabel(repo, prNumber) : 'PR';
+      // Replace original message in-place (remove buttons so user cannot click again)
+      replaceOriginalMessage(payload.response_url, `:no_entry: Merge cancelled for ${label}.`, [
+        { type: 'section', text: { type: 'mrkdwn', text: `:no_entry: Merge cancelled for *${label}*.` } },
+      ]);
       await postToSlack(channelId, `:no_entry: Merge cancelled for ${label}.`);
       return;
     }
