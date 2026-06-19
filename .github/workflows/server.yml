@@ -84,8 +84,16 @@ jobs:
     # Deploy on main merge, version tags, or manual dispatch.
     runs-on: [self-hosted, prism-deploy]
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/ghcr-login-vm
+        with:
+          ghcr_user: ${{ github.repository_owner }}
+          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Sync split compose + deploy prism-server on VM 212 (prod)
         env:
