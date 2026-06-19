@@ -73,8 +73,16 @@ jobs:
     concurrency:
       group: prism-deploy-vm212
       cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/ghcr-login-vm
+        with:
+          ghcr_user: ${{ github.repository_owner }}
+          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Sync split compose + restart prism-assimp on VM 212 (prod)
         env:

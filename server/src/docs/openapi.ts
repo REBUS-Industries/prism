@@ -1,9 +1,9 @@
 /**
  * OpenAPI 3.1 spec for PRISM's external API.
  *
- * Scope: only the public `/v1/*` namespace. The internal `/api/*` routes
- * (admin SPA, agent uploads, etc.) are intentionally NOT documented here
- * because they're not stable for third-party use.
+ * Scope: public `/v1/*` namespace plus portal-facing `/api/*` surfaces
+ * (visualiser, libraries, access). Internal admin-only routes are omitted
+ * or marked cookie-auth where included for completeness.
  *
  * Served at GET /api/openapi.json (public, no auth required so external
  * developers can read it without provisioning a key).
@@ -390,7 +390,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
     },
     servers: [
       { url: SERVER_URL, description: 'Production - /v1 conversion + receive surface' },
-      { url: API_BASE,   description: 'Production root - /api/visualiser/* portal surface + project attachments' },
+      { url: API_BASE,   description: 'Production root - /api/visualiser/* portal surface, project attachments, and library APIs (/api/fixtures, /api/models, /api/materials)' },
     ],
 
     tags: [
@@ -400,6 +400,9 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Jobs',               description: 'Poll job status and download outputs.' },
       { name: 'Visualiser',         description: 'Start, poll, and stop Pixel Streaming sessions of ORBIT versions, plus multi-viewer share links. Portal-facing - `POST`/`DELETE` require the `visualiser:create_stream` scope. The live signalling + control WebSocket channels (`/ws/visualiser/{runId}/signalling` and `/ws/visualiser/{runId}/control`) and the multi-viewer model cannot be modelled in OpenAPI - see [API_MULTIVIEW_SESSION_CONTROL.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/API_MULTIVIEW_SESSION_CONTROL.md) and [PORTAL_INTEGRATION.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/PORTAL_INTEGRATION.md).' },
       { name: 'Project Attachments',description: 'Upload MVR/GDTF lighting files to an ORBIT project before starting a visualiser stream. Optional second-pass import via `import_mvr.py`.' },
+      { name: 'Fixture library', description: 'GDTF/MVR fixture types — list, edit, import, and connector export. Portal-facing; requires `fixtures:*` scopes on `X-API-Key`. Narrative: `/docs/library-integration`.' },
+      { name: 'Model library', description: 'Generic 3D model assets — list, edit, and async import via the convert pipeline. Portal-facing; requires `models:*` scopes. Narrative: `/docs/library-integration`.' },
+      { name: 'Materials library', description: 'Shared PBR materials + texture slots. Portal-facing; requires `materials:*` scopes. Narrative: `/docs/library-integration`.' },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
       { name: 'Access', description: [
         'Portal-brokered identity + connector authorisation, served by the',
@@ -457,9 +460,16 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             '  `POST /api/projects/{projectId}/attachments` and',
             '  `DELETE /api/projects/{projectId}/attachments/{id}`.',
             '',
-            'Read-only endpoints (`GET`) are gated by `requireAuth` rather than',
-            '`requireScope`; any valid API key, admin cookie, or ORBIT bearer is',
-            'accepted.',
+            '**Library scopes** (fixtures / models / materials — see',
+            '`/docs/library-integration`):',
+            '',
+            '- `fixtures:read|write|delete|import` — `/api/fixtures/*`',
+            '- `models:read|write|delete|import` — `/api/models/*`, `/api/model-import`',
+            '- `materials:read|write|delete` — `/api/materials/*`, `/api/textures/*`',
+            '',
+            'Library routes enforce scopes on **every** method (including GET).',
+            'Visualiser read-only GETs accept any valid key; library GETs require',
+            'the matching `:read` scope.',
           ].join('\n'),
         },
         cookieAuth: {
@@ -1772,6 +1782,393 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { description: 'Missing `visualiser:attach_project_files` scope.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      // ================================================================
+      // Library APIs — fixtures, models, materials (portal-facing)
+      //
+      // Narrative companion: docs/LIBRARY_INTEGRATION.md
+      // (/docs/library-integration). All routes require X-API-Key with the
+      // matching fixtures:* / models:* / materials:* scope.
+      // ================================================================
+
+      '/api/fixtures': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Fixture library'],
+          summary: 'List fixture types',
+          description: 'Paginated catalogue of PRISM-owned fixture types. **Scope:** `fixtures:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'q', schema: { type: 'string' } },
+            { in: 'query', name: 'tags', schema: { type: 'string' }, description: 'Comma-separated tags.' },
+            { in: 'query', name: 'limit', schema: { type: 'integer', default: 50 } },
+            { in: 'query', name: 'cursor', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Fixture list.', content: { 'application/json': { schema: { type: 'object', properties: { fixtures: { type: 'array', items: { type: 'object' } }, nextCursor: { type: 'string', nullable: true } } } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+        post: {
+          tags: ['Fixture library'],
+          summary: 'Create a blank fixture type',
+          description: '**Scope:** `fixtures:write`.',
+          security: [{ apiKey: [] }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, manufacturer: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } } } } } },
+          responses: {
+            '201': { description: 'Created.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/fixtures/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Fixture library'],
+          summary: 'Get fixture detail',
+          description: 'Full definition (parts, DMX modes, beams). **Scope:** `fixtures:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Fixture detail.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        put: {
+          tags: ['Fixture library'],
+          summary: 'Update fixture metadata / definition',
+          description: '**Scope:** `fixtures:write`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object' } } } },
+          responses: {
+            '200': { description: 'Updated.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        delete: {
+          tags: ['Fixture library'],
+          summary: 'Soft-delete a fixture type',
+          description: '**Scope:** `fixtures:delete`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Deleted.', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/fixtures/export': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Fixture library'],
+          summary: 'List connector-exportable fixtures',
+          description: 'Published fixtures only — the connector/ORBIT pull surface. **Scope:** `fixtures:read`.',
+          security: [{ apiKey: [] }],
+          responses: {
+            '200': { description: 'Export summaries.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/fixtures/export/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Fixture library'],
+          summary: 'Get connector export payload',
+          description: 'Self-contained JSON (definition + asset URLs) for ORBIT connectors. **Scope:** `fixtures:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Export payload.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/models': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Model library'],
+          summary: 'List models',
+          description: '**Scope:** `models:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'q', schema: { type: 'string' } },
+            { in: 'query', name: 'category', schema: { type: 'string' } },
+            { in: 'query', name: 'limit', schema: { type: 'integer', default: 50 } },
+            { in: 'query', name: 'cursor', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Model list.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+        post: {
+          tags: ['Model library'],
+          summary: 'Create a blank model',
+          description: '**Scope:** `models:write`.',
+          security: [{ apiKey: [] }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, category: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } } } } } },
+          responses: {
+            '201': { description: 'Created.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/models/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Model library'],
+          summary: 'Get model detail',
+          description: '**Scope:** `models:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Model detail.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        put: {
+          tags: ['Model library'],
+          summary: 'Update model metadata',
+          description: '**Scope:** `models:write`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object' } } } },
+          responses: {
+            '200': { description: 'Updated.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        delete: {
+          tags: ['Model library'],
+          summary: 'Soft-delete a model',
+          description: '**Scope:** `models:delete`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Deleted.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/model-import': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Model library'],
+          summary: 'Import a model file',
+          description: 'Multipart upload; runs the async convert pipeline and creates an Orbit version. **Scope:** `models:import`.',
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    file: { type: 'string', format: 'binary' },
+                    name: { type: 'string' },
+                    category: { type: 'string' },
+                  },
+                  required: ['file'],
+                },
+              },
+            },
+          },
+          responses: {
+            '202': { description: 'Import accepted.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/materials': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Materials library'],
+          summary: 'List materials',
+          description: '**Scope:** `materials:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'q', schema: { type: 'string' } },
+            { in: 'query', name: 'tags', schema: { type: 'string' } },
+            { in: 'query', name: 'limit', schema: { type: 'integer', default: 50 } },
+            { in: 'query', name: 'cursor', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Material list.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+        post: {
+          tags: ['Materials library'],
+          summary: 'Create a blank material',
+          description: '**Scope:** `materials:write`.',
+          security: [{ apiKey: [] }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } } } } } },
+          responses: {
+            '201': { description: 'Created.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/materials/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Materials library'],
+          summary: 'Get material detail',
+          description: 'Slots, textures, and PBR parameters. **Scope:** `materials:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Material detail.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        put: {
+          tags: ['Materials library'],
+          summary: 'Update material metadata / parameters',
+          description: '**Scope:** `materials:write`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object' } } } },
+          responses: {
+            '200': { description: 'Updated.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        delete: {
+          tags: ['Materials library'],
+          summary: 'Soft-delete a material',
+          description: '**Scope:** `materials:delete`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Deleted.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/materials/{id}/download': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Materials library'],
+          summary: 'Download material ZIP',
+          description: 'Streams textures + manifest. **Scope:** `materials:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'ZIP archive.', content: { 'application/zip': { schema: { type: 'string', format: 'binary' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/materials/import': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Materials library'],
+          summary: 'Import a material ZIP',
+          description: 'Megascans-style or packaged glTF/GLB. **Scope:** `materials:write`.',
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    file: { type: 'string', format: 'binary' },
+                    name: { type: 'string' },
+                  },
+                  required: ['file'],
+                },
+              },
+            },
+          },
+          responses: {
+            '201': { description: 'Imported.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/textures': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Materials library'],
+          summary: 'List textures',
+          description: 'Shared texture library backing material slots. **Scope:** `materials:read`.',
+          security: [{ apiKey: [] }],
+          responses: {
+            '200': { description: 'Texture list.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+        post: {
+          tags: ['Materials library'],
+          summary: 'Upload a texture',
+          description: '**Scope:** `materials:write`.',
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  properties: { file: { type: 'string', format: 'binary' } },
+                  required: ['file'],
+                },
+              },
+            },
+          },
+          responses: {
+            '201': { description: 'Created.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
           },
         },
       },

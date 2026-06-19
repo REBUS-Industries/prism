@@ -11,11 +11,21 @@ on:
 jobs:
   deploy-dev:
     runs-on: [self-hosted, prism-deploy]
+    permissions:
+      contents: read
+      packages: read
     concurrency:
       group: prism-deploy-vm212
       cancel-in-progress: false
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/ghcr-login-vm
+        with:
+          ghcr_user: ${{ github.repository_owner }}
+          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
+
       - name: Map package to compose service
         id: map
         run: |
