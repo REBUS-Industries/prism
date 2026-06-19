@@ -396,6 +396,33 @@ async function updatePrBranch(repo, prNumber, expectedHeadSha) {
   return { ok: res.ok, status: res.status, message: body.message ?? '' };
 }
 
+/**
+ * Convert a draft PR to "ready for review" via the GitHub GraphQL API.
+ * The REST PATCH /pulls/:number does not officially support toggling draft
+ * status, so we use the markPullRequestReadyForReview GraphQL mutation.
+ */
+async function markPRReady(repo, prNumber) {
+  // Fetch the node_id required by the GraphQL mutation.
+  const prRes = await GH(`/repos/${repo}/pulls/${prNumber}`);
+  const pr = await prRes.json().catch(() => ({}));
+  const nodeId = pr.node_id;
+  if (!nodeId) return { ok: false, message: 'Could not fetch PR node_id for GraphQL call' };
+
+  const gqlRes = await fetchJsonSafe('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: 'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}',
+      variables: { id: nodeId },
+    }),
+  }, GH_REQUEST_TIMEOUT_MS, 'GitHub GraphQL markPRReady');
+
+  const body = await gqlRes.json().catch(() => ({}));
+  if (body.errors?.length) return { ok: false, message: body.errors.map(e => e.message).join('; ') };
+  if (!gqlRes.ok) return { ok: false, message: `GraphQL HTTP ${gqlRes.status}` };
+  return { ok: true };
+}
+
 const MERGE_STATE_HELP = {
   dirty: 'Merge conflicts with the base branch — rebase onto origin/main, resolve conflicts, push, then retry.',
   blocked: 'Blocked by branch protection (required reviews, status checks, or other rules).',
@@ -1032,6 +1059,47 @@ async function finishCiPoll(job) {
   }
 }
 
+/**
+ * Post an interactive Slack message prompting the user to mark a draft PR
+ * as ready-for-review and proceed with the merge, or cancel.
+ */
+async function postDraftReadyPrompt(channelId, label, prNumber, repo, userName) {
+  const url = prUrl(repo, prNumber);
+  const value = `${repo}::${prNumber}::${userName}`;
+  return slackApi('chat.postMessage', {
+    channel: channelId,
+    text: `⚠️ ${label} is a draft PR — mark it ready for review and continue merging?`,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `:pencil: *<${url}|${label}>* is still a *draft* PR.\nMark it ready for review and continue merging?`,
+        },
+      },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            action_id: 'ready_and_merge',
+            style: 'primary',
+            text: { type: 'plain_text', text: 'Mark Ready & Merge', emoji: false },
+            value,
+          },
+          {
+            type: 'button',
+            action_id: 'cancel_draft_merge',
+            style: 'danger',
+            text: { type: 'plain_text', text: 'Cancel', emoji: false },
+            value,
+          },
+        ],
+      },
+    ],
+  });
+}
+
 // Why we declined to merge (used to build the Slack abort message).
 const ABORT_HEADLINES = {
   conflict: 'it conflicts with `main` and needs a manual rebase',
@@ -1363,6 +1431,14 @@ async function startMerge(repo, prNumber, userName, channelId, res, isModal = fa
       : res.json({ response_type: 'ephemeral', text: msg });
   }
 
+  // Draft PR — prompt the user to mark it ready before merging.
+  if (pr.draft) {
+    if (isModal) res.json({ response_action: 'clear' });
+    else res.json({ response_type: 'ephemeral', text: '' });
+    await postDraftReadyPrompt(channelId, label, prNumber, repo, userName);
+    return;
+  }
+
   const job = {
     repo,
     prNumber,
@@ -1612,6 +1688,55 @@ app.post('/interact', async (req, res) => {
       if (!updated.ok) console.error('views.update failed:', JSON.stringify(updated));
       return;
     }
+
+    // ── Draft PR: "Mark Ready & Merge" button ─────────────────────────────────
+    if (action?.action_id === 'ready_and_merge') {
+      res.json({});
+      const channelId = payload.channel?.id ?? payload.user.id;
+      const parts = (action.value ?? '').split('::');
+      const repo = parts[0];
+      const prNumber = parseInt(parts[1] ?? '', 10);
+      const userName = parts[2] ?? 'unknown';
+      if (!repo || !prNumber || isNaN(prNumber)) {
+        await postToSlack(channelId, ':x: Could not parse draft merge data — please try `/prism-merge` again.');
+        return;
+      }
+      const label = prLabel(repo, prNumber);
+      await postToSlack(channelId, `:pencil2: Marking ${label} as ready for review…`);
+      const ready = await markPRReady(repo, prNumber);
+      if (!ready.ok) {
+        await postToSlack(channelId, `:x: Could not mark ${label} as ready for review: ${ready.message || 'GitHub error'}`);
+        return;
+      }
+      // Drive startMerge without the original Express res (already acknowledged).
+      // isModal=true makes startMerge post its queue/start message to Slack
+      // directly rather than through res. The fakeRes shim forwards modal error
+      // responses (response_action:'errors') to Slack as plain messages.
+      const fakeRes = {
+        json: (data) => {
+          if (data?.errors) {
+            const errText = Object.values(data.errors ?? {}).join('; ');
+            postToSlack(channelId, `:x: ${errText}`).catch(console.error);
+          }
+          // response_action:'clear' — no-op; startMerge will postToSlack itself.
+        },
+      };
+      await startMerge(repo, prNumber, userName, channelId, fakeRes, true);
+      return;
+    }
+
+    // ── Draft PR: "Cancel" button ─────────────────────────────────────────
+    if (action?.action_id === 'cancel_draft_merge') {
+      res.json({});
+      const channelId = payload.channel?.id ?? payload.user.id;
+      const parts = (action.value ?? '').split('::');
+      const repo = parts[0];
+      const prNumber = parseInt(parts[1] ?? '', 10);
+      const label = (repo && !isNaN(prNumber)) ? prLabel(repo, prNumber) : 'PR';
+      await postToSlack(channelId, `:no_entry: Merge cancelled for ${label}.`);
+      return;
+    }
+
     res.json({});
     return;
   }
