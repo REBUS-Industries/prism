@@ -58,10 +58,20 @@ jobs:
             SERVICES='${SERVICES//\'/\'\\\'\'}'
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
-            # shellcheck disable=SC2086
-            docker compose pull \${SERVICES}
-            # shellcheck disable=SC2086
-            docker compose up -d \${SERVICES}
-            # shellcheck disable=SC2086
-            docker compose ps \${SERVICES}
+            FAILED=()
+            # Pull/restart one service at a time so monorepo images deploy even when
+            # a polyrepo pull fails (needs GHCR_PULL_TOKEN — see DEPLOY.md).
+            for svc in \${SERVICES}; do
+              echo "=== \${svc} ==="
+              if docker compose pull "\${svc}" && docker compose up -d "\${svc}"; then
+                docker compose ps "\${svc}"
+              else
+                echo "::warning::\${svc} pull/restart failed"
+                FAILED+=("\${svc}")
+              fi
+            done
+            if [ \${#FAILED[@]} -gt 0 ]; then
+              echo "::error::Failed: \${FAILED[*]} — polyrepo services (e.g. prism-fixtures) need org secret GHCR_PULL_TOKEN (read:packages) on this repo"
+              exit 1
+            fi
           REMOTE
