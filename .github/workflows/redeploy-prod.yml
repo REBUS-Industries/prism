@@ -38,15 +38,17 @@ jobs:
       - uses: ./.github/actions/ghcr-login-vm
         with:
           ghcr_user: ${{ github.repository_owner }}
-          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
+          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.ORBIT_DEPLOY_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Sync compose + nginx, pull and restart services on VM 212
         env:
           DEPLOY_HOST: prism-dev
           SERVICES: ${{ github.event.inputs.services || 'prism-fixtures prism-server prism-materials prism-router' }}
+          DEPLOY_GIT_TOKEN: ${{ secrets.ORBIT_DEPLOY_PAT || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           echo "Redeploying on VM 212: ${SERVICES}"
+          DEPLOY_GIT_TOKEN_B64="$(printf '%s' "${DEPLOY_GIT_TOKEN}" | base64 -w0)"
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             infra/docker-compose.dev.yml \
             "${DEPLOY_HOST}:/opt/prism/docker-compose.dev.yml"
@@ -56,22 +58,47 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" bash -s <<REMOTE
             set -euo pipefail
             SERVICES='${SERVICES//\'/\'\\\'\'}'
+            DEPLOY_GIT_TOKEN="\$(printf '%s' '${DEPLOY_GIT_TOKEN_B64}' | base64 -d)"
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
             FAILED=()
-            # Pull/restart one service at a time so monorepo images deploy even when
-            # a polyrepo pull fails (needs GHCR_PULL_TOKEN — see DEPLOY.md).
+            build_fixtures_from_git() {
+              local tag image build_dir
+              tag="\$(grep '^PRISM_FIXTURES_TAG=' .env 2>/dev/null | cut -d= -f2- || echo latest)"
+              image="ghcr.io/rebus-industries/prism-fixtures-service:\${tag}"
+              build_dir="/tmp/prism-fixtures-build-$$"
+              rm -rf "\${build_dir}"
+              git clone --depth 1 \
+                "https://x-access-token:\${DEPLOY_GIT_TOKEN}@github.com/REBUS-Industries/prism-fixtures-service.git" \
+                "\${build_dir}"
+              docker build -t "\${image}" "\${build_dir}"
+              rm -rf "\${build_dir}"
+            }
             for svc in \${SERVICES}; do
               echo "=== \${svc} ==="
-              if docker compose pull "\${svc}" && docker compose up -d "\${svc}"; then
+              IMG="\$(docker compose config --images "\${svc}" 2>/dev/null | head -1 || true)"
+              PULLED=0
+              if docker compose pull "\${svc}"; then
+                PULLED=1
+                echo "pulled \${svc}"
+              elif [ -n "\${IMG}" ] && docker image inspect "\${IMG}" >/dev/null 2>&1; then
+                echo "::warning::pull failed for \${svc}; restarting local image \${IMG}"
+              elif [ "\${svc}" = "prism-fixtures" ] && [ -n "\${DEPLOY_GIT_TOKEN}" ]; then
+                echo "::warning::pull failed for \${svc}; building from prism-fixtures-service git"
+                if build_fixtures_from_git; then
+                  PULLED=1
+                fi
+              fi
+              if [ "\${PULLED}" = "1" ] || { [ -n "\${IMG}" ] && docker image inspect "\${IMG}" >/dev/null 2>&1; }; then
+                docker compose up -d --force-recreate --no-deps --pull never "\${svc}"
                 docker compose ps "\${svc}"
               else
-                echo "::warning::\${svc} pull/restart failed"
+                echo "::warning::\${svc} has no pullable image and no local/build fallback"
                 FAILED+=("\${svc}")
               fi
             done
             if [ \${#FAILED[@]} -gt 0 ]; then
-              echo "::error::Failed: \${FAILED[*]} — polyrepo services (e.g. prism-fixtures) need org secret GHCR_PULL_TOKEN (read:packages) on this repo"
+              echo "::error::Failed: \${FAILED[*]} — set GHCR_PULL_TOKEN (read:packages) or ensure ORBIT_DEPLOY_PAT can read prism-fixtures-service"
               exit 1
             fi
           REMOTE
