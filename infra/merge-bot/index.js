@@ -38,6 +38,16 @@ const CI_WATCH_MINUTES = 20;
 // waiting the full CI_WATCH_MINUTES and posting a misleading timeout.
 const NO_DEPLOY_GRACE_MS = 150_000;
 
+// --- Network + worker safety -------------------------------------------------
+// A merge must never be blocked forever by a stalled network call. Every GitHub /
+// Slack request is bounded by a timeout, and each active job is bounded by an
+// absolute ceiling, so the single FIFO worker always advances the queue. This
+// guards against undici leaving fetch() permanently unsettled when a keep-alive
+// socket is silently dropped (no error, no resolution) - which wedged the queue.
+const GH_REQUEST_TIMEOUT_MS = Number(process.env.GH_REQUEST_TIMEOUT_MS ?? 30_000);
+const SLACK_REQUEST_TIMEOUT_MS = Number(process.env.SLACK_REQUEST_TIMEOUT_MS ?? 15_000);
+const JOB_HARD_TIMEOUT_MS = Number(process.env.JOB_HARD_TIMEOUT_MINUTES ?? 45) * 60_000;
+
 // ── Auto-update / rebase-before-merge ──────────────────────────────────────────
 // Before merging we bring the PR branch up to date with its base (main) so a
 // merge can never land stale code or silently drop concurrent commits that
@@ -222,7 +232,16 @@ async function runWorker() {
   workerBusy = true;
   try {
     while (active) {
-      await runActiveJob(active);
+      try {
+        await withHardTimeout(runActiveJob(active), JOB_HARD_TIMEOUT_MS, `job ${active.label}`);
+      } catch (err) {
+        console.error(`runActiveJob abandoned (${active?.label}):`, err?.message || err);
+        try {
+          await postToSlack(active.channelId, `:warning: Stopped waiting on *${active.label}* (${err?.message || 'internal timeout'}). Advancing the merge queue.`);
+        } catch (postErr) {
+          console.error('advance-notice post failed:', postErr?.message || postErr);
+        }
+      }
       active = null;
       await persistState();
 
@@ -272,13 +291,36 @@ function queueStatusText() {
 
 // ─── Slack API helpers ────────────────────────────────────────────────────────
 
+// Resolve or reject within `ms`, so a stuck await (e.g. a fetch whose socket was
+// silently dropped) can never block the caller - or the merge worker - forever.
+function withHardTimeout(promise, ms, label) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded ${Math.round(ms / 1000)}s hard timeout`)), ms);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
+// fetch() bounded by an AbortSignal timeout. On any failure/timeout we resolve to
+// a non-ok, Response-like shim so callers that branch on `res.ok` treat it as a
+// transient miss (retry/continue) instead of throwing or hanging.
+async function fetchJsonSafe(url, opts, timeoutMs, label) {
+  try {
+    return await fetch(url, { ...opts, signal: opts.signal ?? AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    console.error(`${label} request failed:`, err?.message || err);
+    return { ok: false, status: 0, _failed: true, headers: { get: () => null }, json: async () => ({}), text: async () => '' };
+  }
+}
+
 async function slackApi(method, body) {
-  const res = await fetch(`https://slack.com/api/${method}`, {
+  const res = await fetchJsonSafe(`https://slack.com/api/${method}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  });
-  const data = await res.json();
+  }, SLACK_REQUEST_TIMEOUT_MS, `Slack ${method}`);
+  const data = await res.json().catch(() => ({ ok: false, error: 'bad_json' }));
   if (!data.ok) console.error(`Slack ${method} failed:`, JSON.stringify(data));
   return data;
 }
@@ -287,7 +329,7 @@ const postToSlack = (channel, text) => slackApi('chat.postMessage', { channel, t
 
 // ─── GitHub API helpers ───────────────────────────────────────────────────────
 
-const GH = (path, opts = {}) => fetch(`https://api.github.com${path}`, {
+const GH = (path, opts = {}) => fetchJsonSafe(`https://api.github.com${path}`, {
   ...opts,
   headers: {
     Authorization: `token ${GITHUB_TOKEN}`,
@@ -295,7 +337,7 @@ const GH = (path, opts = {}) => fetch(`https://api.github.com${path}`, {
     'X-GitHub-Api-Version': '2022-11-28',
     ...(opts.headers ?? {}),
   },
-});
+}, GH_REQUEST_TIMEOUT_MS, `GitHub ${path}`);
 
 async function getOpenPRs(repo) {
   const res = await GH(`/repos/${repo}/pulls?state=open&per_page=50&sort=updated&direction=desc`);
