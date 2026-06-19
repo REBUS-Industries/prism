@@ -1,0 +1,67 @@
+name: redeploy-prod
+
+# Pull + restart selected compose services on VM 212 (prism.rebus.industries).
+# Use after infra/nginx changes, GHCR auth fixes, or to refresh polyrepo images
+# (e.g. prism-fixtures-service) without rebuilding monorepo images.
+#
+# Manual:
+#   gh workflow run redeploy-prod --repo REBUS-Industries/prism --ref main \
+#     -f services="prism-fixtures prism-server prism-materials prism-router"
+#
+# Merging a PR that touches this file also triggers a redeploy (push to main).
+
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Space-separated compose service names to pull + restart'
+        required: false
+        default: 'prism-fixtures prism-server prism-materials prism-router'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/redeploy-prod.yml'
+
+jobs:
+  redeploy:
+    runs-on: [self-hosted, prism-deploy]
+    permissions:
+      contents: read
+      packages: read
+    concurrency:
+      group: prism-deploy-vm212
+      cancel-in-progress: false
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/ghcr-login-vm
+        with:
+          ghcr_user: ${{ github.repository_owner }}
+          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Sync compose + nginx, pull and restart services on VM 212
+        env:
+          DEPLOY_HOST: prism-dev
+          SERVICES: ${{ github.event.inputs.services || 'prism-fixtures prism-server prism-materials prism-router' }}
+        run: |
+          set -euo pipefail
+          echo "Redeploying on VM 212: ${SERVICES}"
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/docker-compose.dev.yml \
+            "${DEPLOY_HOST}:/opt/prism/docker-compose.dev.yml"
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/nginx.router.conf \
+            "${DEPLOY_HOST}:/opt/prism/nginx.router.conf"
+          ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" env \
+            "SERVICES=${SERVICES}" bash -s <<'REMOTE'
+            set -euo pipefail
+            cd /opt/prism
+            cp docker-compose.dev.yml docker-compose.yml
+            # shellcheck disable=SC2086
+            docker compose pull ${SERVICES}
+            # shellcheck disable=SC2086
+            docker compose up -d ${SERVICES}
+            # shellcheck disable=SC2086
+            docker compose ps ${SERVICES}
+          REMOTE
