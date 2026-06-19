@@ -90,7 +90,7 @@ jobs:
       - uses: ./.github/actions/ghcr-login-vm
         with:
           ghcr_user: ${{ github.repository_owner }}
-          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.ORBIT_DEPLOY_PAT || secrets.GITHUB_TOKEN }}
+          ghcr_token: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Sync split compose + deploy prism-web to VM 212 (prod)
         env:

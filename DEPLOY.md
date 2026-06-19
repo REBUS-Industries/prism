@@ -81,9 +81,9 @@ curl -sf http://localhost:8765/health
 
 Before `docker compose pull`, deploy jobs log Docker into `ghcr.io` on the VM
 (`.github/actions/ghcr-login-vm`). VM-stored credentials expire; CI refreshes them
-each deploy. Token priority: **`GHCR_PULL_TOKEN`** → **`ORBIT_DEPLOY_PAT`** (already
-used by agent/visualiser workflows; needs `read:packages` for polyrepo images) →
-**`GITHUB_TOKEN`** (monorepo packages only).
+each deploy. Token priority: **`GHCR_PULL_TOKEN`** → **`GITHUB_TOKEN`** (monorepo packages).
+Polyrepo images (e.g. `prism-fixtures-service`) need `GHCR_PULL_TOKEN`, or use
+`redeploy-prod` which can restart local images / build fixtures from git via `ORBIT_DEPLOY_PAT`.
 
 For manual deploys (e.g. a specific tag):
 
