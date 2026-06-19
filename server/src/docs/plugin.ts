@@ -8,6 +8,9 @@
  *  GET /docs/portal-integration    -> Rendered HTML of
  *                                     docs/PORTAL_INTEGRATION.md (Phase K)
  *  GET /docs/portal-integration.md -> Raw markdown source of same
+ *  GET /docs/library-integration   -> Rendered HTML of
+ *                                     docs/LIBRARY_INTEGRATION.md
+ *  GET /docs/library-integration.md -> Raw markdown source of same
  *
  * No authentication. The spec describes how to authenticate (X-API-Key) and
  * exposing it openly is fine — third-party developers need to read it to
@@ -22,7 +25,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import MarkdownIt from 'markdown-it';
 import { buildOpenApi } from './openapi.js';
 
@@ -55,51 +58,72 @@ const plugin: FastifyPluginAsync = async (app) => {
     });
   }
 
-  // ---- portal-integration narrative companion (Phase K) ----
-  //
-  // Cache the markdown once at process start; the file is shipped
-  // inside the docker image so it's immutable across the container's
-  // lifetime. A SIGHUP-style reload would be over-engineering — a
-  // redeploy ships the updated content.
-  let portalMd: string | null = null;
-  let portalHtml: string | null = null;
-  async function loadPortalDoc(): Promise<{ md: string; html: string }> {
-    if (portalMd && portalHtml) return { md: portalMd, html: portalHtml };
-    const mdPath = join(docsDir, 'PORTAL_INTEGRATION.md');
-    portalMd = await readFile(mdPath, 'utf-8');
-    portalHtml = renderPortalDocHtml(portalMd, publicBaseUrl);
-    return { md: portalMd, html: portalHtml };
+  // ---- narrative markdown companions ----
+  registerMarkdownDoc(app, {
+    slug: 'portal-integration',
+    filename: 'PORTAL_INTEGRATION.md',
+    pageTitle: 'PRISM Visualiser — Portal Integration',
+    docsDir,
+    publicBaseUrl,
+  });
+  registerMarkdownDoc(app, {
+    slug: 'library-integration',
+    filename: 'LIBRARY_INTEGRATION.md',
+    pageTitle: 'PRISM Libraries — Portal Integration',
+    docsDir,
+    publicBaseUrl,
+  });
+};
+
+interface MarkdownDocConfig {
+  slug: string;
+  filename: string;
+  pageTitle: string;
+  docsDir: string;
+  publicBaseUrl: string;
+}
+
+function registerMarkdownDoc(app: FastifyInstance, config: MarkdownDocConfig): void {
+  let cachedMd: string | null = null;
+  let cachedHtml: string | null = null;
+
+  async function loadDoc(): Promise<{ md: string; html: string }> {
+    if (cachedMd && cachedHtml) return { md: cachedMd, html: cachedHtml };
+    const mdPath = join(config.docsDir, config.filename);
+    cachedMd = await readFile(mdPath, 'utf-8');
+    cachedHtml = renderMarkdownDocHtml(cachedMd, config.pageTitle, config.publicBaseUrl, config.slug);
+    return { md: cachedMd, html: cachedHtml };
   }
 
-  app.get('/docs/portal-integration', async (_req, reply) => {
+  app.get(`/docs/${config.slug}`, async (_req, reply) => {
     try {
-      const { html } = await loadPortalDoc();
+      const { html } = await loadDoc();
       reply
         .header('cache-control', 'public, max-age=300')
         .type('text/html; charset=utf-8');
       return html;
     } catch (err) {
-      app.log.error({ err }, 'failed to render portal-integration doc');
+      app.log.error({ err, slug: config.slug }, 'failed to render markdown doc');
       reply.code(404);
-      return { error: 'portal integration guide not available' };
+      return { error: `${config.slug} guide not available` };
     }
   });
 
-  app.get('/docs/portal-integration.md', async (_req, reply) => {
+  app.get(`/docs/${config.slug}.md`, async (_req, reply) => {
     try {
-      const { md } = await loadPortalDoc();
+      const { md: markdown } = await loadDoc();
       reply
         .header('cache-control', 'public, max-age=300')
         .header('access-control-allow-origin', '*')
         .type('text/markdown; charset=utf-8');
-      return md;
+      return markdown;
     } catch (err) {
-      app.log.error({ err }, 'failed to load portal-integration markdown');
+      app.log.error({ err, slug: config.slug }, 'failed to load markdown doc');
       reply.code(404);
-      return { error: 'portal integration guide not available' };
+      return { error: `${config.slug} guide not available` };
     }
   });
-};
+}
 
 function renderRedocPage(specUrl: string): string {
   // Redoc is loaded from the public CDN. We use the standalone bundle so
@@ -144,7 +168,8 @@ function renderRedocPage(specUrl: string): string {
     <span class="brand-dot"></span>
     <span class="brand">PRISM API</span>
     <span class="spacer"></span>
-    <a href="/docs/portal-integration" style="margin-right:12px">Portal integration &rarr;</a>
+    <a href="/docs/portal-integration" style="margin-right:12px">Visualiser guide &rarr;</a>
+    <a href="/docs/library-integration" style="margin-right:12px">Libraries guide &rarr;</a>
     <a class="spec-link" href="${specUrl}" target="_blank" rel="noopener">openapi.json &nearr;</a>
     <a href="/admin/" style="margin-left:12px">Back to admin &rarr;</a>
   </div>
@@ -161,7 +186,7 @@ function renderRedocPage(specUrl: string): string {
 `;
 }
 
-function renderPortalDocHtml(markdown: string, publicBaseUrl: string): string {
+function renderMarkdownDocHtml(markdown: string, pageTitle: string, publicBaseUrl: string, slug: string): string {
   // markdown-it doesn't ship a default theme; we wrap the rendered body
   // in our own CSS that matches the Redoc page's brand chrome above so
   // operators bouncing between the two pages don't get visual whiplash.
@@ -174,7 +199,7 @@ function renderPortalDocHtml(markdown: string, publicBaseUrl: string): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PRISM Visualiser — Portal Integration</title>
+  <title>${pageTitle}</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
@@ -291,7 +316,9 @@ function renderPortalDocHtml(markdown: string, publicBaseUrl: string): string {
     <span class="brand">PRISM</span>
     <span class="spacer"></span>
     <a href="/docs" style="margin-right:12px">&larr; OpenAPI spec</a>
-    <a class="spec-link" href="/docs/portal-integration.md" target="_blank" rel="noopener">view raw .md &nearr;</a>
+    <a href="/docs/portal-integration" style="margin-right:12px">Visualiser guide</a>
+    <a href="/docs/library-integration" style="margin-right:12px">Libraries guide</a>
+    <a class="spec-link" href="/docs/${slug}.md" target="_blank" rel="noopener">view raw .md &nearr;</a>
     <a href="${publicBaseUrl.replace(/\/+$/, '')}/admin/" style="margin-left:12px">admin &rarr;</a>
   </div>
   <main>
