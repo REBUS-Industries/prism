@@ -79,6 +79,12 @@ docker compose ps
 curl -sf http://localhost:8765/health
 ```
 
+Before `docker compose pull`, deploy jobs log Docker into `ghcr.io` on the VM
+(`.github/actions/ghcr-login-vm`). VM-stored credentials expire; CI refreshes them
+each deploy using `GITHUB_TOKEN` (`packages: read`). For org-wide polyrepo images,
+set org secret **`GHCR_PULL_TOKEN`** (PAT or fine-grained token with `read:packages`)
+on `REBUS-Industries/prism` — deploy workflows prefer it over `GITHUB_TOKEN`.
+
 For manual deploys (e.g. a specific tag):
 
 ```bash

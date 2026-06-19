@@ -1,0 +1,25 @@
+name: GHCR login on deploy VM
+description: Authenticate Docker on VM 212 before compose pull (stored credentials expire).
+inputs:
+  deploy_host:
+    description: SSH host alias for live VM 212
+    required: false
+    default: prism-dev
+  ghcr_user:
+    description: GHCR username (org or actor that owns the token)
+    required: true
+  ghcr_token:
+    description: Token with read:packages (GHCR_PULL_TOKEN or GITHUB_TOKEN)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Docker login on deploy VM
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.ghcr_token }}
+        DEPLOY_HOST: ${{ inputs.deploy_host }}
+        GHCR_USER: ${{ inputs.ghcr_user }}
+      run: |
+        echo "${GHCR_TOKEN}" | ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" \
+          "docker login ghcr.io -u '${GHCR_USER}' --password-stdin"

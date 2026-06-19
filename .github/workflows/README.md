@@ -22,4 +22,9 @@ gh workflow run web-image --repo REBUS-Industries/prism --ref <branch>
 gh workflow run server-image --repo REBUS-Industries/prism --ref <branch>
 ```
 
+**GHCR pull on VM 212:** deploy jobs run `docker login ghcr.io` over SSH before
+`docker compose pull` (see `.github/actions/ghcr-login-vm`). Optional org secret
+`GHCR_PULL_TOKEN` (`read:packages`) covers polyrepo images when `GITHUB_TOKEN` is
+repo-scoped only.
+
 There is one PRISM environment — VM 212 (`prism.rebus.industries`); merges to `main` deploy there. `v*` tags / `workflow_dispatch` produce pinned release images. VM 211 is ORBIT-only (the tag-gated PRISM monolith there was decommissioned 2026-06-16).
