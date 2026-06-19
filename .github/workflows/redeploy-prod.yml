@@ -62,6 +62,15 @@ jobs:
             cd /opt/prism
             cp docker-compose.dev.yml docker-compose.yml
             FAILED=()
+            service_image() {
+              docker compose config 2>/dev/null \
+                | awk -v svc="\$1" '
+                    \$0 ~ "^  " svc ":$" { in_svc=1; next }
+                    in_svc && /^  [a-zA-Z0-9_-]+:/ { exit }
+                    in_svc && /^    image:/ { print \$2; exit }
+                  ' \
+                | tr -d '"'
+            }
             build_fixtures_from_git() {
               local tag image build_dir
               tag="\$(grep '^PRISM_FIXTURES_TAG=' .env 2>/dev/null | cut -d= -f2- || echo latest)"
@@ -76,18 +85,18 @@ jobs:
             }
             for svc in \${SERVICES}; do
               echo "=== \${svc} ==="
-              IMG="\$(docker compose config --images "\${svc}" 2>/dev/null | head -1 || true)"
+              IMG="\$(service_image "\${svc}")"
               PULLED=0
               if docker compose pull "\${svc}"; then
                 PULLED=1
                 echo "pulled \${svc}"
-              elif [ -n "\${IMG}" ] && docker image inspect "\${IMG}" >/dev/null 2>&1; then
-                echo "::warning::pull failed for \${svc}; restarting local image \${IMG}"
               elif [ "\${svc}" = "prism-fixtures" ] && [ -n "\${DEPLOY_GIT_TOKEN}" ]; then
                 echo "::warning::pull failed for \${svc}; building from prism-fixtures-service git"
                 if build_fixtures_from_git; then
                   PULLED=1
                 fi
+              elif [ -n "\${IMG}" ] && docker image inspect "\${IMG}" >/dev/null 2>&1; then
+                echo "::warning::pull failed for \${svc}; restarting local image \${IMG}"
               fi
               if [ "\${PULLED}" = "1" ] || { [ -n "\${IMG}" ] && docker image inspect "\${IMG}" >/dev/null 2>&1; }; then
                 docker compose up -d --force-recreate --no-deps --pull never "\${svc}"
