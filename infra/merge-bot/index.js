@@ -641,7 +641,15 @@ async function pollDeploys(repo, afterIso, maxMinutes = CI_WATCH_MINUTES) {
     for (const cross of config.crossRepo ?? []) {
       const crossBranch = repoCiConfig(cross.repo).deployBranch ?? 'main';
       const crossBatch = await getWorkflowBatch(cross.repo, afterIso, cross.workflows, crossBranch);
-      if (!crossBatch.started || crossBatch.pending) {
+      if (!crossBatch.started) {
+        // Cross-repo deploy has not appeared. After the grace window, accept that
+        // repository_dispatch did not fire (broken or not configured) and skip.
+        const elapsed = Date.now() - new Date(afterIso).getTime();
+        if (elapsed > NO_DEPLOY_GRACE_MS) continue; // skip this cross-repo requirement
+        crossPending = true;
+        break;
+      }
+      if (crossBatch.pending) {
         crossPending = true;
         break;
       }
