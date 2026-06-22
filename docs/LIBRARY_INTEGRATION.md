@@ -23,6 +23,22 @@ Your portal integrates via **REST + `X-API-Key`**, not via the admin SPA
 routes (`/admin/#/…`). The admin pages are a reference for what the APIs
 manage; all list/create/edit/delete operations are available programmatically.
 
+### Portal card fields (fixtures + models)
+
+List and detail JSON for **fixtures** and **models** includes everything a
+portal needs to render a library grid without fetching each asset's detail:
+
+| Field | Fixtures | Models |
+|-------|----------|--------|
+| `previewUrl` | Relative path to the active preview GLB | Same |
+| `orbitUrl` | Orbit viewer link when published | Orbit Model Library link after import |
+| `versions[]` | Stored revisions with `downloadedAt` + `previewUrl` | Import history with `createdAt` + `previewUrl` + `orbitUrl` |
+
+OpenAPI schemas: **`FixtureListItem`**, **`FixtureVersionSummary`**,
+**`ModelListItem`**, **`ModelVersionSummary`** on [`/docs`](https://prism.rebus.industries/docs).
+Materials/textures use the same `previewUrl` pattern for 2D thumbnails — see
+[Texture previews](#texture-previews) below.
+
 ---
 
 ## Authentication

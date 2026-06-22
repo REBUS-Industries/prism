@@ -363,6 +363,26 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         '     -H "X-API-Key: $PRISM_KEY"',
         '```',
         '',
+        '## Library APIs (fixtures, models, materials)',
+        '',
+        'Portal-facing asset libraries are served under `/api/fixtures`, `/api/models`,',
+        'and `/api/materials`. Narrative companion:',
+        '[`/docs/library-integration`](' + BASE + '/docs/library-integration).',
+        '',
+        '**List and detail JSON** for fixtures and models includes portal-card fields',
+        'so you can render a library grid without N+1 detail fetches:',
+        '',
+        '| Field | Fixtures | Models |',
+        '| ----- | -------- | ------ |',
+        '| `previewUrl` | Relative path to the active preview GLB (`/api/fixtures/{id}/preview.glb` or `/media/{mediaId}`) | Same under `/api/models/…` |',
+        '| `orbitUrl` | Orbit viewer link when published (`definition.metadata.orbitFixtureRef`) | Orbit Model Library link (`definition.metadata.orbit`) |',
+        '| `versions[]` | Stored GDTF revisions — each row has `downloadedAt`, `previewUrl`, `isActive` | Import history — each row has `createdAt`, `previewUrl`, `orbitUrl`, `isActive` |',
+        '',
+        'Materials and textures use the same `previewUrl` pattern for **2D thumbnails**',
+        '(`GET /api/textures/{id}/preview`). Fixture/model previews are **GLB meshes** —',
+        'stream the path from `previewUrl` with your `X-API-Key` (proxy through your',
+        'portal backend for browser embeds; `<img>` cannot send custom headers).',
+        '',
         '## Permissions & portal-brokered access',
         '',
         'PRISM brokers REBUS-portal identity into a scoped ORBIT token plus a',
@@ -1026,6 +1046,165 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           properties: {
             workspace: { $ref: '#/components/schemas/GoogleWorkspaceLink', nullable: true, description: 'null when no domain is linked.' },
             users:     { type: 'array', items: { $ref: '#/components/schemas/ProvisionedUser' } },
+          },
+        },
+
+        // ============================================================
+        // Library APIs — fixtures, models (portal-facing)
+        // Narrative: /docs/library-integration
+        // ============================================================
+        FixtureVersionSummary: {
+          type: 'object',
+          required: ['id', 'fixtureTypeId', 'gdtfHash', 'downloadedAt', 'isActive', 'previewUrl'],
+          properties: {
+            id:              { type: 'string', format: 'uuid' },
+            fixtureTypeId:   { type: 'string', format: 'uuid' },
+            gdtfShareRid:     { type: 'integer', nullable: true },
+            gdtfShareUuid:    { type: 'string', nullable: true },
+            gdtfVersion:      { type: 'string', nullable: true },
+            revision:         { type: 'string', nullable: true, description: 'GDTF revision label.' },
+            gdtfHash:         { type: 'string' },
+            originalMediaId:  { type: 'string', format: 'uuid', nullable: true },
+            previewModelId:   { type: 'string', format: 'uuid', nullable: true, description: 'Internal media id — use `previewUrl` for portal embeds.' },
+            downloadedAt:     { type: 'string', format: 'date-time', description: 'When PRISM stored this revision.' },
+            isActive:         { type: 'boolean' },
+            previewUrl:       {
+              type: 'string',
+              nullable: true,
+              example: '/api/fixtures/65906ae4-284e-4cb3-9c88-3a02b95163a8/preview.glb',
+              description: 'Relative preview path. Active version → `/preview.glb`; other revisions → `/media/{previewModelId}`.',
+            },
+          },
+        },
+        FixtureListItem: {
+          type: 'object',
+          required: ['id', 'name', 'manufacturer', 'fixtureName', 'tags', 'importSource', 'origin', 'status', 'hasPreview', 'previewUrl', 'orbitUrl', 'versions', 'createdAt', 'updatedAt'],
+          properties: {
+            id:               { type: 'string', format: 'uuid' },
+            name:             { type: 'string' },
+            manufacturer:     { type: 'string' },
+            fixtureName:      { type: 'string' },
+            revision:         { type: 'string', nullable: true },
+            tags:             { type: 'array', items: { type: 'string' } },
+            sourceGdtfHash:   { type: 'string', nullable: true },
+            gdtfShareUuid:    { type: 'string', nullable: true },
+            importSource:     { type: 'string', enum: ['upload', 'gdtf-share', 'mvr-embedded'] },
+            origin:           { type: 'string', enum: ['gdtf-share', 'upload', 'mvr', 'manual'] },
+            activeVersionId:  { type: 'string', format: 'uuid', nullable: true },
+            status:           { type: 'string', example: 'published' },
+            hasPreview:       { type: 'boolean' },
+            updateAvailable:  { type: 'boolean' },
+            previewUrl:       {
+              type: 'string',
+              nullable: true,
+              description: 'Relative path to the active version preview GLB.',
+            },
+            orbitUrl:         {
+              type: 'string',
+              nullable: true,
+              format: 'uri',
+              description: 'Orbit viewer URL when the fixture type was published to Orbit.',
+            },
+            versions:         {
+              type: 'array',
+              items: { $ref: '#/components/schemas/FixtureVersionSummary' },
+              description: 'Stored GDTF revision history.',
+            },
+            createdAt:        { type: 'string', format: 'date-time' },
+            updatedAt:        { type: 'string', format: 'date-time' },
+          },
+        },
+        FixtureDetail: {
+          allOf: [
+            { $ref: '#/components/schemas/FixtureListItem' },
+            {
+              type: 'object',
+              required: ['definition', 'previewModelId'],
+              properties: {
+                definition:      { type: 'object', additionalProperties: true, description: 'Full GDTF-derived definition (parts, DMX, beams, wheels, metadata.orbitFixtureRef).' },
+                previewModelId:  { type: 'string', format: 'uuid', nullable: true },
+                sourceGdtfId:    { type: 'string', nullable: true },
+                activeVersion:   { $ref: '#/components/schemas/FixtureVersionSummary', nullable: true },
+              },
+            },
+          ],
+        },
+        FixtureListResponse: {
+          type: 'object',
+          required: ['fixtures', 'nextCursor'],
+          properties: {
+            fixtures:   { type: 'array', items: { $ref: '#/components/schemas/FixtureListItem' } },
+            nextCursor: { type: 'string', nullable: true },
+          },
+        },
+        FixtureDetailResponse: {
+          type: 'object',
+          required: ['fixture'],
+          properties: {
+            fixture: { $ref: '#/components/schemas/FixtureDetail' },
+          },
+        },
+        ModelVersionSummary: {
+          type: 'object',
+          required: ['id', 'createdAt', 'isActive', 'previewUrl', 'orbitUrl'],
+          properties: {
+            id:          { type: 'string', format: 'uuid' },
+            sourceHash:  { type: 'string', nullable: true },
+            createdAt:   { type: 'string', format: 'date-time', description: 'When the import/version row was created.' },
+            isActive:    { type: 'boolean' },
+            previewUrl:  { type: 'string', nullable: true, description: 'Relative preview GLB path for this version.' },
+            orbitUrl:    { type: 'string', nullable: true, format: 'uri', description: 'Orbit viewer URL when this version carries an Orbit ref.' },
+          },
+        },
+        ModelListItem: {
+          type: 'object',
+          required: ['id', 'name', 'tags', 'status', 'origin', 'hasPreview', 'previewUrl', 'orbitUrl', 'versions', 'createdAt', 'updatedAt'],
+          properties: {
+            id:               { type: 'string', format: 'uuid' },
+            name:             { type: 'string' },
+            category:         { type: 'string', nullable: true },
+            tags:             { type: 'array', items: { type: 'string' } },
+            status:           { type: 'string', enum: ['draft', 'published'] },
+            origin:           { type: 'string', enum: ['upload', 'import', 'manual'] },
+            description:      { type: 'string', nullable: true },
+            activeVersionId:  { type: 'string', format: 'uuid', nullable: true },
+            hasPreview:       { type: 'boolean' },
+            importStatus:     { type: 'string', enum: ['converting', 'complete', 'failed'], nullable: true },
+            importJobId:      { type: 'string', nullable: true },
+            previewUrl:       { type: 'string', nullable: true },
+            orbitUrl:         { type: 'string', nullable: true, format: 'uri' },
+            versions:         { type: 'array', items: { $ref: '#/components/schemas/ModelVersionSummary' } },
+            createdAt:        { type: 'string', format: 'date-time' },
+            updatedAt:        { type: 'string', format: 'date-time' },
+          },
+        },
+        ModelDetail: {
+          allOf: [
+            { $ref: '#/components/schemas/ModelListItem' },
+            {
+              type: 'object',
+              required: ['definition'],
+              properties: {
+                definition:   { type: 'object', additionalProperties: true, description: 'Meshes, material slots, bounding box, metadata.orbit.' },
+                dimensions:   { type: 'object', nullable: true, properties: { length: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } } },
+                boundingBox:  { type: 'object', nullable: true, additionalProperties: true },
+              },
+            },
+          ],
+        },
+        ModelListResponse: {
+          type: 'object',
+          required: ['models', 'nextCursor'],
+          properties: {
+            models:     { type: 'array', items: { $ref: '#/components/schemas/ModelListItem' } },
+            nextCursor: { type: 'string', nullable: true },
+          },
+        },
+        ModelDetailResponse: {
+          type: 'object',
+          required: ['model'],
+          properties: {
+            model: { $ref: '#/components/schemas/ModelDetail' },
           },
         },
       },
@@ -1808,7 +1987,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             { in: 'query', name: 'cursor', schema: { type: 'string' } },
           ],
           responses: {
-            '200': { description: 'Fixture list.', content: { 'application/json': { schema: { type: 'object', properties: { fixtures: { type: 'array', items: { type: 'object' } }, nextCursor: { type: 'string', nullable: true } } } } } },
+            '200': { description: 'Fixture list.', content: { 'application/json': { schema: { $ref: '#/components/schemas/FixtureListResponse' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
           },
@@ -1836,7 +2015,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           security: [{ apiKey: [] }],
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
-            '200': { description: 'Fixture detail.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': { description: 'Fixture detail.', content: { 'application/json': { schema: { $ref: '#/components/schemas/FixtureDetailResponse' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
@@ -1850,7 +2029,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object' } } } },
           responses: {
-            '200': { description: 'Updated.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': { description: 'Updated.', content: { 'application/json': { schema: { $ref: '#/components/schemas/FixtureDetailResponse' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
@@ -1864,6 +2043,27 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
             '200': { description: 'Deleted.', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/fixtures/{id}/preview.glb': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Fixture library'],
+          summary: 'Stream active preview GLB',
+          description: [
+            'Binary glTF preview mesh for the **active** stored version.',
+            'The same path appears on list/detail rows as `previewUrl` when `hasPreview` is true.',
+            '**Scope:** `fixtures:read`.',
+          ].join(' '),
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Preview GLB.', content: { 'model/gltf-binary': { schema: { type: 'string', format: 'binary' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
@@ -1917,7 +2117,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             { in: 'query', name: 'cursor', schema: { type: 'string' } },
           ],
           responses: {
-            '200': { description: 'Model list.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': { description: 'Model list.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ModelListResponse' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
           },
@@ -1945,7 +2145,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           security: [{ apiKey: [] }],
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
-            '200': { description: 'Model detail.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': { description: 'Model detail.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ModelDetailResponse' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
@@ -1959,7 +2159,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object' } } } },
           responses: {
-            '200': { description: 'Updated.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': { description: 'Updated.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ModelDetailResponse' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
@@ -1973,6 +2173,27 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
             '200': { description: 'Deleted.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/models/{id}/preview.glb': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Model library'],
+          summary: 'Stream active preview GLB',
+          description: [
+            'Cached preview mesh after import completes.',
+            'The same path appears on list/detail rows as `previewUrl` when `hasPreview` is true.',
+            '**Scope:** `models:read`.',
+          ].join(' '),
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Preview GLB.', content: { 'model/gltf-binary': { schema: { type: 'string', format: 'binary' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
