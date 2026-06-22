@@ -28,7 +28,7 @@
 import { createReadStream } from 'node:fs';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { and, desc, eq, ilike, isNull, not, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
@@ -148,14 +148,13 @@ async function loadTexture(id: string): Promise<TextureRow | null> {
 
 async function streamTextureBody(
   row: Pick<typeof textures.$inferSelect, 'originalFilename' | 'contentType' | 'storagePath'>,
-  reply: { header: (name: string, value: string) => unknown; send: (body: unknown) => unknown },
+  reply: FastifyReply,
   opts: { cacheControl?: string },
 ) {
   const s = await stat(row.storagePath);
-  reply
-    .header('content-type', row.contentType)
-    .header('content-length', String(s.size))
-    .header('content-disposition', `inline; filename="${encodeURIComponent(row.originalFilename)}"`);
+  reply.header('content-type', row.contentType);
+  reply.header('content-length', String(s.size));
+  reply.header('content-disposition', `inline; filename="${encodeURIComponent(row.originalFilename)}"`);
   if (opts.cacheControl) reply.header('cache-control', opts.cacheControl);
   return reply.send(createReadStream(row.storagePath));
 }
