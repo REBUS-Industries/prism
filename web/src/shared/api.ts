@@ -1826,8 +1826,11 @@ export interface FixtureVersionSummary {
   gdtfHash: string;
   originalMediaId: string | null;
   previewModelId: string | null;
+  /** When PRISM stored this revision (ISO 8601). */
   downloadedAt: string;
   isActive: boolean;
+  /** Relative preview path — active version uses `/preview.glb`, others use `/media/{id}`. */
+  previewUrl: string | null;
 }
 
 export interface FixtureUpdateCheck {
@@ -1859,6 +1862,12 @@ export interface FixtureListItem {
   status: string;
   hasPreview: boolean;
   updateAvailable?: boolean;
+  /** Relative preview path for the active version (`GET …/preview.glb` or media URL). */
+  previewUrl: string | null;
+  /** Orbit viewer URL from `definition.metadata.orbitFixtureRef` when published. */
+  orbitUrl: string | null;
+  /** Stored GDTF revision history with per-version preview URLs. */
+  versions: FixtureVersionSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1868,7 +1877,6 @@ export interface FixtureDetail extends FixtureListItem {
   previewModelId: string | null;
   sourceGdtfId: string | null;
   activeVersion?: FixtureVersionSummary | null;
-  versions?: FixtureVersionSummary[];
 }
 
 export interface GdtfShareMode {
@@ -2302,8 +2310,13 @@ export interface ModelDefinition {
 export interface ModelVersionSummary {
   id: string;
   sourceHash: string | null;
+  /** When the version row was created / import completed (ISO 8601). */
   createdAt: string;
   isActive: boolean;
+  /** Relative preview path — active version uses `/preview.glb`, others use `/media/{id}`. */
+  previewUrl: string | null;
+  /** Orbit viewer URL when this version carries an Orbit ref in its definition snapshot. */
+  orbitUrl: string | null;
 }
 
 export interface ModelListItem {
@@ -2319,6 +2332,12 @@ export interface ModelListItem {
   /** Present while import runs through the convert pipeline. */
   importStatus?: ModelImportStatus | null;
   importJobId?: string | null;
+  /** Relative preview path for the active version (`GET …/preview.glb` or media URL). */
+  previewUrl: string | null;
+  /** Orbit viewer URL from `definition.metadata.orbit` when present. */
+  orbitUrl: string | null;
+  /** Stored revision history with per-version preview + Orbit links. */
+  versions: ModelVersionSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -2327,7 +2346,6 @@ export interface ModelDetail extends ModelListItem {
   definition: ModelDefinition;
   dimensions: { length: number; width: number; height: number } | null;
   boundingBox: ModelBoundingBox | null;
-  versions: ModelVersionSummary[];
 }
 
 export const modelsApi = {
