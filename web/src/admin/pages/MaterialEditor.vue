@@ -304,7 +304,7 @@ const sources = computed<Partial<Record<MaterialSlot, string>>>(() => {
 
   if (material.value) {
 
-    for (const s of material.value.slots) map[s.slot] = texturesApi.downloadUrl(s.textureId);
+    for (const s of material.value.slots) map[s.slot] = s.texture.previewUrl ?? texturesApi.previewUrl(s.textureId);
 
   }
 
@@ -429,17 +429,12 @@ function patchSlotLocal(slot: MaterialSlot, texture: Texture): void {
     assignedAt: new Date().toISOString(),
 
     texture: {
-
       id: texture.id,
-
       displayName: texture.displayName,
-
       originalFilename: texture.originalFilename,
-
       contentType: texture.contentType,
-
       sizeBytes: texture.sizeBytes,
-
+      previewUrl: texture.previewUrl ?? texturesApi.previewUrl(texture.id),
     },
 
   };

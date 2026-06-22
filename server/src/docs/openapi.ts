@@ -2173,6 +2173,23 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         },
       },
 
+      '/api/textures/{id}/preview': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Materials library'],
+          summary: 'Texture inline preview',
+          description: 'Streams the texture body for `<img>` embeds and portal thumbnails. Same bytes as `/download`; adds cache headers. **Scope:** `materials:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Image body.', content: { 'image/*': { schema: { type: 'string', format: 'binary' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
       // ================================================================
       // Permissions & portal-brokered access
       //

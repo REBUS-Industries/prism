@@ -201,6 +201,15 @@ Architecture reference: [`docs/MODEL_LIBRARY.md`](MODEL_LIBRARY.md)
 Materials reference rows in the texture library (`/api/textures/*`). Most
 portals need both read scopes.
 
+List/detail responses include **`previewUrl`** on materials (when a thumbnail
+is set) and on each texture row. Stream the image with the same `X-API-Key`:
+
+```bash
+# Texture inline preview (also on each texture object as previewUrl)
+curl -sS -H "X-API-Key: $PRISM_KEY" -o preview.png \
+  "https://prism.rebus.industries/api/textures/{texture-id}/preview"
+```
+
 ### Read
 
 ```bash
