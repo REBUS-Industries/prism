@@ -33,13 +33,13 @@ const detail = ref<MaterialDetail | null>(null);
 const failed = ref(false);
 
 const staticUrl = computed(() =>
-  props.thumbnailTextureId ? texturesApi.downloadUrl(props.thumbnailTextureId) : null,
+  props.thumbnailTextureId ? texturesApi.previewUrl(props.thumbnailTextureId) : null,
 );
 
 const sources = computed<Partial<Record<MaterialSlot, string>>>(() => {
   if (!detail.value) return {};
   const map: Partial<Record<MaterialSlot, string>> = {};
-  for (const s of detail.value.slots) map[s.slot] = texturesApi.downloadUrl(s.textureId);
+  for (const s of detail.value.slots) map[s.slot] = s.texture.previewUrl ?? texturesApi.previewUrl(s.textureId);
   return map;
 });
 

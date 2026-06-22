@@ -1009,8 +1009,8 @@ export const projectAttachmentsApi = {
 // `/api/materials` (see server/src/api/{textures,materials}.ts). The admin
 // SPA hits these with its existing cookie auth; portal API keys would need
 // the `materials:read` / `materials:write` / `materials:delete` scopes.
-// Texture image bodies stream from `/api/textures/:id/download` — use that
-// URL directly as an <img> src or a three.js TextureLoader URL.
+// Texture image bodies stream from `/api/textures/:id/preview` (embed) or
+// `/api/textures/:id/download` — both require `materials:read` auth.
 
 /** The eight PBR slots a material can carry, in canonical (priority) order.
  *  Mirrors server/src/materials/slots.ts ALLOWED_SLOTS. */
@@ -1095,6 +1095,8 @@ export interface Texture {
   uploadedByApiKeyId: string | null;
   createdAt: string;
   referenceCount: number;
+  /** Inline image path — use with cookie or portal server-side fetch + `X-API-Key`. */
+  previewUrl: string;
 }
 
 /** Resolved slot for a library row — checks display name then original filename. */
@@ -1163,7 +1165,9 @@ export const texturesApi = {
   /** Soft delete. On 409 the {@link ApiError} body carries
    *  `{ error, referencingMaterials: [{ id, name }] }`. */
   remove: (id: string) => api.delete<void>(`/api/textures/${id}`),
-  /** Absolute path usable directly as an <img> src or three.js texture URL. */
+  /** Inline preview — preferred for `<img>` and three.js TextureLoader. */
+  previewUrl: (id: string): string => `/api/textures/${id}/preview`,
+  /** Stream/download URL (same body as preview). */
   downloadUrl: (id: string): string => `/api/textures/${id}/download`,
 };
 
@@ -1179,6 +1183,8 @@ export interface MaterialListItem {
   description: string | null;
   tags: string[];
   thumbnailTextureId: string | null;
+  /** Material card preview when thumbnailTextureId is set. */
+  previewUrl: string | null;
   /** Parent material id when this row was created via Branch. */
   branchedFromId: string | null;
   /** User-created group id, when assigned. */
@@ -1202,6 +1208,7 @@ export interface MaterialSlotTexture {
   originalFilename: string;
   contentType: string;
   sizeBytes: number;
+  previewUrl: string;
 }
 
 export interface MaterialSlotAssignment {
@@ -1373,6 +1380,7 @@ export interface MaterialDetail {
   description: string | null;
   tags: string[];
   thumbnailTextureId: string | null;
+  previewUrl: string | null;
   branchedFromId: string | null;
   groupId: string | null;
   createdByAdminId: string | null;

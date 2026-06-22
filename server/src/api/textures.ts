@@ -19,6 +19,7 @@
  *   GET    /api/textures/:id             metadata
  *   PUT    /api/textures/:id             rename / retag              (write)
  *   DELETE /api/textures/:id             soft-delete (409 if in use) (delete)
+ *   GET    /api/textures/:id/preview     stream inline image for UI embed
  *   GET    /api/textures/:id/download    stream the body
  *
  * Reads require `materials:read`; admin sessions and ORBIT bearers bypass
@@ -35,6 +36,7 @@ import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import { ALLOWED_SLOTS, isMaterialSlot, slotFilenameTokens } from '../materials/slots.js';
 import { normalizeTextureBody } from '../materials/textureNormalize.js';
+import { texturePreviewUrl } from '../materials/texturePreview.js';
 
 const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/prism';
 const TEXTURES_ROOT = resolve(DATA_DIR, 'textures');
@@ -90,6 +92,8 @@ interface PublicTexture {
   uploadedByApiKeyId: string | null;
   createdAt: string;
   referenceCount: number;
+  /** Inline image URL — same auth as metadata (`materials:read`). */
+  previewUrl: string;
 }
 
 type TextureRow = typeof textures.$inferSelect & { referenceCount?: number | string | null };
@@ -106,6 +110,7 @@ function toPublic(row: TextureRow): PublicTexture {
     uploadedByApiKeyId: row.uploadedByApiKeyId,
     createdAt: row.createdAt.toISOString(),
     referenceCount: Number(row.referenceCount ?? 0),
+    previewUrl: texturePreviewUrl(row.id),
   };
 }
 
@@ -139,6 +144,20 @@ async function loadTexture(id: string): Promise<TextureRow | null> {
     .where(and(eq(textures.id, id), isNull(textures.deletedAt)))
     .limit(1);
   return rows[0] ?? null;
+}
+
+async function streamTextureBody(
+  row: Pick<typeof textures.$inferSelect, 'originalFilename' | 'contentType' | 'storagePath'>,
+  reply: { header: (name: string, value: string) => unknown; send: (body: unknown) => unknown },
+  opts: { cacheControl?: string },
+) {
+  const s = await stat(row.storagePath);
+  reply
+    .header('content-type', row.contentType)
+    .header('content-length', String(s.size))
+    .header('content-disposition', `inline; filename="${encodeURIComponent(row.originalFilename)}"`);
+  if (opts.cacheControl) reply.header('cache-control', opts.cacheControl);
+  return reply.send(createReadStream(row.storagePath));
 }
 
 const plugin: FastifyPluginAsync = async (app) => {
@@ -331,6 +350,24 @@ const plugin: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
 
+  /* ---------- GET /api/textures/:id/preview ---------- */
+  app.get<{ Params: { id: string } }>('/:id/preview', {
+    preHandler: [requireAuth, requireScope('materials:read')],
+  }, async (req, reply) => {
+    const parsed = idParam.safeParse(req.params);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid id' });
+    const row = await db.query.textures.findFirst({
+      where: and(eq(textures.id, parsed.data.id), isNull(textures.deletedAt)),
+    });
+    if (!row) return reply.code(404).send({ error: 'not found' });
+
+    try {
+      return await streamTextureBody(row, reply, { cacheControl: 'private, max-age=3600' });
+    } catch {
+      return reply.code(410).send({ error: 'texture body missing on disk' });
+    }
+  });
+
   /* ---------- GET /api/textures/:id/download ---------- */
   app.get<{ Params: { id: string } }>('/:id/download', {
     preHandler: [requireAuth, requireScope('materials:read')],
@@ -343,12 +380,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (!row) return reply.code(404).send({ error: 'not found' });
 
     try {
-      const s = await stat(row.storagePath);
-      reply
-        .header('content-type', row.contentType)
-        .header('content-length', String(s.size))
-        .header('content-disposition', `inline; filename="${encodeURIComponent(row.originalFilename)}"`);
-      return reply.send(createReadStream(row.storagePath));
+      return await streamTextureBody(row, reply, {});
     } catch {
       return reply.code(410).send({ error: 'texture body missing on disk' });
     }

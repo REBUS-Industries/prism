@@ -341,7 +341,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
       <div class="grid">
         <div v-for="t in section.textures" :key="t.id" class="card tex-card">
           <span class="thumb">
-            <img :src="texturesApi.downloadUrl(t.id)" :alt="t.displayName" loading="lazy" />
+            <img :src="t.previewUrl ?? texturesApi.previewUrl(t.id)" :alt="t.displayName" loading="lazy" />
           </span>
 
           <template v-if="editingId === t.id">

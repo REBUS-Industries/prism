@@ -6,6 +6,7 @@ import { db } from '../db/client.js';
 import { materials, materialTextures, textures } from '../db/schema.js';
 import { ALLOWED_SLOTS } from './slots.js';
 import { type MaterialParameters, mergeParameters } from './parameters.js';
+import { texturePreviewUrl } from './texturePreview.js';
 
 const SLOTS_TOTAL = ALLOWED_SLOTS.length;
 
@@ -19,6 +20,7 @@ export interface SlotAssignment {
     originalFilename: string;
     contentType: string;
     sizeBytes: number;
+    previewUrl: string;
   };
 }
 
@@ -28,6 +30,8 @@ export interface MaterialDetail {
   description: string | null;
   tags: string[];
   thumbnailTextureId: string | null;
+  /** Inline preview when a thumbnail texture is set. */
+  previewUrl: string | null;
   branchedFromId: string | null;
   groupId: string | null;
   createdByAdminId: string | null;
@@ -72,6 +76,7 @@ export async function loadMaterialDetail(id: string): Promise<MaterialDetail | n
         originalFilename: r.texOriginalFilename,
         contentType: r.texContentType,
         sizeBytes: r.texSizeBytes,
+        previewUrl: texturePreviewUrl(r.texId),
       },
     }))
     .sort((a, b) => ALLOWED_SLOTS.indexOf(a.slot as never) - ALLOWED_SLOTS.indexOf(b.slot as never));
@@ -82,6 +87,7 @@ export async function loadMaterialDetail(id: string): Promise<MaterialDetail | n
     description: m.description,
     tags: Array.isArray(m.tags) ? m.tags : [],
     thumbnailTextureId: m.thumbnailTextureId,
+    previewUrl: m.thumbnailTextureId ? texturePreviewUrl(m.thumbnailTextureId) : null,
     branchedFromId: m.branchedFromId ?? null,
     groupId: m.groupId ?? null,
     createdByAdminId: m.createdByAdminId,

@@ -39,7 +39,7 @@ needs (read-only browse vs full edit).
 
 | Scope | Fixture library | Model library | Material library |
 |-------|-----------------|---------------|------------------|
-| `{lib}:read` | List, detail, preview GLB, connector export | List, detail, preview GLB | List, detail, download ZIP, texture download |
+| `{lib}:read` | List, detail, preview GLB, connector export | List, detail, preview GLB | List, detail, texture preview, material ZIP export |
 | `{lib}:write` | Create, edit definition, categories, IES | Create, edit metadata | Create, edit, slot assign, duplicate, branch |
 | `{lib}:delete` | Soft-delete fixture types | Soft-delete models | Soft-delete materials / textures |
 | `{lib}:import` | GDTF / GDTF-Share / MVR import | `/api/model-import` upload | `/api/materials/import` ZIP |
@@ -201,6 +201,48 @@ Architecture reference: [`docs/MODEL_LIBRARY.md`](MODEL_LIBRARY.md)
 Materials reference rows in the texture library (`/api/textures/*`). Most
 portals need both read scopes.
 
+### Texture previews
+
+List and detail responses include a **`previewUrl`** path you can stream with
+the same `X-API-Key` used for JSON calls:
+
+| Response | `previewUrl` |
+|----------|----------------|
+| `GET /api/textures`, `GET /api/textures/{id}` | On every texture row |
+| `GET /api/materials` | On each material when `thumbnailTextureId` is set |
+| `GET /api/materials/{id}` | On the material **and** each `slots[].texture` |
+
+Example list item:
+
+```json
+{
+  "id": "a1b2c3d4-…",
+  "displayName": "Concrete albedo",
+  "contentType": "image/png",
+  "previewUrl": "/api/textures/a1b2c3d4-…/preview"
+}
+```
+
+Stream the image:
+
+```bash
+# Preferred embed route (inline, cache-friendly)
+curl -sS -H "X-API-Key: $PRISM_KEY" -o preview.png \
+  "https://prism.rebus.industries/api/textures/{texture-id}/preview"
+
+# Same bytes — attachment-friendly alias
+curl -sS -H "X-API-Key: $PRISM_KEY" -o texture.png \
+  "https://prism.rebus.industries/api/textures/{texture-id}/download"
+```
+
+**Portal UI note:** browser `<img src="…">` cannot send `X-API-Key`. Proxy
+preview bytes through your portal backend, or embed the PRISM admin UI with
+cookie auth. For headless sync, fetch `previewUrl` server-side and cache locally.
+
+Material card thumbnails use `material.previewUrl` (captured preview or albedo
+thumbnail). Slot textures use `slots[].texture.previewUrl` for per-channel
+thumbnails in custom editors.
+
 ### Read
 
 ```bash
@@ -255,6 +297,17 @@ curl -sS -X DELETE -H "X-API-Key: $PRISM_KEY" \
 
 Material groups (`/api/material-groups`) organise the library UI; use the
 same scopes.
+
+### Related endpoints
+
+| Path | Purpose |
+|------|---------|
+| `GET /api/textures/{id}/preview` | Inline texture image for thumbnails |
+| `GET /api/textures/{id}/download` | Stream texture body (same bytes as preview) |
+| `GET /api/materials/{id}/download` | Export material ZIP (textures + manifest) |
+| `GET/POST/PUT/DELETE /api/material-groups` | Organise materials in the library UI |
+
+See also external provider browse/import: [`docs/EXTERNAL_MATERIALS.md`](EXTERNAL_MATERIALS.md)
 
 ---
 

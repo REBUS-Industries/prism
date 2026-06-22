@@ -47,6 +47,7 @@ import { ALLOWED_SLOTS, isMaterialSlot } from '../materials/slots.js';
 import { importMaterialZipBuffer, MAX_MATERIAL_ZIP_BYTES } from '../materials/importZip.js';
 import { duplicateMaterial } from '../materials/duplicate.js';
 import { loadMaterialDetail, SLOTS_TOTAL } from '../materials/loadDetail.js';
+import { texturePreviewUrl } from '../materials/texturePreview.js';
 import { saveMaterialThumbnail, MAX_MATERIAL_THUMBNAIL_BYTES } from '../materials/saveThumbnail.js';
 import {
   type MaterialParametersPatch,
@@ -182,6 +183,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       description: r.description,
       tags: Array.isArray(r.tags) ? r.tags : [],
       thumbnailTextureId: r.thumbnailTextureId,
+      previewUrl: r.thumbnailTextureId ? texturePreviewUrl(r.thumbnailTextureId) : null,
       branchedFromId: r.branchedFromId ?? null,
       groupId: r.groupId ?? null,
       slotsFilled: Number(r.slotsFilled ?? 0),
