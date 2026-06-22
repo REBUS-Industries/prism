@@ -870,7 +870,7 @@ async function removeFixture(): Promise<void> {
 
   await fixturesApi.remove(props.id);
 
-  void router.push({ name: 'fixtures' });
+  void router.push({ name: 'prism-library' });
 
 }
 
@@ -898,7 +898,7 @@ onMounted(() => {
 
       <header class="editor-head">
 
-        <RouterLink :to="{ name: 'fixtures' }" class="back muted"><Icon name="arrow_back" :size="14" /> Fixture library</RouterLink>
+        <RouterLink :to="{ name: 'prism-library' }" class="back muted"><Icon name="arrow_back" :size="14" /> Fixture library</RouterLink>
 
         <div class="head-main">
 
@@ -952,11 +952,6 @@ onMounted(() => {
           </div>
 
           <div class="head-actions">
-
-            <RouterLink
-              :to="{ name: 'fixture-debug', params: { id: fixture.id } }"
-              class="btn-debug"
-            >Debug GDTF 3D</RouterLink>
 
             <button
               type="button"
