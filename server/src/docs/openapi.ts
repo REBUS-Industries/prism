@@ -402,7 +402,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Project Attachments',description: 'Upload MVR/GDTF lighting files to an ORBIT project before starting a visualiser stream. Optional second-pass import via `import_mvr.py`.' },
       { name: 'Fixture library', description: 'GDTF/MVR fixture types — list, edit, import, and connector export. Portal-facing; requires `fixtures:*` scopes on `X-API-Key`. Narrative: `/docs/library-integration`.' },
       { name: 'Model library', description: 'Generic 3D model assets — list, edit, and async import via the convert pipeline. Portal-facing; requires `models:*` scopes. Narrative: `/docs/library-integration`.' },
-      { name: 'Materials library', description: 'Shared PBR materials + texture slots. Portal-facing; requires `materials:*` scopes. Narrative: `/docs/library-integration`.' },
+      { name: 'Materials library', description: 'Shared PBR materials + texture slots. JSON list/detail responses include `previewUrl` for material thumbnails and texture rows; stream images via `GET /api/textures/{id}/preview`. Portal-facing; requires `materials:*` scopes. Narrative: `/docs/library-integration`.' },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
       { name: 'Access', description: [
         'Portal-brokered identity + connector authorisation, served by the',
@@ -2016,7 +2016,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         get: {
           tags: ['Materials library'],
           summary: 'List materials',
-          description: '**Scope:** `materials:read`.',
+          description: 'Paginated material list. Each row includes `previewUrl` when `thumbnailTextureId` is set (card thumbnail). **Scope:** `materials:read`.',
           security: [{ apiKey: [] }],
           parameters: [
             { in: 'query', name: 'q', schema: { type: 'string' } },
@@ -2049,7 +2049,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         get: {
           tags: ['Materials library'],
           summary: 'Get material detail',
-          description: 'Slots, textures, and PBR parameters. **Scope:** `materials:read`.',
+          description: 'Slots, textures, PBR parameters. Material and each `slots[].texture` include `previewUrl` for inline image fetch. **Scope:** `materials:read`.',
           security: [{ apiKey: [] }],
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
@@ -2140,7 +2140,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         get: {
           tags: ['Materials library'],
           summary: 'List textures',
-          description: 'Shared texture library backing material slots. **Scope:** `materials:read`.',
+          description: 'Shared texture library backing material slots. Each texture row includes `previewUrl` (`GET /api/textures/{id}/preview`). **Scope:** `materials:read`.',
           security: [{ apiKey: [] }],
           responses: {
             '200': { description: 'Texture list.', content: { 'application/json': { schema: { type: 'object' } } } },
@@ -2178,11 +2178,45 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         get: {
           tags: ['Materials library'],
           summary: 'Texture inline preview',
-          description: 'Streams the texture body for `<img>` embeds and portal thumbnails. Same bytes as `/download`; adds cache headers. **Scope:** `materials:read`.',
+          description: 'Streams the texture body for portal thumbnails and `<img>` embeds. Same bytes as `/download`; adds `Cache-Control`. Requires `X-API-Key` with `materials:read` — proxy server-side for browser UI. **Scope:** `materials:read`.',
           security: [{ apiKey: [] }],
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
             '200': { description: 'Image body.', content: { 'image/*': { schema: { type: 'string', format: 'binary' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/textures/{id}/download': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Materials library'],
+          summary: 'Download texture body',
+          description: 'Streams the texture file (`Content-Disposition: inline`). Same bytes as `/preview`. **Scope:** `materials:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Image body.', content: { 'image/*': { schema: { type: 'string', format: 'binary' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/textures/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Materials library'],
+          summary: 'Get texture metadata',
+          description: 'Texture row including `previewUrl`. **Scope:** `materials:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Texture metadata.', content: { 'application/json': { schema: { type: 'object' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
