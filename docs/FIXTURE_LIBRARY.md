@@ -40,6 +40,8 @@ GDTF-Share credentials: **Settings → GDTF-Share** (`gdtf_share_username`, `gdt
 
 Orbit fixture publish: **Settings → Orbit** (`orbit_server_url`, `orbit_token`) plus `ORBIT_FIXTURES_PROJECT_ID` on `prism-fixtures-service`. Published refs are stored on `definition.metadata.orbitFixtureRef`.
 
+**Assembly & motion (portal docs):** [`/docs/fixture-assembly-and-motion`](https://prism.rebus.industries/docs/fixture-assembly-and-motion) — GDTF scene graph, pan/tilt rig, beams, multi-mode geometry. Canonical markdown also lives in `prism-fixtures-service/docs/fixture-assembly-and-motion.md`.
+
 ## Connectors
 
 - **Rhino:** `prism:*` user strings on objects; send emits `FixtureInstance` alongside geometry.

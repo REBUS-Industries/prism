@@ -116,6 +116,9 @@ curl -sS -H "X-API-Key: $PRISM_KEY" -o preview.glb \
 
 **Scopes:** `fixtures:read`
 
+Narrative companion for assembly, pan/tilt motion, and the GDTF scene graph:
+[`/docs/fixture-assembly-and-motion`](https://prism.rebus.industries/docs/fixture-assembly-and-motion).
+
 ### List/detail fields (portal cards)
 
 List and detail responses include **`previewUrl`**, **`orbitUrl`**, and a
@@ -426,6 +429,7 @@ headless or cross-origin portals, use the REST API with scoped API keys
 ## See also
 
 - OpenAPI spec: [`https://prism.rebus.industries/docs`](https://prism.rebus.industries/docs)
+- Fixture assembly & motion: [`/docs/fixture-assembly-and-motion`](https://prism.rebus.industries/docs/fixture-assembly-and-motion)
 - Visualiser portal guide: [`/docs/portal-integration`](https://prism.rebus.industries/docs/portal-integration)
 - Permissions / tool grants: [`docs/PERMISSIONS.md`](PERMISSIONS.md)
 - Portal contract (identity): [`docs/PORTAL_CONTRACT.md`](PORTAL_CONTRACT.md)
