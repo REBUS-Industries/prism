@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Material library card thumbnail. Uses the persisted albedo / captured preview
- * image when available; otherwise lazy-loads material detail and renders a
- * compact flat swatch (same look as the editor preview).
+ * Material library card thumbnail. Lazy-loads material detail and renders a
+ * compact sphere swatch so metallic / reflective materials show environment
+ * reflections (same capture path as the editor thumbnail).
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import MaterialPreviewSwatch from './MaterialPreviewSwatch.vue';
@@ -32,10 +32,6 @@ const loading = ref(false);
 const detail = ref<MaterialDetail | null>(null);
 const failed = ref(false);
 
-const staticUrl = computed(() =>
-  props.thumbnailTextureId ? texturesApi.previewUrl(props.thumbnailTextureId) : null,
-);
-
 const sources = computed<Partial<Record<MaterialSlot, string>>>(() => {
   if (!detail.value) return {};
   const map: Partial<Record<MaterialSlot, string>> = {};
@@ -52,7 +48,7 @@ const parameters = computed<MaterialParameters>(() =>
 let observer: IntersectionObserver | null = null;
 
 async function loadPreview(): Promise<void> {
-  if (staticUrl.value || detail.value || loading.value || failed.value) return;
+  if (detail.value || loading.value || failed.value) return;
   loading.value = true;
   try {
     detail.value = await materialsApi.get(props.materialId);
@@ -64,7 +60,6 @@ async function loadPreview(): Promise<void> {
 }
 
 onMounted(() => {
-  if (staticUrl.value) return;
   const el = rootRef.value;
   if (!el || typeof IntersectionObserver === 'undefined') {
     shouldRender.value = true;
@@ -99,9 +94,8 @@ defineExpose({
 
 <template>
   <span ref="rootRef" class="material-card-preview">
-    <img v-if="staticUrl" :src="staticUrl" :alt="alt" loading="lazy" />
     <MaterialPreviewSwatch
-      v-else-if="shouldRender && detail"
+      v-if="shouldRender && detail"
       :sources="sources"
       :parameters="parameters"
     />
@@ -116,12 +110,6 @@ defineExpose({
   display: block;
   width: 100%;
   height: 100%;
-}
-.material-card-preview img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
 }
 .material-card-preview :deep(.material-preview-swatch) {
   width: 100%;

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Compact flat PBR swatch preview — same material wiring as GlbViewer but fixed
- * studio lighting, orthographic camera, no controls. Used for material library
- * cards and for offscreen thumbnail capture in the editor.
+ * Compact PBR swatch preview on a sphere — same material wiring as GlbViewer but
+ * fixed studio lighting and no controls. Used for material library cards and for
+ * offscreen thumbnail capture in the editor.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
@@ -19,7 +19,8 @@ import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 type SlotSources = Partial<Record<MaterialSlot, string | null>>;
 
 const STUDIO_HDRI = '/hdri/studio_small_01_1k.hdr';
-const SWATCH_HALF_EXTENT = 1;
+const SPHERE_RADIUS = 1;
+const CAMERA_DISTANCE = 3.2;
 
 const props = defineProps<{
   sources?: SlotSources;
@@ -35,7 +36,7 @@ const wrapRef = ref<HTMLDivElement | null>(null);
 
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
-let camera: THREE.OrthographicCamera | null = null;
+let camera: THREE.PerspectiveCamera | null = null;
 let material: THREE.MeshPhysicalMaterial | THREE.MeshBasicMaterial | null = null;
 let isUnlitMaterial = false;
 let mesh: THREE.Mesh | null = null;
@@ -55,7 +56,7 @@ let lastSide: THREE.Side = THREE.FrontSide;
 let lastAlphaTest = 0;
 
 function buildGeometry(): THREE.BufferGeometry {
-  const geo = new THREE.PlaneGeometry(SWATCH_HALF_EXTENT * 2, SWATCH_HALF_EXTENT * 2);
+  const geo = new THREE.SphereGeometry(SPHERE_RADIUS, 64, 48);
   const uv = geo.getAttribute('uv');
   if (uv) {
     geo.setAttribute('uv1', uv.clone());
@@ -309,15 +310,9 @@ async function loadEnvironment(): Promise<void> {
   }
 }
 
-function updateOrthoFrustum(width: number, height: number): void {
+function updateCameraAspect(width: number, height: number): void {
   if (!camera) return;
-  const aspect = width / height;
-  const halfHeight = SWATCH_HALF_EXTENT;
-  const halfWidth = halfHeight * aspect;
-  camera.left = -halfWidth;
-  camera.right = halfWidth;
-  camera.top = halfHeight;
-  camera.bottom = -halfHeight;
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
 }
 
@@ -327,7 +322,7 @@ function resize(): void {
   const size = readContainerCssSize(wrap);
   if (!size) return;
   renderer.setPixelRatio(threePixelRatio());
-  updateOrthoFrustum(size.width, size.height);
+  updateCameraAspect(size.width, size.height);
   renderer.setSize(size.width, size.height, true);
 }
 
@@ -378,10 +373,10 @@ onMounted(() => {
   wrap.appendChild(renderer.domElement);
 
   scene = new THREE.Scene();
-  camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-  camera.position.set(0, 0, 1);
+  camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
+  camera.position.set(0, 0, CAMERA_DISTANCE);
   camera.lookAt(0, 0, 0);
-  updateOrthoFrustum(w, h);
+  updateCameraAspect(w, h);
 
   material = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
   mesh = new THREE.Mesh(buildGeometry(), material);
