@@ -11,6 +11,9 @@
  *  GET /docs/library-integration   -> Rendered HTML of
  *                                     docs/LIBRARY_INTEGRATION.md
  *  GET /docs/library-integration.md -> Raw markdown source of same
+ *  GET /docs/fixture-assembly-and-motion -> Rendered HTML of
+ *                                     docs/fixture-assembly-and-motion.md
+ *  GET /docs/fixture-assembly-and-motion.md -> Raw markdown source of same
  *
  * No authentication. The spec describes how to authenticate (X-API-Key) and
  * exposing it openly is fine — third-party developers need to read it to
@@ -70,6 +73,13 @@ const plugin: FastifyPluginAsync = async (app) => {
     slug: 'library-integration',
     filename: 'LIBRARY_INTEGRATION.md',
     pageTitle: 'PRISM Libraries — Portal Integration',
+    docsDir,
+    publicBaseUrl,
+  });
+  registerMarkdownDoc(app, {
+    slug: 'fixture-assembly-and-motion',
+    filename: 'fixture-assembly-and-motion.md',
+    pageTitle: 'PRISM Fixtures — Assembly & Motion',
     docsDir,
     publicBaseUrl,
   });
@@ -170,6 +180,7 @@ function renderRedocPage(specUrl: string): string {
     <span class="spacer"></span>
     <a href="/docs/portal-integration" style="margin-right:12px">Visualiser guide &rarr;</a>
     <a href="/docs/library-integration" style="margin-right:12px">Libraries guide &rarr;</a>
+    <a href="/docs/fixture-assembly-and-motion" style="margin-right:12px">Fixture assembly &rarr;</a>
     <a class="spec-link" href="${specUrl}" target="_blank" rel="noopener">openapi.json &nearr;</a>
     <a href="/admin/" style="margin-left:12px">Back to admin &rarr;</a>
   </div>
@@ -318,6 +329,7 @@ function renderMarkdownDocHtml(markdown: string, pageTitle: string, publicBaseUr
     <a href="/docs" style="margin-right:12px">&larr; OpenAPI spec</a>
     <a href="/docs/portal-integration" style="margin-right:12px">Visualiser guide</a>
     <a href="/docs/library-integration" style="margin-right:12px">Libraries guide</a>
+    <a href="/docs/fixture-assembly-and-motion" style="margin-right:12px">Fixture assembly</a>
     <a class="spec-link" href="/docs/${slug}.md" target="_blank" rel="noopener">view raw .md &nearr;</a>
     <a href="${publicBaseUrl.replace(/\/+$/, '')}/admin/" style="margin-left:12px">admin &rarr;</a>
   </div>
