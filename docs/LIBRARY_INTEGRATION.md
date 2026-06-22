@@ -23,6 +23,22 @@ Your portal integrates via **REST + `X-API-Key`**, not via the admin SPA
 routes (`/admin/#/…`). The admin pages are a reference for what the APIs
 manage; all list/create/edit/delete operations are available programmatically.
 
+### Portal card fields (fixtures + models)
+
+List and detail JSON for **fixtures** and **models** includes everything a
+portal needs to render a library grid without fetching each asset's detail:
+
+| Field | Fixtures | Models |
+|-------|----------|--------|
+| `previewUrl` | Relative path to the active preview GLB | Same |
+| `orbitUrl` | Orbit viewer link when published | Orbit Model Library link after import |
+| `versions[]` | Stored revisions with `downloadedAt` + `previewUrl` | Import history with `createdAt` + `previewUrl` + `orbitUrl` |
+
+OpenAPI schemas: **`FixtureListItem`**, **`FixtureVersionSummary`**,
+**`ModelListItem`**, **`ModelVersionSummary`** on [`/docs`](https://prism.rebus.industries/docs).
+Materials/textures use the same `previewUrl` pattern for 2D thumbnails — see
+[Texture previews](#texture-previews) below.
+
 ---
 
 ## Authentication
@@ -100,6 +116,43 @@ curl -sS -H "X-API-Key: $PRISM_KEY" -o preview.glb \
 
 **Scopes:** `fixtures:read`
 
+### List/detail fields (portal cards)
+
+List and detail responses include **`previewUrl`**, **`orbitUrl`**, and a
+**`versions`** array so portals can render library cards without N+1 detail
+calls:
+
+| Field | Meaning |
+|-------|---------|
+| `previewUrl` | Relative path to the active version preview (`/api/fixtures/{id}/preview.glb` or `/media/{mediaId}`) |
+| `orbitUrl` | Orbit viewer link when the fixture was published (`definition.metadata.orbitFixtureRef`) |
+| `versions[]` | Stored GDTF revisions with `downloadedAt`, `previewUrl`, and `isActive` |
+
+Example list item (truncated):
+
+```json
+{
+  "id": "65906ae4-284e-4cb3-9c88-3a02b95163a8",
+  "name": "MAC Aura XB",
+  "hasPreview": true,
+  "previewUrl": "/api/fixtures/65906ae4-284e-4cb3-9c88-3a02b95163a8/preview.glb",
+  "orbitUrl": "https://orbit.rebus.industries/projects/0f2893eb28/models/abc@def",
+  "versions": [
+    {
+      "id": "…",
+      "revision": "1.0",
+      "downloadedAt": "2026-06-18T10:15:00.000Z",
+      "isActive": true,
+      "previewUrl": "/api/fixtures/65906ae4-284e-4cb3-9c88-3a02b95163a8/preview.glb"
+    }
+  ]
+}
+```
+
+Stream the preview mesh with the same `X-API-Key` used for JSON (proxy through
+your portal backend for `<img>` / WebGL embeds — browser requests cannot send
+`X-API-Key`).
+
 ### Write / import
 
 ```bash
@@ -160,6 +213,39 @@ curl -sS -H "X-API-Key: $PRISM_KEY" -o preview.glb \
 ```
 
 **Scope:** `models:read`
+
+### List/detail fields (portal cards)
+
+Same pattern as fixtures — each model row includes **`previewUrl`**,
+**`orbitUrl`**, and **`versions[]`** with per-version **`createdAt`** and
+**`previewUrl`**:
+
+| Field | Meaning |
+|-------|---------|
+| `previewUrl` | Relative path to cached preview GLB for the active version |
+| `orbitUrl` | Orbit Model Library viewer URL from `definition.metadata.orbit` |
+| `versions[]` | Import history with `createdAt`, `previewUrl`, `orbitUrl`, `isActive` |
+
+Example list item (truncated):
+
+```json
+{
+  "id": "a1b2c3d4-…",
+  "name": "Stage prop",
+  "hasPreview": true,
+  "previewUrl": "/api/models/a1b2c3d4-…/preview.glb",
+  "orbitUrl": "https://orbit.rebus.industries/projects/e86589cc1e/models/xyz@ver",
+  "versions": [
+    {
+      "id": "…",
+      "createdAt": "2026-06-18T09:00:00.000Z",
+      "isActive": true,
+      "previewUrl": "/api/models/a1b2c3d4-…/preview.glb",
+      "orbitUrl": "https://orbit.rebus.industries/projects/e86589cc1e/models/xyz@ver"
+    }
+  ]
+}
+```
 
 ### Write / import
 

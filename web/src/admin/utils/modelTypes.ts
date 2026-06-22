@@ -3,7 +3,7 @@
  * `web/src/shared/api.ts` (alongside `modelsApi`); this module re-exports them
  * under convenient names and adds small client-side helpers.
  *
- * The service-side source of truth is `prism-models-service/src/contracts/models.ts`.
+ * The service-side source of truth is `prism-shared/src/contracts/models.ts`.
  */
 export type {
   ModelVec3 as Vec3,
