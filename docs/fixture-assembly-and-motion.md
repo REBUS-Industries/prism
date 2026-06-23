@@ -175,6 +175,63 @@ present; otherwise the rig's `minValue` / `maxValue` are used.
 
 ---
 
+## Orbit publish (`Orbit.Objects.Lighting.FixtureType`)
+
+Fixture types published via `POST /api/fixtures/:id/publish-orbit` land in the
+Orbit Fixtures project (`ORBIT_FIXTURES_PROJECT_ID`, default `0f2893eb28`) as
+`Orbit.Objects.Lighting.FixtureType` plus a root Collection summary. Third-party
+viewers, Rhino plug-ins, and the Orbit viewer must be able to drive pan/tilt from
+**only** the published object graph — without re-parsing GDTF or duplicating PRISM
+heuristics.
+
+### Required fields for pan / tilt
+
+| Location | Field | Requirement |
+|----------|-------|-------------|
+| `FixtureType.motionRig[]` | `axisType` | `"PAN"` on the yoke axis, `"TILT"` on the head axis — **not** `"OTHER"` when the controlled part is YOKE/HEAD |
+| | `axisVector` | PAN → `(0,0,1)` · TILT → `(1,0,0)` in GDTF Z-up space |
+| | `controlledPartId` | `partId` of the geometry group to rotate |
+| | `controlledPartTag` | Denormalised `parts[].tag` (`YOKE` / `HEAD`) for consumers that match by tag |
+| | `motionAxisId` | Stable UUID — keyed by runtime angle maps |
+| | `minValue` / `maxValue` | Prefer DMX physical range from `dmxMapping` when available |
+| | `defaultValue`, `pivot`, `parentPartId` | Pass through from parsed definition |
+| | `dmxLinks`, `realFade`, `realAcceleration` | Pass through when present in source rig |
+| `FixtureType.parts[]` | `tag`, `partId`, `parentPartId`, `localTransform` | Full geometry hierarchy (metres, GDTF Z-up) |
+| | `motionAxisId` | Cross-link to the rig entry controlling this part |
+| Root Collection `properties` | `motionRig[]` | Same normalised rig as `FixtureType` |
+| | `motionSummary[]` | `{ motionAxisId, axisType, controlledPartId, controlledPartTag, minValue, maxValue }` per axis |
+| | `motionAxisCount` | `motionRig.length` |
+
+### Normalisation (publish serializer)
+
+GDTF sources often emit `axisType: "OTHER"` and identical `(0,0,1)` vectors for
+both yoke and head. PRISM admin preview corrects this at runtime; **Orbit publish
+must emit the corrected form** so external consumers behave identically.
+
+Use `@rebus-industries/prism-shared/orbit`:
+
+- `normalizeMotionRigForOrbit(motionRig, parts, dmxMapping)` — sets PAN/TILT
+  types, axis vectors, DMX physical range, and `controlledPartTag`
+- `buildOrbitMotionSummary(motionRig)` — Collection summary rows
+
+Reference copy: `scaffold/prism-shared-library/src/orbit/motionRig.ts` · wiring
+note: `scaffold/prism-fixtures-service/src/orbit/publishMotion.ts`.
+
+### Applying motion (consumer algorithm)
+
+Same as PRISM preview (`buildFixtureAssembly` + `FixtureViewer.syncMotion`):
+
+1. Resolve controlled object by `controlledPartId` (or tag fallback: YOKE → pan,
+   HEAD → tilt).
+2. For each axis angle θ (degrees), rotate around the normalised axis vector:
+   `quaternion = restQuaternion × axisAngle(axis, θ × π/180)`.
+3. PAN uses `(0,0,1)`; TILT uses `(1,0,0)`. Head is a child of yoke in the part
+   tree so tilt tracks pan automatically.
+
+Do **not** rely on raw GDTF `axisVector` when `axisType` is `PAN` or `TILT`.
+
+---
+
 ## Beams
 
 `FixtureBeam` rows describe photometric output. Preview attaches a wireframe

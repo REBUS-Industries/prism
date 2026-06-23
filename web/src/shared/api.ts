@@ -1709,6 +1709,8 @@ export interface MotionAxis {
   sourceGdtfGeometryId?: string;
   parentPartId?: string;
   controlledPartId?: string;
+  /** Denormalised on Orbit publish from `parts[].tag` of `controlledPartId`. */
+  controlledPartTag?: FixturePartTag;
   axisType: 'PAN' | 'TILT' | 'ROLL' | 'SPIN' | 'OTHER';
   axisVector: Vec3;
   pivot: Vec3;

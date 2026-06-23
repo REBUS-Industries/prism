@@ -16,3 +16,4 @@ Files in this folder mirror:
 | `src/contracts/fixtures.ts` | Extended fixture list/detail + version types |
 | `src/contracts/models.ts` | Model library wire types |
 | `src/library/responses.ts` | `toFixtureTypeSummary`, `toModelTypeDetail`, preview/orbit URL helpers |
+| `src/orbit/motionRig.ts` | Normalise pan/tilt for Orbit FixtureType publish |
