@@ -25,6 +25,17 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.44 — ORBIT convert curve preflight
+
+### Fixed
+
+- **agent**: Before ORBIT export, remove curve objects where Rhino `GetLength()` faults
+  (native SEH on degenerate construction/helper curves). Logs `[ORBIT-PREFLIGHT]` to
+  job logs. If conversion still faults, the fail message suggests using layer selection
+  to exclude construction layers.
+
+---
+
 ## Unreleased
 
 ### Investigated â€” Parent-model (tree) import blocked by "no versions yet" error
