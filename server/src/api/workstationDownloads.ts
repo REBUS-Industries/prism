@@ -116,9 +116,8 @@ async function fetchDbAgentRelease(): Promise<AgentReleaseCandidate | null> {
     const match = parsed.pathname.match(
       /^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\//,
     );
-    if (match) {
-      const [, owner, repo, tag] = match;
-      releasesPageUrl = `https://github.com/${owner}/${repo}/releases/tag/${encodeURIComponent(tag)}`;
+    if (match?.[1] && match[2] && match[3]) {
+      releasesPageUrl = `https://github.com/${match[1]}/${match[2]}/releases/tag/${encodeURIComponent(match[3])}`;
     }
   } catch {
     // Keep default releasesPageUrl.
