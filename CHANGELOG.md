@@ -53,7 +53,14 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ## Unreleased
 
-### Investigated â€” Parent-model (tree) import blocked by "no versions yet" error
+### Fixed — restore canonical agent release repo
+
+- **ci**: Remove monorepo fallback publish from `agent-msi`. Agent releases belong on
+  **`REBUS-Industries/prism-agent`** only (as v0.3.43 and earlier). v0.3.44/v0.3.45
+  were mistakenly published to the monorepo when `ORBIT_DEPLOY_PAT` lost write access;
+  refresh that org secret (Contents write on `prism-agent`) and re-tag to republish there.
+
+---
 
 - **Root cause identified.** `server/src/jobs/dispatcher.ts` (lines ~419â€“439) calls `getLatestVersionId` (ORBIT GraphQL `model.versions(limit:1)`) before launching UE. A parent container model (e.g. `building`) that has no committed versions of its own â€” only submodels like `building/shell` â€” returns `null`, and the dispatcher immediately rejects the run with `version_unavailable`. The UE connector is never reached, which is why v0.4.8/v0.4.9 connector changes had no effect.
 - **Fix specified, not yet implemented.** Full change specification (root cause, 4-layer fix, and test plan) documented in `PRISM/docs/PARENT_MODEL_IMPORT_HANDOFF.md`. The fix introduces an `importMode: 'tree'` flag on the `POST /api/visualiser/streams` API that bypasses version resolution, threads `modelName` + `importMode` through the dispatcher â†’ agent protocol â†’ orchestrator CLI â†’ UE command line, and adds a branch in `FOrbitHeadlessAutoImport.cpp` to call `OrbitImportTree` instead of `OrbitImport`.

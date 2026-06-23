@@ -9,23 +9,19 @@
  * during setup -- so the legacy per-node `agent-config.json` template
  * and standalone PowerShell script downloads are no longer needed.
  *
- * Agent version resolution queries every known release location on each
- * request (no server-side cache) and picks the highest semver:
- *   - REBUS-Industries/prism-agent (primary)
- *   - REBUS-Industries/prism (monorepo fallback when agent-msi cannot
- *     publish to prism-agent)
+ * Agent version resolution queries GitHub Releases on each request (no
+ * server-side cache) and picks the highest semver from:
+ *   - REBUS-Industries/prism-agent (canonical — same repo agent-msi publishes to)
  *   - DB settings `workstation_agent_version` /
- *     `workstation_agent_download_url` (CI / admin pin — participates in
- *     the max-semver pick, not only when GitHub is unreachable)
+ *     `workstation_agent_download_url` (CI / admin pin)
  */
 import type { FastifyPluginAsync } from 'fastify';
 import { requireAdmin } from '../auth/middleware.js';
 import { getSetting } from '../db/settings.js';
 
-/** Primary agent repo; legacy `REBUS-ORBIT/prism-agent` redirects here. */
+/** Canonical agent release repo; legacy `REBUS-ORBIT/prism-agent` redirects here. */
 const AGENT_RELEASE_REPOS = [
   'REBUS-Industries/prism-agent',
-  'REBUS-Industries/prism',
 ] as const;
 
 // Preference order: the Inno Setup wizard .exe is the user-facing
@@ -178,9 +174,8 @@ const plugin: FastifyPluginAsync = async (app) => {
   /**
    * GET /agent — meta JSON describing the latest agent build.
    *
-   * Queries REBUS-Industries/prism-agent, REBUS-Industries/prism, and DB
-   * settings; picks the highest semver. Prefers the `.exe` setup wrapper;
-   * `.zip` is used only when a release has no `.exe` yet.
+   * Queries REBUS-Industries/prism-agent and DB settings; picks the highest semver.
+   * Prefers the `.exe` setup wrapper; `.zip` is used only when a release has no `.exe` yet.
    */
   app.get('/agent', async (req) => {
     const latest = await resolveLatestAgentRelease();
