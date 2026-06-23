@@ -13,6 +13,7 @@ import multipart from '@fastify/multipart';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runBootstrap } from './bootstrap.js';
+import { MAX_UPLOAD_BYTES } from './conversion/uploadLimits.js';
 import { resolveProvenance } from './auth/provenance.js';
 import { serverApiLog, redactPath, categoryFor, levelFor } from './observability/apiLog.js';
 import { redisRegistry } from './ws/redisRegistry.js';
@@ -45,7 +46,9 @@ async function buildApp() {
         ? undefined
         : { target: 'pino-pretty', options: { translateTime: 'SYS:HH:MM:ss.l', ignore: 'pid,hostname' } },
     },
-    bodyLimit: 64 * 1024 * 1024,  // small JSON bodies; uploads go through @fastify/multipart
+    // Must be >= @fastify/multipart limits.fileSize or large convert uploads 413
+    // before the route handler runs (Fastify rejects the raw body first).
+    bodyLimit: MAX_UPLOAD_BYTES,
     disableRequestLogging: false,
     // Trust the external Caddy reverse proxy so that `req.ip` reflects the
     // real client IP from `X-Forwarded-For` instead of the proxy LXC's
@@ -78,7 +81,7 @@ async function buildApp() {
   });
   await app.register(multipart, {
     limits: {
-      fileSize: 1024 * 1024 * 1024,  // 1 GB
+      fileSize: MAX_UPLOAD_BYTES,
       files: 1,
       fields: 32,
     },

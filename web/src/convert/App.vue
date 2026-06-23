@@ -17,6 +17,16 @@ const swapYZ = ref(false);
 const quality = ref<'sensible' | 'extreme'>('sensible');
 const selectLayers = ref(false);
 
+/** Keep in sync with server `conversion/uploadLimits.ts`. */
+const maxUploadBytes = 1024 * 1024 * 1024;
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${n} B`;
+}
+
 const submitting = ref(false);
 const error = ref<string | null>(null);
 const jobId = ref<string | null>(null);
@@ -257,6 +267,10 @@ const showLayerPicker = computed(() =>
 
         <div v-if="mvrSuccess" class="success-box">{{ mvrSuccess }}</div>
         <div v-if="error" class="error-box">{{ error }}</div>
+        <p v-if="file && !isMvrFile" class="muted file-hint">
+          {{ file.name }} · {{ formatBytes(file.size) }}
+          <span v-if="file.size > maxUploadBytes"> — exceeds 1 GB limit</span>
+        </p>
         <button class="primary" type="submit" :disabled="!canSubmit">
           {{ submitting ? (isMvrFile ? 'Parsing MVR…' : 'Uploading…') : (isMvrFile ? 'Import MVR' : 'Convert') }}
         </button>
