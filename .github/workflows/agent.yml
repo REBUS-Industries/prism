@@ -32,18 +32,37 @@ on:
       - 'visualiser/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
-    # Agent build pulls vendor/orbit-monorepo (private). Until a deploy key
-    # is provisioned, this job only runs successfully when the submodule
-    # checkout succeeds. Triggered manually for now.
+    # Agent build pulls vendor/orbit-monorepo (private submodule). Use the
+    # default GITHUB_TOKEN for this repo checkout; ORBIT_DEPLOY_PAT is only
+    # needed for the submodule fetch and the cross-repo GitHub Release step.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          token: ${{ secrets.ORBIT_DEPLOY_PAT }}
+          fetch-depth: 1
+
+      - name: Checkout submodules (vendor/orbit-monorepo)
+        shell: pwsh
+        env:
+          ORBIT_DEPLOY_PAT: ${{ secrets.ORBIT_DEPLOY_PAT }}
+        run: |
+          if (-not $env:ORBIT_DEPLOY_PAT) {
+            Write-Error "ORBIT_DEPLOY_PAT secret is missing or empty — required to fetch vendor/orbit-monorepo (private submodule). Refresh the org secret and re-run this workflow."
+            exit 1
+          }
+          git config --global url."https://x-access-token:$($env:ORBIT_DEPLOY_PAT)@github.com/".insteadOf "https://github.com/"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth 1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Submodule checkout failed — verify ORBIT_DEPLOY_PAT can read REBUS-ORBIT/orbit-server and re-run."
+            exit 1
+          }
 
       - uses: actions/setup-dotnet@v4
         with:
