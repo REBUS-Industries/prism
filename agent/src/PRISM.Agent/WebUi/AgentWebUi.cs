@@ -511,6 +511,11 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
             }
             return _releasesCache ?? Array.Empty<Visualiser.TemplatePuller.ReleaseInfo>();
         }
+        catch (Visualiser.TemplatePullException ex) when (ex.IsRateLimit && _releasesCache is { Count: > 0 })
+        {
+            _log.LogWarning(ex, "template releases: rate limited — serving stale cache for {Repo}", repo);
+            return _releasesCache;
+        }
         finally
         {
             _releasesGate.Release();
@@ -557,6 +562,11 @@ public sealed class AgentWebUi : IHostedService, IAsyncDisposable
                 _connRefsEtag = result.ETag;
             }
             return _connRefsCache ?? Array.Empty<Visualiser.TemplatePuller.ConnectorRefInfo>();
+        }
+        catch (Visualiser.TemplatePullException ex) when (ex.IsRateLimit && _connRefsCache is { Count: > 0 })
+        {
+            _log.LogWarning(ex, "connector refs: rate limited — serving stale cache for {Repo}", repo);
+            return _connRefsCache;
         }
         finally
         {

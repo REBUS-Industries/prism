@@ -121,7 +121,16 @@ async function fetchTemplateReleases(repo: string): Promise<TemplateRelease[]> {
     return cached.releases;
   }
   if (res.status === 404) return [];
+  if (res.status === 401) {
+    throw new Error(
+      'GitHub token rejected (401 Bad credentials). Refresh PRISM_GITHUB_TOKEN on the server '
+      + '(infra/.env) — the current value may be expired or lack repo read access.',
+    );
+  }
   if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
+    if (cached?.releases.length) {
+      return cached.releases;
+    }
     throw new GitHubRateLimitError(rateLimitMessage(res));
   }
   if (!res.ok) throw new Error(`GitHub API ${res.status} ${res.statusText}`);
