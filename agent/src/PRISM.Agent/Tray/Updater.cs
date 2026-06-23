@@ -14,8 +14,16 @@ namespace PRISM.Agent.Tray;
 /// </summary>
 public static class Updater
 {
-    const string ReleasesUrl =
-        "https://api.github.com/repos/REBUS-ORBIT/prism-agent/releases/latest";
+    /// <summary>
+    /// GitHub repos checked for agent releases, highest semver wins.
+    /// Primary: dedicated agent repo. Fallback: monorepo when agent-msi
+    /// cannot publish to prism-agent (see .github/workflows/agent.yml).
+    /// </summary>
+    static readonly string[] ReleaseRepos =
+    [
+        "REBUS-Industries/prism-agent",
+        "REBUS-Industries/prism",
+    ];
 
     static readonly Version _currentVersion =
         typeof(Updater).Assembly.GetName().Version ?? new Version(0, 1, 0);
@@ -65,14 +73,40 @@ public static class Updater
         http.DefaultRequestHeaders.UserAgent.ParseAdd(
             $"PRISM.Agent/{_currentVersion} (Windows)");
 
+        UpdateInfo? best = null;
+        foreach (var repo in ReleaseRepos)
+        {
+            UpdateInfo? candidate;
+            try
+            {
+                candidate = await FetchLatestFromRepoAsync(http, repo);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (candidate is null) continue;
+            if (best is null || candidate.NewVersion > best.NewVersion)
+                best = candidate;
+        }
+
+        if (best is null || best.NewVersion <= _currentVersion)
+            return null;
+
+        return best;
+    }
+
+    static async Task<UpdateInfo?> FetchLatestFromRepoAsync(HttpClient http, string repo)
+    {
         string json;
         try
         {
-            json = await http.GetStringAsync(ReleasesUrl);
+            json = await http.GetStringAsync(
+                $"https://api.github.com/repos/{repo}/releases/latest");
         }
         catch
         {
-            // No network / private repo — treat as up-to-date.
             return null;
         }
 
@@ -129,9 +163,10 @@ public static class Updater
         if (!Version.TryParse(tagName.TrimStart('v'), out var newVersion))
             return null;
 
-        return newVersion > _currentVersion
-            ? new UpdateInfo(tagName, downloadUrl ?? "", newVersion, sizeBytes, notes)
-            : null;
+        if (string.IsNullOrEmpty(downloadUrl))
+            return null;
+
+        return new UpdateInfo(tagName, downloadUrl, newVersion, sizeBytes, notes);
     }
 
     // ------------------------------------------------------------------

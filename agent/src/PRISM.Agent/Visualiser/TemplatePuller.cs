@@ -507,6 +507,16 @@ public static class TemplatePuller
     static TemplatePullException HttpFailure(HttpResponseMessage resp, string apiUrl, string? configuredToken)
     {
         var status = (int)resp.StatusCode;
+        if (status == 401)
+        {
+            return new TemplatePullException(
+                $"GitHub token rejected (401 Bad credentials) for {apiUrl}. " +
+                "Update the GitHub token in the agent web UI (Visualiser card) or refresh " +
+                "PRISM_GITHUB_TOKEN / GITHUB_TOKEN on this workstation — the current token " +
+                "may be expired or lack read access to the repo.",
+                isRateLimit: false);
+        }
+
         var remaining = FirstHeader(resp, "x-ratelimit-remaining");
         var isRateLimited = (status == 403 || status == 429) &&
                             string.Equals(remaining, "0", StringComparison.Ordinal);
@@ -520,7 +530,8 @@ public static class TemplatePuller
                   "raise the limit to 5000/hour — enter it in the agent web UI's \"GitHub token\" field (no " +
                   "restart needed), or set the PRISM_GITHUB_TOKEN / GITHUB_TOKEN environment variable.";
             return new TemplatePullException(
-                $"GitHub API rate limit exceeded (HTTP {status}) for {apiUrl}. {advice}{DescribeReset(resp)}");
+                $"GitHub API rate limit exceeded (HTTP {status}) for {apiUrl}. {advice}{DescribeReset(resp)}",
+                isRateLimit: true);
         }
         return new TemplatePullException(
             $"GitHub API GET {apiUrl} failed: HTTP {status} {resp.ReasonPhrase}.");
@@ -1453,6 +1464,13 @@ public static class TemplatePuller
 /// <summary>Actionable failure during a template pull (surfaced to the operator).</summary>
 public sealed class TemplatePullException : Exception
 {
-    public TemplatePullException(string message) : base(message) { }
+    public TemplatePullException(string message, bool isRateLimit = false) : base(message)
+    {
+        IsRateLimit = isRateLimit;
+    }
+
     public TemplatePullException(string message, Exception inner) : base(message, inner) { }
+
+    /// <summary>True when GitHub returned a rate-limit response (403/429, remaining 0).</summary>
+    public bool IsRateLimit { get; }
 }

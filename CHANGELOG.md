@@ -25,6 +25,21 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.45 — Agent updater + GitHub rate-limit resilience
+
+### Fixed
+
+- **agent**: In-app updater now checks **REBUS-Industries/prism-agent** and
+  **REBUS-Industries/prism** (monorepo fallback) and picks the highest semver,
+  so v0.3.44+ builds published only on the monorepo are offered to older agents.
+- **agent**: Template/connector release pickers serve a **stale cached list** when
+  GitHub rate-limits instead of failing empty; clearer 401 message when the PAT
+  is expired.
+- **server/infra**: Admin template version picker (`/api/workstations/template-releases`)
+  routes to **prism-server** (shared cache + token); serves stale cache on rate limit.
+
+---
+
 ## v0.3.44 — ORBIT convert curve preflight
 
 ### Fixed
