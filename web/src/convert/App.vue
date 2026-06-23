@@ -28,6 +28,7 @@ function formatBytes(n: number): string {
 }
 
 const submitting = ref(false);
+const uploadProgress = ref(0);
 const error = ref<string | null>(null);
 const jobId = ref<string | null>(null);
 const job = ref<JobSummary | null>(null);
@@ -75,6 +76,7 @@ async function submit() {
   }
   error.value = null;
   submitting.value = true;
+  uploadProgress.value = 0;
   try {
     const res = await convertApi.submit(file.value, {
       projectId: projectId.value.trim(),
@@ -84,7 +86,7 @@ async function submit() {
       swapYZ: swapYZ.value,
       quality: quality.value,
       selectLayers: selectLayers.value,
-    });
+    }, (p) => { uploadProgress.value = p; });
     jobId.value = res.jobId;
     job.value = null;
     layers.value = null;
@@ -93,6 +95,7 @@ async function submit() {
     error.value = (err as ApiError).message ?? 'submission failed';
   } finally {
     submitting.value = false;
+    uploadProgress.value = 0;
   }
 }
 
@@ -188,6 +191,7 @@ function reset() {
   job.value = null;
   layers.value = null;
   error.value = null;
+  uploadProgress.value = 0;
   mvrModalOpen.value = false;
   mvrResult.value = null;
   mvrSuccess.value = null;
@@ -271,8 +275,17 @@ const showLayerPicker = computed(() =>
           {{ file.name }} · {{ formatBytes(file.size) }}
           <span v-if="file.size > maxUploadBytes"> — exceeds 2 GB limit</span>
         </p>
+        <div v-if="submitting && !isMvrFile" class="upload-progress">
+          <div class="upload-progress-labels">
+            <span class="muted">{{ uploadProgress < 1 ? 'Uploading…' : 'Processing…' }}</span>
+            <span class="muted">{{ Math.round(uploadProgress * 100) }}%</span>
+          </div>
+          <div class="progress mt-sm">
+            <div class="fill" :style="{ width: `${Math.round(uploadProgress * 100)}%` }" />
+          </div>
+        </div>
         <button class="primary" type="submit" :disabled="!canSubmit">
-          {{ submitting ? (isMvrFile ? 'Parsing MVR…' : 'Uploading…') : (isMvrFile ? 'Import MVR' : 'Convert') }}
+          {{ submitting ? (isMvrFile ? 'Parsing MVR…' : (uploadProgress < 1 ? 'Uploading…' : 'Submitting…')) : (isMvrFile ? 'Import MVR' : 'Convert') }}
         </button>
       </form>
     </div>
@@ -381,4 +394,10 @@ h2 { font-size: 1rem; font-weight: 600; margin: 0 0 16px; }
 .page-footer a { margin-left: 8px; }
 .ext-link { display: inline-flex; align-items: center; gap: 4px; }
 .mvr-hint { font-size: 0.8125rem; margin: 0; }
+.upload-progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8125rem;
+}
+.mt-sm { margin-top: 6px; }
 </style>
