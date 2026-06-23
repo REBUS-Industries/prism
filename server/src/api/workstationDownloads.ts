@@ -9,38 +9,73 @@
  * during setup -- so the legacy per-node `agent-config.json` template
  * and standalone PowerShell script downloads are no longer needed.
  *
- * Agent version resolution -- GitHub Releases API is always the primary source.
- * The DB settings `workstation_agent_version` / `workstation_agent_download_url`
- * act as admin overrides to pin a specific version; when they are absent the
- * latest release from REBUS-ORBIT/prism-agent is used automatically on every
- * page load (no server-side cache so the page always reflects the actual latest).
+ * Agent version resolution queries every known release location on each
+ * request (no server-side cache) and picks the highest semver:
+ *   - REBUS-Industries/prism-agent (primary)
+ *   - REBUS-Industries/prism (monorepo fallback when agent-msi cannot
+ *     publish to prism-agent)
+ *   - DB settings `workstation_agent_version` /
+ *     `workstation_agent_download_url` (CI / admin pin — participates in
+ *     the max-semver pick, not only when GitHub is unreachable)
  */
 import type { FastifyPluginAsync } from 'fastify';
 import { requireAdmin } from '../auth/middleware.js';
 import { getSetting } from '../db/settings.js';
 
-const GITHUB_RELEASE_REPO = 'REBUS-ORBIT/prism-agent';
+/** Primary agent repo; legacy `REBUS-ORBIT/prism-agent` redirects here. */
+const AGENT_RELEASE_REPOS = [
+  'REBUS-Industries/prism-agent',
+  'REBUS-Industries/prism',
+] as const;
+
 // Preference order: the Inno Setup wizard .exe is the user-facing
 // install artifact; the multi-file zip is kept as a fallback for older
 // agents whose in-app self-update path still grabs the .zip directly.
 const SETUP_EXE_PATTERN = /^PRISM\.Agent-Setup-.+\.exe$/;
 const ZIP_ASSET_PATTERN = /^PRISM\.Agent-.+\.zip$/;
 
-interface GitHubReleaseInfo {
+interface AgentReleaseCandidate {
   version: string;
   downloadUrl: string;
+  releasesPageUrl: string;
+  source: string;
 }
 
-/** Always fetches the latest release directly from the GitHub Releases API.
- *  No server-side cache — the admin page should reflect the real latest on
- *  every load. GitHub's unauthenticated rate limit (60 req/h) is well above
- *  realistic admin page traffic. Picks the `.exe` setup wrapper first and
- *  falls back to the `.zip` payload if a release doesn't carry an .exe yet
- *  (e.g. tags from before v0.1.30). */
-async function fetchLatestAgentRelease(): Promise<GitHubReleaseInfo | null> {
+function parseSemver(tag: string): number[] {
+  const core = tag.trim().replace(/^v/i, '').split('+')[0]?.split('-')[0] ?? '';
+  const parts = core.split('.').map((p) => parseInt(p, 10));
+  if (parts.some((n) => Number.isNaN(n))) return [];
+  return parts;
+}
+
+/** Returns -1 if a<b, 0 if equal, 1 if a>b. Unparseable tags sort last. */
+function compareSemver(a: string, b: string): number {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (pa.length === 0 && pb.length === 0) return 0;
+  if (pa.length === 0) return -1;
+  if (pb.length === 0) return 1;
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const ai = pa[i] ?? 0;
+    const bi = pb[i] ?? 0;
+    if (ai < bi) return -1;
+    if (ai > bi) return 1;
+  }
+  return 0;
+}
+
+function pickInstallerAsset(assets: { name: string; browser_download_url: string }[]) {
+  return (
+    assets.find((a) => SETUP_EXE_PATTERN.test(a.name)) ??
+    assets.find((a) => ZIP_ASSET_PATTERN.test(a.name))
+  );
+}
+
+async function fetchAgentReleaseFromRepo(repo: string): Promise<AgentReleaseCandidate | null> {
   try {
     const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_RELEASE_REPO}/releases/latest`,
+      `https://api.github.com/repos/${repo}/releases/latest`,
       {
         headers: {
           Accept: 'application/vnd.github+json',
@@ -48,22 +83,69 @@ async function fetchLatestAgentRelease(): Promise<GitHubReleaseInfo | null> {
           'X-GitHub-Api-Version': '2022-11-28',
         },
         signal: AbortSignal.timeout(8000),
+        redirect: 'follow',
       },
     );
     if (!res.ok) return null;
     const json = (await res.json()) as {
       tag_name: string;
+      html_url?: string;
       assets: { name: string; browser_download_url: string }[];
     };
-    const assets = json.assets ?? [];
-    const asset =
-      assets.find((a) => SETUP_EXE_PATTERN.test(a.name)) ??
-      assets.find((a) => ZIP_ASSET_PATTERN.test(a.name));
+    const asset = pickInstallerAsset(json.assets ?? []);
     if (!asset) return null;
-    return { version: json.tag_name, downloadUrl: asset.browser_download_url };
+    const tag = json.tag_name.trim();
+    return {
+      version: tag,
+      downloadUrl: asset.browser_download_url,
+      releasesPageUrl: json.html_url ?? `https://github.com/${repo}/releases/tag/${encodeURIComponent(tag)}`,
+      source: `github:${repo}`,
+    };
   } catch {
     return null;
   }
+}
+
+async function fetchDbAgentRelease(): Promise<AgentReleaseCandidate | null> {
+  const version = (await getSetting('workstation_agent_version'))?.trim();
+  const downloadUrl = (await getSetting('workstation_agent_download_url'))?.trim();
+  if (!version || !downloadUrl) return null;
+  let releasesPageUrl = `https://github.com/REBUS-Industries/prism-agent/releases/tag/${encodeURIComponent(version)}`;
+  try {
+    const parsed = new URL(downloadUrl);
+    const match = parsed.pathname.match(
+      /^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\//,
+    );
+    if (match) {
+      const [, owner, repo, tag] = match;
+      releasesPageUrl = `https://github.com/${owner}/${repo}/releases/tag/${encodeURIComponent(tag)}`;
+    }
+  } catch {
+    // Keep default releasesPageUrl.
+  }
+  return {
+    version,
+    downloadUrl,
+    releasesPageUrl,
+    source: 'db',
+  };
+}
+
+/** Query GitHub + DB and return the highest semver with a download URL. */
+async function resolveLatestAgentRelease(): Promise<AgentReleaseCandidate | null> {
+  const candidates: AgentReleaseCandidate[] = [];
+  for (const repo of AGENT_RELEASE_REPOS) {
+    const info = await fetchAgentReleaseFromRepo(repo);
+    if (info) candidates.push(info);
+  }
+  const dbInfo = await fetchDbAgentRelease();
+  if (dbInfo) candidates.push(dbInfo);
+
+  let best: AgentReleaseCandidate | null = null;
+  for (const c of candidates) {
+    if (!best || compareSemver(c.version, best.version) > 0) best = c;
+  }
+  return best;
 }
 
 /** Compute the WSS URL the agent should use for this server, honouring the
@@ -97,34 +179,19 @@ const plugin: FastifyPluginAsync = async (app) => {
   /**
    * GET /agent — meta JSON describing the latest agent build.
    *
-   * Resolution order for version + downloadUrl:
-   *   1. GitHub Releases API for REBUS-ORBIT/prism-agent (live, no cache).
-   *      The .exe setup wrapper is preferred; .zip is used only if no .exe
-   *      asset is published for the latest tag.
-   *   2. DB settings — admin override to pin a specific version. Only used
-   *      when GitHub API is unreachable or returns no matching asset.
-   *   3. null / available: false so the UI renders the "build pending" state.
+   * Queries REBUS-Industries/prism-agent, REBUS-Industries/prism, and DB
+   * settings; picks the highest semver. Prefers the `.exe` setup wrapper;
+   * `.zip` is used only when a release has no `.exe` yet.
    */
   app.get('/agent', async (req) => {
-    // Primary: GitHub Releases API — always reflects the true latest build.
-    const ghRelease = await fetchLatestAgentRelease();
-    let downloadUrl = ghRelease?.downloadUrl ?? null;
-    let version     = ghRelease?.version     ?? null;
-
-    // Fallback: DB admin override (pinned version or when GitHub is unreachable).
-    if (!downloadUrl || !version) {
-      const dbUrl = (await getSetting('workstation_agent_download_url'))?.trim() || null;
-      const dbVer = (await getSetting('workstation_agent_version'))?.trim()      || null;
-      downloadUrl = downloadUrl ?? dbUrl;
-      version     = version     ?? dbVer;
-    }
-
+    const latest = await resolveLatestAgentRelease();
     const wsUrl = await resolveAgentWsUrl(req);
     return {
-      downloadUrl,
-      version,
+      downloadUrl: latest?.downloadUrl ?? null,
+      version: latest?.version ?? null,
+      releasesPageUrl: latest?.releasesPageUrl ?? null,
       wsUrl,
-      available: !!downloadUrl,
+      available: !!latest?.downloadUrl,
       buildSource: {
         workflow: '.github/workflows/agent.yml',
         artifact: 'PRISM.Agent-Setup-<tag>.exe',
@@ -135,14 +202,11 @@ const plugin: FastifyPluginAsync = async (app) => {
 
   /**
    * GET /agent/download — 302 redirect to the latest installer URL.
-   * Resolves via GitHub Releases API first, DB override as fallback.
-   * Picks the `.exe` setup wrapper when present and falls back to `.zip`.
+   * Uses the same multi-source max-semver resolution as `/agent`.
    */
   app.get('/agent/download', async (_req, reply) => {
-    const ghRelease = await fetchLatestAgentRelease();
-    const url = ghRelease?.downloadUrl
-      ?? (await getSetting('workstation_agent_download_url'))?.trim()
-      ?? null;
+    const latest = await resolveLatestAgentRelease();
+    const url = latest?.downloadUrl ?? null;
     if (!url) {
       return reply.code(404).send({
         error: 'no agent build available',
