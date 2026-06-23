@@ -149,6 +149,13 @@ public sealed class ConvertJob
                 RhinoAxisSwap.ApplyYZSwap(doc, pipelineLog);
             }
 
+            var removedCurves = RhinoConvertPreflight.RemoveUnmeshableCurves(doc, pipelineLog);
+            if (removedCurves > 0)
+            {
+                pipelineLog(
+                    $"[ORBIT-PREFLIGHT] removed {removedCurves} curve(s) that cannot be exported to ORBIT");
+            }
+
             await Progress(assign.JobId, "preparing", 10, "preparing conversion");
             var card = AssignToCard(assign, doc);
             using var transport = new ServerTransport(assign.OrbitServerUrl, assign.ProjectId, assign.OrbitToken);
@@ -161,7 +168,19 @@ public sealed class ConvertJob
             });
 
             await Progress(assign.JobId, "converting", 15, "running conversion pipeline");
-            string versionId = await pipeline.SendAsync(card, doc, transport, client, prog, ct, pipelineLog);
+            string versionId;
+            try
+            {
+                versionId = await pipeline.SendAsync(card, doc, transport, client, prog, ct, pipelineLog);
+            }
+            catch (System.Runtime.InteropServices.SEHException ex)
+            {
+                throw new InvalidOperationException(
+                    "Rhino failed while converting geometry for ORBIT (often a degenerate curve on a " +
+                    "construction/helper layer). Re-run with “Choose layers to include before converting” " +
+                    "and exclude construction layers, or remove bad curves in Rhino before export.",
+                    ex);
+            }
 
             var versionUrl = $"{assign.OrbitServerUrl.TrimEnd('/')}/projects/{assign.ProjectId}/models/{assign.ModelId}";
 
