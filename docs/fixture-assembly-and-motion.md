@@ -1,7 +1,8 @@
 # Fixture assembly and motion
 
-**Audience:** portal developers, connector authors, and anyone rendering PRISM
-fixture types from `GET /api/fixtures/:id` or connector export payloads.
+**Audience:** portal developers, connector authors, third-party viewers, Rhino
+plug-in authors, and anyone rendering PRISM fixture types from the REST API,
+Orbit `FixtureType` objects, or connector export payloads.
 
 **Canonical source:** `prism-fixtures-service/docs/fixture-assembly-and-motion.md`
 — this copy is bundled into the PRISM server image and served at
@@ -25,8 +26,8 @@ that matches the GDTF-Share fixture builder:
 - **Beams** attached at lens / emission nodes and opened along **−Z**.
 
 The same rules apply whether you consume the definition over the REST API,
-pull connector export JSON, or stream the assembled preview at
-`GET /api/fixtures/:id/preview.glb`.
+read a published Orbit `FixtureType`, pull connector export JSON, or stream
+the assembled preview at `GET /api/fixtures/:id/preview.glb`.
 
 ---
 
@@ -175,60 +176,128 @@ present; otherwise the rig's `minValue` / `maxValue` are used.
 
 ---
 
-## Orbit publish (`Orbit.Objects.Lighting.FixtureType`)
+## Building pan/tilt control
 
-Fixture types published via `POST /api/fixtures/:id/publish-orbit` land in the
-Orbit Fixtures project (`ORBIT_FIXTURES_PROJECT_ID`, default `0f2893eb28`) as
-`Orbit.Objects.Lighting.FixtureType` plus a root Collection summary. Third-party
-viewers, Rhino plug-ins, and the Orbit viewer must be able to drive pan/tilt from
-**only** the published object graph — without re-parsing GDTF or duplicating PRISM
-heuristics.
+The pan/tilt algorithm is **the same** for PRISM admin preview, third-party
+viewers, and Rhino plug-ins. There is no separate Orbit-specific motion model —
+only the **source** of `parts[]` and `motionRig[]` differs (REST definition vs
+published Orbit object).
 
-### Required fields for pan / tilt
+### Step 1 — Build the static scene graph
 
-| Location | Field | Requirement |
-|----------|-------|-------------|
-| `FixtureType.motionRig[]` | `axisType` | `"PAN"` on the yoke axis, `"TILT"` on the head axis — **not** `"OTHER"` when the controlled part is YOKE/HEAD |
-| | `axisVector` | PAN → `(0,0,1)` · TILT → `(1,0,0)` in GDTF Z-up space |
-| | `controlledPartId` | `partId` of the geometry group to rotate |
-| | `controlledPartTag` | Denormalised `parts[].tag` (`YOKE` / `HEAD`) for consumers that match by tag |
-| | `motionAxisId` | Stable UUID — keyed by runtime angle maps |
-| | `minValue` / `maxValue` | Prefer DMX physical range from `dmxMapping` when available |
-| | `defaultValue`, `pivot`, `parentPartId` | Pass through from parsed definition |
-| | `dmxLinks`, `realFade`, `realAcceleration` | Pass through when present in source rig |
-| `FixtureType.parts[]` | `tag`, `partId`, `parentPartId`, `localTransform` | Full geometry hierarchy (metres, GDTF Z-up) |
-| | `motionAxisId` | Cross-link to the rig entry controlling this part |
-| Root Collection `properties` | `motionRig[]` | Same normalised rig as `FixtureType` |
-| | `motionSummary[]` | `{ motionAxisId, axisType, controlledPartId, controlledPartTag, minValue, maxValue }` per axis |
-| | `motionAxisCount` | `motionRig.length` |
+Follow [Assembly scene graph](#assembly-scene-graph) above: one transform group
+per `parts[]` row, parent/child links, meshes loaded and scaled. Keep the tree
+in **GDTF Z-up** (metres). The yoke must be a parent (direct or indirect) of
+the head so tilt tracks pan through the hierarchy.
 
-### Normalisation (publish serializer)
+**Orbit:** geometry lives on `Orbit.Objects.Lighting.FixtureType` — top-level
+`parts[]`, `models[]`, and mesh objects referenced from the instance definition.
+Part **tags** are on `FixtureType.parts[]`, not on individual mesh objects
+(meshes are keyed by `applicationId` containing the part UUID).
 
-GDTF sources often emit `axisType: "OTHER"` and identical `(0,0,1)` vectors for
-both yoke and head. PRISM admin preview corrects this at runtime; **Orbit publish
-must emit the corrected form** so external consumers behave identically.
+### Step 2 — Resolve which parts pan and tilt
 
-Use `@rebus-industries/prism-shared/orbit`:
+First match wins for each motion type:
 
-- `normalizeMotionRigForOrbit(motionRig, parts, dmxMapping)` — sets PAN/TILT
-  types, axis vectors, DMX physical range, and `controlledPartTag`
-- `buildOrbitMotionSummary(motionRig)` — Collection summary rows
+1. **Explicit rig** — `motionRig` entry with effective type `PAN` or `TILT` and
+   a `controlledPartId` present in `parts[]`.
+2. **Tag fallback** — part with `tag === 'YOKE'` → pan; `tag === 'HEAD'` → tilt.
 
-Reference copy: `scaffold/prism-shared-library/src/orbit/motionRig.ts` · wiring
-note: `scaffold/prism-fixtures-service/src/orbit/publishMotion.ts`.
+When GDTF (or Orbit) stores `axisType: "OTHER"`, resolve the effective type
+before choosing an axis vector:
 
-### Applying motion (consumer algorithm)
+| Condition | Effective type |
+|-----------|----------------|
+| `axisType` is `PAN` or `TILT` | use as-is |
+| `controlledPartTag` or part tag is `YOKE` | `PAN` |
+| `controlledPartTag` or part tag is `HEAD` | `TILT` |
+| `sourceGdtfGeometryId` contains `"pan"` (case-insensitive) | `PAN` |
+| `sourceGdtfGeometryId` contains `"tilt"` | `TILT` |
+| otherwise | keep declared `axisType` |
 
-Same as PRISM preview (`buildFixtureAssembly` + `FixtureViewer.syncMotion`):
+Orbit rows may include `controlledPartTag` (`YOKE` / `HEAD`) even when
+`axisType` is still `"OTHER"` — use it in the table above.
 
-1. Resolve controlled object by `controlledPartId` (or tag fallback: YOKE → pan,
-   HEAD → tilt).
-2. For each axis angle θ (degrees), rotate around the normalised axis vector:
-   `quaternion = restQuaternion × axisAngle(axis, θ × π/180)`.
-3. PAN uses `(0,0,1)`; TILT uses `(1,0,0)`. Head is a child of yoke in the part
-   tree so tilt tracks pan automatically.
+Cross-check: `parts[].motionAxisId` on the yoke/head row should match
+`motionRig[].motionAxisId` for that axis.
 
-Do **not** rely on raw GDTF `axisVector` when `axisType` is `PAN` or `TILT`.
+### Step 3 — Choose rotation axes
+
+For effective types `PAN` and `TILT`, **ignore** the raw `axisVector` from GDTF
+(many manufacturers emit `(0,0,1)` for both). Use type-based axes:
+
+| Effective type | Axis vector (GDTF space) | Rotates |
+|----------------|--------------------------|---------|
+| **PAN** | `(0, 0, 1)` | Yoke (base stays fixed) |
+| **TILT** | `(1, 0, 0)` | Head (follows pan via parent chain) |
+
+`ROLL`, `SPIN`, and other `OTHER` axes use `axisVector` from the rig entry
+(normalise to unit length; default to `(0,0,1)` if zero).
+
+### Step 4 — Apply angles
+
+Store the part group's rest orientation after the static assembly. For each
+motion axis, keyed by `motionAxisId`:
+
+```
+θ = angleDegrees[motionAxisId] ?? defaultValue
+quaternion = restQuaternion × axisAngle(axis, θ × π/180)
+```
+
+Apply the quaternion to the transform group for `controlledPartId`. Angles are
+**degrees** between `minValue` and `maxValue` (prefer DMX physical range from
+`dmxMapping` when implementing sliders; see above).
+
+Optional timing: `realFade` and `realAcceleration` on the rig row are GDTF
+seconds for a full move — use for interpolated preview, not for static posing.
+
+### Data sources
+
+| Source | Where to read `parts[]` / `motionRig[]` |
+|--------|------------------------------------------|
+| PRISM REST API | `GET /api/fixtures/:id` → `fixture.definition` |
+| Orbit published type | `Orbit.Objects.Lighting.FixtureType` object (top-level fields) |
+| Orbit collection summary | Root Collection `properties.motionRig` / `motionSummary` (same rig, condensed summary) |
+| Connector export | `GET /api/fixtures/export/:id` payload |
+
+List/detail rows expose `orbitUrl` when the type has been published — open the
+model in Orbit or fetch the object graph via the Orbit objects API.
+
+---
+
+## Orbit published fixtures
+
+Fixture types published via `POST /api/fixtures/:id/publish-orbit` are stored in
+the Orbit Fixtures project (`ORBIT_FIXTURES_PROJECT_ID`, default `0f2893eb28`) as
+`Orbit.Objects.Lighting.FixtureType` plus a root Collection summary.
+
+Third-party consumers should implement [Building pan/tilt control](#building-pantilt-control)
+using `FixtureType.motionRig[]` and `FixtureType.parts[]`. The Collection
+`properties.motionSummary[]` rows are a compact index (`motionAxisId`, effective
+type, `controlledPartId`, `controlledPartTag`, min/max) — useful for UI labels,
+not a substitute for the full rig.
+
+### Fields present on published types
+
+| Field | Purpose |
+|-------|---------|
+| `motionRig[]` | Full motion axes — drive pan/tilt from here |
+| `parts[]` | Geometry hierarchy, tags, `localTransform`, `motionAxisId` |
+| `controlledPartId` | Part group to rotate for this axis |
+| `controlledPartTag` | Denormalised tag (`YOKE` / `HEAD`) — use for effective-type resolution |
+| `motionAxisId` | Stable key for runtime angle maps |
+| `minValue` / `maxValue` | Physical range (degrees) |
+| `dmxLinks` | Channel linkage when populated from GDTF |
+| `realFade` / `realAcceleration` | Optional move timing (seconds) |
+
+### Publish normalisation (PRISM service)
+
+GDTF often stores both axes as `axisType: "OTHER"` with identical Z vectors.
+PRISM admin preview applies the [effective-type rules](#step-2--resolve-which-parts-pan-and-tilt) at
+runtime. The publish pipeline should emit normalised `axisType` (`PAN` / `TILT`)
+and axis vectors so consumers do not need to duplicate heuristics — see
+`normalizeMotionRigForOrbit` in `prism-shared` / monorepo scaffold. Until a
+fixture is republished, Orbit may still carry `"OTHER"`; implement Step 2 above.
 
 ---
 
@@ -273,9 +342,10 @@ shared library geometries remain in memory for `GeometryReference` cloning.
 
 ## API surfaces
 
-| Need | Endpoint |
-|------|----------|
+| Need | Endpoint / source |
+|------|-------------------|
 | Full definition + motion rig | `GET /api/fixtures/:id` |
+| Published Orbit type | `orbitUrl` on list/detail → Orbit model; object type `Orbit.Objects.Lighting.FixtureType` |
 | Assembled preview GLB | `GET /api/fixtures/:id/preview.glb` |
 | Part mesh | `GET /api/fixtures/:id/media/:mediaId` |
 | Connector payload + asset URLs | `GET /api/fixtures/export/:id` |
