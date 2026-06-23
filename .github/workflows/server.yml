@@ -32,6 +32,7 @@ on:
       # rebuild when they change too.
       - 'agent/install/**'
       - 'agent/src/PRISM.Agent/agent-config.example.json'
+      - 'infra/nginx.router.conf'
       - '.github/workflows/server.yml'
   workflow_dispatch:
 
@@ -121,6 +122,9 @@ jobs:
             docker compose pull prism-server prism-materials
             # prism-web + prism-router: web-image. Polyrepo services: deploy-service / deploy-on-package.
             docker compose up -d prism-server prism-materials
-            docker compose ps prism-server prism-materials
+            # nginx.router.conf is bind-mounted into prism-router — recreate so
+            # routing fixes (e.g. agent downloads -> prism-server) take effect.
+            docker compose up -d --force-recreate --no-deps prism-router
+            docker compose ps prism-server prism-materials prism-router
             docker image prune -af --filter "until=24h" 2>/dev/null || true
           REMOTE
