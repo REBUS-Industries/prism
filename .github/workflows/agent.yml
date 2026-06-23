@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -301,9 +301,10 @@ jobs:
           cat RELEASE_NOTES.md
           echo "----- end -----"
 
-      - name: Attach to release
+      - name: Attach to release (prism-agent)
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        id: release
+        id: release_prism_agent
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           repository: REBUS-Industries/prism-agent
@@ -321,6 +322,37 @@ jobs:
             PRISM.Agent-Setup-*.exe
           make_latest: true
 
+      - name: Attach to release (monorepo fallback)
+        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && steps.release_prism_agent.outcome == 'failure'
+        id: release_monorepo
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || 'latest' }}
+          name: PRISM Agent ${{ github.ref_name || 'latest' }}
+          body_path: RELEASE_NOTES.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            PRISM.Agent-*.zip
+            PRISM.Agent-Setup-*.exe
+          make_latest: true
+
+      - name: Verify agent release published
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        id: release_target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.release_prism_agent.outcome }}" == "success" ]]; then
+            echo "repo=REBUS-Industries/prism-agent" >> "$GITHUB_OUTPUT"
+            echo "Published to REBUS-Industries/prism-agent"
+          elif [[ "${{ steps.release_monorepo.outcome }}" == "success" ]]; then
+            echo "repo=REBUS-Industries/prism" >> "$GITHUB_OUTPUT"
+            echo "::warning::Published to REBUS-Industries/prism (fallback). ORBIT_DEPLOY_PAT cannot create releases on prism-agent — grant Contents write on that repo or refresh the org secret."
+          else
+            echo "::error::Agent release failed on both prism-agent (ORBIT_DEPLOY_PAT) and monorepo fallback (GITHUB_TOKEN). See Attach to release step logs."
+            exit 1
+          fi
+
       - name: Update PRISM server settings (version + download URL)
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         # Non-fatal: the runner is on the public internet and cannot reach the
@@ -336,8 +368,9 @@ jobs:
           if (-not $env:PROD_VM_SSH_KEY) { Write-Host "PROD_VM_SSH_KEY not set; skipping DB update"; exit 0 }
           $tag = "${{ github.ref_name }}"
           if (-not $tag) { $tag = "latest" }
+          $releaseRepo = "${{ steps.release_target.outputs.repo }}"
           $zipName = "PRISM.Agent-$tag.zip"
-          $downloadUrl = "https://github.com/REBUS-Industries/prism-agent/releases/download/$tag/$zipName"
+          $downloadUrl = "https://github.com/$releaseRepo/releases/download/$tag/$zipName"
 
           $keyPath = "$env:RUNNER_TEMP\prod_vm_key"
           [IO.File]::WriteAllText($keyPath, $env:PROD_VM_SSH_KEY)
