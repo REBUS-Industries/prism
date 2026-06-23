@@ -53,7 +53,7 @@ async function buildApp() {
     credentials: true,
   });
   await app.register(multipart, {
-    limits: { fileSize: 1024 * 1024 * 1024, files: 1, fields: 32 },
+    limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 1, fields: 32 },
   });
 
   app.get('/health', async () => ({ status: 'ok', service: 'prism-agent' }));

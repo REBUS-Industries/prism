@@ -59,7 +59,7 @@ const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/pr
 const TEXTURES_ROOT = resolve(DATA_DIR, 'textures');
 
 // Megascans 8K sets routinely run into the hundreds of MB once every channel
-// is bundled; cap the import body generously below the 1 GB multipart ceiling.
+// is bundled; cap the import body generously below the 2 GB multipart ceiling.
 const MAX_ZIP_BYTES = MAX_MATERIAL_ZIP_BYTES;
 
 const idParam = z.object({ id: z.string().uuid() });
