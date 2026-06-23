@@ -450,14 +450,15 @@ export const workstationsApi = {
   // /install-script and /agent-config endpoints are gone.
   agentInfo: () => api.get<AgentBuildInfo>('/api/admin/workstations/downloads/agent'),
   agentDownloadUrl: () => '/api/admin/workstations/downloads/agent/download',
-  /** Hard-coded GitHub releases page for the agent — used as the
-   *  "View on GitHub" link next to the download button. */
-  releasesPageUrl: 'https://github.com/REBUS-ORBIT/prism-agent/releases/latest',
+  /** Fallback when agentInfo has not loaded yet. */
+  releasesPageUrl: 'https://github.com/REBUS-Industries/prism-agent/releases/latest',
 };
 
 export interface AgentBuildInfo {
   downloadUrl: string | null;
   version: string | null;
+  /** GitHub release page for the resolved latest build. */
+  releasesPageUrl: string | null;
   wsUrl: string;
   available: boolean;
   buildSource: {
