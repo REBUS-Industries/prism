@@ -16,6 +16,7 @@ import { jobs } from '../db/schema.js';
 import { enqueueConvert } from '../jobs/queue.js';
 import { requireAuth, requireTool } from '../auth/middleware.js';
 import { ASSIMP_EXTS, isAssimpExt, isPreconvertEnabled, maybePreconvert } from '../conversion/preconvert.js';
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from '../conversion/uploadLimits.js';
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? '/var/lib/prism/uploads';
 
@@ -104,11 +105,27 @@ const plugin: FastifyPluginAsync = async (app) => {
         }
         const id = randomUUID();
         savedPath = resolve(join(UPLOAD_DIR, `${id}${ext}`));
+        if (part.file.truncated) {
+          return reply.code(413).send({
+            error: 'upload too large',
+            maxBytes: MAX_UPLOAD_BYTES,
+            maxLabel: MAX_UPLOAD_LABEL,
+          });
+        }
         const chunks: Buffer[] = [];
-        for await (const chunk of part.file) chunks.push(chunk as Buffer);
+        for await (const chunk of part.file) {
+          chunks.push(chunk as Buffer);
+          fileSize += chunk.length;
+          if (fileSize > MAX_UPLOAD_BYTES || part.file.truncated) {
+            return reply.code(413).send({
+              error: 'upload too large',
+              maxBytes: MAX_UPLOAD_BYTES,
+              maxLabel: MAX_UPLOAD_LABEL,
+            });
+          }
+        }
         const buf = Buffer.concat(chunks);
         await writeFile(savedPath, buf);
-        fileSize = buf.length;
       } else {
         fields[part.fieldname] = String(part.value ?? '');
       }

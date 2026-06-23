@@ -1301,7 +1301,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
                   type: 'object',
                   required: ['file', 'projectId', 'modelId'],
                   properties: {
-                    file:       { type: 'string', format: 'binary', description: 'The source file. <=1 GB.' },
+                    file:       { type: 'string', format: 'binary', description: 'The source file. <=2 GB.' },
                     projectId:  { type: 'string', description: 'ORBIT project id.' },
                     modelId:    { type: 'string', description: 'ORBIT model id.' },
                     modelName:  { type: 'string' },

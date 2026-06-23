@@ -329,6 +329,9 @@ function extractMessage(body: unknown): string | undefined {
         return `${o['error']}. ${o['hint']}`;
       }
       if (typeof o['hint'] === 'string') return `${o['error']}. ${o['hint']}`;
+      if (o['error'] === 'upload too large' && typeof o['maxLabel'] === 'string') {
+        return `File exceeds the ${o['maxLabel']} upload limit.`;
+      }
       return o['error'];
     }
     if (typeof o['message'] === 'string') return o['message'];
