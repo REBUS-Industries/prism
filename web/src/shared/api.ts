@@ -619,7 +619,7 @@ export const convertApi = {
     includeLayerDescendants?: boolean;
     /** Two-phase flow: ask agent for layer tree before conversion. */
     selectLayers?: boolean;
-  }) => {
+  }, onProgress?: (fraction: number) => void) => {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('projectId', opts.projectId);
@@ -632,7 +632,7 @@ export const convertApi = {
     if (opts.includedLayers?.length) fd.append('includedLayers', opts.includedLayers.join(','));
     if (opts.includeLayerDescendants !== undefined) fd.append('includeLayerDescendants', String(opts.includeLayerDescendants));
     if (opts.selectLayers !== undefined) fd.append('selectLayers', String(opts.selectLayers));
-    return api.postForm<{ jobId: string; status: string }>('/api/convert/async', fd);
+    return api.postFormWithProgress<{ jobId: string; status: string }>('/api/convert/async', fd, onProgress);
   },
 };
 
