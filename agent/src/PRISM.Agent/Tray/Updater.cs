@@ -15,15 +15,9 @@ namespace PRISM.Agent.Tray;
 public static class Updater
 {
     /// <summary>
-    /// GitHub repos checked for agent releases, highest semver wins.
-    /// Primary: dedicated agent repo. Fallback: monorepo when agent-msi
-    /// cannot publish to prism-agent (see .github/workflows/agent.yml).
+    /// Canonical agent release repo (same target as agent-msi publishes to).
     /// </summary>
-    static readonly string[] ReleaseRepos =
-    [
-        "REBUS-Industries/prism-agent",
-        "REBUS-Industries/prism",
-    ];
+    const string ReleasesRepo = "REBUS-Industries/prism-agent";
 
     static readonly Version _currentVersion =
         typeof(Updater).Assembly.GetName().Version ?? new Version(0, 1, 0);
@@ -73,22 +67,14 @@ public static class Updater
         http.DefaultRequestHeaders.UserAgent.ParseAdd(
             $"PRISM.Agent/{_currentVersion} (Windows)");
 
-        UpdateInfo? best = null;
-        foreach (var repo in ReleaseRepos)
+        UpdateInfo? best;
+        try
         {
-            UpdateInfo? candidate;
-            try
-            {
-                candidate = await FetchLatestFromRepoAsync(http, repo);
-            }
-            catch
-            {
-                continue;
-            }
-
-            if (candidate is null) continue;
-            if (best is null || candidate.NewVersion > best.NewVersion)
-                best = candidate;
+            best = await FetchLatestFromRepoAsync(http, ReleasesRepo);
+        }
+        catch
+        {
+            return null;
         }
 
         if (best is null || best.NewVersion <= _currentVersion)

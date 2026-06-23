@@ -310,9 +310,8 @@ onUnmounted(() => {
     </header>
     <p class="muted small">
       Latest PRISM.Agent wizard installer (built by the
-      <code>agent-msi</code> GitHub Action). Resolved live from
-      <code>REBUS-Industries/prism-agent</code> and, when needed, the
-      monorepo release fallback on <code>REBUS-Industries/prism</code>.
+      <code>agent-msi</code> GitHub Action and attached to the
+      <code>REBUS-Industries/prism-agent</code> release).
     </p>
 
     <div v-if="agentInfoError" class="error-box mt">{{ agentInfoError }}</div>
