@@ -111,6 +111,8 @@ export interface MotionAxis {
   sourceGdtfGeometryId?: string;
   parentPartId?: string;
   controlledPartId?: string;
+  /** Denormalised on Orbit publish from `parts[].tag` of `controlledPartId`. */
+  controlledPartTag?: FixturePartTag;
   axisType: 'PAN' | 'TILT' | 'ROLL' | 'SPIN' | 'OTHER';
   axisVector: Vec3;
   pivot: Vec3;
@@ -118,6 +120,10 @@ export interface MotionAxis {
   maxValue: number;
   defaultValue: number;
   dmxLinks: string[];
+  /** GDTF RealFade — time (s) for a full move of this axis. */
+  realFade?: number;
+  /** GDTF RealAcceleration — acceleration time (s) for this axis. */
+  realAcceleration?: number;
 }
 
 export interface WheelSlot {
