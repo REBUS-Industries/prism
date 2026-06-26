@@ -24,10 +24,6 @@ const orbitProdFields: FieldDef[] = [
   { key: 'orbit_fixtures_project_id',      label: 'Orbit Fixture Project ID', placeholder: 'e.g. 0f2893eb28' },
   { key: 'orbit_model_library_project_id', label: 'Orbit Model Project ID',   placeholder: 'e.g. e86589cc1e' },
 ];
-const orbitDevFields: FieldDef[] = [
-  { key: 'orbit_dev_server_url', label: 'Server URL', placeholder: 'https://orbit-dev.rebus.industries' },
-  { key: 'orbit_dev_token',      label: 'API token (PAT)', secret: true },
-];
 const otherFields: FieldDef[] = [
   { key: 'job_retention_hours', label: 'Job retention (hours)', type: 'number', placeholder: '720' },
   { key: 'maintenance_mode',    label: 'Maintenance mode', type: 'switch' },
@@ -54,7 +50,7 @@ const workstationAgentFields: FieldDef[] = [
 // Reactive state for each known key: current input + original DB value.
 // Pre-populate synchronously so the template can render before refresh()
 // returns — otherwise `values[f.key].value` blows up on first paint.
-const ALL_KEYS = [...orbitProdFields, ...orbitDevFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
+const ALL_KEYS = [...orbitProdFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
 const values = reactive<Record<string, { value: string; original: string }>>(
   Object.fromEntries(ALL_KEYS.map((k) => [k, { value: '', original: '' }])),
 );
@@ -72,7 +68,7 @@ const fixtureTypesStore = useFixtureTypesStore();
 // ── Tile model ──────────────────────────────────────────────────────────
 // Each section is a tile; clicking either opens a modal (fields/custom) or
 // navigates to a named route (routeName).
-type TileKey = 'orbit-prod' | 'orbit-dev' | 'gdtf' | 'server' | 'workstation' | 'fixture-types'
+type TileKey = 'orbit-prod' | 'gdtf' | 'server' | 'workstation' | 'fixture-types'
              | 'external-materials' | 'portal-identity' | 'portal-access'
              | 'users' | 'webhooks' | 'api-keys';
 interface TileDef {
@@ -92,8 +88,7 @@ const router = useRouter();
 const route = useRoute();
 
 const tiles: TileDef[] = [
-  { key: 'orbit-prod',     title: 'ORBIT — Production',   icon: 'cloud',     description: 'Production server URL + API token used by the orchestrator.', fields: orbitProdFields, testTarget: 'prod' },
-  { key: 'orbit-dev',      title: 'ORBIT — Dev / Staging', icon: 'science',   description: 'Dev/staging server URL + API token.', fields: orbitDevFields, testTarget: 'dev' },
+  { key: 'orbit-prod',     title: 'ORBIT',   icon: 'cloud',     description: 'ORBIT server URL, API token, and project IDs used across PRISM.', fields: orbitProdFields, testTarget: 'prod' },
   { key: 'gdtf',           title: 'GDTF-Share',            icon: 'lightbulb', description: 'Credentials for fixture library import from GDTF-Share.com.', fields: gdtfShareFields },
   { key: 'fixture-types',  title: 'Fixture Types',         icon: 'palette',   description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
   { key: 'external-materials', title: 'External materials', icon: 'travel_explore', description: 'Fab, Poly Haven, and ambientCG search providers + Epic OAuth token.', custom: 'external-materials' },
@@ -116,11 +111,10 @@ type TestState =
   | { kind: 'fail'; reason: string };
 
 const testProd = reactive<TestState>({ kind: 'idle' });
-const testDev  = reactive<TestState>({ kind: 'idle' });
 
 async function refresh() {
   const all = (await settingsApi.list()).settings;
-  for (const f of [...orbitProdFields, ...orbitDevFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields]) {
+  for (const f of [...orbitProdFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields]) {
     const v = all[f.key] ?? '';
     values[f.key] = { value: v, original: v };
   }
@@ -179,36 +173,33 @@ async function saveAll(fields: FieldDef[]) {
   for (const f of fields) if (isDirty(f.key)) await save(f.key);
 }
 
-function setTestState(state: TestState, target: 'prod' | 'dev') {
-  const t = target === 'prod' ? testProd : testDev;
-  Object.assign(t, state);
+function setTestState(state: TestState) {
+  Object.assign(testProd, state);
 }
 
-async function runTest(target: 'prod' | 'dev') {
-  setTestState({ kind: 'busy' }, target);
-  // If unsaved changes exist for this target, save them first so the test
-  // hits the values the operator just typed.
-  const fields = target === 'prod' ? orbitProdFields : orbitDevFields;
-  await saveAll(fields);
+async function runTest() {
+  setTestState({ kind: 'busy' });
+  // If unsaved changes exist, save them first so the test hits the values
+  // the operator just typed.
+  await saveAll(orbitProdFields);
 
-  const r = await orbitApi.test(target);
+  const r = await orbitApi.test('prod');
   if ((r as OrbitTestOk).ok) {
     const ok = r as OrbitTestOk;
     setTestState({
       kind: 'ok',
       user:   { name: ok.user.name, email: ok.user.email ?? null },
       server: { name: ok.serverInfo.name, version: ok.serverInfo.version },
-    }, target);
+    });
   } else {
     const fail = r as OrbitTestFail;
-    setTestState({ kind: 'fail', reason: fail.error }, target);
+    setTestState({ kind: 'fail', reason: fail.error });
   }
 }
 
 const activeTest = computed<TestState | null>(() => {
-  const target = activeTile.value?.testTarget;
-  if (!target) return null;
-  return target === 'prod' ? testProd : testDev;
+  if (!activeTile.value?.testTarget) return null;
+  return testProd;
 });
 
 function openTile(key: TileKey) {
@@ -236,8 +227,6 @@ function tileSummary(tile: TileDef): string {
   switch (tile.key) {
     case 'orbit-prod':
       return values.orbit_server_url.value || 'Not configured';
-    case 'orbit-dev':
-      return values.orbit_dev_server_url.value || 'Not configured';
     case 'gdtf':
       return values.gdtf_share_username.value
         ? `User: ${values.gdtf_share_username.value}`
@@ -355,7 +344,7 @@ onMounted(() => {
         <button
           class="primary"
           :disabled="activeTest.kind === 'busy'"
-          @click="runTest(activeTile.testTarget)"
+          @click="runTest()"
         >
           {{ activeTest.kind === 'busy' ? 'Testing…' : 'Test connection' }}
         </button>

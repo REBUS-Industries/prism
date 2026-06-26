@@ -9,7 +9,6 @@ import { settings } from './schema.js';
 
 const ENV_FALLBACKS: Partial<Record<SettingKey | LegacySettingKey, string | undefined>> = {
   orbit_server_url:     process.env.ORBIT_SERVER_URL,
-  orbit_dev_server_url: process.env.ORBIT_DEV_SERVER_URL,
   orbit_fixtures_project_id:      process.env.ORBIT_FIXTURES_PROJECT_ID ?? '0f2893eb28',
   orbit_model_library_project_id: process.env.ORBIT_MODEL_LIBRARY_PROJECT_ID ?? 'e86589cc1e',
   job_retention_hours:  process.env.JOB_RETENTION_HOURS ?? '720',
@@ -35,9 +34,7 @@ const ENV_FALLBACKS: Partial<Record<SettingKey | LegacySettingKey, string | unde
 
 export type SettingKey =
   | 'orbit_server_url'
-  | 'orbit_dev_server_url'
   | 'orbit_token'
-  | 'orbit_dev_token'
   // Orbit project IDs that downstream services publish into. Set in Admin →
   // Settings → ORBIT and read from the shared `settings` table (or via the
   // matching env var). Defaults are the documented production projects.

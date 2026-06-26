@@ -128,8 +128,8 @@ export const settings = pgTable('settings', {
 });
 
 // Settings keys PRISM expects (consumed via getSetting() in server/src/orbit/client.ts etc.):
-//   orbit_server_url, orbit_dev_server_url,    target URLs (admin-editable)
-//   orbit_token, orbit_dev_token,              optional shared service tokens
+//   orbit_server_url                           ORBIT server URL (admin-editable)
+//   orbit_token                                optional shared service token
 //   job_retention_hours                        how long completed job rows survive
 //   maintenance_mode                           '1' = block all auth, return 503
 //   session_secret                             cookie signer (initialised from env on first boot)

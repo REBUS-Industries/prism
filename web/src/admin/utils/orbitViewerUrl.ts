@@ -1,9 +1,7 @@
 import type { ModelDefinition, ModelOrbitRef } from '../../shared/api';
 
-const DEFAULT_ORBIT_SERVER_URLS: Record<'prod' | 'dev', string> = {
-  prod: 'https://orbit.rebus.industries',
-  dev: 'https://orbit-dev.rebus.industries',
-};
+// ORBIT dev/staging was retired — there is a single production server.
+const DEFAULT_ORBIT_SERVER_URL = 'https://orbit.rebus.industries';
 
 /** Parse `definition.metadata.orbit` written by prism-models-service on import. */
 export function readModelOrbitRef(definition?: ModelDefinition | null): ModelOrbitRef | null {
@@ -22,14 +20,15 @@ export function readModelOrbitRef(definition?: ModelDefinition | null): ModelOrb
   };
 }
 
-/** Resolve the Orbit server base URL for a target from admin settings (non-secret keys). */
+/** Resolve the Orbit server base URL from admin settings (non-secret key).
+ *  `target` is retained for call-site compatibility but ORBIT dev was retired,
+ *  so every target resolves to the single production server. */
 export function orbitServerBaseUrl(
   settings: Record<string, string>,
-  target: 'prod' | 'dev',
+  _target: 'prod' | 'dev' = 'prod',
 ): string {
-  const key = target === 'dev' ? 'orbit_dev_server_url' : 'orbit_server_url';
-  const configured = settings[key]?.trim();
-  return (configured || DEFAULT_ORBIT_SERVER_URLS[target]).replace(/\/+$/, '');
+  const configured = settings['orbit_server_url']?.trim();
+  return (configured || DEFAULT_ORBIT_SERVER_URL).replace(/\/+$/, '');
 }
 
 /**

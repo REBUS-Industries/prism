@@ -19,7 +19,6 @@ const GQL_ACTIVE_USER = `query { activeUser { id } }`;
 
 const CANONICAL_ORBIT_URLS = [
   'https://orbit.rebus.industries',
-  'https://orbit-dev.rebus.industries',
 ] as const;
 
 function normalizeUrl(raw?: string | null): string | undefined {
@@ -27,8 +26,9 @@ function normalizeUrl(raw?: string | null): string | undefined {
   return u || undefined;
 }
 
-/** Deduped ORBIT hosts to probe — settings, env, then canonical prod/dev URLs. */
-async function collectOrbitUrls(prefer: 'prod' | 'dev' = 'prod'): Promise<string[]> {
+/** Deduped ORBIT hosts to probe — settings, env, then the canonical prod URL.
+ *  (ORBIT dev/staging was retired — there is a single production server.) */
+async function collectOrbitUrls(): Promise<string[]> {
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (raw?: string | null) => {
@@ -38,13 +38,8 @@ async function collectOrbitUrls(prefer: 'prod' | 'dev' = 'prod'): Promise<string
     out.push(u);
   };
 
-  // Prefer the caller's target first (prod vs dev key), then the other setting.
-  const primaryKey = prefer === 'dev' ? 'orbit_dev_server_url' : 'orbit_server_url';
-  const secondaryKey = prefer === 'dev' ? 'orbit_server_url' : 'orbit_dev_server_url';
-  add(await getSetting(primaryKey));
-  add(await getSetting(secondaryKey));
+  add(await getSetting('orbit_server_url'));
   add(process.env.ORBIT_SERVER_URL);
-  add(process.env.ORBIT_DEV_SERVER_URL);
   for (const u of CANONICAL_ORBIT_URLS) add(u);
   return out;
 }
@@ -82,14 +77,14 @@ async function validateAgainstUrl(
 /**
  * @returns the ORBIT user id if the token validates on any known host, or null.
  */
-async function validate(token: string, prefer: 'prod' | 'dev' = 'prod'): Promise<{ userId: string; serverUrl: string } | null> {
+async function validate(token: string): Promise<{ userId: string; serverUrl: string } | null> {
   const cached = cache.get(token);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
     return { userId: cached.userId, serverUrl: cached.serverUrl };
   }
 
-  for (const serverUrl of await collectOrbitUrls(prefer)) {
+  for (const serverUrl of await collectOrbitUrls()) {
     const result = await validateAgainstUrl(token, serverUrl);
     if (result) {
       cache.set(token, { userId: result.userId, serverUrl: result.serverUrl, expiresAt: now + POSITIVE_TTL_MS });
@@ -105,13 +100,13 @@ setInterval(() => {
   for (const [k, v] of cache) if (v.expiresAt <= now) cache.delete(k);
 }, 60_000).unref();
 
-export async function tryAuthOrbitBearer(req: FastifyRequest, target: 'prod' | 'dev' = 'prod'): Promise<boolean> {
+export async function tryAuthOrbitBearer(req: FastifyRequest): Promise<boolean> {
   const auth = req.headers.authorization;
   if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) return false;
   const token = auth.slice(7).trim();
   if (!token) return false;
 
-  const result = await validate(token, target);
+  const result = await validate(token);
   if (!result) return false;
 
   req.principal = {

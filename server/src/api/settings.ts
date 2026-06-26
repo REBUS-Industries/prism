@@ -15,7 +15,6 @@ import { requireAdmin } from '../auth/middleware.js';
 
 const SECRET_KEYS = new Set<SettingKey>([
   'orbit_token',
-  'orbit_dev_token',
   'gdtf_share_password',
   'fab_epic_refresh_token',
   'portal_api_key',

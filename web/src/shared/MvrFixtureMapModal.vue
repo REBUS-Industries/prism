@@ -316,12 +316,6 @@ function fixturesForRef(u: MvrUnresolvedFixture): FixtureListItem[] {
       </ul>
 
       <h3 class="section-title">Upload to ORBIT</h3>
-      <label class="field-label">Target
-        <select v-model="target">
-          <option value="dev">Dev</option>
-          <option value="prod">Production</option>
-        </select>
-      </label>
       <OrbitPicker
         :target="target"
         v-model:projectId="projectId"
