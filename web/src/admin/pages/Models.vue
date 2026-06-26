@@ -19,6 +19,8 @@ const categoryFilter = ref('');
 const categoryOptions = ref<ModelCategoryOption[]>([]);
 const nextCursor = ref<string | null>(null);
 const orbitSettings = ref<Record<string, string>>({});
+const syncing = ref(false);
+const syncMessage = ref<string | null>(null);
 const PAGE = 36;
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -74,6 +76,37 @@ async function loadOrbitSettings(): Promise<void> {
   }
 }
 
+async function syncFromOrbit(): Promise<void> {
+  syncing.value = true;
+  syncMessage.value = null;
+  error.value = null;
+  try {
+    const res = await modelsApi.syncFromOrbit();
+    const s = res.summary;
+    if (!s.ran) {
+      syncMessage.value = s.busy
+        ? 'Orbit sync is already running — try again in a moment.'
+        : (s.error ?? 'Orbit sync did not run.');
+      return;
+    }
+    const parts = [
+      `${s.created} created`,
+      `${s.linked} linked`,
+      `${s.skipped} unchanged`,
+    ];
+    if (s.pruned) parts.push(`${s.pruned} pruned`);
+    if (s.thumbnails) parts.push(`${s.thumbnails} thumbnails refreshed`);
+    syncMessage.value = `Synced ${s.total} Orbit models (${parts.join(', ')}).`;
+    await load(true);
+  } catch (err) {
+    const apiErr = err as ApiError;
+    const body = apiErr.body as { error?: string; summary?: { error?: string } } | undefined;
+    error.value = body?.error ?? body?.summary?.error ?? apiErr.message ?? 'Orbit sync failed';
+  } finally {
+    syncing.value = false;
+  }
+}
+
 onMounted(() => {
   void loadModelCategories().then(() => {
     categoryOptions.value = modelCategoryFilterOptions();
@@ -86,6 +119,9 @@ onMounted(() => {
 <template>
   <div class="h-row">
     <h1 class="flex-1">Model Library</h1>
+    <button class="btn-link" :disabled="syncing || loading" @click="syncFromOrbit">
+      <Icon name="sync" :size="16" />{{ syncing ? 'Syncing…' : 'Sync from Orbit' }}
+    </button>
     <RouterLink :to="{ name: 'model-import' }" class="btn-link">
       <Icon name="upload_file" :size="16" />Import model
     </RouterLink>
@@ -109,6 +145,7 @@ onMounted(() => {
   </section>
 
   <div v-if="error" class="error-box mt">{{ error }}</div>
+  <p v-if="syncMessage" class="muted small mt sync-ok">{{ syncMessage }}</p>
 
   <p v-if="isEmpty" class="muted mt">No models yet. Import a mesh or create a blank record to get started.</p>
 
@@ -184,4 +221,7 @@ onMounted(() => {
 .pill.published { background: #1f3a23; color: #7fd18c; }
 .center { display: flex; justify-content: center; }
 .btn-link { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none; color: inherit; border: 1px solid var(--color-border, #2a2a32); }
+button.btn-link { background: transparent; cursor: pointer; font: inherit; }
+button.btn-link:disabled { opacity: 0.6; cursor: not-allowed; }
+.sync-ok { color: #7fd18c; }
 </style>

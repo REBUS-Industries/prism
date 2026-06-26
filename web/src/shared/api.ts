@@ -2370,6 +2370,21 @@ export interface ModelDetail extends ModelListItem {
   boundingBox: ModelBoundingBox | null;
 }
 
+/** Result summary from POST /api/model-import/sync (Orbit → library reconciliation). */
+export interface ModelOrbitSyncSummary {
+  ran: boolean;
+  busy?: boolean;
+  total: number;
+  created: number;
+  linked: number;
+  skipped: number;
+  pruned: number;
+  thumbnails: number;
+  projectId?: string;
+  target?: 'prod' | 'dev';
+  error?: string;
+}
+
 export const modelsApi = {
   categories: () => api.get<{ categories: ModelCategoryOption[] }>('/api/models/categories'),
   list: (params: { q?: string; tags?: string[]; category?: string; limit?: number; cursor?: string | null } = {}) => {
@@ -2416,6 +2431,11 @@ export const modelsApi = {
       isNewVersion?: boolean;
       importStatus?: ModelImportStatus | null;
     }>('/api/model-import', fd);
+  },
+  /** Pull connector-published models from the Orbit Model Library project into PRISM. */
+  syncFromOrbit: (opts: { prune?: boolean } = {}) => {
+    const qs = opts.prune ? '?prune=1' : '';
+    return api.post<{ ok: boolean; summary: ModelOrbitSyncSummary }>(`/api/model-import/sync${qs}`, {});
   },
 };
 
