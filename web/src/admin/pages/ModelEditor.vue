@@ -17,6 +17,7 @@ import OrbitModelViewer from '../components/OrbitModelViewer.vue';
 import Icon from '../../shared/Icon.vue';
 import { cloneModelTransform, ensureModelTransform } from '../utils/modelTransform';
 import {
+  loadModelCategories,
   modelCategoryLabel,
   modelCategorySelectOptions,
   normalizeModelCategory,
@@ -351,6 +352,7 @@ async function loadOrbitSettings(): Promise<void> {
 }
 
 onMounted(() => {
+  void loadModelCategories();
   void reload();
   void loadMaterials();
   void loadOrbitSettings();

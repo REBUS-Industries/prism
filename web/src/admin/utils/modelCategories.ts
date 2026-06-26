@@ -1,8 +1,11 @@
-export type ModelCategoryOption = { value: string; label: string };
+import { modelsApi, type ModelCategoryOption } from '../../shared/api';
 
-/** Predefined model library categories (stored lowercase). */
-export const MODEL_CATEGORY_OPTIONS: readonly ModelCategoryOption[] = [
-  { value: '', label: '—' },
+export type { ModelCategoryOption };
+
+const EMPTY_OPTION: ModelCategoryOption = { value: '', label: '—' };
+
+/** Offline fallback when the models service is unreachable. */
+const FALLBACK_CATEGORIES: ModelCategoryOption[] = [
   { value: 'truss', label: 'Truss' },
   { value: 'clamp', label: 'Clamp' },
   { value: 'staging', label: 'Staging' },
@@ -16,19 +19,46 @@ export const MODEL_CATEGORY_OPTIONS: readonly ModelCategoryOption[] = [
   { value: 'other', label: 'Other' },
 ];
 
-const KNOWN_VALUES = new Set(
-  MODEL_CATEGORY_OPTIONS.map((o) => o.value).filter(Boolean),
-);
+/** @deprecated Use loadModelCategories() — kept for backwards compatibility during migration. */
+export const MODEL_CATEGORY_OPTIONS: readonly ModelCategoryOption[] = [
+  EMPTY_OPTION,
+  ...FALLBACK_CATEGORIES,
+];
+
+let cachedPalette: ModelCategoryOption[] | null = null;
+
+function paletteWithEmpty(categories: ModelCategoryOption[]): ModelCategoryOption[] {
+  return [EMPTY_OPTION, ...categories.filter((c) => c.value)];
+}
+
+/** Fetch the category palette from GET /api/models/categories (cached for the session). */
+export async function loadModelCategories(force = false): Promise<ModelCategoryOption[]> {
+  if (cachedPalette && !force) return cachedPalette;
+  try {
+    const res = await modelsApi.categories();
+    cachedPalette = paletteWithEmpty(res.categories);
+  } catch {
+    cachedPalette = paletteWithEmpty(FALLBACK_CATEGORIES);
+  }
+  return cachedPalette;
+}
+
+function activeOptions(): ModelCategoryOption[] {
+  return cachedPalette ?? [...MODEL_CATEGORY_OPTIONS];
+}
+
+const knownValues = (): Set<string> =>
+  new Set(activeOptions().map((o) => o.value).filter(Boolean).map((v) => v.toLowerCase()));
 
 export function isKnownModelCategory(value: string): boolean {
-  return KNOWN_VALUES.has(value.toLowerCase());
+  return knownValues().has(value.trim().toLowerCase());
 }
 
 /** Map stored value to select value; known categories normalize to lowercase. */
 export function normalizeModelCategory(value: string | null | undefined): string {
   const trimmed = (value ?? '').trim();
   if (!trimmed) return '';
-  const match = MODEL_CATEGORY_OPTIONS.find(
+  const match = activeOptions().find(
     (o) => o.value && o.value.toLowerCase() === trimmed.toLowerCase(),
   );
   return match?.value ?? trimmed;
@@ -37,15 +67,19 @@ export function normalizeModelCategory(value: string | null | undefined): string
 /** Options for `<select>` — includes a one-off entry when the model has an unknown category. */
 export function modelCategorySelectOptions(current: string | null | undefined): ModelCategoryOption[] {
   const normalized = normalizeModelCategory(current);
-  if (!normalized || isKnownModelCategory(normalized)) {
-    return [...MODEL_CATEGORY_OPTIONS];
-  }
-  return [...MODEL_CATEGORY_OPTIONS, { value: normalized, label: normalized }];
+  const base = activeOptions();
+  if (!normalized || isKnownModelCategory(normalized)) return [...base];
+  return [...base, { value: normalized, label: normalized }];
 }
 
 export function modelCategoryLabel(value: string | null | undefined): string {
   const normalized = normalizeModelCategory(value);
   if (!normalized) return '—';
-  const match = MODEL_CATEGORY_OPTIONS.find((o) => o.value === normalized);
+  const match = activeOptions().find((o) => o.value === normalized);
   return match?.label ?? normalized;
+}
+
+/** Filter chips for the library list (excludes the empty option). */
+export function modelCategoryFilterOptions(): ModelCategoryOption[] {
+  return activeOptions().filter((o) => o.value);
 }

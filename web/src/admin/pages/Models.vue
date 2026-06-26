@@ -1,17 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { modelsApi, settingsApi, type ModelListItem, type ApiError } from '../../shared/api';
+import { modelsApi, settingsApi, type ModelListItem, type ModelCategoryOption, type ApiError } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 import ModelCardPreview from '../components/ModelCardPreview.vue';
+import {
+  loadModelCategories,
+  modelCategoryFilterOptions,
+  modelCategoryLabel,
+} from '../utils/modelCategories';
 
 const router = useRouter();
 const models = ref<ModelListItem[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const search = ref('');
+const categoryFilter = ref('');
+const categoryOptions = ref<ModelCategoryOption[]>([]);
 const nextCursor = ref<string | null>(null);
 const orbitSettings = ref<Record<string, string>>({});
+const syncing = ref(false);
+const syncMessage = ref<string | null>(null);
 const PAGE = 36;
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -22,6 +31,7 @@ async function load(reset = true): Promise<void> {
   try {
     const res = await modelsApi.list({
       q: search.value.trim() || undefined,
+      category: categoryFilter.value || undefined,
       limit: PAGE,
       cursor: reset ? null : nextCursor.value,
     });
@@ -37,6 +47,14 @@ async function load(reset = true): Promise<void> {
 function onSearch(): void {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => void load(true), 300);
+}
+
+function onCategoryFilter(): void {
+  void load(true);
+}
+
+function displayCategory(m: ModelListItem): string {
+  return m.categoryLabel ?? modelCategoryLabel(m.category) ?? m.category ?? '';
 }
 
 async function createBlank(): Promise<void> {
@@ -58,7 +76,41 @@ async function loadOrbitSettings(): Promise<void> {
   }
 }
 
+async function syncFromOrbit(): Promise<void> {
+  syncing.value = true;
+  syncMessage.value = null;
+  error.value = null;
+  try {
+    const res = await modelsApi.syncFromOrbit();
+    const s = res.summary;
+    if (!s.ran) {
+      syncMessage.value = s.busy
+        ? 'Orbit sync is already running — try again in a moment.'
+        : (s.error ?? 'Orbit sync did not run.');
+      return;
+    }
+    const parts = [
+      `${s.created} created`,
+      `${s.linked} linked`,
+      `${s.skipped} unchanged`,
+    ];
+    if (s.pruned) parts.push(`${s.pruned} pruned`);
+    if (s.thumbnails) parts.push(`${s.thumbnails} thumbnails refreshed`);
+    syncMessage.value = `Synced ${s.total} Orbit models (${parts.join(', ')}).`;
+    await load(true);
+  } catch (err) {
+    const apiErr = err as ApiError;
+    const body = apiErr.body as { error?: string; summary?: { error?: string } } | undefined;
+    error.value = body?.error ?? body?.summary?.error ?? apiErr.message ?? 'Orbit sync failed';
+  } finally {
+    syncing.value = false;
+  }
+}
+
 onMounted(() => {
+  void loadModelCategories().then(() => {
+    categoryOptions.value = modelCategoryFilterOptions();
+  });
   void load(true);
   void loadOrbitSettings();
 });
@@ -67,6 +119,9 @@ onMounted(() => {
 <template>
   <div class="h-row">
     <h1 class="flex-1">Model Library</h1>
+    <button class="btn-link" :disabled="syncing || loading" @click="syncFromOrbit">
+      <Icon name="sync" :size="16" />{{ syncing ? 'Syncing…' : 'Sync from Orbit' }}
+    </button>
     <RouterLink :to="{ name: 'model-import' }" class="btn-link">
       <Icon name="upload_file" :size="16" />Import model
     </RouterLink>
@@ -79,11 +134,18 @@ onMounted(() => {
         <Icon name="search" :size="16" class="search-icon" />
         <input v-model="search" placeholder="Search models…" @input="onSearch" />
       </div>
+      <select v-model="categoryFilter" class="category-filter" @change="onCategoryFilter">
+        <option value="">All categories</option>
+        <option v-for="opt in categoryOptions" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </option>
+      </select>
       <button :disabled="loading" @click="load(true)"><Icon name="refresh" :size="16" />Refresh</button>
     </div>
   </section>
 
   <div v-if="error" class="error-box mt">{{ error }}</div>
+  <p v-if="syncMessage" class="muted small mt sync-ok">{{ syncMessage }}</p>
 
   <p v-if="isEmpty" class="muted mt">No models yet. Import a mesh or create a blank record to get started.</p>
 
@@ -106,7 +168,7 @@ onMounted(() => {
       <div class="meta">
         <div class="name" :title="m.name">{{ m.name }}</div>
         <div class="sub muted small">
-          <span v-if="m.category">{{ m.category }}</span>
+          <span v-if="m.category">{{ displayCategory(m) }}</span>
           <span class="pill" :class="m.status">{{ m.status }}</span>
         </div>
       </div>
@@ -123,6 +185,7 @@ onMounted(() => {
 .search-box { position: relative; flex: 1; }
 .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.5; }
 .search-box input { width: 100%; padding-left: 32px; }
+.category-filter { min-width: 160px; }
 .model-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -158,4 +221,7 @@ onMounted(() => {
 .pill.published { background: #1f3a23; color: #7fd18c; }
 .center { display: flex; justify-content: center; }
 .btn-link { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none; color: inherit; border: 1px solid var(--color-border, #2a2a32); }
+button.btn-link { background: transparent; cursor: pointer; font: inherit; }
+button.btn-link:disabled { opacity: 0.6; cursor: not-allowed; }
+.sync-ok { color: #7fd18c; }
 </style>

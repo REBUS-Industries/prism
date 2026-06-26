@@ -2332,10 +2332,17 @@ export interface ModelVersionSummary {
   orbitUrl: string | null;
 }
 
+export interface ModelCategoryOption {
+  value: string;
+  label: string;
+}
+
 export interface ModelListItem {
   id: string;
   name: string;
   category: string | null;
+  /** Display label from GET /api/models/categories when category is known. */
+  categoryLabel?: string | null;
   tags: string[];
   status: 'draft' | 'published';
   origin: ModelOrigin;
@@ -2363,7 +2370,23 @@ export interface ModelDetail extends ModelListItem {
   boundingBox: ModelBoundingBox | null;
 }
 
+/** Result summary from POST /api/model-import/sync (Orbit → library reconciliation). */
+export interface ModelOrbitSyncSummary {
+  ran: boolean;
+  busy?: boolean;
+  total: number;
+  created: number;
+  linked: number;
+  skipped: number;
+  pruned: number;
+  thumbnails: number;
+  projectId?: string;
+  target?: 'prod' | 'dev';
+  error?: string;
+}
+
 export const modelsApi = {
+  categories: () => api.get<{ categories: ModelCategoryOption[] }>('/api/models/categories'),
   list: (params: { q?: string; tags?: string[]; category?: string; limit?: number; cursor?: string | null } = {}) => {
     const qs = new URLSearchParams();
     if (params.q) qs.set('q', params.q);
@@ -2408,6 +2431,11 @@ export const modelsApi = {
       isNewVersion?: boolean;
       importStatus?: ModelImportStatus | null;
     }>('/api/model-import', fd);
+  },
+  /** Pull connector-published models from the Orbit Model Library project into PRISM. */
+  syncFromOrbit: (opts: { prune?: boolean } = {}) => {
+    const qs = opts.prune ? '?prune=1' : '';
+    return api.post<{ ok: boolean; summary: ModelOrbitSyncSummary }>(`/api/model-import/sync${qs}`, {});
   },
 };
 
