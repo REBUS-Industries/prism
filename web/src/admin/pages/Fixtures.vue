@@ -8,6 +8,7 @@ import FixtureLibraryDetail from '../components/FixtureLibraryDetail.vue';
 import FixtureDownloadModal from '../components/FixtureDownloadModal.vue';
 import Icon from '../../shared/Icon.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
+import { fixtureLabel } from '../utils/fixtureLabel';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import type { GdtfModelQuality } from '../utils/fixtureModelQuality';
 
@@ -121,6 +122,17 @@ function matchLocal(entry: GdtfShareCatalogEntry): FixtureListItem | undefined {
     const fn = f.fixtureName.toLowerCase();
     return fm === mfg && (fn === fix || f.name.toLowerCase().includes(fix));
   });
+}
+
+/** Row label: the matched local fixture's custom name when set, else the catalog name. */
+function rowLabel(entry: GdtfShareCatalogEntry): string {
+  return matchLocal(entry)?.displayName?.trim() || entry.fixture;
+}
+
+/** True when a custom display name is hiding the canonical GDTF name (show it as a sub line). */
+function rowHasCustomName(entry: GdtfShareCatalogEntry): boolean {
+  const custom = matchLocal(entry)?.displayName?.trim();
+  return !!custom && custom !== entry.fixture;
 }
 
 const catalogEntries = computed(() => {
@@ -576,7 +588,7 @@ async function createBlank(): Promise<void> {
 
 async function removeFixture(f: FixtureListItem): Promise<void> {
 
-  if (!confirm(`Delete fixture "${f.name}"?`)) return;
+  if (!confirm(`Delete fixture "${fixtureLabel(f)}"?`)) return;
 
   try {
 
@@ -975,7 +987,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             <div class="row-main">
 
               <span class="row-title">
-                {{ entry.fixture }}
+                {{ rowLabel(entry) }}
                 <span
                   v-if="matchLocal(entry)?.updateAvailable"
                   class="update-badge"
@@ -983,7 +995,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
                 ><Icon name="arrow_upward" :size="11" /></span>
               </span>
 
-              <span class="row-sub muted">{{ formatVersionSub(entry) }}</span>
+              <span class="row-sub muted">
+                <span v-if="rowHasCustomName(entry)">{{ entry.fixture }} · </span>{{ formatVersionSub(entry) }}
+              </span>
 
             </div>
 

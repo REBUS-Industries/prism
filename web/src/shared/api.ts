@@ -1856,6 +1856,12 @@ export interface FixtureEditCarryReport {
 export interface FixtureListItem {
   id: string;
   name: string;
+  /**
+   * Optional custom "pretty" label. Human-facing only — never changes identity
+   * (`name` / `manufacturer` / `fixtureName`) or the Orbit model name. Render
+   * `displayName ?? name` everywhere a fixture name is shown (see `fixtureLabel`).
+   */
+  displayName: string | null;
   manufacturer: string;
   fixtureName: string;
   revision: string | null;
@@ -2067,9 +2073,10 @@ export const fixturesApi = {
     );
   },
   get: (id: string) => api.get<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`),
-  create: (body: { name: string; manufacturer?: string; fixtureName?: string; tags?: string[] }) =>
+  create: (body: { name: string; displayName?: string; manufacturer?: string; fixtureName?: string; tags?: string[] }) =>
     api.post<{ fixture: FixtureListItem }>('/api/fixtures', body),
-  update: (id: string, body: { name?: string; tags?: string[]; status?: string; definition?: FixtureDefinition }) =>
+  /** `displayName: ''` or `null` clears the custom name (falls back to `name`). Max length 256. */
+  update: (id: string, body: { name?: string; displayName?: string | null; tags?: string[]; status?: string; definition?: FixtureDefinition }) =>
     api.put<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`, body),
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/fixtures/${id}`),
   previewUrl: (id: string) => `/api/fixtures/${id}/preview.glb`,

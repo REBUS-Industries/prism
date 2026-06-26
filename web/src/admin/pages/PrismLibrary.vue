@@ -15,6 +15,7 @@ import Icon from '../../shared/Icon.vue';
 import Modal from '../../shared/Modal.vue';
 import FixtureTypeSelect from '../components/FixtureTypeSelect.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
+import { fixtureLabel } from '../utils/fixtureLabel';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import {
   fixturesApi,
@@ -82,7 +83,7 @@ const preManufacturer = computed(() => {
     if (originFilter.value !== 'all' && f.origin !== originFilter.value) return false;
     if (statusFilter.value !== 'all' && f.status !== statusFilter.value) return false;
     if (!q) return true;
-    const hay = `${f.name} ${f.manufacturer} ${f.fixtureName}`.toLowerCase();
+    const hay = `${f.displayName ?? ''} ${f.name} ${f.manufacturer} ${f.fixtureName}`.toLowerCase();
     return q.split(/\s+/).every((term) => hay.includes(term));
   });
 });
@@ -201,7 +202,7 @@ async function toggleStatus(): Promise<void> {
 }
 
 async function removeFixture(f: FixtureListItem): Promise<void> {
-  if (!confirm(`Delete "${f.name}" from the PRISM library?`)) return;
+  if (!confirm(`Delete "${fixtureLabel(f)}" from the PRISM library?`)) return;
   try {
     await fixturesApi.remove(f.id);
     fixtures.value = fixtures.value.filter((x) => x.id !== f.id);
@@ -419,12 +420,14 @@ onMounted(() => {
             />
             <div class="row-main">
               <span class="row-title">
-                {{ f.name }}
+                {{ fixtureLabel(f) }}
                 <span v-if="f.updateAvailable" class="update-badge" title="Newer GDTF revision available">
                   <Icon name="arrow_upward" :size="11" />
                 </span>
               </span>
-              <span class="row-sub muted">{{ f.fixtureName || f.manufacturer }}</span>
+              <span class="row-sub muted">
+                <span v-if="f.displayName?.trim()">{{ f.name }} · </span>{{ f.fixtureName || f.manufacturer }}
+              </span>
             </div>
             <span class="origin-badge" :class="`origin-${f.origin}`">{{ originLabel(f.origin) }}</span>
             <span class="data-icon" :class="{ on: f.hasPreview }" title="3D preview">
@@ -438,8 +441,10 @@ onMounted(() => {
         <div v-if="!selected" class="detail-empty muted">Select a fixture to view details.</div>
         <div v-else class="fixture-detail">
           <h2 class="section-label">PRISM library fixture</h2>
-          <p class="detail-name">{{ selected.name }}</p>
-          <p class="detail-sub muted">{{ selected.manufacturer }} — {{ selected.fixtureName }}</p>
+          <p class="detail-name">{{ fixtureLabel(selected) }}</p>
+          <p class="detail-sub muted">
+            <span v-if="selected.displayName?.trim()">{{ selected.name }} · </span>{{ selected.manufacturer }} — {{ selected.fixtureName }}
+          </p>
 
           <div class="icon-actions">
             <button type="button" class="icon-action" title="Open in editor" @click="openEditor(selected.id)">
