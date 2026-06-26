@@ -18,6 +18,8 @@ import FixtureGdtfDebugPanel from '../components/FixtureGdtfDebugPanel.vue';
 
 import { buildTransform4x4 } from '../utils/fixtureTransform';
 
+import { fixtureLabel } from '../utils/fixtureLabel';
+
 import DmxModePanel from '../components/DmxModePanel.vue';
 
 import IesUploader from '../components/IesUploader.vue';
@@ -138,6 +140,8 @@ watch(() => route.query.tab, (tab) => {
 
 
 const name = ref('');
+
+const displayName = ref('');
 
 const tags = ref('');
 
@@ -673,6 +677,8 @@ async function reload(): Promise<void> {
 
     name.value = res.fixture.name;
 
+    displayName.value = res.fixture.displayName ?? '';
+
     tags.value = res.fixture.tags.join(', ');
 
     status.value = res.fixture.status;
@@ -722,6 +728,8 @@ async function save(): Promise<void> {
 
       name: name.value.trim(),
 
+      displayName: displayName.value.trim() || null,
+
       tags: tags.value.split(',').map((s) => s.trim()).filter(Boolean),
 
       status: status.value,
@@ -731,6 +739,8 @@ async function save(): Promise<void> {
     });
 
     fixture.value = res.fixture;
+
+    displayName.value = res.fixture.displayName ?? '';
 
   } catch (err) {
 
@@ -904,9 +914,11 @@ onMounted(() => {
 
           <div>
 
-            <h1>{{ fixture.name }}</h1>
+            <h1>{{ fixtureLabel(fixture) }}</h1>
 
             <p class="head-meta muted">
+
+              <span v-if="fixture.displayName?.trim()">{{ fixture.name }} · </span>
 
               {{ info?.manufacturer }} · {{ info?.fixtureName }}
 
@@ -1283,6 +1295,12 @@ onMounted(() => {
 
           <label>Name <input v-model="name" /></label>
 
+          <label>Display name
+            <input v-model="displayName" :placeholder="name || 'Custom label (optional)'" maxlength="256" />
+          </label>
+
+          <p class="field-hint muted">Optional. Shown across PRISM, the connector, and Orbit. Leave blank to use the fixture name.</p>
+
           <label>Tags <input v-model="tags" placeholder="comma-separated" /></label>
 
           <label>Status
@@ -1588,6 +1606,8 @@ onMounted(() => {
 }
 
 .head-meta { margin: 4px 0 0; font-size: 13px; }
+
+.field-hint { margin: -4px 0 6px; font-size: 11px; line-height: 1.4; }
 
 .version-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .version-bar .provenance { margin: 0; font-size: 12px; }

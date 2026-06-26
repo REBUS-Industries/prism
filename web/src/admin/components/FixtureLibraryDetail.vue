@@ -314,7 +314,7 @@ watch(
   <div v-else class="fixture-detail">
     <h2 class="section-label">Fixture information</h2>
 
-    <p class="detail-name">{{ entry.fixture }}</p>
+    <p class="detail-name">{{ localFixture?.displayName?.trim() || entry.fixture }}</p>
     <p class="detail-sub muted">{{ entry.manufacturer }} - {{ entry.fixture }}</p>
 
     <div class="icon-actions">
