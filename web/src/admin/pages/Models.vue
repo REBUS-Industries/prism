@@ -98,6 +98,7 @@ onMounted(() => {
         <ModelCardPreview
           :model-id="m.id"
           :has-preview="m.hasPreview"
+          :has-thumbnail="!!m.hasThumbnail"
           :alt="m.name"
           :orbit-settings="orbitSettings"
         />

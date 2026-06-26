@@ -38,7 +38,8 @@ const CLEAR_COLOR_PASS_NAMES = new Set([
   'DEPTH',
   'DEPTH-NORMAL',
   'DEPTH-NORMAL-ID',
-  'PROGRESSIVE-AO',
+  // Do NOT include PROGRESSIVE-AO — Speckle runs that pass when the camera is
+  // idle; clearing it to the dark bg drives AO toward zero and darkens the model.
 ]);
 
 /**

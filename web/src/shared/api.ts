@@ -2342,6 +2342,8 @@ export interface ModelListItem {
   description: string | null;
   activeVersionId: string | null;
   hasPreview: boolean;
+  /** Cached Orbit preview PNG from prism-models-service sync. */
+  hasThumbnail?: boolean;
   /** Present while import runs through the convert pipeline. */
   importStatus?: ModelImportStatus | null;
   importJobId?: string | null;
@@ -2390,6 +2392,7 @@ export const modelsApi = {
   ) => api.put<{ model: ModelDetail }>(`/api/models/${id}`, body),
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/models/${id}`),
   previewUrl: (id: string) => `/api/models/${id}/preview.glb`,
+  thumbnailUrl: (id: string) => `/api/models/${id}/thumbnail`,
   mediaUrl: (id: string, mediaId: string) => `/api/models/${id}/media/${mediaId}`,
   import: (file: File, options: { name?: string; category?: string; tags?: string[]; sourceUnits?: ModelLengthUnit } = {}) => {
     const fd = new FormData();

@@ -1,8 +1,7 @@
 <script setup lang="ts">
 /**
- * Model library card thumbnail. Uses cached GLB preview image when available;
- * otherwise lazy-loads model detail and embeds a compact ORBIT viewer for models
- * linked via definition.metadata.orbit (same loader as ModelEditor).
+ * Model library card thumbnail. Prefers a cached Orbit preview PNG from the
+ * models service; falls back to a compact embedded ORBIT viewer or local GLB.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { modelsApi, type ModelOrbitRef } from '../../shared/api';
@@ -14,9 +13,11 @@ import { readModelOrbitRef } from '../utils/orbitViewerUrl';
 const props = withDefaults(defineProps<{
   modelId: string;
   hasPreview: boolean;
+  hasThumbnail?: boolean;
   alt: string;
   orbitSettings?: Record<string, string>;
 }>(), {
+  hasThumbnail: false,
   orbitSettings: () => ({}),
 });
 
@@ -28,16 +29,18 @@ const detailChecked = ref(false);
 const imgFailed = ref(false);
 
 const staticUrl = computed(() =>
-  props.hasPreview ? modelsApi.previewUrl(props.modelId) : null,
+  props.hasThumbnail ? modelsApi.thumbnailUrl(props.modelId) : null,
 );
 
 const showStaticImage = computed(() =>
-  shouldRender.value
-  && Boolean(staticUrl.value && !imgFailed.value && !orbitRef.value && detailChecked.value),
+  shouldRender.value && Boolean(staticUrl.value && !imgFailed.value),
 );
 
 const showOrbit = computed(() =>
-  shouldRender.value && Boolean(orbitRef.value),
+  shouldRender.value
+  && Boolean(orbitRef.value)
+  && !showStaticImage.value
+  && detailChecked.value,
 );
 
 const showGlbViewer = computed(() =>
@@ -45,6 +48,7 @@ const showGlbViewer = computed(() =>
   && props.hasPreview
   && imgFailed.value
   && !orbitRef.value
+  && !props.hasThumbnail
   && detailChecked.value,
 );
 
@@ -79,7 +83,7 @@ function onImgError(): void {
 function beginLazyLoad(): void {
   if (shouldRender.value) return;
   shouldRender.value = true;
-  void loadPreviewSource();
+  if (!props.hasThumbnail) void loadPreviewSource();
 }
 
 onMounted(() => {
