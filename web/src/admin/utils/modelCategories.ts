@@ -44,7 +44,7 @@ export async function loadModelCategories(force = false): Promise<ModelCategoryO
 }
 
 function activeOptions(): ModelCategoryOption[] {
-  return cachedPalette ?? MODEL_CATEGORY_OPTIONS;
+  return cachedPalette ?? [...MODEL_CATEGORY_OPTIONS];
 }
 
 const knownValues = (): Set<string> =>
