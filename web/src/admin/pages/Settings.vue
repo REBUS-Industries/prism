@@ -21,6 +21,8 @@ interface FieldDef {
 const orbitProdFields: FieldDef[] = [
   { key: 'orbit_server_url', label: 'Server URL', placeholder: 'https://orbit.rebus.industries' },
   { key: 'orbit_token',      label: 'API token (PAT)', secret: true, placeholder: 'paste a personal access token here' },
+  { key: 'orbit_fixtures_project_id',      label: 'Orbit Fixture Project ID', placeholder: 'e.g. 0f2893eb28' },
+  { key: 'orbit_model_library_project_id', label: 'Orbit Model Project ID',   placeholder: 'e.g. e86589cc1e' },
 ];
 const orbitDevFields: FieldDef[] = [
   { key: 'orbit_dev_server_url', label: 'Server URL', placeholder: 'https://orbit-dev.rebus.industries' },
