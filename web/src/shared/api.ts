@@ -2332,10 +2332,17 @@ export interface ModelVersionSummary {
   orbitUrl: string | null;
 }
 
+export interface ModelCategoryOption {
+  value: string;
+  label: string;
+}
+
 export interface ModelListItem {
   id: string;
   name: string;
   category: string | null;
+  /** Display label from GET /api/models/categories when category is known. */
+  categoryLabel?: string | null;
   tags: string[];
   status: 'draft' | 'published';
   origin: ModelOrigin;
@@ -2364,6 +2371,7 @@ export interface ModelDetail extends ModelListItem {
 }
 
 export const modelsApi = {
+  categories: () => api.get<{ categories: ModelCategoryOption[] }>('/api/models/categories'),
   list: (params: { q?: string; tags?: string[]; category?: string; limit?: number; cursor?: string | null } = {}) => {
     const qs = new URLSearchParams();
     if (params.q) qs.set('q', params.q);

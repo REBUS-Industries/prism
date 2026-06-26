@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { modelsApi, type ApiError, type ModelImportStatus } from '../../shared/api';
+import { modelsApi, type ApiError, type ModelImportStatus, type ModelCategoryOption } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
-import { MODEL_CATEGORY_OPTIONS } from '../utils/modelCategories';
+import { loadModelCategories } from '../utils/modelCategories';
 import {
   DEFAULT_MODEL_SOURCE_UNITS,
   MODEL_LENGTH_UNITS,
@@ -21,6 +21,7 @@ const category = ref('');
 const tags = ref('');
 const sourceUnits = ref<ModelLengthUnit>(DEFAULT_MODEL_SOURCE_UNITS);
 const selectedFile = ref<File | null>(null);
+const categoryOptions = ref<ModelCategoryOption[]>([]);
 
 /** Match /convert/ supported formats (Rhino + assimp pre-convert). */
 const ACCEPT = '.3dm,.dwg,.dxf,.fbx,.obj,.stl,.ply,.3mf,.skp,.dae,.gltf,.glb,.blend,.x,.usdz,.step,.stp,.iges,.igs,.zip';
@@ -126,6 +127,9 @@ async function runImport(): Promise<void> {
   }
 }
 
+onMounted(() => {
+  void loadModelCategories().then((opts) => { categoryOptions.value = opts; });
+});
 onUnmounted(stopPolling);
 </script>
 
@@ -158,7 +162,7 @@ onUnmounted(stopPolling);
           <span class="field-label">Category <span class="optional">(optional)</span></span>
           <select v-model="category">
             <option
-              v-for="opt in MODEL_CATEGORY_OPTIONS"
+              v-for="opt in categoryOptions"
               :key="opt.value || '__none__'"
               :value="opt.value"
             >

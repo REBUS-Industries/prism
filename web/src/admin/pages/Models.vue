@@ -1,15 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { modelsApi, settingsApi, type ModelListItem, type ApiError } from '../../shared/api';
+import { modelsApi, settingsApi, type ModelListItem, type ModelCategoryOption, type ApiError } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 import ModelCardPreview from '../components/ModelCardPreview.vue';
+import {
+  loadModelCategories,
+  modelCategoryFilterOptions,
+  modelCategoryLabel,
+} from '../utils/modelCategories';
 
 const router = useRouter();
 const models = ref<ModelListItem[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const search = ref('');
+const categoryFilter = ref('');
+const categoryOptions = ref<ModelCategoryOption[]>([]);
 const nextCursor = ref<string | null>(null);
 const orbitSettings = ref<Record<string, string>>({});
 const PAGE = 36;
@@ -22,6 +29,7 @@ async function load(reset = true): Promise<void> {
   try {
     const res = await modelsApi.list({
       q: search.value.trim() || undefined,
+      category: categoryFilter.value || undefined,
       limit: PAGE,
       cursor: reset ? null : nextCursor.value,
     });
@@ -37,6 +45,14 @@ async function load(reset = true): Promise<void> {
 function onSearch(): void {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => void load(true), 300);
+}
+
+function onCategoryFilter(): void {
+  void load(true);
+}
+
+function displayCategory(m: ModelListItem): string {
+  return m.categoryLabel ?? modelCategoryLabel(m.category) ?? m.category ?? '';
 }
 
 async function createBlank(): Promise<void> {
@@ -59,6 +75,9 @@ async function loadOrbitSettings(): Promise<void> {
 }
 
 onMounted(() => {
+  void loadModelCategories().then(() => {
+    categoryOptions.value = modelCategoryFilterOptions();
+  });
   void load(true);
   void loadOrbitSettings();
 });
@@ -79,6 +98,12 @@ onMounted(() => {
         <Icon name="search" :size="16" class="search-icon" />
         <input v-model="search" placeholder="Search models…" @input="onSearch" />
       </div>
+      <select v-model="categoryFilter" class="category-filter" @change="onCategoryFilter">
+        <option value="">All categories</option>
+        <option v-for="opt in categoryOptions" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </option>
+      </select>
       <button :disabled="loading" @click="load(true)"><Icon name="refresh" :size="16" />Refresh</button>
     </div>
   </section>
@@ -106,7 +131,7 @@ onMounted(() => {
       <div class="meta">
         <div class="name" :title="m.name">{{ m.name }}</div>
         <div class="sub muted small">
-          <span v-if="m.category">{{ m.category }}</span>
+          <span v-if="m.category">{{ displayCategory(m) }}</span>
           <span class="pill" :class="m.status">{{ m.status }}</span>
         </div>
       </div>
@@ -123,6 +148,7 @@ onMounted(() => {
 .search-box { position: relative; flex: 1; }
 .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.5; }
 .search-box input { width: 100%; padding-left: 32px; }
+.category-filter { min-width: 160px; }
 .model-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
