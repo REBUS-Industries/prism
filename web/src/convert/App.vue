@@ -242,12 +242,6 @@ const showLayerPicker = computed(() =>
 
         <template v-if="!isMvrFile">
         <div class="row">
-          <label class="flex-1">ORBIT target
-            <select v-model="orbitTarget">
-              <option value="prod">Production</option>
-              <option value="dev">Dev</option>
-            </select>
-          </label>
           <label class="flex-1">Quality
             <select v-model="quality">
               <option value="sensible">Sensible</option>

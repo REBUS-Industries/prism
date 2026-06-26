@@ -8,7 +8,7 @@
  * The schema we target is standard Speckle V2 (ORBIT is a fork of Speckle).
  * If ORBIT ever diverges, only this file needs to change.
  */
-import { getSetting, type SettingKey } from '../db/settings.js';
+import { getSetting } from '../db/settings.js';
 
 export type OrbitTarget = 'prod' | 'dev';
 
@@ -60,12 +60,11 @@ export class OrbitClientError extends Error {
  * admin hasn't configured a URL or token — callers should surface that to
  * the UI rather than treating it as an error.
  */
-export async function getOrbitCreds(target: OrbitTarget): Promise<OrbitCreds | null> {
-  const urlKey:   SettingKey = target === 'dev' ? 'orbit_dev_server_url' : 'orbit_server_url';
-  const tokenKey: SettingKey = target === 'dev' ? 'orbit_dev_token'      : 'orbit_token';
-
-  const url   = (await getSetting(urlKey))?.trim();
-  const token = (await getSetting(tokenKey))?.trim();
+export async function getOrbitCreds(_target: OrbitTarget = 'prod'): Promise<OrbitCreds | null> {
+  // ORBIT dev/staging was retired — every target resolves to the single
+  // production server (`orbit_server_url` / `orbit_token`).
+  const url   = (await getSetting('orbit_server_url'))?.trim();
+  const token = (await getSetting('orbit_token'))?.trim();
   if (!url || !token) return null;
   return { url: url.replace(/\/+$/, ''), token };
 }

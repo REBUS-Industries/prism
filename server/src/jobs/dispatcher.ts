@@ -109,7 +109,7 @@ export async function tryDispatch(jobId: string, log: FastifyBaseLogger): Promis
   );
   const agent = eligible[0]!;
 
-  const orbitServerUrl = await getSetting(job.orbitTarget === 'dev' ? 'orbit_dev_server_url' : 'orbit_server_url');
+  const orbitServerUrl = await getSetting('orbit_server_url');
   if (!orbitServerUrl && !isPollLayers) {
     // pollLayers doesn't actually need ORBIT creds — but we still resolve
     // them for an eventual convert phase to fail loudly here rather than
@@ -118,12 +118,7 @@ export async function tryDispatch(jobId: string, log: FastifyBaseLogger): Promis
     return { dispatched: false, reason: `no ORBIT URL set for target=${job.orbitTarget}` };
   }
 
-  const orbitToken =
-    job.submittedBy?.startsWith('orbit:')
-      // For Phase 3 we don't yet persist the bearer that was used at submit time.
-      // The convert/async route in Phase 7 will stash it (encrypted) on the job row.
-      ? (await getSetting('orbit_token')) ?? ''
-      : (await getSetting('orbit_token')) ?? '';
+  const orbitToken = (await getSetting('orbit_token')) ?? '';
   if (!orbitToken && !isPollLayers) {
     log.warn({ jobId }, 'no shared orbit_token; agent will get an empty bearer (Phase 7 fixes per-user tokens)');
   }
@@ -378,7 +373,7 @@ export async function tryDispatchVisualisation(
   }
 
   const agent = reserved.conn;
-  const orbitServerUrl = await getSetting(run.orbitTarget === 'dev' ? 'orbit_dev_server_url' : 'orbit_server_url');
+  const orbitServerUrl = await getSetting('orbit_server_url');
   if (!orbitServerUrl) {
     await releaseVisualiserSlot(reserved.workstationId).catch(() => null);
     log.error({ orbitTarget: run.orbitTarget }, 'visualiser dispatch failed: no ORBIT server URL configured for target');

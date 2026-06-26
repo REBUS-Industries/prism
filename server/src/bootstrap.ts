@@ -37,9 +37,6 @@ export async function runBootstrap(log: FastifyBaseLogger): Promise<void> {
     await setSetting('orbit_server_url', process.env.ORBIT_SERVER_URL);
     log.info('bootstrap: seeded orbit_server_url from env');
   }
-  if (!(await getSetting('orbit_dev_server_url')) && process.env.ORBIT_DEV_SERVER_URL) {
-    await setSetting('orbit_dev_server_url', process.env.ORBIT_DEV_SERVER_URL);
-  }
 
   await applyExternalMaterialsSettings();
   log.info('bootstrap: applied external materials settings');
