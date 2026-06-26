@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import type { JobSummary } from '../../shared/api';
 import { adminApi } from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
+import { buildOrbitModelViewerUrl, orbitServerBaseUrl } from '../utils/orbitViewerUrl';
 
 const props = defineProps<{ jobs: JobSummary[] }>();
 const emit = defineEmits<{
@@ -35,6 +36,24 @@ function fmtSize(b: number): string {
   return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 function shortId(id: string): string { return id.slice(0, 8); }
+
+/**
+ * Link to the published Orbit model once a job is complete. Convert jobs always
+ * carry a full `resultUrl` (the agent builds it from the configured Orbit
+ * server) — prefer it, matching the convert SPA. Fall back to building a URL
+ * from the target ids for older convert rows. Receive jobs that complete
+ * without an Orbit model get no link.
+ */
+function orbitModelUrl(j: JobSummary): string | null {
+  if (j.status !== 'complete') return null;
+  if (!j.resultUrl && (j.jobType === 'receive' || !j.projectId || !j.modelId)) return null;
+  return buildOrbitModelViewerUrl(orbitServerBaseUrl({}, j.orbitTarget), {
+    projectId: j.projectId,
+    modelId: j.modelId,
+    versionId: j.versionId ?? undefined,
+    resultUrl: j.resultUrl ?? undefined,
+  });
+}
 
 async function handleCancel(id: string) {
   if (cancellingId.value) return;
@@ -100,6 +119,15 @@ async function handleCancel(id: string) {
             :title="cancellingId === j.id ? 'Cancelling…' : 'Cancel job'"
             @click.stop="handleCancel(j.id)"
           ><span v-if="cancellingId === j.id">…</span><Icon v-else name="close" :size="14" /></button>
+          <a
+            v-else-if="orbitModelUrl(j)"
+            :href="orbitModelUrl(j)!"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn-orbit"
+            title="Open the published model in Orbit"
+            @click.stop
+          ><Icon name="open_in_new" :size="14" /> Open in Orbit</a>
         </td>
       </tr>
       <tr v-if="!sorted.length">
@@ -146,6 +174,24 @@ tr.clickable:hover td { color: var(--color-text); }
   cursor: pointer;
 }
 .btn-layers:hover { background: hsl(var(--primary) / 0.9); border-color: hsl(var(--primary) / 0.9); }
+
+/* "Open in Orbit" link shown on completed jobs (convert publishes a version). */
+.btn-orbit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  border: 1px solid hsl(var(--primary));
+  color: hsl(var(--primary));
+  background: transparent;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn-orbit:hover { background: hsl(var(--primary) / 0.1); }
 .btn-cancel:hover:not(:disabled) {
   background: var(--color-error-bg);
 }
