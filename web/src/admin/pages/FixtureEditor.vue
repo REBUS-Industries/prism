@@ -105,6 +105,8 @@ const publishingOrbit = ref(false);
 
 const publishOrbitError = ref<string | null>(null);
 
+const iesOrbitMessage = ref<string | null>(null);
+
 const orbitUnitNumber = ref('');
 
 const orbitPatchUniverse = ref<number | ''>('');
@@ -812,6 +814,33 @@ async function publishToOrbit(): Promise<void> {
   }
 }
 
+async function onIesUploaded(): Promise<void> {
+  iesOrbitMessage.value = null;
+  publishOrbitError.value = null;
+  await reload();
+  if (!orbitFixtureRef.value) {
+    iesOrbitMessage.value =
+      'IES saved in PRISM. Publish to Orbit to attach photometric blobs on FixtureType.assets.ies for Rhino and viewers.';
+    return;
+  }
+  if (!canPublishToOrbit.value) {
+    iesOrbitMessage.value =
+      'IES saved in PRISM. Complete manufacturer/fixture name and geometry, then republish to Orbit to sync profiles.';
+    return;
+  }
+  publishingOrbit.value = true;
+  try {
+    const res = await fixturesApi.publishToOrbit(props.id);
+    fixture.value = res.fixture;
+    syncOrbitPublishFields();
+    iesOrbitMessage.value = 'IES uploaded and republished to Orbit — profiles are available on FixtureType.assets.ies.';
+  } catch (err) {
+    publishOrbitError.value = (err as ApiError).message ?? 'republish to Orbit failed after IES upload';
+  } finally {
+    publishingOrbit.value = false;
+  }
+}
+
 
 
 function updatePivot(pivot: Vec3): void {
@@ -1258,14 +1287,22 @@ onMounted(() => {
 
           <p class="muted small">
             Upload a photometric (.ies) file for each zoom position — typically DMX 0 (wide), 128 (mid), and 255 (narrow).
+            Profiles are stored in PRISM and uploaded to Orbit as blobs on
+            <code>FixtureType.assets.ies</code> when you publish or republish.
+            If this fixture is already on Orbit, each upload triggers an automatic republish.
           </p>
 
           <IesUploader
             :fixture-id="fixture.id"
             :beams="fixture.definition.beams"
             :parts="fixture.definition.parts"
-            @uploaded="reload"
+            :disabled="publishingOrbit"
+            @uploaded="onIesUploaded"
           />
+
+          <p v-if="publishingOrbit" class="muted small mt-sm">Republishing IES profiles to Orbit…</p>
+          <p v-else-if="iesOrbitMessage" class="muted small mt-sm sync-ok">{{ iesOrbitMessage }}</p>
+          <p v-if="publishOrbitError" class="error-box mt-sm">{{ publishOrbitError }}</p>
 
           <ul class="beam-list">
 
@@ -2126,6 +2163,8 @@ onMounted(() => {
 }
 
 .muted-pill { opacity: 0.7; }
+
+.sync-ok { color: #7fd18c; }
 
 
 
