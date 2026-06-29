@@ -13,6 +13,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FixturePart, FixtureModel, ModelMaterialSlot, ModelTransform } from '../../shared/api';
 import { paintModelMaterialSlots, type SlotMaterialMaps } from './modelMaterialSlots';
 import { applyModelTransform, ensureModelTransform } from './modelTransform';
+import { readMeshOffset } from './fixtureTransform';
 import { isModelLengthUnit, unitScaleToMetres } from './modelUnits';
 import {
   REBUS_CLAMP_PART_ID,
@@ -229,6 +230,29 @@ export function findGeometryReferenceEmissionNode(
 function isRebusClampPart(part: FixturePart): boolean {
   return part.partId === REBUS_CLAMP_PART_ID
     || (part.tag === 'CLAMP' && partMeta(part).rebusSlot === true);
+}
+
+/**
+ * Wrap a placed mesh in a per-model offset group (GDTF Z-up metres + degrees
+ * XYZ) when `model.metadata.meshOffset` is set. The offset shifts the mesh
+ * inside the part's local frame WITHOUT touching the part `localTransform`, so
+ * the pan/tilt pivot is unaffected. Composition matches the Orbit baker:
+ * partWorld · offset · wrap(+90°X) · scale.
+ */
+function applyMeshOffset(wrapped: THREE.Object3D, model: FixtureModel | undefined): THREE.Object3D {
+  const offset = readMeshOffset(model?.metadata as Record<string, unknown> | undefined);
+  if (!offset) return wrapped;
+  const offsetGroup = new THREE.Group();
+  offsetGroup.name = 'MeshOffset';
+  offsetGroup.position.set(offset.position.x, offset.position.y, offset.position.z);
+  offsetGroup.rotation.set(
+    THREE.MathUtils.degToRad(offset.rotation.x),
+    THREE.MathUtils.degToRad(offset.rotation.y),
+    THREE.MathUtils.degToRad(offset.rotation.z),
+    'XYZ',
+  );
+  offsetGroup.add(wrapped);
+  return offsetGroup;
 }
 
 /**
@@ -520,7 +544,7 @@ export async function buildFixtureAssembly(
           const placement = input.clampPlacement ?? { mirrorZ: false, rotateZDeg: 0 };
           meshCount += attachClampMeshes(partGroup, wrapped, placement);
         } else {
-          partGroup.add(wrapped);
+          partGroup.add(applyMeshOffset(wrapped, model));
           meshCount += 1;
         }
         return;
