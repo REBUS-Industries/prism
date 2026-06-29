@@ -37,3 +37,29 @@ git push -u origin cursor/fixture-mesh-offset-dd18
 
 Deploy `fixtures-image` (this patch) together with the monorepo `web-image` so
 the editor preview and the published Orbit mesh stay in sync.
+
+## fixtures-reset-gdtf-custom-mesh.patch
+
+Pairs with the monorepo **Reset to GDTF** button and **1:1 custom mesh**
+viewer rules.
+
+- `POST /api/fixtures/:id/reset-gdtf` — re-import active GDTF revision/package
+  with `carryEdits: false` (discards part transforms, custom meshes, materials,
+  IES, placement, display name, etc.).
+- `reimportFixtureMeshes(..., carryEdits?)` — optional third arg; `false`
+  skips `carryForwardEdits` for uploaded/manual fixtures.
+- Orbit bake: `metadata.replaced` models skip glTF→GDTF wrap/scale; mesh-offset
+  rotation is ignored (translation only), matching the web viewer.
+
+Apply together with (or after) `fixtures-mesh-offset.patch` if that patch is
+not yet on `main`.
+
+### Apply
+
+```bash
+cd prism-fixtures-service
+git checkout -b cursor/fixture-reset-gdtf-custom-mesh-dd18
+git am < /path/to/fixtures-reset-gdtf-custom-mesh.patch   # or: git apply
+npm install && npm run build
+git push -u origin cursor/fixture-reset-gdtf-custom-mesh-dd18
+```

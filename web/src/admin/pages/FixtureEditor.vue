@@ -164,6 +164,7 @@ const carryReport = ref<string[]>([]);
 const modelQuality = ref<GdtfModelQuality>(DEFAULT_GDTF_MODEL_QUALITY);
 
 const reimportingMeshes = ref(false);
+const resettingToGdtf = ref(false);
 
 const availableModelQualities = computed(() =>
   availableModelQualitiesFromDefinition(fixture.value?.definition.metadata),
@@ -346,6 +347,43 @@ async function applyModelQuality(): Promise<void> {
 // when the GDTF ships a single mesh and the quality picker is hidden.
 async function reloadModelMeshes(): Promise<void> {
   await runMeshReimport(modelQuality.value);
+}
+
+async function resetToGdtf(): Promise<void> {
+  if (!fixture.value) return;
+  const label = fixtureLabel(fixture.value);
+  const confirmed = window.confirm(
+    `Reset "${label}" to the original GDTF data?\n\n`
+    + 'This will permanently discard all local edits, including:\n'
+    + '• Part position and rotation\n'
+    + '• Custom mesh uploads and mesh offsets\n'
+    + '• Materials, IES profiles, and placement settings\n'
+    + '• Display name and other metadata changes\n\n'
+    + 'This cannot be undone.',
+  );
+  if (!confirmed) return;
+
+  resettingToGdtf.value = true;
+  error.value = null;
+  carryReport.value = [];
+  try {
+    const shareRid = activeStoredVersion.value?.gdtfShareRid;
+    if (shareRid) {
+      await fixturesApi.downloadVersion(props.id, shareRid, {
+        carryEdits: false,
+        modelQuality: modelQuality.value,
+      });
+    } else {
+      await fixturesApi.resetToGdtf(props.id, { modelQuality: modelQuality.value });
+    }
+    assemblyRevision.value += 1;
+    await reload();
+    void checkForUpdates();
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'Reset to GDTF failed';
+  } finally {
+    resettingToGdtf.value = false;
+  }
 }
 
 const meshOriginCount = computed(
@@ -1381,6 +1419,22 @@ onMounted(() => {
         </section>
 
         <section class="panel-card settings-card">
+          <h2>GDTF source</h2>
+          <p class="muted small">
+            Re-download the fixture from GDTF Share (or re-parse the stored GDTF package for uploaded fixtures)
+            and replace the working copy with a fresh import. All local edits are discarded.
+          </p>
+          <button
+            type="button"
+            class="mt-sm danger"
+            :disabled="resettingToGdtf || saving || reimportingMeshes"
+            @click="resetToGdtf"
+          >
+            {{ resettingToGdtf ? 'Resetting…' : 'Reset to GDTF' }}
+          </button>
+        </section>
+
+        <section class="panel-card settings-card">
           <h2>Clamp</h2>
           <p class="muted small">
             Pick a clamp from the Model Library or upload a custom mesh. It renders at the fixture origin while the body can be lowered separately.
@@ -1585,8 +1639,8 @@ onMounted(() => {
             <h3 class="model-swap-title">Swap a model</h3>
             <p class="muted small">
               Upload a 3D file to replace a model's mesh (glTF, GLB, OBJ, FBX, 3DS, STL, DAE, PLY).
-              Part transforms and the pan/tilt pivot are kept — use <strong>Mesh offset</strong> on the
-              part (Parts tab) to align an imported mesh without moving the pivot.
+              Custom meshes render at their authored 1:1 scale — use <strong>Mesh offset</strong> translation on the
+              part (Parts tab) to align without moving the pan/tilt pivot.
             </p>
             <ul class="model-swap-list">
               <li v-for="m in swapModels" :key="m.modelId" class="model-swap-row">

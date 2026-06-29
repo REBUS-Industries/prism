@@ -11,6 +11,7 @@ import {
   writeMeshOffset,
   type MeshOffset,
 } from '../utils/fixtureTransform';
+import { isCustomReplacedModel } from '../utils/fixtureCustomMesh';
 
 const props = defineProps<{
   part: FixturePart | null;
@@ -31,6 +32,8 @@ const linkedModel = computed(() => {
   if (!props.part?.modelId) return null;
   return props.models.find((m) => m.modelId === props.part!.modelId) ?? null;
 });
+
+const isCustomMesh = computed(() => isCustomReplacedModel(linkedModel.value));
 
 const modelOptions = computed(() =>
   props.models.map((m) => ({
@@ -109,7 +112,10 @@ function commitMeshOffset(offset: MeshOffset): void {
   const model = linkedModel.value;
   if (!model) return;
   if (!model.metadata || typeof model.metadata !== 'object') model.metadata = {};
-  writeMeshOffset(model.metadata as Record<string, unknown>, offset);
+  const toWrite = isCustomReplacedModel(model)
+    ? { position: { ...offset.position }, rotation: { x: 0, y: 0, z: 0 } }
+    : offset;
+  writeMeshOffset(model.metadata as Record<string, unknown>, toWrite);
   notify();
 }
 
@@ -245,7 +251,7 @@ function onModelChange(ev: Event): void {
       </select>
     </label>
 
-    <fieldset v-if="linkedModel" class="field-group">
+    <fieldset v-if="linkedModel && !isCustomMesh" class="field-group">
       <legend>Model dimensions <span class="unit">mm</span></legend>
       <ParamSlider
         label="Length"
@@ -273,16 +279,25 @@ function onModelChange(ev: Event): void {
       />
     </fieldset>
 
+    <p v-else-if="linkedModel && isCustomMesh" class="muted small dims-hint">
+      Custom mesh — rendered 1:1 at its authored scale. Use mesh offset translation below to align it.
+    </p>
     <p v-else class="muted small dims-hint">Link a model to edit Length / Width / Height.</p>
 
     <fieldset v-if="linkedModel" class="field-group">
       <legend class="offset-legend">
-        <span>Mesh offset <span class="unit">mm / °</span></span>
+        <span>Mesh offset <span class="unit">{{ isCustomMesh ? 'mm' : 'mm / °' }}</span></span>
         <button v-if="hasMeshOffset" type="button" class="reset-btn" @click="resetMeshOffset">Reset</button>
       </legend>
       <p class="muted small offset-hint">
-        Aligns a custom / imported mesh to the part origin without moving the part
-        position or pan/tilt pivot. Applied in the published Orbit mesh too.
+        <template v-if="isCustomMesh">
+          Aligns a custom imported mesh to the part origin without moving the part position or pan/tilt pivot.
+          Only translation is applied — the mesh is not scaled or rotated.
+        </template>
+        <template v-else>
+          Aligns a custom / imported mesh to the part origin without moving the part
+          position or pan/tilt pivot. Applied in the published Orbit mesh too.
+        </template>
       </p>
       <div class="offset-sub">Translation</div>
       <ParamSlider
@@ -309,6 +324,7 @@ function onModelChange(ev: Event): void {
         :model-value="meshOffsetPosMmValue('z')"
         @update:model-value="setMeshOffsetPos('z', $event)"
       />
+      <template v-if="!isCustomMesh">
       <div class="offset-sub">Rotation</div>
       <ParamSlider
         label="X"
@@ -334,6 +350,7 @@ function onModelChange(ev: Event): void {
         :model-value="meshOffsetRotDegValue('z')"
         @update:model-value="setMeshOffsetRot('z', $event)"
       />
+      </template>
     </fieldset>
   </div>
 </template>
