@@ -255,6 +255,10 @@ class ApiClient {
     return this.req<T>(path, { method: 'POST', body: form });
   }
 
+  putForm<T>(path: string, form: FormData) {
+    return this.req<T>(path, { method: 'PUT', body: form });
+  }
+
   /**
    * Multipart POST with upload-progress reporting. `fetch()` cannot surface
    * request-body upload progress, so this path uses XHR — but it still
@@ -2182,7 +2186,7 @@ export const fixturesApi = {
     fd.append('beamId', ids[0] ?? ''); // back-compat for older API builds
     if (zoomDmx !== undefined) fd.append('zoomDmx', String(zoomDmx));
     fd.append('file', file);
-    return api.postForm<{ mediaId: string; beamIds?: string[]; beamId?: string; zoomDmx?: number }>(`/api/fixtures/${id}/ies`, fd);
+    return api.putForm<{ mediaId: string; beamIds?: string[]; beamId?: string; zoomDmx?: number }>(`/api/fixtures/${id}/ies`, fd);
   },
   searchGdtfShare: (q: string, limit = 25) =>
     api.get<{ results: GdtfShareResult[] }>(`/api/gdtf-share/search?q=${encodeURIComponent(q)}&limit=${limit}`),
