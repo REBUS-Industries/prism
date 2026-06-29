@@ -177,6 +177,54 @@ present; otherwise the rig's `minValue` / `maxValue` are used.
 
 ---
 
+## IES profiles and Orbit publish
+
+Photometric `.ies` files are stored as `IES_FILE` media on the fixture
+(`PUT /api/fixtures/:id/ies`) and attached to beams via:
+
+| Field | Purpose |
+|-------|---------|
+| `beams[].iesAssetId` | Legacy default profile (PRISM media id) |
+| `beams[].iesProfiles[]` | Zoom-keyed profiles `{ zoomDmx, iesAssetId }` (typical DMX 0 / 128 / 255) |
+
+**PRISM-only upload is not enough for Rhino or Orbit viewers.** On
+`POST /api/fixtures/:id/publish-orbit`, `prism-fixtures-service`:
+
+1. Collects all `IES_FILE` rows for the fixture
+2. Uploads each file to Orbit as a blob
+3. Embeds blob refs on the published `Orbit.Objects.Lighting.FixtureType`:
+
+```json
+{
+  "assets": {
+    "ies": [
+      {
+        "mediaId": "prism-media-uuid",
+        "mediaType": "IES_FILE",
+        "blobId": "orbit-blob-id",
+        "fileName": "profile.ies",
+        "fileSize": 12345
+      }
+    ]
+  },
+  "beams": [
+    {
+      "beamId": "...",
+      "iesProfiles": [{ "zoomDmx": 128, "iesAssetId": "prism-media-uuid" }]
+    }
+  ]
+}
+```
+
+Connectors and viewers join `beams[].iesProfiles[].iesAssetId` →
+`assets.ies[].mediaId` → `blobId` to download the file bytes from Orbit.
+
+After changing IES in the admin editor, **republish to Orbit** (the editor
+auto-republishes when the fixture was already published). Unpublished fixtures
+must use **Publish to Orbit** once geometry and metadata are complete.
+
+---
+
 ## Building pan/tilt control
 
 The pan/tilt algorithm is **the same** for PRISM admin preview, third-party

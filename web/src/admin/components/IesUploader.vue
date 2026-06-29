@@ -10,7 +10,12 @@ import {
   type IesBeamGroup,
 } from '../utils/fixtureIes';
 
-const props = defineProps<{ fixtureId: string; beams: FixtureBeam[]; parts?: FixturePart[] }>();
+const props = defineProps<{
+  fixtureId: string;
+  beams: FixtureBeam[];
+  parts?: FixturePart[];
+  disabled?: boolean;
+}>();
 const emit = defineEmits<{ uploaded: [] }>();
 
 const uploadingKey = ref<string | null>(null);
@@ -91,7 +96,7 @@ async function onFile(group: IesBeamGroup, zoomDmx: number, ev: Event): Promise<
             <input
               type="file"
               accept=".ies,text/plain"
-              :disabled="uploadingKey != null"
+              :disabled="props.disabled || uploadingKey != null"
               @change="onFile(group, zoomDmx, $event)"
             />
           </label>
