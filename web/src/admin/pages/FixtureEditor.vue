@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 
@@ -89,6 +89,11 @@ import {
 
 
 const props = defineProps<{ id: string }>();
+
+const PARTS_PROPS_WIDTH_KEY = 'prism-fixture-editor-parts-props-width';
+const PARTS_PROPS_WIDTH_MIN = 240;
+const PARTS_VIEWPORT_MIN = 320;
+const PARTS_PROPS_WIDTH_DEFAULT = 280;
 
 const router = useRouter();
 const route = useRoute();
@@ -939,6 +944,93 @@ async function removeFixture(): Promise<void> {
 
 
 
+const partsPanelRef = ref<HTMLDivElement | null>(null);
+const propsPaneWidth = ref(PARTS_PROPS_WIDTH_DEFAULT);
+const draggingPropsSplitter = ref(false);
+let partsPanelResizeObserver: ResizeObserver | null = null;
+
+function getPartsPanelWidth(): number {
+  return partsPanelRef.value?.clientWidth ?? 1200;
+}
+
+function maxPropsPaneWidth(bodyW = getPartsPanelWidth()): number {
+  const reserved = 220 + 16 + PARTS_VIEWPORT_MIN;
+  return Math.max(PARTS_PROPS_WIDTH_MIN, bodyW - reserved);
+}
+
+function clampPropsPaneWidth(px: number, bodyW = getPartsPanelWidth()): number {
+  return Math.min(Math.max(px, PARTS_PROPS_WIDTH_MIN), maxPropsPaneWidth(bodyW));
+}
+
+function readStoredPropsPaneWidth(): number | null {
+  try {
+    const raw = localStorage.getItem(PARTS_PROPS_WIDTH_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveInitialPropsPaneWidth(bodyW: number): number {
+  const stored = readStoredPropsPaneWidth();
+  if (stored === null) return clampPropsPaneWidth(PARTS_PROPS_WIDTH_DEFAULT, bodyW);
+  return clampPropsPaneWidth(stored, bodyW);
+}
+
+function setupPartsPanelResize(): void {
+  if (!partsPanelRef.value) return;
+  const bodyW = partsPanelRef.value.clientWidth;
+  propsPaneWidth.value = resolveInitialPropsPaneWidth(bodyW);
+
+  if (!partsPanelResizeObserver) {
+    partsPanelResizeObserver = new ResizeObserver(() => {
+      propsPaneWidth.value = clampPropsPaneWidth(propsPaneWidth.value);
+    });
+    partsPanelResizeObserver.observe(partsPanelRef.value);
+  }
+}
+
+function persistPropsPaneWidth(): void {
+  try {
+    localStorage.setItem(PARTS_PROPS_WIDTH_KEY, String(propsPaneWidth.value));
+  } catch {
+    // non-fatal
+  }
+}
+
+function onPropsSplitterPointerDown(ev: PointerEvent): void {
+  if (!partsPanelRef.value) return;
+  draggingPropsSplitter.value = true;
+  const startX = ev.clientX;
+  const startW = propsPaneWidth.value;
+
+  const onMove = (moveEv: PointerEvent): void => {
+    const delta = startX - moveEv.clientX;
+    propsPaneWidth.value = clampPropsPaneWidth(startW + delta);
+  };
+
+  const onUp = (): void => {
+    draggingPropsSplitter.value = false;
+    persistPropsPaneWidth();
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'parts') nextTick(() => setupPartsPanelResize());
+});
+
+onBeforeUnmount(() => {
+  partsPanelResizeObserver?.disconnect();
+  partsPanelResizeObserver = null;
+});
+
 onMounted(() => {
   void reload();
   void checkForUpdates();
@@ -1163,7 +1255,12 @@ onMounted(() => {
 
 
 
-      <div v-else-if="activeTab === 'parts'" class="tab-panel parts-panel">
+      <div
+        v-else-if="activeTab === 'parts'"
+        ref="partsPanelRef"
+        class="tab-panel parts-panel"
+        :class="{ 'is-dragging': draggingPropsSplitter }"
+      >
 
         <aside class="panel-card parts-tree-card">
 
@@ -1257,7 +1354,18 @@ onMounted(() => {
 
         </section>
 
-        <aside class="panel-card parts-props-card">
+        <div
+          class="col-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize properties panel"
+          @pointerdown="onPropsSplitterPointerDown"
+        />
+
+        <aside
+          class="panel-card parts-props-card"
+          :style="{ width: `${propsPaneWidth}px`, flex: `0 0 ${propsPaneWidth}px` }"
+        >
 
           <FixturePartProperties
 
@@ -1997,15 +2105,35 @@ onMounted(() => {
 
 .parts-panel {
 
-  display: grid;
+  display: flex;
 
-  grid-template-columns: 220px 1fr 280px;
+  flex-direction: row;
 
-  gap: 16px;
+  align-items: stretch;
+
+  gap: 0;
 
 }
 
-.parts-tree-card,
+.parts-panel.is-dragging {
+
+  cursor: col-resize;
+
+  user-select: none;
+
+}
+
+.parts-tree-card {
+
+  flex: 0 0 220px;
+
+  overflow-y: auto;
+
+  min-height: 0;
+
+  margin-right: 16px;
+
+}
 
 .parts-props-card {
 
@@ -2015,13 +2143,43 @@ onMounted(() => {
 
 }
 
+.col-splitter {
+
+  flex: 0 0 6px;
+
+  margin: 0 5px;
+
+  cursor: col-resize;
+
+  border-radius: 3px;
+
+  background: color-mix(in srgb, var(--color-border-strong) 45%, transparent);
+
+  transition: background 0.15s;
+
+}
+
+.col-splitter:hover,
+
+.parts-panel.is-dragging .col-splitter {
+
+  background: color-mix(in srgb, var(--orbit-primary) 35%, transparent);
+
+}
+
 .parts-viewport-card {
 
   display: flex;
 
   flex-direction: column;
 
+  flex: 1 1 0;
+
+  min-width: 0;
+
   min-height: 0;
+
+  margin-right: 5px;
 
 }
 
@@ -2207,9 +2365,24 @@ onMounted(() => {
 
 @media (max-width: 960px) {
 
-  .overview-panel, .parts-panel { grid-template-columns: 1fr; }
+  .overview-panel { grid-template-columns: 1fr; }
 
-  .parts-tree-card, .parts-props-card { max-height: none; }
+  .parts-panel { flex-direction: column; }
+
+  .col-splitter { display: none; }
+
+  .parts-tree-card,
+  .parts-props-card {
+
+    width: 100% !important;
+
+    flex: none !important;
+
+    max-height: none;
+
+    margin-right: 0;
+
+  }
 
 }
 
