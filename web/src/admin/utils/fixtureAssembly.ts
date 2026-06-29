@@ -13,6 +13,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FixturePart, FixtureModel, ModelMaterialSlot, ModelTransform } from '../../shared/api';
 import { paintModelMaterialSlots, type SlotMaterialMaps } from './modelMaterialSlots';
 import { applyModelTransform, ensureModelTransform } from './modelTransform';
+import { isCustomReplacedModel } from './fixtureCustomMesh';
 import { readMeshOffset } from './fixtureTransform';
 import { isModelLengthUnit, unitScaleToMetres } from './modelUnits';
 import {
@@ -245,12 +246,14 @@ function applyMeshOffset(wrapped: THREE.Object3D, model: FixtureModel | undefine
   const offsetGroup = new THREE.Group();
   offsetGroup.name = 'MeshOffset';
   offsetGroup.position.set(offset.position.x, offset.position.y, offset.position.z);
-  offsetGroup.rotation.set(
-    THREE.MathUtils.degToRad(offset.rotation.x),
-    THREE.MathUtils.degToRad(offset.rotation.y),
-    THREE.MathUtils.degToRad(offset.rotation.z),
-    'XYZ',
-  );
+  if (!isCustomReplacedModel(model)) {
+    offsetGroup.rotation.set(
+      THREE.MathUtils.degToRad(offset.rotation.x),
+      THREE.MathUtils.degToRad(offset.rotation.y),
+      THREE.MathUtils.degToRad(offset.rotation.z),
+      'XYZ',
+    );
+  }
   offsetGroup.add(wrapped);
   return offsetGroup;
 }
@@ -348,12 +351,21 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
  * mapping (verified on Rivale Profile Base): x = length/bbox.x,
  * y = height/bbox.y, z = width/bbox.z.
  *
- * The mesh is placed at its own authored origin — both GDTF model files and
- * uploaded replacements are trusted to carry the correct geometry origin (we no
- * longer derive a bounding-box centre, which random sticking-out geometry threw
- * off; alignment is handled at import time / in the source 3D file instead).
+ * Custom / replaced uploads are rendered 1:1 (no axis wrap or dimension fit) — only
+ * an optional mesh-offset translation may be applied afterward.
  */
-function wrapModelMesh(meshRoot: THREE.Object3D, dims: ModelDims): THREE.Group {
+function wrapModelMesh(
+  meshRoot: THREE.Object3D,
+  dims: ModelDims,
+  model?: FixtureModel,
+): THREE.Group {
+  if (isCustomReplacedModel(model)) {
+    const passthrough = new THREE.Group();
+    passthrough.name = 'Scene';
+    passthrough.add(meshRoot);
+    return passthrough;
+  }
+
   const wrapper = new THREE.Group();
   wrapper.name = 'Scene';
   wrapper.rotation.x = Math.PI / 2;
@@ -525,7 +537,7 @@ export async function buildFixtureAssembly(
             input.clampModelTransform,
             input.clampSourceUnits,
           )
-          : wrapModelMesh(obj.clone(true), dims);
+          : wrapModelMesh(obj.clone(true), dims, model);
         if (
           isRebusClampPart(part) && clampUrl
           && input.clampMaterialSlots?.length

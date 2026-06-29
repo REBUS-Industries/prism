@@ -155,8 +155,27 @@ GeometryReference instances inherit the offset (it lives on the referenced
 model). Edit it in the admin editor's Parts tab → part properties → **Mesh
 offset**; the offset persists in the fixture definition (no DB migration) and
 publishes to Orbit so Rhino / 3rd-party viewers match the PRISM preview. Scale
-is handled separately by the Model Dimensions (L/W/H) fit; clamp models use
-their own placement controls.
+is handled separately by the Model Dimensions (L/W/H) fit for **GDTF** meshes;
+**custom replaced** uploads (`metadata.replaced === true`) render **1:1** at
+their authored scale with no axis wrap or dimension fit — only mesh-offset
+**translation** is applied (rotation offset is ignored for custom meshes).
+Clamp models use their own placement controls.
+
+---
+
+## Custom replaced meshes (`models[].metadata.replaced`)
+
+When a model mesh is swapped via Settings → **Replace**, PRISM stamps
+`metadata.replaced: true` (and `replacedFilename`). Those meshes are treated as
+already correct in size and orientation:
+
+- Web viewer: `wrapModelMesh` passes the GLB through without +90° X or L/W/H
+  scaling; optional `meshOffset.position` translation aligns the mesh to the
+  part origin.
+- Orbit publish: `transformGlbMeshes(..., oneToOne: true)` skips the glTF→GDTF
+  wrap/scale bake; mesh-offset rotation is ignored for replaced models.
+
+GDTF-native meshes still use the wrap + dimension fit described above.
 
 ---
 

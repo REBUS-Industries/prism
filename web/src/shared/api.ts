@@ -2109,6 +2109,11 @@ export const fixturesApi = {
     }),
   reimportMeshes: (id: string, modelQuality: GdtfModelQuality) =>
     api.post<{ fixture: FixtureDetail }>(`/api/fixtures/${id}/reimport-meshes`, { modelQuality }),
+  /** Re-parse the stored GDTF package and discard all user edits (upload/manual fixtures). */
+  resetToGdtf: (id: string, options: { modelQuality?: GdtfModelQuality } = {}) =>
+    api.post<{ fixture: FixtureDetail }>(`/api/fixtures/${id}/reset-gdtf`, {
+      modelQuality: options.modelQuality,
+    }),
   /** Swap one model's mesh with an uploaded 3D file (glTF/GLB/OBJ/FBX/3DS/STL/DAE/PLY). */
   replaceModel: (id: string, modelId: string, file: File) => {
     const fd = new FormData();
