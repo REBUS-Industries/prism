@@ -120,6 +120,44 @@ Output handles for consumers:
 | `beamPart` | Attach beam cone / IES viz |
 | `partGroups` | Map `partId` → transform group (editor gizmo / picking) |
 
+### Custom mesh offset (`models[].metadata.meshOffset`)
+
+A part's GDTF `localTransform` (e.g. a `HEAD` at Z = -153 mm) is where the
+pan/tilt pivot is derived, so it must **not** move when a custom/imported mesh
+is swapped in. To align an imported mesh whose authored origin differs from the
+GDTF node origin, set a per-model offset instead of pre-baking the inverse
+transform into the source file:
+
+```jsonc
+// FixtureModel.metadata
+"meshOffset": {
+  "position": { "x": 0, "y": 0, "z": 0.153 },  // GDTF Z-up metres
+  "rotation": { "x": 0, "y": 0, "z": 0 }         // degrees, intrinsic XYZ
+}
+```
+
+The offset is applied in the **part-local GDTF frame**, between the part world
+transform and the mesh wrap/scale, identically in the editor viewer and the
+Orbit publish:
+
+```
+placed = partWorld · Translate(pos) · Rotate(rotXYZ) · wrap(+90°X) · scale(L/W/H) · meshVertex
+```
+
+- Web viewer: `buildFixtureAssembly` wraps the mesh `Scene` group in a
+  `MeshOffset` group (`fixtureAssembly.ts`, helpers in `fixtureTransform.ts`).
+- Orbit publish: `buildMeshesAtMatrix` places meshes at
+  `world · meshOffsetMatrixRow(offset)` (`prism-fixtures-service`
+  `fixtureGeometryOrbit.ts` + `fixtureTransformMatrix.ts`).
+
+Because the part `localTransform`/`pivot` is untouched, pan/tilt is unaffected.
+GeometryReference instances inherit the offset (it lives on the referenced
+model). Edit it in the admin editor's Parts tab → part properties → **Mesh
+offset**; the offset persists in the fixture definition (no DB migration) and
+publishes to Orbit so Rhino / 3rd-party viewers match the PRISM preview. Scale
+is handled separately by the Model Dimensions (L/W/H) fit; clamp models use
+their own placement controls.
+
 ---
 
 ## Motion rig (`motionRig[]`)

@@ -1,0 +1,141 @@
+From 620a2f2270ecd735cfb0766ad2e54dd7e69993a7 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 29 Jun 2026 15:57:51 +0000
+Subject: [PATCH] feat: apply model meshOffset in Orbit geometry bake
+
+Read model.metadata.meshOffset and place part meshes at world . offset so
+the published Orbit mesh matches the PRISM viewer's per-mesh offset. The
+offset aligns a custom/imported mesh to the part origin without changing the
+part transform/pivot (pan/tilt preserved). Adds offset assertions to
+fixtureTransformMatrix.test.ts.
+---
+ src/orbit/fixtureGeometryOrbit.ts        | 11 ++++++-
+ src/orbit/fixtureTransformMatrix.test.ts | 22 +++++++++++++
+ src/orbit/fixtureTransformMatrix.ts      | 39 ++++++++++++++++++++++++
+ 3 files changed, 71 insertions(+), 1 deletion(-)
+
+diff --git a/src/orbit/fixtureGeometryOrbit.ts b/src/orbit/fixtureGeometryOrbit.ts
+index a1b326a..97f2ed1 100644
+--- a/src/orbit/fixtureGeometryOrbit.ts
++++ b/src/orbit/fixtureGeometryOrbit.ts
+@@ -18,9 +18,11 @@ import {
+   identityMat4Row,
+   matrixDet3Sign,
+   matrixWithinTemplateSubtree,
++  meshOffsetMatrixRow,
+   multiplyMat4Row,
+   normalMatrixRow,
+   partLocalMatrixFromTransform,
++  readMeshOffset,
+   transformPointRow,
+ } from './fixtureTransformMatrix.js';
+ import {
+@@ -323,7 +325,14 @@ function buildMeshesAtMatrix(
+ 
+   baseMeshes = filterMeshesForOpticalPart(baseMeshes, part, inheritedModel) as ParsedMesh[];
+ 
+-  const placed = applyMatrixToMeshes(baseMeshes, worldMatrix);
++  // Per-mesh offset (model.metadata.meshOffset) aligns a custom/imported mesh to
++  // the part origin without moving the part transform/pivot. Applied in the
++  // part-local GDTF frame, matching the web viewer: world · offset · wrap · scale.
++  const meshOffset = readMeshOffset(model.metadata as Record<string, unknown> | undefined);
++  const placementMatrix = meshOffset
++    ? multiplyMat4Row(worldMatrix, meshOffsetMatrixRow(meshOffset))
++    : worldMatrix;
++  const placed = applyMatrixToMeshes(baseMeshes, placementMatrix);
+   const prismMaterialId = part.materialId ?? ctx.tagMaterials[part.tag] ?? PRISM_DEFAULT_MATERIAL_ID;
+   const material = renderMaterialForPart(
+     part.materialId,
+diff --git a/src/orbit/fixtureTransformMatrix.test.ts b/src/orbit/fixtureTransformMatrix.test.ts
+index 51731ef..ed23dd9 100644
+--- a/src/orbit/fixtureTransformMatrix.test.ts
++++ b/src/orbit/fixtureTransformMatrix.test.ts
+@@ -6,8 +6,10 @@ import {
+   invertMat4Row,
+   matrixDet3Sign,
+   matrixWithinTemplateSubtree,
++  meshOffsetMatrixRow,
+   multiplyMat4Row,
+   partLocalMatrixFromTransform,
++  readMeshOffset,
+   transformPointRow,
+ } from './fixtureTransformMatrix.js';
+ 
+@@ -91,4 +93,24 @@ for (let i = 0; i < 16; i++) {
+   assert.ok(Math.abs(roundTrip[i]! - expected) < 1e-5, `invert round-trip[${i}] = ${roundTrip[i]}`);
+ }
+ 
++// Mesh offset: absent / all-zero reads as null; non-zero reads back.
++assert.equal(readMeshOffset(undefined), null);
++assert.equal(readMeshOffset({}), null);
++assert.equal(readMeshOffset({ meshOffset: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } } }), null);
++const readback = readMeshOffset({ meshOffset: { position: { x: 0, y: 0, z: 0.153 }, rotation: { x: 0, y: 0, z: 0 } } });
++assert.ok(readback && Math.abs(readback.position.z - 0.153) < 1e-9, 'meshOffset z reads back');
++
++// Mesh offset placement matches the web viewer: world · offset · vertex.
++// Head part at GDTF Z = -0.153 m; a +0.153 m Z mesh offset lands the mesh origin at world Z 0.
++const headWorld = composeMatrixFromTrs({ x: 0, y: 0, z: -0.153 }, { x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 });
++const offsetMat = meshOffsetMatrixRow({ position: { x: 0, y: 0, z: 0.153 }, rotation: { x: 0, y: 0, z: 0 } });
++const placement = multiplyMat4Row(headWorld, offsetMat);
++const [ox, oy, oz] = transformPointRow(placement, 0, 0, 0);
++assert.ok(Math.abs(ox) < 1e-9 && Math.abs(oy) < 1e-9 && Math.abs(oz) < 1e-9, `offset cancels part Z (got ${oz})`);
++
++// Offset rotation uses the same intrinsic XYZ basis as part transforms.
++const rotOffset = meshOffsetMatrixRow({ position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 90 } });
++const [rx, ry] = transformPointRow(rotOffset, 1, 0, 0);
++assert.ok(Math.abs(rx) < 1e-6 && Math.abs(ry - 1) < 1e-6, `Z+90 maps +X to +Y (got ${rx}, ${ry})`);
++
+ console.log('fixtureTransformMatrix.test.ts: ok');
+diff --git a/src/orbit/fixtureTransformMatrix.ts b/src/orbit/fixtureTransformMatrix.ts
+index 1758207..5884c81 100644
+--- a/src/orbit/fixtureTransformMatrix.ts
++++ b/src/orbit/fixtureTransformMatrix.ts
+@@ -82,6 +82,45 @@ function translationOf(m: number[]): Vec3 {
+   return { x: m[3] ?? 0, y: m[7] ?? 0, z: m[11] ?? 0 };
+ }
+ 
++/**
++ * Per-mesh placement offset for a fixture model (GDTF Z-up metres + degrees
++ * XYZ). Applied on top of the part world transform WITHOUT changing it, so the
++ * pan/tilt pivot is preserved. Mirrors the web `fixtureTransform.MeshOffset`.
++ */
++export interface MeshOffset {
++  position: Vec3;
++  rotation: Vec3;
++}
++
++function readVec3(raw: unknown): Vec3 {
++  const b = (raw ?? {}) as Record<string, unknown>;
++  return {
++    x: typeof b.x === 'number' ? b.x : 0,
++    y: typeof b.y === 'number' ? b.y : 0,
++    z: typeof b.z === 'number' ? b.z : 0,
++  };
++}
++
++/** Read `model.metadata.meshOffset`; returns null when absent or all-zero. */
++export function readMeshOffset(metadata: Record<string, unknown> | null | undefined): MeshOffset | null {
++  const raw = (metadata ?? {})['meshOffset'];
++  if (!raw || typeof raw !== 'object') return null;
++  const bag = raw as Record<string, unknown>;
++  const offset: MeshOffset = { position: readVec3(bag.position), rotation: readVec3(bag.rotation) };
++  const { position: p, rotation: r } = offset;
++  if (p.x === 0 && p.y === 0 && p.z === 0 && r.x === 0 && r.y === 0 && r.z === 0) return null;
++  return offset;
++}
++
++/**
++ * Row-major offset matrix (Translate · Rotate XYZ) applied in the part-local
++ * GDTF frame. Compose into the placement as `world · meshOffsetMatrixRow(offset)`
++ * so the published mesh matches the web viewer (partWorld · offset · wrap · scale).
++ */
++export function meshOffsetMatrixRow(offset: MeshOffset): number[] {
++  return composeMatrixFromTrs(offset.position, offset.rotation, { x: 1, y: 1, z: 1 });
++}
++
+ /** Per-axis scale (column norms) from a row-major 4×4. */
+ export function scaleFromMatrixRow(m: number[]): Vec3 {
+   return {
+-- 
+2.43.0
+

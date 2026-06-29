@@ -64,6 +64,8 @@ import {
 
   type FixtureDetail,
 
+  type FixtureModel,
+
   type FixtureOrbitRef,
 
   type FixtureOrbitPublishTemplate,
@@ -373,6 +375,23 @@ function downloadMeshOrigins(): void {
 }
 
 const replacingModelId = ref<string | null>(null);
+const meshUploadMessage = ref<string | null>(null);
+const meshUploadTarget = ref<string | null>(null);
+
+/** Filename of an uploaded custom mesh on a model (set by replaceFixtureModel), else null. */
+function customMeshFilename(m: FixtureModel | undefined): string | null {
+  const meta = m?.metadata as { replaced?: unknown; replacedFilename?: unknown } | undefined;
+  if (!meta || meta.replaced !== true) return null;
+  return typeof meta.replacedFilename === 'string' && meta.replacedFilename
+    ? meta.replacedFilename
+    : 'custom mesh';
+}
+
+const clampCustomMeshFilename = computed(() =>
+  customMeshFilename(
+    fixture.value?.definition.models?.find((m) => m.modelId === REBUS_CLAMP_MODEL_ID),
+  ),
+);
 
 /** Millimetres to lower the fixture body (clamp stays at the hang point). */
 const fixtureZOffsetMm = ref(0);
@@ -537,11 +556,16 @@ async function replaceModel(modelId: string, ev: Event): Promise<void> {
   if (!file) return;
   replacingModelId.value = modelId;
   error.value = null;
+  meshUploadMessage.value = null;
   try {
     const res = await fixturesApi.replaceModel(props.id, modelId, file);
     fixture.value = res.fixture;
     assemblyRevision.value += 1;
     await reload();
+    meshUploadTarget.value = modelId;
+    meshUploadMessage.value = orbitFixtureRef.value
+      ? `Uploaded ${file.name} — converted and aligned. Adjust Mesh offset on the part if needed, then Republish to Orbit to update the published mesh.`
+      : `Uploaded ${file.name} — converted and aligned. Adjust Mesh offset on the part if needed, then Publish to Orbit to include it.`;
   } catch (err) {
     error.value = (err as ApiError).message ?? 'model replace failed';
   } finally {
@@ -1407,6 +1431,10 @@ onMounted(() => {
             <span v-if="clampHasMesh" class="pill online">Attached</span>
             <span v-else class="pill muted-pill">No model</span>
           </div>
+          <p v-if="clampCustomMeshFilename" class="muted small">Custom mesh: {{ clampCustomMeshFilename }}</p>
+          <p v-if="meshUploadMessage && meshUploadTarget === REBUS_CLAMP_MODEL_ID" class="muted small sync-ok">
+            {{ meshUploadMessage }}
+          </p>
           <p v-if="clampModelLibraryId && clampHasUploadedMesh" class="muted small">
             Library model is used in the viewport when set; the uploaded mesh remains for ORBIT export until you clear the library pick.
           </p>
@@ -1556,13 +1584,18 @@ onMounted(() => {
           <div v-if="swapModels.length" class="model-swap">
             <h3 class="model-swap-title">Swap a model</h3>
             <p class="muted small">
-              Upload a 3D file to replace a model's mesh (glTF, GLB, OBJ, FBX, 3DS, STL, DAE, PLY). Part transforms are kept.
+              Upload a 3D file to replace a model's mesh (glTF, GLB, OBJ, FBX, 3DS, STL, DAE, PLY).
+              Part transforms and the pan/tilt pivot are kept — use <strong>Mesh offset</strong> on the
+              part (Parts tab) to align an imported mesh without moving the pivot.
             </p>
             <ul class="model-swap-list">
               <li v-for="m in swapModels" :key="m.modelId" class="model-swap-row">
                 <span class="model-swap-meta">
                   <span class="model-swap-name">{{ m.modelId }}</span>
                   <span class="model-swap-tag">{{ m.partTag }}</span>
+                  <span v-if="customMeshFilename(m)" class="pill online custom-mesh-pill">
+                    Custom: {{ customMeshFilename(m) }}
+                  </span>
                 </span>
                 <label class="model-swap-btn" :class="{ busy: replacingModelId === m.modelId }">
                   <Icon name="upload_file" :size="14" />
@@ -1576,6 +1609,9 @@ onMounted(() => {
                 </label>
               </li>
             </ul>
+            <p v-if="meshUploadMessage && meshUploadTarget !== REBUS_CLAMP_MODEL_ID" class="muted small sync-ok">
+              {{ meshUploadMessage }}
+            </p>
           </div>
         </section>
 
@@ -1801,6 +1837,7 @@ onMounted(() => {
 .model-swap-row { display: flex; align-items: center; gap: 10px; }
 .model-swap-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .model-swap-name { font-size: 13px; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.custom-mesh-pill { align-self: flex-start; margin-top: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-swap-tag { font-size: 11px; color: var(--color-text-muted); }
 .model-swap-btn {
   display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;

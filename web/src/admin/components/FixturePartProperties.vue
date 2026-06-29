@@ -7,6 +7,9 @@ import {
   ensureTransform,
   metresToMm,
   mmToMetres,
+  readMeshOffset,
+  writeMeshOffset,
+  type MeshOffset,
 } from '../utils/fixtureTransform';
 
 const props = defineProps<{
@@ -84,6 +87,54 @@ function setDimMm(axis: 'length' | 'width' | 'height', mm: number): void {
   if (!model.metadata || typeof model.metadata !== 'object') model.metadata = {};
   (model.metadata as Record<string, unknown>)[axis] = mmToMetres(Math.max(0, mm));
   notify();
+}
+
+const ZERO_MESH_OFFSET: MeshOffset = {
+  position: { x: 0, y: 0, z: 0 },
+  rotation: { x: 0, y: 0, z: 0 },
+};
+
+const hasMeshOffset = computed(() =>
+  !!readMeshOffset((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
+);
+
+function currentMeshOffset(): MeshOffset {
+  const stored = readMeshOffset((linkedModel.value?.metadata ?? {}) as Record<string, unknown>);
+  return stored
+    ? { position: { ...stored.position }, rotation: { ...stored.rotation } }
+    : { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } };
+}
+
+function commitMeshOffset(offset: MeshOffset): void {
+  const model = linkedModel.value;
+  if (!model) return;
+  if (!model.metadata || typeof model.metadata !== 'object') model.metadata = {};
+  writeMeshOffset(model.metadata as Record<string, unknown>, offset);
+  notify();
+}
+
+function meshOffsetPosMmValue(axis: 'x' | 'y' | 'z'): number {
+  return metresToMm(currentMeshOffset().position[axis]);
+}
+
+function meshOffsetRotDegValue(axis: 'x' | 'y' | 'z'): number {
+  return currentMeshOffset().rotation[axis];
+}
+
+function setMeshOffsetPos(axis: 'x' | 'y' | 'z', mm: number): void {
+  const offset = currentMeshOffset();
+  offset.position[axis] = mmToMetres(mm);
+  commitMeshOffset(offset);
+}
+
+function setMeshOffsetRot(axis: 'x' | 'y' | 'z', deg: number): void {
+  const offset = currentMeshOffset();
+  offset.rotation[axis] = deg;
+  commitMeshOffset(offset);
+}
+
+function resetMeshOffset(): void {
+  commitMeshOffset({ ...ZERO_MESH_OFFSET, position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } });
 }
 
 function onModelChange(ev: Event): void {
@@ -223,6 +274,67 @@ function onModelChange(ev: Event): void {
     </fieldset>
 
     <p v-else class="muted small dims-hint">Link a model to edit Length / Width / Height.</p>
+
+    <fieldset v-if="linkedModel" class="field-group">
+      <legend class="offset-legend">
+        <span>Mesh offset <span class="unit">mm / °</span></span>
+        <button v-if="hasMeshOffset" type="button" class="reset-btn" @click="resetMeshOffset">Reset</button>
+      </legend>
+      <p class="muted small offset-hint">
+        Aligns a custom / imported mesh to the part origin without moving the part
+        position or pan/tilt pivot. Applied in the published Orbit mesh too.
+      </p>
+      <div class="offset-sub">Translation</div>
+      <ParamSlider
+        label="X"
+        :min="-2000"
+        :max="2000"
+        :step="1"
+        :model-value="meshOffsetPosMmValue('x')"
+        @update:model-value="setMeshOffsetPos('x', $event)"
+      />
+      <ParamSlider
+        label="Y"
+        :min="-2000"
+        :max="2000"
+        :step="1"
+        :model-value="meshOffsetPosMmValue('y')"
+        @update:model-value="setMeshOffsetPos('y', $event)"
+      />
+      <ParamSlider
+        label="Z"
+        :min="-2000"
+        :max="2000"
+        :step="1"
+        :model-value="meshOffsetPosMmValue('z')"
+        @update:model-value="setMeshOffsetPos('z', $event)"
+      />
+      <div class="offset-sub">Rotation</div>
+      <ParamSlider
+        label="X"
+        :min="-180"
+        :max="180"
+        :step="0.5"
+        :model-value="meshOffsetRotDegValue('x')"
+        @update:model-value="setMeshOffsetRot('x', $event)"
+      />
+      <ParamSlider
+        label="Y"
+        :min="-180"
+        :max="180"
+        :step="0.5"
+        :model-value="meshOffsetRotDegValue('y')"
+        @update:model-value="setMeshOffsetRot('y', $event)"
+      />
+      <ParamSlider
+        label="Z"
+        :min="-180"
+        :max="180"
+        :step="0.5"
+        :model-value="meshOffsetRotDegValue('z')"
+        @update:model-value="setMeshOffsetRot('z', $event)"
+      />
+    </fieldset>
   </div>
 </template>
 
@@ -300,4 +412,32 @@ function onModelChange(ev: Event): void {
 }
 .dims-hint { margin: 0; }
 .small { font-size: 11px; }
+.offset-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.offset-hint { margin: 0 0 4px; }
+.offset-sub {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-subtle);
+  margin-top: 4px;
+}
+.reset-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.reset-btn:hover { background: var(--color-bg-hover); }
 </style>
