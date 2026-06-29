@@ -430,6 +430,7 @@ headless or cross-origin portals, use the REST API with scoped API keys
 
 - OpenAPI spec: [`https://prism.rebus.industries/docs`](https://prism.rebus.industries/docs)
 - Fixture assembly & motion: [`/docs/fixture-assembly-and-motion`](https://prism.rebus.industries/docs/fixture-assembly-and-motion)
+- Fixture groups & position presets: [`/docs/fixture-groups-positions-metadata`](https://prism.rebus.industries/docs/fixture-groups-positions-metadata)
 - Visualiser portal guide: [`/docs/portal-integration`](https://prism.rebus.industries/docs/portal-integration)
 - Permissions / tool grants: [`docs/PERMISSIONS.md`](PERMISSIONS.md)
 - Portal contract (identity): [`docs/PORTAL_CONTRACT.md`](PORTAL_CONTRACT.md)

@@ -9,6 +9,7 @@ Orbit `FixtureType` objects, or connector export payloads.
 [`/docs/fixture-assembly-and-motion`](https://prism.rebus.industries/docs/fixture-assembly-and-motion).
 
 **Companion:** [Fixture library API guide](/docs/library-integration) ·
+[Fixture groups & position presets](/docs/fixture-groups-positions-metadata) ·
 [OpenAPI spec](/docs) (`Fixture library` tag)
 
 ---
