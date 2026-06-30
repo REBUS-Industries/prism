@@ -14,6 +14,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, type MotionNode } from '../utils/fixtureAssembly';
+import type { GdtfReferenceBounds } from '../utils/fixtureGdtfBounds';
+import { box3FromGdtfBounds } from '../utils/fixtureGdtfBounds';
 import type { ClampPlacement } from '../utils/fixturePlacement';
 import { buildFixturePbrMaterial, type BuiltMaterial } from '../utils/fixturePbrMaterial';
 import { fetchSlotMaterials, paintModelMaterialSlots, type SlotMaterialMaps } from '../utils/modelMaterialSlots';
@@ -94,6 +96,8 @@ const props = withDefaults(defineProps<{
   editable?: boolean;
   /** Part the gizmo attaches to (assembly mode only). */
   selectedPartId?: string | null;
+  /** GDTF reference bounds overlay for custom-mesh alignment (part-local metres). */
+  gdtfReferenceBounds?: GdtfReferenceBounds | null;
   /** Active gizmo transform mode. */
   gizmoMode?: 'translate' | 'rotate' | 'scale';
   /** Gizmo coordinate space. 'local' aligns with GDTF axes (matches panel). */
@@ -113,6 +117,7 @@ const props = withDefaults(defineProps<{
   assemblyRevision: 0,
   editable: false,
   selectedPartId: null,
+  gdtfReferenceBounds: null,
   gizmoMode: 'translate',
   gizmoSpace: 'local',
 });
@@ -132,6 +137,8 @@ let orthographicCamera: THREE.OrthographicCamera | null = null;
 let controls: OrbitControls | null = null;
 let transformControls: TransformControls | null = null;
 let transformHelper: THREE.Object3D | null = null;
+/** Wireframe overlay for GDTF reference bounds on the selected custom-mesh part. */
+let gdtfReferenceOverlay: THREE.Group | null = null;
 /** partId → group carrying the GDTF local transform (for gizmo + picking). */
 let partGroups = new Map<string, THREE.Group>();
 let envRT: THREE.WebGLRenderTarget | null = null;
@@ -278,6 +285,7 @@ function disposeBuiltMaterials(): void {
 function clearLoaded(): void {
   // Detach the gizmo before disposing the groups it may be attached to.
   transformControls?.detach();
+  clearGdtfReferenceOverlay();
   assemblyParts = [];
   partGroups = new Map();
   disposeBuiltMaterials();
@@ -409,6 +417,38 @@ function syncDimmer(): void {
   if (dirLight) dirLight.intensity = 0.2 + props.dimmer * 1.2;
 }
 
+function clearGdtfReferenceOverlay(): void {
+  gdtfReferenceOverlay?.removeFromParent();
+  if (gdtfReferenceOverlay) {
+    gdtfReferenceOverlay.traverse((obj) => {
+      const helper = obj as THREE.Box3Helper & { dispose?: () => void };
+      if (typeof helper.dispose === 'function') helper.dispose();
+    });
+  }
+  gdtfReferenceOverlay = null;
+}
+
+/** Draw captured GDTF bounds + origin axes on the selected part group. */
+function syncGdtfReferenceOverlay(): void {
+  clearGdtfReferenceOverlay();
+  if (!props.gdtfReferenceBounds || !props.selectedPartId) return;
+  const grp = partGroups.get(props.selectedPartId);
+  if (!grp) return;
+
+  const box = box3FromGdtfBounds(props.gdtfReferenceBounds);
+  const overlay = new THREE.Group();
+  overlay.name = 'GdtfReferenceOverlay';
+
+  const boxHelper = new THREE.Box3Helper(box, 0x00aa66);
+  overlay.add(boxHelper);
+
+  const axes = new THREE.AxesHelper(0.12);
+  overlay.add(axes);
+
+  grp.add(overlay);
+  gdtfReferenceOverlay = overlay;
+}
+
 /** Attach / detach the transform gizmo based on editable + selectedPartId. */
 function syncGizmo(): void {
   if (!transformControls) return;
@@ -422,6 +462,7 @@ function syncGizmo(): void {
   } else {
     transformControls.detach();
   }
+  syncGdtfReferenceOverlay();
 }
 
 /** Read the gizmo'd group's local TRS (GDTF space) and emit it to the parent. */
@@ -832,7 +873,7 @@ watch(() => props.dimmer, syncDimmer);
 watch(() => props.showBeam, syncBeam);
 watch(() => props.beams, syncBeam, { deep: true });
 watch(() => props.interactive, (v) => { if (controls) controls.enabled = v; });
-watch(() => [props.editable, props.selectedPartId, props.gizmoMode, props.gizmoSpace], syncGizmo);
+watch(() => [props.editable, props.selectedPartId, props.gizmoMode, props.gizmoSpace, props.gdtfReferenceBounds], syncGizmo);
 watch(() => props.lightBackground, (v) => {
   if (scene) scene.background = new THREE.Color(v ? 0xe8eaed : 0x1a1a1f);
 });

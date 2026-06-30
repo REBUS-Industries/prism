@@ -18,6 +18,19 @@ import FixtureGdtfDebugPanel from '../components/FixtureGdtfDebugPanel.vue';
 
 import { buildTransform4x4 } from '../utils/fixtureTransform';
 
+import { isCustomReplacedModel } from '../utils/fixtureCustomMesh';
+
+import { getModelMediaId } from '../utils/fixtureAssembly';
+
+import {
+  gdtfBoundsFromBox3,
+  readGdtfBounds,
+  writeGdtfBounds,
+  type GdtfReferenceBounds,
+} from '../utils/fixtureGdtfBounds';
+
+import { loadModelBoundsFromUrl } from '../utils/fixtureModelBounds';
+
 import { fixtureLabel } from '../utils/fixtureLabel';
 
 import DmxModePanel from '../components/DmxModePanel.vue';
@@ -613,15 +626,41 @@ async function replaceModel(modelId: string, ev: Event): Promise<void> {
   replacingModelId.value = modelId;
   error.value = null;
   meshUploadMessage.value = null;
+
+  const modelBefore = fixture.value?.definition.models.find((m) => m.modelId === modelId);
+  let capturedBounds: GdtfReferenceBounds | null = null;
+  if (
+    modelBefore
+    && !readGdtfBounds(modelBefore.metadata as Record<string, unknown>)
+    && !isCustomReplacedModel(modelBefore)
+  ) {
+    const mediaId = getModelMediaId(modelBefore);
+    if (mediaId) {
+      const box = await loadModelBoundsFromUrl(
+        fixturesApi.mediaUrl(props.id, mediaId),
+        modelBefore,
+        false,
+      );
+      capturedBounds = box ? gdtfBoundsFromBox3(box) : null;
+    }
+  }
+
   try {
-    const res = await fixturesApi.replaceModel(props.id, modelId, file);
-    fixture.value = res.fixture;
-    assemblyRevision.value += 1;
+    await fixturesApi.replaceModel(props.id, modelId, file);
     await reload();
+
+    const modelAfter = fixture.value?.definition.models.find((m) => m.modelId === modelId);
+    if (modelAfter && capturedBounds) {
+      if (!modelAfter.metadata || typeof modelAfter.metadata !== 'object') modelAfter.metadata = {};
+      writeGdtfBounds(modelAfter.metadata as Record<string, unknown>, capturedBounds);
+      await save();
+    }
+
+    assemblyRevision.value += 1;
     meshUploadTarget.value = modelId;
     meshUploadMessage.value = orbitFixtureRef.value
-      ? `Uploaded ${file.name} — converted and aligned. Adjust Mesh offset on the part if needed, then Republish to Orbit to update the published mesh.`
-      : `Uploaded ${file.name} — converted and aligned. Adjust Mesh offset on the part if needed, then Publish to Orbit to include it.`;
+      ? `Uploaded ${file.name}. Mesh uses its file origin by default — adjust Mesh offset if needed, or use Align to GDTF bounds. Republish to Orbit to update the published mesh.`
+      : `Uploaded ${file.name}. Mesh uses its file origin by default — adjust Mesh offset if needed, or use Align to GDTF bounds, then Publish to Orbit.`;
   } catch (err) {
     error.value = (err as ApiError).message ?? 'model replace failed';
   } finally {
@@ -719,6 +758,15 @@ const selectedPart = computed<FixturePart | null>(() => {
 
   return fixture.value.definition.parts.find((p) => p.partId === selectedPartId.value) ?? null;
 
+});
+
+/** GDTF reference bounds for the selected part's custom mesh (viewer overlay). */
+const selectedGdtfBounds = computed(() => {
+  const part = selectedPart.value;
+  if (!part?.modelId || !fixture.value) return null;
+  const model = fixture.value.definition.models.find((m) => m.modelId === part.modelId);
+  if (!model || !isCustomReplacedModel(model)) return null;
+  return readGdtfBounds(model.metadata as Record<string, unknown>);
 });
 
 
@@ -1414,6 +1462,8 @@ onMounted(() => {
 
               :datums="datumMarkers"
 
+              :gdtf-reference-bounds="selectedGdtfBounds"
+
               :editable="!!assembly"
 
               :selected-part-id="selectedPartId"
@@ -1460,6 +1510,8 @@ onMounted(() => {
             :part="selectedPart"
 
             :models="fixture.definition.models"
+
+            :fixture-id="fixture.id"
 
             @change="onGeometryChange"
 
