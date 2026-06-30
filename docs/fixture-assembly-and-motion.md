@@ -156,9 +156,11 @@ model). Edit it in the admin editor's Parts tab → part properties → **Mesh
 offset**; the offset persists in the fixture definition (no DB migration) and
 publishes to Orbit so Rhino / 3rd-party viewers match the PRISM preview. Scale
 is handled separately by the Model Dimensions (L/W/H) fit for **GDTF** meshes;
-**custom replaced** uploads skip that dimension fit (1:1 authored scale) but
-still receive the +90° X glTF→GDTF axis conversion — only mesh-offset
-**translation** is applied (rotation offset is ignored for custom meshes).
+**custom replaced** uploads skip that dimension fit (1:1 authored scale, matching
+Orbit publish) but still receive the +90° X glTF→GDTF axis conversion — only
+mesh-offset **translation** is applied (rotation offset is ignored for custom
+meshes). The preview camera frames the full assembly bbox so large CAD exports
+remain visible.
 Clamp models use their own placement controls.
 
 ---
@@ -171,7 +173,8 @@ authored scale (no L/W/H dimension fit) but still pass through the standard
 +90° X wrap so Y-up glTF displays correctly in the Z-up viewer:
 
 - Web viewer: `wrapModelMesh` applies +90° X only (no bbox scale); optional
-  `meshOffset.position` translation aligns the mesh to the part origin.
+  `meshOffset.position` translation aligns the mesh to the part origin. Iso
+  camera near/far are derived from the assembly bounding box.
 - Orbit publish: `transformGlbMeshes(..., oneToOne: true)` applies the glTF→GDTF
   wrap matrix without dimension scale; mesh-offset rotation is ignored for
   replaced models.

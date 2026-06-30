@@ -339,6 +339,11 @@ function applyCameraPreset(): void {
     if (!perspectiveCamera) return;
     perspectiveCamera.up.set(0, 0, 1);
     perspectiveCamera.position.set(c.x + s * 0.6, c.y - s * 0.4, c.z + s * 0.8);
+    const dist = perspectiveCamera.position.distanceTo(c);
+    const radius = Math.max(s * 0.5, 0.05);
+    perspectiveCamera.near = Math.max(0.01, dist - radius - s);
+    perspectiveCamera.far = Math.max(perspectiveCamera.near + 1, dist + radius + s * 2);
+    perspectiveCamera.updateProjectionMatrix();
   } else {
     fitOrthographicView(props.viewPreset, aspect);
   }
@@ -607,9 +612,13 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
-  if (meshCount === 0) {
+  if (meshCount === 0 || box.isEmpty()) {
     disposeAssembly(root);
     for (const bm of newBuilt) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
+    console.warn(
+      '[FixtureViewer] assembly produced no visible geometry',
+      meshCount === 0 ? '(no meshes loaded)' : '(empty bounding box — check mode filter / media URLs)',
+    );
     return false;
   }
   clearLoaded();
@@ -650,8 +659,8 @@ async function loadContent(): Promise<void> {
       await loadGlb(props.url);
     }
     syncGizmo();
-  } catch {
-    /* keep whatever is currently shown */
+  } catch (err) {
+    console.warn('[FixtureViewer] failed to load preview content', err);
   }
 }
 
@@ -719,7 +728,9 @@ function resize(): void {
   const aspect = width / height;
   perspectiveCamera.aspect = aspect;
   perspectiveCamera.updateProjectionMatrix();
-  if (props.viewPreset !== 'iso') {
+  if (props.viewPreset === 'iso') {
+    applyCameraPreset();
+  } else {
     fitOrthographicView(props.viewPreset, aspect);
   }
 }
@@ -751,11 +762,11 @@ onMounted(() => {
   tiltGroup.add(glbOrient);
   scene.add(panGroup);
 
-  perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
+  perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
   perspectiveCamera.up.set(0, 0, 1);
   perspectiveCamera.position.set(2, -3, 1.5);
 
-  orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 500);
+  orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 5000);
   orthographicCamera.up.set(0, 0, 1);
 
   controls = new OrbitControls(activeCamera()!, renderer.domElement);
@@ -800,7 +811,10 @@ const assemblyKey = (): string => {
   const clampXform = a.clampModelTransform
     ? `${a.clampModelTransform.position.x},${a.clampModelTransform.position.y},${a.clampModelTransform.position.z}|${a.clampModelTransform.rotation.x},${a.clampModelTransform.rotation.y},${a.clampModelTransform.rotation.z}|${a.clampModelTransform.scale.x},${a.clampModelTransform.scale.y},${a.clampModelTransform.scale.z}`
     : '';
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
+  const modelMedia = (a.models ?? [])
+    .map((m) => `${m.modelId}=${String((m.metadata as { mediaId?: unknown } | undefined)?.mediaId ?? '')}`)
+    .join('|');
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${modelMedia}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
 };
 
 const modelMaterialsKey = (): string =>
