@@ -9,3 +9,9 @@
 export function fixtureLabel(f: { displayName?: string | null; name: string }): string {
   return f.displayName?.trim() || f.name;
 }
+
+/** Default copy name when the caller does not provide one (mirrors fixtures-service). */
+export function duplicateFixtureName(sourceName: string): string {
+  const base = sourceName?.trim() || 'Fixture';
+  return /\(copy\)\s*$/i.test(base) ? base : `${base} (Copy)`;
+}

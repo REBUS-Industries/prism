@@ -152,6 +152,12 @@ const name = ref('');
 
 const displayName = ref('');
 
+const manufacturer = ref('');
+
+const fixtureName = ref('');
+
+const revision = ref('');
+
 const tags = ref('');
 
 const status = ref('draft');
@@ -248,6 +254,12 @@ const assembly = computed(() => {
 
 const info = computed(() => fixture.value?.definition.fixtureInformation);
 
+const canCheckGdtfUpdates = computed(() =>
+  !!fixture.value?.gdtfShareUuid && fixture.value.importSource !== 'duplicate',
+);
+
+const showDuplicateBanner = computed(() => route.query.from === 'duplicate');
+
 const fixtureInfoRows = computed(() => {
   const def = fixture.value?.definition;
   if (!def) return [];
@@ -284,6 +296,7 @@ function formatStoredVersionLabel(v: FixtureVersionSummary): string {
 }
 
 async function checkForUpdates(): Promise<void> {
+  if (!canCheckGdtfUpdates.value) return;
   checkingUpdates.value = true;
   carryReport.value = [];
   try {
@@ -732,6 +745,23 @@ const datumMarkers = computed(() => {
 
 
 
+function syncIdentityFromFixture(): void {
+  if (!fixture.value) return;
+  displayName.value = fixture.value.displayName ?? '';
+  manufacturer.value = fixture.value.manufacturer ?? info.value?.manufacturer ?? '';
+  fixtureName.value = fixture.value.fixtureName ?? info.value?.fixtureName ?? '';
+  revision.value = fixture.value.revision ?? info.value?.revision ?? '';
+}
+
+function applyIdentityToDefinition(): void {
+  if (!fixture.value) return;
+  const infoBlock = { ...(fixture.value.definition.fixtureInformation ?? {}) };
+  infoBlock.manufacturer = manufacturer.value.trim();
+  infoBlock.fixtureName = fixtureName.value.trim();
+  infoBlock.revision = revision.value.trim() || undefined;
+  fixture.value.definition.fixtureInformation = infoBlock;
+}
+
 async function reload(): Promise<void> {
 
   loading.value = true;
@@ -747,6 +777,12 @@ async function reload(): Promise<void> {
     name.value = res.fixture.name;
 
     displayName.value = res.fixture.displayName ?? '';
+
+    manufacturer.value = res.fixture.manufacturer;
+
+    fixtureName.value = res.fixture.fixtureName;
+
+    revision.value = res.fixture.revision ?? '';
 
     tags.value = res.fixture.tags.join(', ');
 
@@ -791,6 +827,7 @@ async function save(): Promise<void> {
   try {
 
     applyPlacementToDefinition();
+    applyIdentityToDefinition();
     applyOrbitPublishTemplate();
 
     const res = await fixturesApi.update(props.id, {
@@ -798,6 +835,12 @@ async function save(): Promise<void> {
       name: name.value.trim(),
 
       displayName: displayName.value.trim() || null,
+
+      manufacturer: manufacturer.value.trim(),
+
+      fixtureName: fixtureName.value.trim(),
+
+      revision: revision.value.trim() || null,
 
       tags: tags.value.split(',').map((s) => s.trim()).filter(Boolean),
 
@@ -809,7 +852,7 @@ async function save(): Promise<void> {
 
     fixture.value = res.fixture;
 
-    displayName.value = res.fixture.displayName ?? '';
+    syncIdentityFromFixture();
 
   } catch (err) {
 
@@ -1070,8 +1113,9 @@ onBeforeUnmount(() => {
 });
 
 onMounted(() => {
-  void reload();
-  void checkForUpdates();
+  void reload().then(() => {
+    if (canCheckGdtfUpdates.value) void checkForUpdates();
+  });
   void loadClampLibraryModels();
 });
 
@@ -1093,6 +1137,10 @@ onMounted(() => {
 
         <RouterLink :to="{ name: 'prism-library' }" class="back muted"><Icon name="arrow_back" :size="14" /> Fixture library</RouterLink>
 
+        <p v-if="showDuplicateBanner" class="duplicate-banner">
+          Draft copy — update manufacturer and fixture name, then publish to Orbit when ready.
+        </p>
+
         <div class="head-main">
 
           <div>
@@ -1103,13 +1151,15 @@ onMounted(() => {
 
               <span v-if="fixture.displayName?.trim()">{{ fixture.name }} · </span>
 
-              {{ info?.manufacturer }} · {{ info?.fixtureName }}
+              {{ manufacturer || info?.manufacturer }} · {{ fixtureName || info?.fixtureName }}
 
-              <span v-if="info?.revision"> · v{{ info.revision }}</span>
+              <span v-if="revision || info?.revision"> · v{{ revision || info?.revision }}</span>
+
+              <span v-if="fixture.status === 'draft'" class="draft-badge">draft</span>
 
             </p>
 
-            <div v-if="storedVersions.length" class="version-bar">
+            <div v-if="storedVersions.length && canCheckGdtfUpdates" class="version-bar">
               <p v-if="provenanceLine" class="provenance muted">{{ provenanceLine }}</p>
               <div class="version-controls">
                 <select
@@ -1500,13 +1550,19 @@ onMounted(() => {
 
           <h2>Metadata</h2>
 
-          <label>Name <input v-model="name" /></label>
+          <label>Name <input v-model="name" maxlength="256" /></label>
 
           <label>Display name
             <input v-model="displayName" :placeholder="name || 'Custom label (optional)'" maxlength="256" />
           </label>
 
           <p class="field-hint muted">Optional. Shown across PRISM, the connector, and Orbit. Leave blank to use the fixture name.</p>
+
+          <label>Manufacturer <input v-model="manufacturer" maxlength="256" /></label>
+
+          <label>Fixture name <input v-model="fixtureName" maxlength="256" /></label>
+
+          <label>Revision <input v-model="revision" maxlength="128" /></label>
 
           <label>Tags <input v-model="tags" placeholder="comma-separated" /></label>
 
@@ -1843,6 +1899,28 @@ onMounted(() => {
 .head-meta { margin: 4px 0 0; font-size: 13px; }
 
 .field-hint { margin: -4px 0 6px; font-size: 11px; line-height: 1.4; }
+
+.duplicate-banner {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 13px;
+}
+[data-theme="dark"] .duplicate-banner { background: #422006; color: #fcd34d; }
+
+.draft-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+[data-theme="dark"] .draft-badge { background: #422006; color: #fcd34d; }
 
 .version-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .version-bar .provenance { margin: 0; font-size: 12px; }

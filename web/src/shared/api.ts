@@ -1794,7 +1794,7 @@ export interface FixtureDefinition {
   metadata: Record<string, unknown>;
 }
 
-export type FixtureImportSource = 'upload' | 'gdtf-share' | 'mvr-embedded';
+export type FixtureImportSource = 'upload' | 'gdtf-share' | 'mvr-embedded' | 'duplicate';
 
 /** GDTF mesh LOD folder preference (gltf_high / gltf / gltf_low). */
 export type GdtfModelQuality = 'low' | 'default' | 'high';
@@ -2079,9 +2079,31 @@ export const fixturesApi = {
   get: (id: string) => api.get<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`),
   create: (body: { name: string; displayName?: string; manufacturer?: string; fixtureName?: string; tags?: string[] }) =>
     api.post<{ fixture: FixtureListItem }>('/api/fixtures', body),
+  /** Deep-copy a fixture into a new draft row (requires fixtures:write). */
+  duplicate: (
+    id: string,
+    body: {
+      name?: string;
+      manufacturer?: string;
+      fixtureName?: string;
+      revision?: string | null;
+      displayName?: string | null;
+    } = {},
+  ) => api.post<{ fixture: FixtureDetail }>(`/api/fixtures/${id}/duplicate`, body),
   /** `displayName: ''` or `null` clears the custom name (falls back to `name`). Max length 256. */
-  update: (id: string, body: { name?: string; displayName?: string | null; tags?: string[]; status?: string; definition?: FixtureDefinition }) =>
-    api.put<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`, body),
+  update: (
+    id: string,
+    body: {
+      name?: string;
+      displayName?: string | null;
+      manufacturer?: string;
+      fixtureName?: string;
+      revision?: string | null;
+      tags?: string[];
+      status?: string;
+      definition?: FixtureDefinition;
+    },
+  ) => api.put<{ fixture: FixtureDetail }>(`/api/fixtures/${id}`, body),
   remove: (id: string) => api.delete<{ ok: boolean }>(`/api/fixtures/${id}`),
   previewUrl: (id: string) => `/api/fixtures/${id}/preview.glb`,
   mediaUrl: (fixtureId: string, mediaId: string) => `/api/fixtures/${fixtureId}/media/${mediaId}`,
