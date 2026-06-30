@@ -351,8 +351,9 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
  * mapping (verified on Rivale Profile Base): x = length/bbox.x,
  * y = height/bbox.y, z = width/bbox.z.
  *
- * Custom / replaced uploads skip dimension fit (1:1 authored scale) but still
- * get the +90° X glTF Y-up → GDTF Z-up axis conversion required by the viewer.
+ * Custom / replaced uploads skip dimension fit (1:1 authored scale, matching
+ * Orbit `oneToOne` bake) but still get the +90° X glTF Y-up → GDTF Z-up axis
+ * conversion required by the viewer. The preview camera frames the full bbox.
  */
 function wrapModelMesh(
   meshRoot: THREE.Object3D,
@@ -454,7 +455,10 @@ export async function buildFixtureAssembly(
     if (!p) {
       p = loader.loadAsync(url)
         .then((g) => g.scene as THREE.Object3D)
-        .catch(() => null);
+        .catch((err) => {
+          console.warn('[fixtureAssembly] failed to load model GLB', url, err);
+          return null;
+        });
       glbCache.set(url, p);
     }
     return p;
