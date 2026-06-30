@@ -156,8 +156,8 @@ model). Edit it in the admin editor's Parts tab → part properties → **Mesh
 offset**; the offset persists in the fixture definition (no DB migration) and
 publishes to Orbit so Rhino / 3rd-party viewers match the PRISM preview. Scale
 is handled separately by the Model Dimensions (L/W/H) fit for **GDTF** meshes;
-**custom replaced** uploads (`metadata.replaced === true`) render **1:1** at
-their authored scale with no axis wrap or dimension fit — only mesh-offset
+**custom replaced** uploads skip that dimension fit (1:1 authored scale) but
+still receive the +90° X glTF→GDTF axis conversion — only mesh-offset
 **translation** is applied (rotation offset is ignored for custom meshes).
 Clamp models use their own placement controls.
 
@@ -166,16 +166,17 @@ Clamp models use their own placement controls.
 ## Custom replaced meshes (`models[].metadata.replaced`)
 
 When a model mesh is swapped via Settings → **Replace**, PRISM stamps
-`metadata.replaced: true` (and `replacedFilename`). Those meshes are treated as
-already correct in size and orientation:
+`metadata.replaced: true` (and `replacedFilename`). Those meshes keep their
+authored scale (no L/W/H dimension fit) but still pass through the standard
++90° X wrap so Y-up glTF displays correctly in the Z-up viewer:
 
-- Web viewer: `wrapModelMesh` passes the GLB through without +90° X or L/W/H
-  scaling; optional `meshOffset.position` translation aligns the mesh to the
-  part origin.
-- Orbit publish: `transformGlbMeshes(..., oneToOne: true)` skips the glTF→GDTF
-  wrap/scale bake; mesh-offset rotation is ignored for replaced models.
+- Web viewer: `wrapModelMesh` applies +90° X only (no bbox scale); optional
+  `meshOffset.position` translation aligns the mesh to the part origin.
+- Orbit publish: `transformGlbMeshes(..., oneToOne: true)` applies the glTF→GDTF
+  wrap matrix without dimension scale; mesh-offset rotation is ignored for
+  replaced models.
 
-GDTF-native meshes still use the wrap + dimension fit described above.
+GDTF-native meshes still use wrap + dimension fit described above.
 
 ---
 
