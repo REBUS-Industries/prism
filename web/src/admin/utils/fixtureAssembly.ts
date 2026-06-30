@@ -351,24 +351,22 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
  * mapping (verified on Rivale Profile Base): x = length/bbox.x,
  * y = height/bbox.y, z = width/bbox.z.
  *
- * Custom / replaced uploads are rendered 1:1 (no axis wrap or dimension fit) — only
- * an optional mesh-offset translation may be applied afterward.
+ * Custom / replaced uploads skip dimension fit (1:1 authored scale) but still
+ * get the +90° X glTF Y-up → GDTF Z-up axis conversion required by the viewer.
  */
 function wrapModelMesh(
   meshRoot: THREE.Object3D,
   dims: ModelDims,
   model?: FixtureModel,
 ): THREE.Group {
-  if (isCustomReplacedModel(model)) {
-    const passthrough = new THREE.Group();
-    passthrough.name = 'Scene';
-    passthrough.add(meshRoot);
-    return passthrough;
-  }
-
   const wrapper = new THREE.Group();
   wrapper.name = 'Scene';
   wrapper.rotation.x = Math.PI / 2;
+
+  if (isCustomReplacedModel(model)) {
+    wrapper.add(meshRoot);
+    return wrapper;
+  }
 
   const bbox = new THREE.Box3().setFromObject(meshRoot);
   const size = bbox.getSize(new THREE.Vector3());

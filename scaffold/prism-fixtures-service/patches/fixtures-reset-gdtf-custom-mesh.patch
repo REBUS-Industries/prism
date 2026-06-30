@@ -153,10 +153,15 @@ index 97f2ed1..b3a4c5d 100644
 +): ParsedMesh[] {
    const raw = meshesFromGlb(bytes);
    if (!raw.length) return [];
++  const wrap = gltfToGdtfWrapMatrix();
 +  if (oneToOne) {
-+    return applyMatrixToMeshes(raw, world);
++    const modelMatrix = multiplyMat4Row(world, wrap);
++    return applyMatrixToMeshes(raw, modelMatrix, { flipWinding: true });
 +  }
-   const wrap = gltfToGdtfWrapMatrix();
+-  if (oneToOne) {
+-    return applyMatrixToMeshes(raw, world);
+-  }
+-  const wrap = gltfToGdtfWrapMatrix();
    const scale = wrapScaleMatrix(raw, dims);
    const modelMatrix = multiplyMat4Row(world, multiplyMat4Row(wrap, scale));
 @@ -285,7 +292,8 @@ function loadModelMeshes(
