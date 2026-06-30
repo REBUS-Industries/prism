@@ -15,7 +15,7 @@ import Icon from '../../shared/Icon.vue';
 import Modal from '../../shared/Modal.vue';
 import FixtureTypeSelect from '../components/FixtureTypeSelect.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
-import { fixtureLabel } from '../utils/fixtureLabel';
+import { duplicateFixtureName as defaultDuplicateName, fixtureLabel } from '../utils/fixtureLabel';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import {
   fixturesApi,
@@ -53,6 +53,15 @@ const newName = ref('');
 const creating = ref(false);
 const importing = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
+
+const copyingId = ref<string | null>(null);
+const showDuplicate = ref(false);
+const duplicateSource = ref<FixtureListItem | null>(null);
+const duplicateName = ref('');
+const duplicateDisplayName = ref('');
+const duplicateManufacturer = ref('');
+const duplicateFixtureNameField = ref('');
+const duplicateRevision = ref('');
 
 const showExport = ref(false);
 const exportPayload = ref<FixtureConnectorExport | null>(null);
@@ -167,8 +176,64 @@ function selectFixture(f: FixtureListItem): void {
   selectedId.value = f.id;
 }
 
-function openEditor(id: string): void {
-  void router.push({ name: 'fixture-editor', params: { id } });
+function openEditor(id: string, query?: Record<string, string>): void {
+  void router.push({ name: 'fixture-editor', params: { id }, query });
+}
+
+function prefillDuplicateForm(f: FixtureListItem): void {
+  duplicateSource.value = f;
+  duplicateName.value = defaultDuplicateName(f.name);
+  duplicateDisplayName.value = f.displayName?.trim()
+    ? defaultDuplicateName(f.displayName.trim())
+    : '';
+  duplicateManufacturer.value = f.manufacturer;
+  duplicateFixtureNameField.value = f.fixtureName;
+  duplicateRevision.value = f.revision ?? '';
+}
+
+function openDuplicateDialog(f: FixtureListItem): void {
+  prefillDuplicateForm(f);
+  showDuplicate.value = true;
+}
+
+async function duplicateFixture(
+  f: FixtureListItem,
+  overrides: {
+    name?: string;
+    manufacturer?: string;
+    fixtureName?: string;
+    revision?: string | null;
+    displayName?: string | null;
+  } = {},
+): Promise<void> {
+  copyingId.value = f.id;
+  error.value = null;
+  try {
+    const res = await fixturesApi.duplicate(f.id, overrides);
+    upsert(res.fixture);
+    selectedId.value = res.fixture.id;
+    showDuplicate.value = false;
+    duplicateSource.value = null;
+    openEditor(res.fixture.id, { from: 'duplicate' });
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'duplicate failed';
+  } finally {
+    copyingId.value = null;
+  }
+}
+
+async function confirmDuplicateDialog(): Promise<void> {
+  const source = duplicateSource.value;
+  if (!source) return;
+  const name = duplicateName.value.trim();
+  if (!name) return;
+  await duplicateFixture(source, {
+    name,
+    manufacturer: duplicateManufacturer.value.trim() || undefined,
+    fixtureName: duplicateFixtureNameField.value.trim() || undefined,
+    revision: duplicateRevision.value.trim() || null,
+    displayName: duplicateDisplayName.value.trim() || null,
+  });
 }
 
 async function onCategoryChange(category: string): Promise<void> {
@@ -450,6 +515,16 @@ onMounted(() => {
             <button type="button" class="icon-action" title="Open in editor" @click="openEditor(selected.id)">
               <Icon name="edit" :size="16" />
             </button>
+            <button
+              type="button"
+              class="icon-action"
+              title="Duplicate… (Shift+click: duplicate now)"
+              :disabled="copyingId === selected.id"
+              @click.exact="openDuplicateDialog(selected)"
+              @click.shift="duplicateFixture(selected)"
+            >
+              <Icon name="content_copy" :size="16" />
+            </button>
             <button type="button" class="icon-action" title="Export for connector / ORBIT" @click="openExport(selected.id)">
               <Icon name="ios_share" :size="16" />
             </button>
@@ -493,7 +568,7 @@ onMounted(() => {
               <dd class="mono">{{ selected.sourceGdtfHash ? selected.sourceGdtfHash.slice(0, 12) + '…' : '—' }}</dd>
               <dt>Updates</dt>
               <dd>
-                <span v-if="selected.updateAvailable" class="pill warn-pill">Update available</span>
+                <span v-if="selected.updateAvailable && selected.gdtfShareUuid && selected.importSource !== 'duplicate'" class="pill warn-pill">Update available</span>
                 <span v-else-if="selected.gdtfShareUuid" class="muted">Up to date</span>
                 <span v-else class="muted">Not linked</span>
               </dd>
@@ -546,6 +621,31 @@ onMounted(() => {
         </button>
       </template>
     </Modal>
+
+    <div v-if="showDuplicate && duplicateSource" class="modal-backdrop" @click.self="showDuplicate = false">
+      <div class="card modal duplicate-modal">
+        <h2>Duplicate fixture</h2>
+        <p class="muted small">Creates an independent draft copy. Edit identity before publishing to Orbit.</p>
+        <label>Name <input v-model="duplicateName" maxlength="256" @keyup.enter="confirmDuplicateDialog" /></label>
+        <label>Display name
+          <input v-model="duplicateDisplayName" :placeholder="duplicateName || 'Custom label (optional)'" maxlength="256" />
+        </label>
+        <label>Manufacturer <input v-model="duplicateManufacturer" maxlength="256" /></label>
+        <label>Fixture name <input v-model="duplicateFixtureNameField" maxlength="256" /></label>
+        <label>Revision <input v-model="duplicateRevision" maxlength="128" /></label>
+        <div class="h-row duplicate-actions">
+          <button type="button" class="btn-cancel" @click="showDuplicate = false">Cancel</button>
+          <button
+            type="button"
+            class="btn-save"
+            :disabled="!duplicateName.trim() || copyingId === duplicateSource.id"
+            @click="confirmDuplicateDialog"
+          >
+            {{ copyingId === duplicateSource.id ? 'Duplicating…' : 'Duplicate' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
       <div class="card modal">
