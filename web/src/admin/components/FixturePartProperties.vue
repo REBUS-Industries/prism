@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import ParamSlider from './ParamSlider.vue';
-import type { FixtureModel, FixturePart } from '../../shared/api';
+import { fixturesApi, type FixtureModel, type FixturePart } from '../../shared/api';
 import {
   buildTransform4x4,
   ensureTransform,
@@ -12,15 +12,35 @@ import {
   type MeshOffset,
 } from '../utils/fixtureTransform';
 import { isCustomReplacedModel } from '../utils/fixtureCustomMesh';
+import { getModelMediaId } from '../utils/fixtureAssembly';
+import { box3FromGdtfBounds, readGdtfBounds } from '../utils/fixtureGdtfBounds';
+import { loadModelBoundsFromUrl } from '../utils/fixtureModelBounds';
+import {
+  alignOffset,
+  DEFAULT_BBOX_ANCHORS,
+  type BboxAnchor,
+  type BboxAnchors,
+} from '../utils/fixtureMeshAlign';
 
 const props = defineProps<{
   part: FixturePart | null;
   models: FixtureModel[];
+  fixtureId?: string;
 }>();
 
 const emit = defineEmits<{
   change: [];
 }>();
+
+const bboxAnchors = ref<BboxAnchors>({ ...DEFAULT_BBOX_ANCHORS });
+const aligning = ref(false);
+const alignError = ref<string | null>(null);
+
+const ANCHOR_OPTIONS: { value: BboxAnchor; label: string }[] = [
+  { value: 'min', label: 'Min' },
+  { value: 'center', label: 'Center' },
+  { value: 'max', label: 'Max' },
+];
 
 const geometryType = computed(() => {
   if (!props.part) return '—';
@@ -34,6 +54,10 @@ const linkedModel = computed(() => {
 });
 
 const isCustomMesh = computed(() => isCustomReplacedModel(linkedModel.value));
+
+const hasGdtfBounds = computed(() =>
+  !!readGdtfBounds((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
+);
 
 const modelOptions = computed(() =>
   props.models.map((m) => ({
@@ -141,6 +165,45 @@ function setMeshOffsetRot(axis: 'x' | 'y' | 'z', deg: number): void {
 
 function resetMeshOffset(): void {
   commitMeshOffset({ ...ZERO_MESH_OFFSET, position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } });
+}
+
+async function alignToGdtfBounds(): Promise<void> {
+  const model = linkedModel.value;
+  const fixtureId = props.fixtureId;
+  if (!model || !fixtureId) return;
+
+  const gdtfBounds = readGdtfBounds(model.metadata as Record<string, unknown>);
+  if (!gdtfBounds) {
+    alignError.value = 'No GDTF reference bounds stored for this model.';
+    return;
+  }
+
+  const mediaId = getModelMediaId(model);
+  if (!mediaId) {
+    alignError.value = 'Custom mesh media is missing.';
+    return;
+  }
+
+  aligning.value = true;
+  alignError.value = null;
+  try {
+    const customBox = await loadModelBoundsFromUrl(
+      fixturesApi.mediaUrl(fixtureId, mediaId),
+      model,
+      true,
+    );
+    if (!customBox || customBox.isEmpty()) {
+      alignError.value = 'Could not measure the custom mesh bounds.';
+      return;
+    }
+    const gdtfBox = box3FromGdtfBounds(gdtfBounds);
+    const position = alignOffset(gdtfBox, customBox, bboxAnchors.value);
+    commitMeshOffset({ position, rotation: { x: 0, y: 0, z: 0 } });
+  } catch {
+    alignError.value = 'Failed to align mesh to GDTF bounds.';
+  } finally {
+    aligning.value = false;
+  }
 }
 
 function onModelChange(ev: Event): void {
@@ -280,7 +343,8 @@ function onModelChange(ev: Event): void {
     </fieldset>
 
     <p v-else-if="linkedModel && isCustomMesh" class="muted small dims-hint">
-      Custom mesh — rendered 1:1 at its authored scale. Use mesh offset translation below to align it.
+      Custom mesh — placed at its file origin by default (pivot and datums unchanged).
+      The green wireframe shows the original GDTF bounds. Use mesh offset or Align below to nudge.
     </p>
     <p v-else class="muted small dims-hint">Link a model to edit Length / Width / Height.</p>
 
@@ -291,7 +355,7 @@ function onModelChange(ev: Event): void {
       </legend>
       <p class="muted small offset-hint">
         <template v-if="isCustomMesh">
-          Aligns a custom imported mesh to the part origin without moving the part position or pan/tilt pivot.
+          Aligns the custom mesh inside the part frame without moving the part position or pan/tilt pivot.
           Only translation is applied — the mesh is not scaled or rotated.
         </template>
         <template v-else>
@@ -299,6 +363,30 @@ function onModelChange(ev: Event): void {
           position or pan/tilt pivot. Applied in the published Orbit mesh too.
         </template>
       </p>
+
+      <div v-if="isCustomMesh && hasGdtfBounds" class="align-assist">
+        <p class="muted small align-hint">
+          Best-fit assist — verify on asymmetric meshes. Export with the file origin at the GDTF mount point for exact placement without offset.
+        </p>
+        <div class="anchor-row">
+          <label v-for="axis in (['x', 'y', 'z'] as const)" :key="axis" class="anchor-field">
+            <span>{{ axis.toUpperCase() }}</span>
+            <select v-model="bboxAnchors[axis]" class="field-input anchor-select">
+              <option v-for="opt in ANCHOR_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </label>
+        </div>
+        <button
+          type="button"
+          class="align-btn"
+          :disabled="aligning"
+          @click="alignToGdtfBounds"
+        >
+          {{ aligning ? 'Aligning…' : 'Align to GDTF bounds (best fit)' }}
+        </button>
+        <p v-if="alignError" class="align-error">{{ alignError }}</p>
+      </div>
+
       <div class="offset-sub">Translation</div>
       <ParamSlider
         label="X"
@@ -437,6 +525,53 @@ function onModelChange(ev: Event): void {
   width: 100%;
 }
 .offset-hint { margin: 0 0 4px; }
+.align-assist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1, rgba(0, 0, 0, 0.03));
+}
+.align-hint { margin: 0; line-height: 1.4; }
+.anchor-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.anchor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+.anchor-select {
+  font-size: 11px;
+  padding: 4px 6px;
+}
+.align-btn {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, #fff);
+  cursor: pointer;
+}
+.align-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.align-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-danger, #c0392b);
+}
 .offset-sub {
   font-size: 10px;
   font-weight: 600;

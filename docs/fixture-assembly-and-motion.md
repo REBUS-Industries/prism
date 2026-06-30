@@ -159,8 +159,8 @@ is handled separately by the Model Dimensions (L/W/H) fit for **GDTF** meshes;
 **custom replaced** uploads skip that dimension fit (1:1 authored scale, matching
 Orbit publish) but still receive the +90° X glTF→GDTF axis conversion — only
 mesh-offset **translation** is applied (rotation offset is ignored for custom
-meshes). The preview camera frames the full assembly bbox so large CAD exports
-remain visible.
+meshes). Custom meshes default to their file origin; captured `gdtfBounds` and
+mesh offset align them inside the part frame without moving pivots.
 Clamp models use their own placement controls.
 
 ---
@@ -170,14 +170,38 @@ Clamp models use their own placement controls.
 When a model mesh is swapped via Settings → **Replace**, PRISM stamps
 `metadata.replaced: true` (and `replacedFilename`). Those meshes keep their
 authored scale (no L/W/H dimension fit) but still pass through the standard
-+90° X wrap so Y-up glTF displays correctly in the Z-up viewer:
++90° X wrap so Y-up glTF displays correctly in the Z-up viewer.
+
+### Origin and placement (default)
+
+Custom meshes are placed at their **file origin** (zero mesh offset) by default.
+The part `localTransform`, pivot, and datums are **never** changed by a mesh
+swap — pan/tilt pivots stay on the GDTF geometry nodes.
+
+**Recommended authoring:** export the replacement mesh with its local origin at
+the same physical point the GDTF mesh used (mount point / pivot). Then no offset
+is needed and asymmetric geometry is handled correctly.
+
+### GDTF reference bounds (`metadata.gdtfBounds`)
+
+On the first replace of a GDTF-native model, PRISM captures the wrapped GDTF
+mesh bounding box (part-local metres) into `model.metadata.gdtfBounds` before
+the upload overwrites the media file. The editor draws this box as a **green
+wireframe overlay** on the selected part so you can align by eye.
+
+Bounding-box alignment is only a **best-fit assist** (asymmetric meshes or
+extra geometry can misalign). Use **Align to GDTF bounds** in part properties
+with per-axis anchors (default: center X/Y, bottom Z) when helpful, then nudge
+with mesh-offset translation sliders or the gizmo.
+
+### Viewer and Orbit
 
 - Web viewer: `wrapModelMesh` applies +90° X only (no bbox scale); optional
-  `meshOffset.position` translation aligns the mesh to the part origin. Iso
+  `meshOffset.position` translation aligns the mesh inside the part frame. Iso
   camera near/far are derived from the assembly bounding box.
 - Orbit publish: `transformGlbMeshes(..., oneToOne: true)` applies the glTF→GDTF
   wrap matrix without dimension scale; mesh-offset rotation is ignored for
-  replaced models.
+  replaced models. Translation offset is baked via `meshOffsetMatrixRow`.
 
 GDTF-native meshes still use wrap + dimension fit described above.
 

@@ -153,6 +153,15 @@ function modelMediaId(model: FixtureModel | undefined): string | null {
   return typeof id === 'string' && id ? id : null;
 }
 
+/** Resolve the fixture media id for a model (for GLB URL construction). */
+export function getModelMediaId(model: FixtureModel | undefined): string | null {
+  return modelMediaId(model);
+}
+
+export function exportModelDims(model: FixtureModel | undefined): ModelDims {
+  return modelDims(model);
+}
+
 function modelDims(model: FixtureModel | undefined): ModelDims {
   const m = model?.metadata as Record<string, unknown> | undefined;
   return {
@@ -347,24 +356,18 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
  * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
  * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
  *
- * After +90° X: mesh local Y → world Z, local Z → world −Y. Builder scale
- * mapping (verified on Rivale Profile Base): x = length/bbox.x,
- * y = height/bbox.y, z = width/bbox.z.
- *
- * Custom / replaced uploads skip dimension fit (1:1 authored scale, matching
- * Orbit `oneToOne` bake) but still get the +90° X glTF Y-up → GDTF Z-up axis
- * conversion required by the viewer. The preview camera frames the full bbox.
+ * When `oneToOne` is true (custom replaced uploads), dimension fit is skipped.
  */
-function wrapModelMesh(
+function wrapModelMeshInternal(
   meshRoot: THREE.Object3D,
   dims: ModelDims,
-  model?: FixtureModel,
+  oneToOne: boolean,
 ): THREE.Group {
   const wrapper = new THREE.Group();
   wrapper.name = 'Scene';
   wrapper.rotation.x = Math.PI / 2;
 
-  if (isCustomReplacedModel(model)) {
+  if (oneToOne) {
     wrapper.add(meshRoot);
     return wrapper;
   }
@@ -378,12 +381,6 @@ function wrapModelMesh(
     const sx = dims.length / size.x;
     const sy = dims.height / size.y;
     const sz = dims.width / size.z;
-    // A single rigid model should not need wildly different per-axis scales to
-    // fit its declared L/W/H. Large divergence means the model's axes/units do
-    // not match the declared dims — common for shared library geometry such as
-    // the Mac Aura "filament" strip, where one axis would otherwise explode into
-    // a wall (identically across every GeometryReference instance). Fall back to
-    // a uniform median scale so the mesh keeps its authored proportions.
     const ratios = [sx, sy, sz];
     const min = Math.min(...ratios);
     const max = Math.max(...ratios);
@@ -397,6 +394,56 @@ function wrapModelMesh(
 
   wrapper.add(meshRoot);
   return wrapper;
+}
+
+/**
+ * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
+ * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
+ *
+ * After +90° X: mesh local Y → world Z, local Z → world −Y. Builder scale
+ * mapping (verified on Rivale Profile Base): x = length/bbox.x,
+ * y = height/bbox.y, z = width/bbox.z.
+ *
+ * Custom / replaced uploads skip dimension fit (1:1 authored scale, matching
+ * Orbit `oneToOne` bake) but still get the +90° X glTF Y-up → GDTF Z-up axis
+ * conversion required by the viewer. The preview camera frames the full bbox.
+ */
+function wrapModelMesh(
+  meshRoot: THREE.Object3D,
+  dims: ModelDims,
+  model?: FixtureModel,
+): THREE.Group {
+  return wrapModelMeshInternal(meshRoot, dims, isCustomReplacedModel(model));
+}
+
+/** Load a fixture model GLB from a same-origin URL. */
+export async function loadFixtureModelGlb(url: string): Promise<THREE.Object3D | null> {
+  const loader = new GLTFLoader();
+  try {
+    const gltf = await loader.loadAsync(url);
+    return gltf.scene as THREE.Object3D;
+  } catch (err) {
+    console.warn('[fixtureAssembly] failed to load model GLB', url, err);
+    return null;
+  }
+}
+
+/**
+ * Part-local bounding box for a model GLB after wrap (+90° X and optional L/W/H fit).
+ * Does not include mesh-offset translation.
+ */
+export function computeModelPartLocalBounds(
+  meshRoot: THREE.Object3D,
+  model: FixtureModel | undefined,
+  oneToOne?: boolean,
+): THREE.Box3 {
+  const dims = modelDims(model);
+  const useOneToOne = oneToOne ?? isCustomReplacedModel(model);
+  const wrapped = wrapModelMeshInternal(meshRoot.clone(true), dims, useOneToOne);
+  wrapped.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(wrapped);
+  disposeAssembly(wrapped);
+  return box;
 }
 
 function isCylinderPrimitive(dims: ModelDims, part: FixturePart): boolean {
