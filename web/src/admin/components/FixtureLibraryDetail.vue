@@ -14,6 +14,7 @@ import DmxModePanel from './DmxModePanel.vue';
 import FixtureQuadPreview from './FixtureQuadPreview.vue';
 import FixtureTypeSelect from './FixtureTypeSelect.vue';
 import Icon from '../../shared/Icon.vue';
+import { fixtureLabel } from '../utils/fixtureLabel';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import { parseWheels } from '../utils/gdtfDebugExport';
@@ -34,6 +35,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   import: [];
   edit: [id: string];
+  duplicate: [fixture: FixtureListItem];
+  'duplicate-quick': [fixture: FixtureListItem];
   delete: [fixture: FixtureListItem];
   'update:selectedRid': [rid: number];
   refreshed: [fixture: FixtureListItem];
@@ -205,8 +208,13 @@ const provenanceLine = computed(() => {
   return `Downloaded ${formatDate(v.downloadedAt)}${v.revision ? ` · ${v.revision}` : ''}`;
 });
 
+/** GDTF-Share update checks only apply to fixtures still linked to Share. */
+const canCheckGdtfUpdates = computed(() =>
+  !!props.localFixture?.gdtfShareUuid && props.localFixture.importSource !== 'duplicate',
+);
+
 async function checkForUpdates(): Promise<void> {
-  if (!props.localFixture) return;
+  if (!props.localFixture || !canCheckGdtfUpdates.value) return;
   checkingUpdates.value = true;
   carryReport.value = [];
   try {
@@ -296,7 +304,7 @@ watch(
     carryReport.value = [];
     if (id) {
       void loadLocalDetail(id);
-      void checkForUpdates();
+      if (canCheckGdtfUpdates.value) void checkForUpdates();
     }
   },
   { immediate: true },
@@ -314,7 +322,7 @@ watch(
   <div v-else class="fixture-detail">
     <h2 class="section-label">Fixture information</h2>
 
-    <p class="detail-name">{{ localFixture?.displayName?.trim() || entry.fixture }}</p>
+    <p class="detail-name">{{ localFixture ? fixtureLabel(localFixture) : entry.fixture }}</p>
     <p class="detail-sub muted">{{ entry.manufacturer }} - {{ entry.fixture }}</p>
 
     <div class="icon-actions">
@@ -333,6 +341,14 @@ watch(
         title="Edit"
         @click="emit('edit', localFixture.id)"
       ><Icon name="edit" :size="16" /></button>
+      <button
+        v-if="localFixture"
+        type="button"
+        class="icon-action"
+        title="Duplicate… (Shift+click: duplicate now)"
+        @click.exact="emit('duplicate', localFixture)"
+        @click.shift="emit('duplicate-quick', localFixture)"
+      ><Icon name="content_copy" :size="16" /></button>
       <RouterLink
         v-if="localFixture"
         :to="{ name: 'fixture-editor', params: { id: localFixture.id }, query: { tab: 'control' } }"
@@ -355,6 +371,7 @@ watch(
 
     <div class="status-row">
       <span v-if="hasFullGdtf" class="full-gdtf-pill">Full GDTF</span>
+      <span v-if="localFixture?.status === 'draft'" class="draft-pill">Draft</span>
       <div class="status-icons">
         <span
           v-for="icon in statusIcons"
@@ -392,7 +409,7 @@ watch(
       </p>
     </div>
 
-    <div v-else class="version-block stored-versions">
+    <div v-else-if="canCheckGdtfUpdates" class="version-block stored-versions">
       <label class="version-label">Library version history</label>
       <p v-if="provenanceLine" class="provenance muted small">{{ provenanceLine }}</p>
       <select
@@ -677,6 +694,17 @@ watch(
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.draft-pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+[data-theme="dark"] .draft-pill { background: #422006; color: #fcd34d; }
 .status-icons { display: flex; gap: 4px; }
 .status-icon {
   width: 26px;

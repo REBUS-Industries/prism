@@ -8,7 +8,7 @@ import FixtureLibraryDetail from '../components/FixtureLibraryDetail.vue';
 import FixtureDownloadModal from '../components/FixtureDownloadModal.vue';
 import Icon from '../../shared/Icon.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
-import { fixtureLabel } from '../utils/fixtureLabel';
+import { duplicateFixtureName as defaultDuplicateName, fixtureLabel } from '../utils/fixtureLabel';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import type { GdtfModelQuality } from '../utils/fixtureModelQuality';
 
@@ -75,6 +75,16 @@ const showCreate = ref(false);
 const newName = ref('');
 
 const creating = ref(false);
+
+const copyingId = ref<string | null>(null);
+const duplicateNotice = ref<string | null>(null);
+const showDuplicate = ref(false);
+const duplicateSource = ref<FixtureListItem | null>(null);
+const duplicateName = ref('');
+const duplicateDisplayName = ref('');
+const duplicateManufacturer = ref('');
+const duplicateFixtureName = ref('');
+const duplicateRevision = ref('');
 
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -546,10 +556,62 @@ function resetFilters(): void {
 
 
 
-function openEditor(id: string): void {
+function openEditor(id: string, query?: Record<string, string>): void {
+  void router.push({ name: 'fixture-editor', params: { id }, query });
+}
 
-  void router.push({ name: 'fixture-editor', params: { id } });
+function prefillDuplicateForm(f: FixtureListItem): void {
+  duplicateSource.value = f;
+  duplicateName.value = defaultDuplicateName(f.name);
+  duplicateDisplayName.value = f.displayName?.trim()
+    ? defaultDuplicateName(f.displayName.trim())
+    : '';
+  duplicateManufacturer.value = f.manufacturer;
+  duplicateFixtureName.value = f.fixtureName;
+  duplicateRevision.value = f.revision ?? '';
+}
 
+function openDuplicateDialog(f: FixtureListItem): void {
+  prefillDuplicateForm(f);
+  showDuplicate.value = true;
+}
+
+async function duplicateFixture(f: FixtureListItem, overrides: {
+  name?: string;
+  manufacturer?: string;
+  fixtureName?: string;
+  revision?: string | null;
+  displayName?: string | null;
+} = {}): Promise<void> {
+  copyingId.value = f.id;
+  error.value = null;
+  duplicateNotice.value = null;
+  try {
+    const res = await fixturesApi.duplicate(f.id, overrides);
+    upsertLocalFixture(res.fixture);
+    duplicateNotice.value = `Created draft copy “${fixtureLabel(res.fixture)}”`;
+    showDuplicate.value = false;
+    duplicateSource.value = null;
+    openEditor(res.fixture.id, { from: 'duplicate' });
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'duplicate failed';
+  } finally {
+    copyingId.value = null;
+  }
+}
+
+async function confirmDuplicateDialog(): Promise<void> {
+  const source = duplicateSource.value;
+  if (!source) return;
+  const name = duplicateName.value.trim();
+  if (!name) return;
+  await duplicateFixture(source, {
+    name,
+    manufacturer: duplicateManufacturer.value.trim() || undefined,
+    fixtureName: duplicateFixtureName.value.trim() || undefined,
+    revision: duplicateRevision.value.trim() || null,
+    displayName: duplicateDisplayName.value.trim() || null,
+  });
 }
 
 
@@ -1043,6 +1105,10 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
           @edit="openEditor"
 
+          @duplicate="openDuplicateDialog"
+
+          @duplicate-quick="duplicateFixture"
+
           @delete="removeFixture"
 
           @update:selected-rid="selectedShareRid = $event"
@@ -1067,6 +1133,44 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
     </div>
 
+    <div v-if="showDuplicate && duplicateSource" class="modal-backdrop" @click.self="showDuplicate = false">
+
+      <div class="card modal duplicate-modal">
+
+        <h2>Duplicate fixture</h2>
+
+        <p class="muted small">Creates an independent draft copy. Edit identity before publishing to Orbit.</p>
+
+        <label>Name <input v-model="duplicateName" maxlength="256" @keyup.enter="confirmDuplicateDialog" /></label>
+
+        <label>Display name
+          <input v-model="duplicateDisplayName" :placeholder="duplicateName || 'Custom label (optional)'" maxlength="256" />
+        </label>
+
+        <label>Manufacturer <input v-model="duplicateManufacturer" maxlength="256" /></label>
+
+        <label>Fixture name <input v-model="duplicateFixtureName" maxlength="256" /></label>
+
+        <label>Revision <input v-model="duplicateRevision" maxlength="128" /></label>
+
+        <div class="h-row duplicate-actions">
+
+          <button type="button" class="btn-outline" @click="showDuplicate = false">Cancel</button>
+
+          <button
+            type="button"
+            :disabled="!duplicateName.trim() || copyingId === duplicateSource.id"
+            @click="confirmDuplicateDialog"
+          >
+            {{ copyingId === duplicateSource.id ? 'Duplicating…' : 'Duplicate' }}
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
 
 
     <FixtureDownloadModal
@@ -1078,6 +1182,8 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
       @cancel="showDownloadModal = false"
       @confirm="confirmDownload"
     />
+
+    <p v-if="duplicateNotice" class="duplicate-notice">{{ duplicateNotice }}</p>
 
     <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
 
@@ -1801,6 +1907,32 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 
   .fixture-list { min-height: 240px; }
 
+}
+
+.duplicate-notice {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: #dcfce7;
+  color: #166534;
+  font-size: 13px;
+}
+[data-theme="dark"] .duplicate-notice { background: #14532d; color: #86efac; }
+
+.duplicate-modal label {
+  display: block;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.duplicate-modal input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+}
+.duplicate-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+  gap: 8px;
 }
 
 </style>
