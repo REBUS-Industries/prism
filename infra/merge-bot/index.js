@@ -872,6 +872,9 @@ async function getAllOpenPRs() {
 // Cache open PRs while the merge modal is open (for live preview updates).
 let modalPrCache = [];
 
+/** Slack static_select allows at most 100 options per menu. */
+const SLACK_STATIC_SELECT_MAX = 100;
+
 /** Slack static_select option text — max 75 chars. */
 function prSelectOptionText(pr) {
   const MAX = 75;
@@ -913,12 +916,21 @@ function buildPrPreviewBlock(pr) {
 
 function buildModalView(channelId, selectablePRs, selectedPr = null, totalOpen = 0, mode = 'merge') {
   const isCheck = mode === 'check';
+  let prsForSelect = selectablePRs;
+  let truncatedNote = '';
+  if (selectablePRs.length > SLACK_STATIC_SELECT_MAX) {
+    prsForSelect = selectablePRs.slice(0, SLACK_STATIC_SELECT_MAX);
+    truncatedNote = `\n_Showing ${SLACK_STATIC_SELECT_MAX} most recently updated PRs (${selectablePRs.length} open). Use \`/prism-merge repo#N\` for others._`;
+    if (selectedPr && !prsForSelect.some(p => p._repo === selectedPr._repo && p.number === selectedPr.number)) {
+      selectedPr = prsForSelect[0] ?? null;
+    }
+  }
   const statusText = queueStatusText();
   const emptyText = totalOpen > 0 && selectablePRs.length === 0
     ? '_All open PRs are currently merging or queued._'
     : '_No open pull requests across any repo._';
 
-  const prBlock = selectablePRs.length === 0
+  const prBlock = prsForSelect.length === 0
     ? { type: 'section', block_id: 'pr_block', text: { type: 'mrkdwn', text: emptyText } }
     : {
         type: 'input',
@@ -929,7 +941,7 @@ function buildModalView(channelId, selectablePRs, selectedPr = null, totalOpen =
           type: 'static_select',
           action_id: 'pr_select',
           placeholder: { type: 'plain_text', text: 'Select a PR…' },
-          options: selectablePRs.map(pr => ({
+          options: prsForSelect.map(pr => ({
             text: { type: 'plain_text', text: prSelectOptionText(pr), emoji: false },
             value: `${pr._repo}::${pr.number}`,
           })),
@@ -947,7 +959,7 @@ function buildModalView(channelId, selectablePRs, selectedPr = null, totalOpen =
     callback_id: isCheck ? 'check_modal' : 'merge_modal',
     private_metadata: channelId,
     title: { type: 'plain_text', text: isCheck ? 'Check a PR' : 'Merge a PR' },
-    submit: selectablePRs.length > 0
+    submit: prsForSelect.length > 0
       ? { type: 'plain_text', text: isCheck ? 'Check status' : 'Merge' }
       : undefined,
     close: { type: 'plain_text', text: 'Cancel' },
@@ -960,8 +972,8 @@ function buildModalView(channelId, selectablePRs, selectedPr = null, totalOpen =
         elements: [{
           type: 'mrkdwn',
           text: isCheck
-            ? `${statusText}\n_Checks mergeability, head CI, and post-merge deploy workflows. Use \`/prism-merge check 42\` for merged PRs._`
-            : statusText,
+            ? `${statusText}\n_Checks mergeability, head CI, and post-merge deploy workflows. Use \`/prism-merge check 42\` for merged PRs._${truncatedNote}`
+            : `${statusText}${truncatedNote}`,
         }],
       },
     ],
@@ -1353,6 +1365,72 @@ async function getBranchRef(repo, branch) {
   return { ok: res.ok, status: res.status, sha: body.object?.sha, message: body.message ?? '' };
 }
 
+
+
+async function getBranchCompareSummary(repo, base, head) {
+  const res = await GH(`/repos/${repo}/compare/${encodeURIComponent(`${base}...${head}`)}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return null;
+  return {
+    status: body.status,
+    aheadBy: body.ahead_by ?? 0,
+    behindBy: body.behind_by ?? 0,
+    commits: (body.commits ?? []).slice(-8).map(c => {
+      const msg = c.commit?.message ?? '';
+      const subject = msg.split('\n')[0]?.trim() ?? '';
+      const short = c.sha?.slice(0, 7) ?? '???????';
+      return `${short} ${subject}`;
+    }),
+  };
+}
+
+async function getPortalPromoteLikelyConflictFiles(repo) {
+  const [devRes, masterRes] = await Promise.all([
+    GH(`/repos/${repo}/compare/${encodeURIComponent('master...dev')}`),
+    GH(`/repos/${repo}/compare/${encodeURIComponent('dev...master')}`),
+  ]);
+  const devBody = await devRes.json().catch(() => ({}));
+  const masterBody = await masterRes.json().catch(() => ({}));
+  if (!devRes.ok || !masterRes.ok) return [];
+  const devFiles = new Set((devBody.files ?? []).map(f => f.filename));
+  return (masterBody.files ?? []).map(f => f.filename).filter(f => devFiles.has(f));
+}
+
+async function buildPortalPromoteMergeFailureDetail(repo, mergeBody, mergeStatus) {
+  const lines = [
+    mergeBody.message,
+    ...(mergeBody.errors ?? []).map(e => (typeof e === 'string' ? e : e?.message ?? JSON.stringify(e))),
+  ].filter(Boolean);
+
+  const isConflict = mergeStatus === 409 || lines.some(l => /merge conflict/i.test(l));
+  if (!isConflict) return lines.join('\n') || `HTTP ${mergeStatus}`;
+
+  const [devVsMaster, masterVsDev] = await Promise.all([
+    getBranchCompareSummary(repo, 'master', 'dev'),
+    getBranchCompareSummary(repo, 'dev', 'master'),
+  ]);
+
+  if (devVsMaster?.status === 'diverged') {
+    lines.push(
+      '',
+      `Branches diverged: \`dev\` is ${devVsMaster.aheadBy} commit(s) ahead and ${devVsMaster.behindBy} commit(s) behind \`master\`.`,
+      'Fix: merge `master` into `dev`, resolve conflicts on dev, push, then retry `/portal-app-promote`.',
+    );
+  }
+  if (masterVsDev?.commits?.length) {
+    lines.push('', 'Recent commits on `master` not in `dev`:');
+    for (const c of masterVsDev.commits.slice(-5)) lines.push(`- ${c}`);
+  }
+
+  const overlap = await getPortalPromoteLikelyConflictFiles(repo);
+  if (overlap.length) {
+    lines.push('', 'Files changed on both branches (likely conflict candidates):');
+    for (const f of overlap.slice(0, 12)) lines.push(`- ${f}`);
+    if (overlap.length > 12) lines.push(`- ... and ${overlap.length - 12} more`);
+  }
+
+  return lines.join('\n');
+}
 async function getCommitSubject(repo, sha) {
   const res = await GH(`/repos/${repo}/commits/${sha}`);
   if (!res.ok) return 'portal-app dev';
@@ -1397,10 +1475,7 @@ async function promotePortalApp(userName, channelId) {
     });
     const mergeBody = await mergeRes.json().catch(() => ({}));
     if (!mergeRes.ok) {
-      const detail = [
-        mergeBody.message,
-        ...(mergeBody.errors ?? []).map(e => (typeof e === 'string' ? e : e?.message ?? JSON.stringify(e))),
-      ].filter(Boolean).join('\n') || `HTTP ${mergeRes.status}`;
+      const detail = await buildPortalPromoteMergeFailureDetail(repo, mergeBody, mergeRes.status);
       await postToSlack(channelId, formatFailureMessage('*portal-app promote failed*', detail, compareUrl));
       return;
     }
@@ -1642,8 +1717,9 @@ app.post('/merge', async (req, res) => {
   if (text === 'check' || text.startsWith('check ')) {
     const rest = text === 'check' ? '' : text.slice(6).trim();
     if (!rest) {
-      await openCheckModal(triggerId, channelId);
-      return res.json({ response_type: 'ephemeral', text: '' });
+      res.json({ response_type: 'ephemeral', text: '' });
+      openCheckModal(triggerId, channelId).catch(err => console.error('openCheckModal:', err));
+      return;
     }
     const parsed = parseArgs(rest);
     if (!parsed) {
@@ -1656,8 +1732,9 @@ app.post('/merge', async (req, res) => {
     return;
   }
   if (!text) {
-    await openMergeModal(triggerId, channelId);
-    return res.json({ response_type: 'ephemeral', text: '' });
+    res.json({ response_type: 'ephemeral', text: '' });
+    openMergeModal(triggerId, channelId).catch(err => console.error('openMergeModal:', err));
+    return;
   }
   const parsed = parseArgs(text);
   if (!parsed) {
