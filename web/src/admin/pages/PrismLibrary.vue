@@ -16,7 +16,7 @@ import Modal from '../../shared/Modal.vue';
 import FixtureTypeSelect from '../components/FixtureTypeSelect.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { duplicateFixtureName as defaultDuplicateName, fixtureLabel } from '../utils/fixtureLabel';
-import { enrichFixtureListItem, fixtureHasOrbitPublish } from '../utils/fixtureOrbitUrl';
+import { enrichFixtureListItem, enrichFixturesOrbitFromDetails, fixtureHasOrbitPublish } from '../utils/fixtureOrbitUrl';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import {
   fixturesApi,
@@ -47,6 +47,7 @@ const statusFilter = ref<StatusFilter>('all');
 const selectedId = ref<string | null>(null);
 
 const checkingUpdates = ref(false);
+const enrichingOrbit = ref(false);
 const savingCategory = ref(false);
 const savingStatus = ref(false);
 
@@ -175,6 +176,7 @@ async function load(): Promise<void> {
     fixtures.value = res.fixtures.map((f) => enrichFixtureListItem(f));
     if (!selectedId.value && res.fixtures[0]) selectedId.value = res.fixtures[0].id;
     void bulkCheckUpdates();
+    void enrichOrbitStatus();
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load PRISM library';
   } finally {
@@ -182,11 +184,26 @@ async function load(): Promise<void> {
   }
 }
 
+async function enrichOrbitStatus(): Promise<void> {
+  if (enrichingOrbit.value) return;
+  enrichingOrbit.value = true;
+  try {
+    await enrichFixturesOrbitFromDetails(
+      fixtures.value,
+      async (id) => (await fixturesApi.get(id)).fixture,
+      upsert,
+    );
+  } finally {
+    enrichingOrbit.value = false;
+  }
+}
+
 function upsert(item: FixtureListItem & { definition?: FixtureDefinition | null }): void {
   const enriched = enrichFixtureListItem(item);
-  const idx = fixtures.value.findIndex((f) => f.id === enriched.id);
-  if (idx >= 0) fixtures.value[idx] = { ...fixtures.value[idx], ...enriched };
-  else fixtures.value = [enriched, ...fixtures.value];
+  const { definition: _omit, ...row } = enriched;
+  const idx = fixtures.value.findIndex((f) => f.id === row.id);
+  if (idx >= 0) fixtures.value[idx] = { ...fixtures.value[idx], ...row };
+  else fixtures.value = [row, ...fixtures.value];
 }
 
 async function bulkCheckUpdates(): Promise<void> {
@@ -489,7 +506,7 @@ onMounted(() => {
       <span class="stat"><strong>{{ totalCount }}</strong> fixtures</span>
       <span class="stat"><strong>{{ withPreview }}</strong> with 3D</span>
       <span class="stat"><strong>{{ publishedCount }}</strong> published</span>
-      <span class="stat"><strong>{{ orbitPublishedCount }}</strong> on Orbit</span>
+      <span class="stat"><strong>{{ orbitPublishedCount }}</strong> on Orbit{{ enrichingOrbit ? '…' : '' }}</span>
       <span class="stat" :class="{ warn: updatesCount }"><strong>{{ updatesCount }}</strong> updates available</span>
     </div>
 

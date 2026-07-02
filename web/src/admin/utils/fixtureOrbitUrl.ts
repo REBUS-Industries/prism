@@ -5,25 +5,45 @@ const DEFAULT_ORBIT_SERVER_URLS = {
   dev: 'https://orbit-dev.rebus.industries',
 } as const;
 
-export function readFixtureOrbitRef(
+/** Default Orbit Fixtures project when publish ref omits projectId. */
+const DEFAULT_FIXTURES_PROJECT_ID = '0f2893eb28';
+
+function orbitRefBag(
   definition?: FixtureDefinition | Record<string, unknown> | null,
-): FixtureOrbitRef | null {
+): Record<string, unknown> | null {
   const meta = (definition as FixtureDefinition | undefined)?.metadata;
   if (!meta || typeof meta !== 'object') return null;
   const raw = (meta as Record<string, unknown>).orbitFixtureRef;
   if (!raw || typeof raw !== 'object') return null;
-  const bag = raw as Record<string, unknown>;
-  const projectId = typeof bag.projectId === 'string' ? bag.projectId.trim() : '';
+  return raw as Record<string, unknown>;
+}
+
+/** Match FixtureEditor: published when metadata carries a model id. */
+export function hasOrbitFixtureRef(
+  definition?: FixtureDefinition | Record<string, unknown> | null,
+): boolean {
+  const bag = orbitRefBag(definition);
+  if (!bag) return false;
   const modelId = typeof bag.modelId === 'string' ? bag.modelId.trim() : '';
-  const versionId = typeof bag.versionId === 'string' ? bag.versionId.trim() : '';
-  const objectId = typeof bag.objectId === 'string' ? bag.objectId.trim() : '';
-  if (!projectId || !modelId || !versionId || !objectId) return null;
+  return !!modelId;
+}
+
+export function readFixtureOrbitRef(
+  definition?: FixtureDefinition | Record<string, unknown> | null,
+): FixtureOrbitRef | null {
+  const bag = orbitRefBag(definition);
+  if (!bag) return null;
+  const modelId = typeof bag.modelId === 'string' ? bag.modelId.trim() : '';
+  if (!modelId) return null;
+  const projectId = typeof bag.projectId === 'string' && bag.projectId.trim()
+    ? bag.projectId.trim()
+    : DEFAULT_FIXTURES_PROJECT_ID;
   return {
     target: bag.target === 'dev' ? 'dev' : 'prod',
     projectId,
     modelId,
-    versionId,
-    objectId,
+    versionId: typeof bag.versionId === 'string' ? bag.versionId : '',
+    objectId: typeof bag.objectId === 'string' ? bag.objectId : '',
     publishedAt: typeof bag.publishedAt === 'string' ? bag.publishedAt : '',
     orbitUrl: typeof bag.orbitUrl === 'string' && bag.orbitUrl.trim() ? bag.orbitUrl.trim() : undefined,
   };
@@ -43,7 +63,8 @@ export function resolveFixtureOrbitUrl(
 export function fixtureHasOrbitPublish(
   item: Pick<FixtureListItem, 'orbitUrl'> & { definition?: FixtureDefinition | null },
 ): boolean {
-  return resolveFixtureOrbitUrl(item) != null;
+  if (item.orbitUrl) return true;
+  return hasOrbitFixtureRef(item.definition);
 }
 
 export function enrichFixtureListItem<T extends FixtureListItem & { definition?: FixtureDefinition | null }>(
@@ -51,4 +72,28 @@ export function enrichFixtureListItem<T extends FixtureListItem & { definition?:
 ): T {
   const orbitUrl = resolveFixtureOrbitUrl(item);
   return orbitUrl && !item.orbitUrl ? { ...item, orbitUrl } : item;
+}
+
+const ORBIT_DETAIL_BATCH = 12;
+
+/** List rows omit definition/orbitUrl — fetch detail for accurate on-Orbit counts. */
+export async function enrichFixturesOrbitFromDetails(
+  items: FixtureListItem[],
+  fetchDetail: (id: string) => Promise<FixtureListItem & { definition?: FixtureDefinition | null }>,
+  onUpdate: (item: FixtureListItem & { definition?: FixtureDefinition | null }) => void,
+): Promise<void> {
+  const missing = items.filter((f) => !fixtureHasOrbitPublish(f));
+  if (!missing.length) return;
+
+  for (let i = 0; i < missing.length; i += ORBIT_DETAIL_BATCH) {
+    const chunk = missing.slice(i, i + ORBIT_DETAIL_BATCH);
+    await Promise.all(chunk.map(async (f) => {
+      try {
+        const detail = await fetchDetail(f.id);
+        onUpdate(enrichFixtureListItem({ ...f, ...detail, definition: detail.definition }));
+      } catch {
+        /* non-fatal — leave row unchanged */
+      }
+    }));
+  }
 }
