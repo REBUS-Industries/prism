@@ -78,6 +78,29 @@ git push -u origin cursor/fixture-flip-normals-dd18
 
 Deploy `fixtures-image` together with monorepo `web-image`.
 
+## fixtures-list-orbit-url.patch
+
+Pairs with the monorepo PRISM library **on Orbit** stat and **Republish all**
+button. List/detail `toSummary` previously omitted `orbitUrl`, so the admin UI
+always showed **0 on Orbit** even when fixtures had
+`definition.metadata.orbitFixtureRef`.
+
+- `src/fixtures/fixtureOrbitUrl.ts` — derive `orbitUrl` from stored Orbit ref
+- `src/api/fixtures.ts` — include `orbitUrl` and `previewUrl` on list/detail rows
+
+### Apply
+
+```bash
+cd prism-fixtures-service
+git checkout -b cursor/fixture-list-orbit-url-dd18
+git am < /path/to/fixtures-list-orbit-url.patch   # or: git apply
+npm install && npm run build && node dist/fixtures/fixtureOrbitUrl.test.js
+git push -u origin cursor/fixture-list-orbit-url-dd18
+```
+
+Deploy `fixtures-image` before or with monorepo `web-image` so the library stat
+is correct on load.
+
 ### Apply
 
 ```bash

@@ -16,6 +16,7 @@ import Modal from '../../shared/Modal.vue';
 import FixtureTypeSelect from '../components/FixtureTypeSelect.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { duplicateFixtureName as defaultDuplicateName, fixtureLabel } from '../utils/fixtureLabel';
+import { enrichFixtureListItem, fixtureHasOrbitPublish } from '../utils/fixtureOrbitUrl';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import {
   fixturesApi,
@@ -24,6 +25,7 @@ import {
   type FixtureConnectorExport,
   type FixtureListItem,
   type FixtureOrigin,
+  type FixtureDefinition,
 } from '../../shared/api';
 
 const router = useRouter();
@@ -141,7 +143,7 @@ const totalCount = computed(() => fixtures.value.length);
 const withPreview = computed(() => fixtures.value.filter((f) => f.hasPreview).length);
 const publishedCount = computed(() => fixtures.value.filter((f) => f.status === 'published').length);
 const updatesCount = computed(() => fixtures.value.filter((f) => f.updateAvailable).length);
-const orbitPublishedCount = computed(() => fixtures.value.filter((f) => f.orbitUrl).length);
+const orbitPublishedCount = computed(() => fixtures.value.filter((f) => fixtureHasOrbitPublish(f)).length);
 
 const listCountLabel = computed(() => `${filtered.value.length} / ${totalCount.value} fixtures`);
 
@@ -170,7 +172,7 @@ async function load(): Promise<void> {
   error.value = null;
   try {
     const res = await fixturesApi.list({ limit: PAGE });
-    fixtures.value = res.fixtures;
+    fixtures.value = res.fixtures.map((f) => enrichFixtureListItem(f));
     if (!selectedId.value && res.fixtures[0]) selectedId.value = res.fixtures[0].id;
     void bulkCheckUpdates();
   } catch (err) {
@@ -180,10 +182,11 @@ async function load(): Promise<void> {
   }
 }
 
-function upsert(item: FixtureListItem): void {
-  const idx = fixtures.value.findIndex((f) => f.id === item.id);
-  if (idx >= 0) fixtures.value[idx] = { ...fixtures.value[idx], ...item };
-  else fixtures.value = [item, ...fixtures.value];
+function upsert(item: FixtureListItem & { definition?: FixtureDefinition | null }): void {
+  const enriched = enrichFixtureListItem(item);
+  const idx = fixtures.value.findIndex((f) => f.id === enriched.id);
+  if (idx >= 0) fixtures.value[idx] = { ...fixtures.value[idx], ...enriched };
+  else fixtures.value = [enriched, ...fixtures.value];
 }
 
 async function bulkCheckUpdates(): Promise<void> {

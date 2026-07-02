@@ -1,0 +1,165 @@
+diff --git a/package.json b/package.json
+index 0a3bc2d..2557089 100644
+--- a/package.json
++++ b/package.json
+@@ -8,7 +8,7 @@
+     "start": "node dist/main.js",
+     "dev": "tsx watch src/main.ts",
+     "diagnose:transforms": "tsx src/orbit/diagnoseFixtureTransforms.ts",
+-    "test": "npm run build && node dist/import/xmlEntityOptions.test.js && node dist/import/gdtfShareCatalog.test.js && node dist/fixtures/fixtureCategoryResolve.test.js && node dist/fixtures/fixtureGeometryReferenceResolve.test.js && node dist/fixtures/duplicateFixture.test.js && node dist/fixtures/connectorExport.test.js && node dist/import/gdtfFixtureParser.test.js && node dist/fixtures/fixtureDisplayName.test.js && node dist/import/glbDoubleSided.test.js && node dist/api/fixture-export-docs.test.js && node dist/orbit/fixtureMotionRigExport.test.js && node dist/orbit/orbitObjects.test.js && node dist/orbit/glbParser.test.js && node dist/orbit/fixtureMaterialsOrbit.test.js && node dist/orbit/meshGeometryFixups.test.js && node dist/orbit/fixtureTransformMatrix.test.js && node dist/orbit/gdtfPrimitiveMeshes.test.js && node dist/orbit/renderMaterialRegistry.test.js && node dist/orbit/fixtureGeometryPartModel.test.js && node dist/orbit/fixtureGeometryModeFilter.test.js && node dist/orbit/fixtureGeometryOrbit.test.js && node dist/orbit/orbitBlobUpload.test.js && node dist/orbit/fixtureMaterialProxies.test.js && node dist/orbit/fixtureInstanceProxies.test.js && node dist/orbit/fixturePublish.test.js && node dist/orbit/fixtureMotionAxisPublish.test.js && node dist/orbit/fixturePartTransformPublish.test.js"
++    "test": "npm run build && node dist/import/xmlEntityOptions.test.js && node dist/import/gdtfShareCatalog.test.js && node dist/fixtures/fixtureCategoryResolve.test.js && node dist/fixtures/fixtureGeometryReferenceResolve.test.js && node dist/fixtures/fixtureOrbitUrl.test.js && node dist/fixtures/duplicateFixture.test.js && node dist/fixtures/connectorExport.test.js && node dist/import/gdtfFixtureParser.test.js && node dist/fixtures/fixtureDisplayName.test.js && node dist/import/glbDoubleSided.test.js && node dist/api/fixture-export-docs.test.js && node dist/orbit/fixtureMotionRigExport.test.js && node dist/orbit/orbitObjects.test.js && node dist/orbit/glbParser.test.js && node dist/orbit/fixtureMaterialsOrbit.test.js && node dist/orbit/meshGeometryFixups.test.js && node dist/orbit/fixtureTransformMatrix.test.js && node dist/orbit/gdtfPrimitiveMeshes.test.js && node dist/orbit/renderMaterialRegistry.test.js && node dist/orbit/fixtureGeometryPartModel.test.js && node dist/orbit/fixtureGeometryModeFilter.test.js && node dist/orbit/fixtureGeometryOrbit.test.js && node dist/orbit/orbitBlobUpload.test.js && node dist/orbit/fixtureMaterialProxies.test.js && node dist/orbit/fixtureInstanceProxies.test.js && node dist/orbit/fixturePublish.test.js && node dist/orbit/fixtureMotionAxisPublish.test.js && node dist/orbit/fixturePartTransformPublish.test.js"
+   },
+   "dependencies": {
+     "@fastify/cookie": "^9.4.0",
+diff --git a/src/api/fixtures.ts b/src/api/fixtures.ts
+index 097c4b3..4ba9dfb 100644
+--- a/src/api/fixtures.ts
++++ b/src/api/fixtures.ts
+@@ -48,6 +48,7 @@ import { applyDisplayName, readDisplayName } from '../fixtures/fixtureDisplayNam
+ import { duplicateFixture } from '../fixtures/duplicateFixture.js';
+ import { publishFixtureById } from '../orbit/publishFixtureById.js';
+ import { OrbitClientError } from '@rebus-industries/prism-shared/orbit';
++import { resolveFixtureOrbitUrl, resolveFixturePreviewUrl } from '../fixtures/fixtureOrbitUrl.js';
+ 
+ const modelQualitySchema = z.enum(['low', 'default', 'high']);
+ 
+@@ -104,10 +105,12 @@ function fieldValue(fields: unknown, name: string): string | undefined {
+ }
+ 
+ function toSummary(row: typeof fixtureTypes.$inferSelect, updateAvailable?: boolean) {
++  const definition = row.definition as FixtureDefinition;
++  const hasPreview = !!row.previewModelId;
+   return {
+     id: row.id,
+     name: row.name,
+-    displayName: readDisplayName(row.definition as FixtureDefinition),
++    displayName: readDisplayName(definition),
+     manufacturer: row.manufacturer,
+     fixtureName: row.fixtureName,
+     revision: row.revision,
+@@ -118,7 +121,9 @@ function toSummary(row: typeof fixtureTypes.$inferSelect, updateAvailable?: bool
+     origin: row.origin,
+     activeVersionId: row.activeVersionId,
+     status: row.status,
+-    hasPreview: !!row.previewModelId,
++    hasPreview,
++    previewUrl: resolveFixturePreviewUrl(row.id, row.previewModelId),
++    orbitUrl: resolveFixtureOrbitUrl(definition),
+     updateAvailable,
+     createdAt: row.createdAt.toISOString(),
+     updatedAt: row.updatedAt.toISOString(),
+diff --git a/src/fixtures/fixtureOrbitUrl.test.ts b/src/fixtures/fixtureOrbitUrl.test.ts
+new file mode 100644
+index 0000000..cea57e6
+--- /dev/null
++++ b/src/fixtures/fixtureOrbitUrl.test.ts
+@@ -0,0 +1,45 @@
++import assert from 'node:assert/strict';
++import { readFixtureOrbitRef, resolveFixtureOrbitUrl } from './fixtureOrbitUrl.js';
++
++const definition = {
++  fixtureInformation: { manufacturer: 'ACME', fixtureName: 'Test' },
++  parts: [],
++  models: [],
++  beams: [],
++  motionRig: [],
++  wheels: [],
++  dmxMapping: {},
++  metadata: {
++    orbitFixtureRef: {
++      target: 'prod',
++      projectId: '0f2893eb28',
++      modelId: 'abc123',
++      versionId: 'ver456',
++      objectId: 'obj789',
++      publishedAt: '2026-07-01T00:00:00.000Z',
++    },
++  },
++};
++
++assert.equal(readFixtureOrbitRef(definition)?.modelId, 'abc123');
++assert.equal(
++  resolveFixtureOrbitUrl(definition),
++  'https://orbit.rebus.industries/projects/0f2893eb28/models/abc123',
++);
++
++assert.equal(
++  resolveFixtureOrbitUrl({
++    ...definition,
++    metadata: {
++      orbitFixtureRef: {
++        ...definition.metadata.orbitFixtureRef,
++        orbitUrl: 'https://orbit.rebus.industries/projects/0f2893eb28/models/custom',
++      },
++    },
++  }),
++  'https://orbit.rebus.industries/projects/0f2893eb28/models/custom',
++);
++
++assert.equal(resolveFixtureOrbitUrl({ ...definition, metadata: {} }), null);
++
++console.log('fixtureOrbitUrl.test: ok');
+diff --git a/src/fixtures/fixtureOrbitUrl.ts b/src/fixtures/fixtureOrbitUrl.ts
+new file mode 100644
+index 0000000..7385c35
+--- /dev/null
++++ b/src/fixtures/fixtureOrbitUrl.ts
+@@ -0,0 +1,58 @@
++import type { FixtureDefinition } from '@rebus-industries/prism-shared';
++
++type FixtureOrbitRef = {
++  target: 'prod' | 'dev';
++  projectId: string;
++  modelId: string;
++  versionId: string;
++  objectId: string;
++  publishedAt: string;
++  orbitUrl?: string;
++};
++
++const DEFAULT_ORBIT_SERVER_URLS = {
++  prod: 'https://orbit.rebus.industries',
++  dev: 'https://orbit-dev.rebus.industries',
++} as const;
++
++export function readFixtureOrbitRef(
++  definition?: FixtureDefinition | Record<string, unknown> | null,
++): FixtureOrbitRef | null {
++  const meta = (definition as FixtureDefinition | undefined)?.metadata;
++  if (!meta || typeof meta !== 'object') return null;
++  const raw = (meta as Record<string, unknown>).orbitFixtureRef;
++  if (!raw || typeof raw !== 'object') return null;
++  const bag = raw as Record<string, unknown>;
++  const projectId = typeof bag.projectId === 'string' ? bag.projectId.trim() : '';
++  const modelId = typeof bag.modelId === 'string' ? bag.modelId.trim() : '';
++  const versionId = typeof bag.versionId === 'string' ? bag.versionId.trim() : '';
++  const objectId = typeof bag.objectId === 'string' ? bag.objectId.trim() : '';
++  if (!projectId || !modelId || !versionId || !objectId) return null;
++  return {
++    target: bag.target === 'dev' ? 'dev' : 'prod',
++    projectId,
++    modelId,
++    versionId,
++    objectId,
++    publishedAt: typeof bag.publishedAt === 'string' ? bag.publishedAt : '',
++    orbitUrl: typeof bag.orbitUrl === 'string' && bag.orbitUrl.trim() ? bag.orbitUrl.trim() : undefined,
++  };
++}
++
++export function resolveFixtureOrbitUrl(
++  definition?: FixtureDefinition | Record<string, unknown> | null,
++): string | null {
++  const ref = readFixtureOrbitRef(definition);
++  if (!ref) return null;
++  if (ref.orbitUrl) return ref.orbitUrl;
++  const base = DEFAULT_ORBIT_SERVER_URLS[ref.target as 'prod' | 'dev'];
++  return `${base}/projects/${ref.projectId}/models/${ref.modelId}`;
++}
++
++export function resolveFixturePreviewUrl(
++  fixtureId: string,
++  previewModelId: string | null | undefined,
++): string | null {
++  if (!previewModelId) return null;
++  return `/api/fixtures/${fixtureId}/preview.glb`;
++}
