@@ -853,7 +853,11 @@ const assemblyKey = (): string => {
     ? `${a.clampModelTransform.position.x},${a.clampModelTransform.position.y},${a.clampModelTransform.position.z}|${a.clampModelTransform.rotation.x},${a.clampModelTransform.rotation.y},${a.clampModelTransform.rotation.z}|${a.clampModelTransform.scale.x},${a.clampModelTransform.scale.y},${a.clampModelTransform.scale.z}`
     : '';
   const modelMedia = (a.models ?? [])
-    .map((m) => `${m.modelId}=${String((m.metadata as { mediaId?: unknown } | undefined)?.mediaId ?? '')}`)
+    .map((m) => {
+      const meta = m.metadata as { mediaId?: unknown; flipNormals?: unknown } | undefined;
+      const flip = meta?.flipNormals === true ? '1' : '0';
+      return `${m.modelId}=${String(meta?.mediaId ?? '')}:${flip}`;
+    })
     .join('|');
   return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${modelMedia}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
 };

@@ -54,6 +54,30 @@ viewer rules.
 Apply together with (or after) `fixtures-mesh-offset.patch` if that patch is
 not yet on `main`.
 
+## fixtures-flip-normals.patch
+
+Pairs with the monorepo **Flip normals** toggle (`model.metadata.flipNormals`).
+Reverses triangle winding when baking Orbit geometry so Rhino / Orbit material
+display matches the PRISM viewer (equivalent to Rhino **Flip**).
+
+- `src/orbit/fixtureTransformMatrix.ts` — `readFlipNormals`
+- `src/orbit/fixtureGeometryOrbit.ts` — flip placed mesh faces when toggle is on
+- `src/orbit/fixtureTransformMatrix.test.ts` — read assertions
+
+No DB migration: `flipNormals` lives in existing `model.metadata` jsonb.
+
+### Apply
+
+```bash
+cd prism-fixtures-service
+git checkout -b cursor/fixture-flip-normals-dd18
+git am < /path/to/fixtures-flip-normals.patch   # or: git apply
+npm install && npm run build && node dist/orbit/fixtureTransformMatrix.test.js
+git push -u origin cursor/fixture-flip-normals-dd18
+```
+
+Deploy `fixtures-image` together with monorepo `web-image`.
+
 ### Apply
 
 ```bash
