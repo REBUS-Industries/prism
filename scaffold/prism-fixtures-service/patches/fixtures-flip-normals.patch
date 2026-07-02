@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Thu, 2 Jul 2026 12:00:00 +0000
+Subject: [PATCH] feat: apply model flipNormals in Orbit geometry bake
+
+When model.metadata.flipNormals is true, reverse triangle winding on placed
+meshes so Rhino / Orbit material display matches the PRISM viewer toggle
+(equivalent to Rhino Flip). Pairs with monorepo FixturePartProperties UI.
+---
+ src/orbit/fixtureGeometryOrbit.ts        | 18 +++++++++++++++---
+ src/orbit/fixtureTransformMatrix.test.ts |  6 ++++++
+ src/orbit/fixtureTransformMatrix.ts      |  6 ++++++
+ 3 files changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/src/orbit/fixtureGeometryOrbit.ts b/src/orbit/fixtureGeometryOrbit.ts
+index 97f2ed1..c8d4e1a 100644
+--- a/src/orbit/fixtureGeometryOrbit.ts
++++ b/src/orbit/fixtureGeometryOrbit.ts
+@@ -22,12 +22,16 @@ import {
+   normalMatrixRow,
+   partLocalMatrixFromTransform,
+   readMeshOffset,
++  readFlipNormals,
+   transformPointRow,
+ } from './fixtureTransformMatrix.js';
+ import {
+   filterMeshesForOpticalPart,
+   isOpticalPart,
+   listLoadableModelsForPart,
+   resolveLoadableModelForPart,
+   type ResolvedPartModel,
+ } from './fixtureGeometryPartModel.js';
++import {
++  flipTriangleWinding,
++  recomputeVertexNormals,
++} from './meshGeometryFixups.js';
+ import { gdtfPrimitiveMeshes, modelHasGdtfPrimitive } from './gdtfPrimitiveMeshes.js';
+ import { PRISM_DEFAULT_MATERIAL_ID } from './fixtureMaterialsOrbit.js';
+ import { enrichMotionRigForOrbit, type PartAxisInfo } from './fixtureMotionRigExport.js';
+@@ -328,11 +332,21 @@ function buildMeshesAtMatrix(
+   const placementMatrix = meshOffset
+     ? multiplyMat4Row(worldMatrix, meshOffsetMatrixRow(meshOffset))
+     : worldMatrix;
+-  const placed = applyMatrixToMeshes(baseMeshes, placementMatrix);
++  let placed = applyMatrixToMeshes(baseMeshes, placementMatrix);
++  if (readFlipNormals(model.metadata as Record<string, unknown> | undefined)) {
++    placed = placed.map((mesh) => {
++      const faces = flipTriangleWinding(mesh.faces);
++      return {
++        ...mesh,
++        faces,
++        vertexNormals: recomputeVertexNormals(mesh.vertices, faces),
++      };
++    });
++  }
+   const prismMaterialId = part.materialId ?? ctx.tagMaterials[part.tag] ?? PRISM_DEFAULT_MATERIAL_ID;
+   const material = renderMaterialForPart(
+     part.materialId,
+     part.tag,
+     ctx.tagMaterials,
+     ctx.renderMaterials,
+   );
+diff --git a/src/orbit/fixtureTransformMatrix.test.ts b/src/orbit/fixtureTransformMatrix.test.ts
+index ed23dd9..f1a2b3c 100644
+--- a/src/orbit/fixtureTransformMatrix.test.ts
++++ b/src/orbit/fixtureTransformMatrix.test.ts
+@@ -8,6 +8,7 @@ import {
+   meshOffsetMatrixRow,
+   multiplyMat4Row,
+   partLocalMatrixFromTransform,
++  readFlipNormals,
+   readMeshOffset,
+   transformPointRow,
+ } from './fixtureTransformMatrix.js';
+@@ -93,6 +94,11 @@ assert.ok(Math.abs(roundTrip[i]! - expected) < 1e-5, `invert round-trip[${i}] =
+ 
+ // Mesh offset: absent / all-zero reads as null; non-zero reads back.
+ assert.equal(readMeshOffset(undefined), null);
++
++// Flip normals toggle reads from model metadata.
++assert.equal(readFlipNormals(undefined), false);
++assert.equal(readFlipNormals({}), false);
++assert.equal(readFlipNormals({ flipNormals: true }), true);
+ assert.equal(readMeshOffset({}), null);
+ assert.equal(readMeshOffset({ meshOffset: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } } }), null);
+ const readback = readMeshOffset({ meshOffset: { position: { x: 0, y: 0, z: 0.153 }, rotation: { x: 0, y: 0, z: 0 } } });
+diff --git a/src/orbit/fixtureTransformMatrix.ts b/src/orbit/fixtureTransformMatrix.ts
+index 5884c81..d4e5f6a 100644
+--- a/src/orbit/fixtureTransformMatrix.ts
++++ b/src/orbit/fixtureTransformMatrix.ts
+@@ -124,6 +124,12 @@ export function meshOffsetMatrixRow(offset: MeshOffset): number[] {
+   return composeMatrixFromTrs(offset.position, offset.rotation, { x: 1, y: 1, z: 1 });
+ }
+ 
++/** True when the user toggled Flip normals in the fixture parts editor. */
++export function readFlipNormals(metadata: Record<string, unknown> | null | undefined): boolean {
++  return (metadata ?? {}).flipNormals === true;
++}
++
+ /** Per-axis scale (column norms) from a row-major 4×4. */
+ export function scaleFromMatrixRow(m: number[]): Vec3 {
+   return {
+-- 
+2.43.0

@@ -163,6 +163,15 @@ meshes). Custom meshes default to their file origin; captured `gdtfBounds` and
 mesh offset align them inside the part frame without moving pivots.
 Clamp models use their own placement controls.
 
+### Flip normals (`metadata.flipNormals`)
+
+Some meshes import with reversed face winding so materials appear on the wrong
+side in Rhino / Orbit (fixable in Rhino with the **Flip** command). In the
+fixture parts editor, enable **Flip normals** on a linked model to reverse
+triangle winding for that mesh only. The toggle is stored on
+`model.metadata.flipNormals`, applied in the PRISM preview immediately, and
+baked into the published Orbit geometry on **Republish**.
+
 ---
 
 ## Custom replaced meshes (`models[].metadata.replaced`)

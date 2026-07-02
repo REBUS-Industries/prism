@@ -14,6 +14,7 @@ import {
 import { isCustomReplacedModel } from '../utils/fixtureCustomMesh';
 import { getModelMediaId } from '../utils/fixtureAssembly';
 import { box3FromGdtfBounds, readGdtfBounds } from '../utils/fixtureGdtfBounds';
+import { readFlipNormals, writeFlipNormals } from '../utils/fixtureFlipNormals';
 import { loadModelBoundsFromUrl } from '../utils/fixtureModelBounds';
 import {
   alignOffset,
@@ -57,6 +58,12 @@ const isCustomMesh = computed(() => isCustomReplacedModel(linkedModel.value));
 
 const hasGdtfBounds = computed(() =>
   !!readGdtfBounds((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
+);
+
+const hasModelMesh = computed(() => !!getModelMediaId(linkedModel.value ?? undefined));
+
+const flipNormals = computed(() =>
+  readFlipNormals((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
 );
 
 const modelOptions = computed(() =>
@@ -165,6 +172,14 @@ function setMeshOffsetRot(axis: 'x' | 'y' | 'z', deg: number): void {
 
 function resetMeshOffset(): void {
   commitMeshOffset({ ...ZERO_MESH_OFFSET, position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } });
+}
+
+function setFlipNormals(enabled: boolean): void {
+  const model = linkedModel.value;
+  if (!model) return;
+  if (!model.metadata || typeof model.metadata !== 'object') model.metadata = {};
+  writeFlipNormals(model.metadata as Record<string, unknown>, enabled);
+  notify();
 }
 
 async function alignToGdtfBounds(): Promise<void> {
@@ -312,6 +327,20 @@ function onModelChange(ev: Event): void {
         <option value="">— None —</option>
         <option v-for="opt in modelOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
       </select>
+    </label>
+
+    <label v-if="linkedModel && hasModelMesh" class="field flip-normals-field">
+      <span class="field-label">Flip normals</span>
+      <div class="flip-row">
+        <input
+          type="checkbox"
+          :checked="flipNormals"
+          @change="setFlipNormals(($event.target as HTMLInputElement).checked)"
+        />
+        <span class="muted small flip-hint">
+          Reverses face winding (Rhino <em>Flip</em>) so materials render on the correct side in Orbit / Rhino. Republish to apply.
+        </span>
+      </div>
     </label>
 
     <fieldset v-if="linkedModel && !isCustomMesh" class="field-group">
@@ -492,6 +521,21 @@ function onModelChange(ev: Event): void {
 .field-input.readonly {
   color: var(--color-text-muted);
   background: var(--color-bg-hover);
+}
+.flip-normals-field {
+  gap: 6px;
+}
+.flip-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.flip-row input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.flip-hint {
+  line-height: 1.4;
 }
 .field-group {
   border: none;

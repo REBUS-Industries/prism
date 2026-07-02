@@ -14,6 +14,7 @@ import type { FixturePart, FixtureModel, ModelMaterialSlot, ModelTransform } fro
 import { paintModelMaterialSlots, type SlotMaterialMaps } from './modelMaterialSlots';
 import { applyModelTransform, ensureModelTransform } from './modelTransform';
 import { isCustomReplacedModel } from './fixtureCustomMesh';
+import { readFlipNormals, applyFlipNormals } from './fixtureFlipNormals';
 import { readMeshOffset } from './fixtureTransform';
 import { isModelLengthUnit, unitScaleToMetres } from './modelUnits';
 import {
@@ -265,6 +266,14 @@ function applyMeshOffset(wrapped: THREE.Object3D, model: FixtureModel | undefine
   }
   offsetGroup.add(wrapped);
   return offsetGroup;
+}
+
+/** Apply optional user flip-normals toggle, then mesh-offset translation. */
+function finalizeModelMesh(wrapped: THREE.Object3D, model: FixtureModel | undefined): THREE.Object3D {
+  if (readFlipNormals(model?.metadata as Record<string, unknown> | undefined)) {
+    applyFlipNormals(wrapped);
+  }
+  return applyMeshOffset(wrapped, model);
 }
 
 /**
@@ -603,9 +612,12 @@ export async function buildFixtureAssembly(
         }
         if (isRebusClampPart(part)) {
           const placement = input.clampPlacement ?? { mirrorZ: false, rotateZDeg: 0 };
+          if (readFlipNormals(model?.metadata as Record<string, unknown> | undefined)) {
+            applyFlipNormals(wrapped);
+          }
           meshCount += attachClampMeshes(partGroup, wrapped, placement);
         } else {
-          partGroup.add(applyMeshOffset(wrapped, model));
+          partGroup.add(finalizeModelMesh(wrapped, model));
           meshCount += 1;
         }
         return;
