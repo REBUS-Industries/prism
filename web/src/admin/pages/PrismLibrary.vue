@@ -69,6 +69,16 @@ const exportLoading = ref(false);
 const exportError = ref<string | null>(null);
 const copied = ref(false);
 
+type RepublishFailure = { id: string; label: string; message: string };
+
+const showRepublishAll = ref(false);
+const republishingAll = ref(false);
+const republishDone = ref(false);
+const republishCancelled = ref(false);
+const republishProgress = ref({ done: 0, total: 0, current: '' });
+const republishSucceeded = ref(0);
+const republishFailures = ref<RepublishFailure[]>([]);
+
 const ORIGIN_CHIPS: Array<{ key: OriginFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'gdtf-share', label: 'GDTF Share' },
@@ -131,8 +141,29 @@ const totalCount = computed(() => fixtures.value.length);
 const withPreview = computed(() => fixtures.value.filter((f) => f.hasPreview).length);
 const publishedCount = computed(() => fixtures.value.filter((f) => f.status === 'published').length);
 const updatesCount = computed(() => fixtures.value.filter((f) => f.updateAvailable).length);
+const orbitPublishedCount = computed(() => fixtures.value.filter((f) => f.orbitUrl).length);
 
 const listCountLabel = computed(() => `${filtered.value.length} / ${totalCount.value} fixtures`);
+
+function orbitPublishBlockedReason(f: FixtureListItem): string | null {
+  if (!f.manufacturer?.trim() || !f.fixtureName?.trim()) {
+    return 'manufacturer and fixture name are required';
+  }
+  return null;
+}
+
+const republishCandidates = computed(() =>
+  fixtures.value.filter((f) => !orbitPublishBlockedReason(f)),
+);
+
+const republishSkipped = computed(() =>
+  fixtures.value.filter((f) => orbitPublishBlockedReason(f)),
+);
+
+const republishProgressPct = computed(() => {
+  const { done, total } = republishProgress.value;
+  return total > 0 ? Math.round((done / total) * 100) : 0;
+});
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -348,6 +379,68 @@ function resetFilters(): void {
   statusFilter.value = 'all';
 }
 
+function resetRepublishState(): void {
+  republishDone.value = false;
+  republishCancelled.value = false;
+  republishProgress.value = { done: 0, total: republishCandidates.value.length, current: '' };
+  republishSucceeded.value = 0;
+  republishFailures.value = [];
+}
+
+function openRepublishAll(): void {
+  resetRepublishState();
+  showRepublishAll.value = true;
+}
+
+function onRepublishModalClose(): void {
+  if (republishingAll.value) {
+    republishCancelled.value = true;
+    return;
+  }
+  showRepublishAll.value = false;
+}
+
+async function runRepublishAll(): Promise<void> {
+  const candidates = republishCandidates.value;
+  if (!candidates.length || republishingAll.value) return;
+  republishingAll.value = true;
+  republishDone.value = false;
+  republishCancelled.value = false;
+  republishProgress.value = { done: 0, total: candidates.length, current: '' };
+  republishSucceeded.value = 0;
+  republishFailures.value = [];
+  error.value = null;
+
+  for (let i = 0; i < candidates.length; i++) {
+    if (republishCancelled.value) break;
+    const f = candidates[i]!;
+    republishProgress.value = {
+      done: i,
+      total: candidates.length,
+      current: fixtureLabel(f),
+    };
+    try {
+      const res = await fixturesApi.publishToOrbit(f.id);
+      upsert(res.fixture);
+      republishSucceeded.value += 1;
+    } catch (err) {
+      republishFailures.value.push({
+        id: f.id,
+        label: fixtureLabel(f),
+        message: (err as ApiError).message ?? 'publish to Orbit failed',
+      });
+    }
+  }
+
+  republishProgress.value = {
+    done: republishCancelled.value ? republishProgress.value.done : candidates.length,
+    total: candidates.length,
+    current: '',
+  };
+  republishDone.value = true;
+  republishingAll.value = false;
+}
+
 onMounted(() => {
   void store.ensureLoaded();
   void load();
@@ -374,6 +467,14 @@ onMounted(() => {
         <button class="btn-outline" :disabled="checkingUpdates" @click="bulkCheckUpdates">
           <Icon name="sync" :size="16" /> {{ checkingUpdates ? 'Checking…' : 'Check updates' }}
         </button>
+        <button
+          class="btn-outline"
+          :disabled="loading || republishingAll || !republishCandidates.length"
+          :title="!republishCandidates.length ? 'No fixtures with manufacturer and fixture name' : 'Republish every library fixture to Orbit'"
+          @click="openRepublishAll"
+        >
+          <Icon name="cloud_upload" :size="16" /> Republish all
+        </button>
         <RouterLink :to="{ name: 'fixtures' }" class="btn-primary link-btn">
           <Icon name="travel_explore" :size="16" /> Browse GDTF Share
         </RouterLink>
@@ -385,6 +486,7 @@ onMounted(() => {
       <span class="stat"><strong>{{ totalCount }}</strong> fixtures</span>
       <span class="stat"><strong>{{ withPreview }}</strong> with 3D</span>
       <span class="stat"><strong>{{ publishedCount }}</strong> published</span>
+      <span class="stat"><strong>{{ orbitPublishedCount }}</strong> on Orbit</span>
       <span class="stat" :class="{ warn: updatesCount }"><strong>{{ updatesCount }}</strong> updates available</span>
     </div>
 
@@ -596,6 +698,72 @@ onMounted(() => {
         <Icon name="add" :size="14" /> Blank fixture
       </button>
     </div>
+
+    <Modal
+      v-if="showRepublishAll"
+      title="Republish all to Orbit"
+      :subtitle="republishDone ? 'Bulk republish finished' : `${republishCandidates.length} fixtures ready`"
+      :max-width="560"
+      @close="onRepublishModalClose"
+    >
+      <div v-if="!republishDone && !republishingAll" class="republish-intro">
+        <p class="muted small">
+          Publishes or republishes every fixture in the PRISM library that has a manufacturer and fixture name.
+          Fixtures already on Orbit are updated in place (same model id, new version).
+        </p>
+        <ul class="republish-summary">
+          <li><strong>{{ republishCandidates.length }}</strong> to publish</li>
+          <li v-if="republishSkipped.length"><strong>{{ republishSkipped.length }}</strong> skipped (missing identity)</li>
+          <li><strong>{{ orbitPublishedCount }}</strong> currently on Orbit</li>
+        </ul>
+        <p v-if="republishSkipped.length" class="muted small">
+          Skipped fixtures need manufacturer and fixture name before they can be published.
+        </p>
+      </div>
+
+      <div v-else class="republish-progress">
+        <div class="progress-bar" aria-hidden="true">
+          <div class="progress-fill" :style="{ width: `${republishProgressPct}%` }" />
+        </div>
+        <p class="republish-status">
+          <template v-if="republishingAll">
+            {{ republishProgress.done + 1 }} / {{ republishProgress.total }}
+            <span v-if="republishProgress.current" class="muted"> — {{ republishProgress.current }}</span>
+          </template>
+          <template v-else-if="republishCancelled">
+            Stopped after {{ republishProgress.done }} of {{ republishProgress.total }}.
+          </template>
+          <template v-else>
+            Completed {{ republishProgress.total }} fixtures.
+          </template>
+        </p>
+        <p class="republish-result">
+          <span class="ok-count">{{ republishSucceeded }} succeeded</span>
+          <span v-if="republishFailures.length" class="fail-count">{{ republishFailures.length }} failed</span>
+        </p>
+        <ul v-if="republishFailures.length" class="republish-failures">
+          <li v-for="item in republishFailures" :key="item.id">
+            <strong>{{ item.label }}</strong>
+            <span class="muted"> — {{ item.message }}</span>
+          </li>
+        </ul>
+      </div>
+
+      <template #footer>
+        <button type="button" class="btn-cancel" @click="onRepublishModalClose">
+          {{ republishingAll ? 'Stop' : 'Close' }}
+        </button>
+        <button
+          v-if="!republishDone && !republishingAll"
+          type="button"
+          class="btn-save"
+          :disabled="!republishCandidates.length"
+          @click="runRepublishAll"
+        >
+          <Icon name="cloud_upload" :size="14" /> Start republish
+        </button>
+      </template>
+    </Modal>
 
     <Modal v-if="showExport" title="Connector / ORBIT export" :subtitle="exportPayload ? `${exportPayload.manufacturer} — ${exportPayload.name}` : ''" :max-width="640" @close="showExport = false">
       <div v-if="exportLoading" class="muted">Building export payload…</div>
@@ -1041,6 +1209,44 @@ onMounted(() => {
   cursor: pointer;
 }
 .btn-export:hover { background: var(--orbit-primary); color: #fff; }
+
+.republish-intro { display: flex; flex-direction: column; gap: 10px; }
+.republish-summary {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.republish-progress { display: flex; flex-direction: column; gap: 10px; }
+.progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--orbit-primary);
+  transition: width 0.2s ease;
+}
+.republish-status { margin: 0; font-size: 13px; }
+.republish-result { margin: 0; font-size: 12px; display: flex; gap: 12px; }
+.ok-count { color: var(--color-success, #16a34a); font-weight: 700; }
+.fail-count { color: var(--color-error, #ef4444); font-weight: 700; }
+.republish-failures {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  font-size: 11px;
+  line-height: 1.5;
+  list-style: none;
+}
+.republish-failures li + li { margin-top: 6px; }
 
 .lib-footer {
   display: flex;
