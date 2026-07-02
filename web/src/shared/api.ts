@@ -1173,11 +1173,22 @@ export const texturesApi = {
   /** Soft delete. On 409 the {@link ApiError} body carries
    *  `{ error, referencingMaterials: [{ id, name }] }`. */
   remove: (id: string) => api.delete<void>(`/api/textures/${id}`),
+  /** Soft-delete every texture with zero live material references. Pass dryRun to count only. */
+  cleanupUnused: (opts: { dryRun?: boolean } = {}) => {
+    const qs = opts.dryRun ? '?dryRun=1' : '';
+    return api.post<TextureCleanupResult>(`/api/textures/cleanup-unused${qs}`, {});
+  },
   /** Inline preview — preferred for `<img>` and three.js TextureLoader. */
   previewUrl: (id: string): string => `/api/textures/${id}/preview`,
   /** Stream/download URL (same body as preview). */
   downloadUrl: (id: string): string => `/api/textures/${id}/download`,
 };
+
+export interface TextureCleanupResult {
+  deleted: number;
+  textureIds: string[];
+  dryRun: boolean;
+}
 
 /** Shape of the 409 body returned when deleting an in-use texture. */
 export interface TextureInUseError {

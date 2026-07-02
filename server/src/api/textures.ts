@@ -19,6 +19,7 @@
  *   GET    /api/textures/:id             metadata
  *   PUT    /api/textures/:id             rename / retag              (write)
  *   DELETE /api/textures/:id             soft-delete (409 if in use) (delete)
+ *   POST   /api/textures/cleanup-unused  soft-delete all unreferenced textures (delete)
  *   GET    /api/textures/:id/preview     stream inline image for UI embed
  *   GET    /api/textures/:id/download    stream the body
  *
@@ -30,7 +31,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { and, desc, eq, ilike, isNull, not, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNull, not, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { materials, materialTextures, textures } from '../db/schema.js';
 import { requireAuth, requireScope } from '../auth/middleware.js';
@@ -278,6 +279,41 @@ const plugin: FastifyPluginAsync = async (app) => {
       .returning();
 
     return reply.code(201).send(toPublic({ ...updated[0]!, referenceCount: 0 }));
+  });
+
+  /* ---------- POST /api/textures/cleanup-unused ---------- */
+  app.post<{ Querystring: { dryRun?: string } }>('/cleanup-unused', {
+    preHandler: [requireAuth, requireScope('materials:delete')],
+  }, async (req) => {
+    const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+
+    const unused = await db
+      .select({ id: textures.id })
+      .from(textures)
+      .where(and(
+        isNull(textures.deletedAt),
+        sql`not exists (
+          select 1 from ${materialTextures} mt
+          inner join ${materials} m on m.id = mt.material_id
+          where mt.texture_id = ${textures.id} and m.deleted_at is null
+        )`,
+      ));
+
+    const textureIds = unused.map((row) => row.id);
+    if (!textureIds.length) {
+      return { deleted: 0, textureIds: [], dryRun };
+    }
+
+    if (dryRun) {
+      return { deleted: textureIds.length, textureIds, dryRun: true };
+    }
+
+    await db
+      .update(textures)
+      .set({ deletedAt: new Date() })
+      .where(and(inArray(textures.id, textureIds), isNull(textures.deletedAt)));
+
+    return { deleted: textureIds.length, textureIds, dryRun: false };
   });
 
   /* ---------- GET /api/textures/:id ---------- */
