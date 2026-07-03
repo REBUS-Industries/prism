@@ -9,6 +9,8 @@ defineProps<{
   fixtureName?: string;
   /** Mesh / GDTF record count for footer caption. */
   recordCount?: number;
+  assemblyRevision?: number;
+  transformRevision?: number;
 }>();
 </script>
 
@@ -32,6 +34,8 @@ defineProps<{
               v-if="previewUrl || assembly"
               :url="previewUrl"
               :assembly="assembly"
+              :assembly-revision="assemblyRevision ?? 0"
+              :transform-revision="transformRevision ?? 0"
               :view-preset="view[0]"
               :interactive="view[0] === 'iso'"
               fill
