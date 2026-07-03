@@ -156,11 +156,13 @@ model). Edit it in the admin editor's Parts tab → part properties → **Mesh
 offset**; the offset persists in the fixture definition (no DB migration) and
 publishes to Orbit so Rhino / 3rd-party viewers match the PRISM preview. Scale
 is handled separately by the Model Dimensions (L/W/H) fit for **GDTF** meshes;
-**custom replaced** uploads skip that dimension fit (1:1 authored scale, matching
-Orbit publish) but still receive the +90° X glTF→GDTF axis conversion — only
-mesh-offset **translation** is applied (rotation offset is ignored for custom
-meshes). Custom meshes default to their file origin; captured `gdtfBounds` and
-mesh offset align them inside the part frame without moving pivots.
+**custom replaced** uploads skip per-axis dimension fit. When the linked model still
+has GDTF **Length / Width / Height**, the preview applies a **uniform median scale**
+so mm CAD exports land near nominal fixture size without axis stretching. Orbit
+publish keeps authored vertex scale (`oneToOne`). Mesh-offset **translation** only
+(rotation offset is ignored for custom meshes). Custom meshes default to their file
+origin; captured `gdtfBounds` and mesh offset align them inside the part frame
+without moving pivots. Iso camera near/far follow the assembly bbox.
 Clamp models use their own placement controls.
 
 ### Flip normals (`metadata.flipNormals`)
@@ -178,8 +180,10 @@ baked into the published Orbit geometry on **Republish**.
 
 When a model mesh is swapped via Settings → **Replace**, PRISM stamps
 `metadata.replaced: true` (and `replacedFilename`). Those meshes keep their
-authored scale (no L/W/H dimension fit) but still pass through the standard
-+90° X wrap so Y-up glTF displays correctly in the Z-up viewer.
+authored vertex scale on Orbit publish (`oneToOne`) but the **PRISM preview**
+applies a uniform median scale when GDTF L/W/H exist so CAD exports at the wrong
+unit (e.g. mm vertices interpreted as metres) still frame sensibly in the editor.
+Per-axis L/W/H stretch is never applied to custom uploads.
 
 ### Origin and placement (default)
 
@@ -205,9 +209,10 @@ with mesh-offset translation sliders or the gizmo.
 
 ### Viewer and Orbit
 
-- Web viewer: `wrapModelMesh` applies +90° X only (no bbox scale); optional
-  `meshOffset.position` translation aligns the mesh inside the part frame. Iso
-  camera near/far are derived from the assembly bounding box.
+- Web viewer: `wrapModelMesh` applies +90° X, then optional **uniform median**
+  scale when L/W/H exist (no per-axis stretch); optional `meshOffset.position`
+  translation aligns the mesh inside the part frame. Iso camera near/far are
+  derived from the assembly bounding box.
 - Orbit publish: `transformGlbMeshes(..., oneToOne: true)` applies the glTF→GDTF
   wrap matrix without dimension scale; mesh-offset rotation is ignored for
   replaced models. Translation offset is baked via `meshOffsetMatrixRow`.

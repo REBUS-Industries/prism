@@ -1,0 +1,122 @@
+diff --git a/docs/fixture-assembly-and-motion.md b/docs/fixture-assembly-and-motion.md
+index 075cb34..77387c8 100644
+--- a/docs/fixture-assembly-and-motion.md
++++ b/docs/fixture-assembly-and-motion.md
+@@ -156,11 +156,13 @@ model). Edit it in the admin editor's Parts tab → part properties → **Mesh
+ offset**; the offset persists in the fixture definition (no DB migration) and
+ publishes to Orbit so Rhino / 3rd-party viewers match the PRISM preview. Scale
+ is handled separately by the Model Dimensions (L/W/H) fit for **GDTF** meshes;
+-**custom replaced** uploads skip that dimension fit (1:1 authored scale, matching
+-Orbit publish) but still receive the +90° X glTF→GDTF axis conversion — only
+-mesh-offset **translation** is applied (rotation offset is ignored for custom
+-meshes). Custom meshes default to their file origin; captured `gdtfBounds` and
+-mesh offset align them inside the part frame without moving pivots.
++**custom replaced** uploads skip per-axis dimension fit. When the linked model still
++has GDTF **Length / Width / Height**, the preview applies a **uniform median scale**
++so mm CAD exports land near nominal fixture size without axis stretching. Orbit
++publish keeps authored vertex scale (`oneToOne`). Mesh-offset **translation** only
++(rotation offset is ignored for custom meshes). Custom meshes default to their file
++origin; captured `gdtfBounds` and mesh offset align them inside the part frame
++without moving pivots. Iso camera near/far follow the assembly bbox.
+ Clamp models use their own placement controls.
+ 
+ ### Flip normals (`metadata.flipNormals`)
+@@ -178,8 +180,10 @@ baked into the published Orbit geometry on **Republish**.
+ 
+ When a model mesh is swapped via Settings → **Replace**, PRISM stamps
+ `metadata.replaced: true` (and `replacedFilename`). Those meshes keep their
+-authored scale (no L/W/H dimension fit) but still pass through the standard
+-+90° X wrap so Y-up glTF displays correctly in the Z-up viewer.
++authored vertex scale on Orbit publish (`oneToOne`) but the **PRISM preview**
++applies a uniform median scale when GDTF L/W/H exist so CAD exports at the wrong
++unit (e.g. mm vertices interpreted as metres) still frame sensibly in the editor.
++Per-axis L/W/H stretch is never applied to custom uploads.
+ 
+ ### Origin and placement (default)
+ 
+@@ -205,9 +209,10 @@ with mesh-offset translation sliders or the gizmo.
+ 
+ ### Viewer and Orbit
+ 
+-- Web viewer: `wrapModelMesh` applies +90° X only (no bbox scale); optional
+-  `meshOffset.position` translation aligns the mesh inside the part frame. Iso
+-  camera near/far are derived from the assembly bounding box.
++- Web viewer: `wrapModelMesh` applies +90° X, then optional **uniform median**
++  scale when L/W/H exist (no per-axis stretch); optional `meshOffset.position`
++  translation aligns the mesh inside the part frame. Iso camera near/far are
++  derived from the assembly bounding box.
+ - Orbit publish: `transformGlbMeshes(..., oneToOne: true)` applies the glTF→GDTF
+   wrap matrix without dimension scale; mesh-offset rotation is ignored for
+   replaced models. Translation offset is baked via `meshOffsetMatrixRow`.
+diff --git a/web/src/admin/utils/fixtureAssembly.ts b/web/src/admin/utils/fixtureAssembly.ts
+index 11a702c..0f6916a 100644
+--- a/web/src/admin/utils/fixtureAssembly.ts
++++ b/web/src/admin/utils/fixtureAssembly.ts
+@@ -361,11 +361,31 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
+   }
+ }
+ 
++/**
++ * Uniform median scale from declared GDTF L/W/H to mesh bbox size (metres).
++ * Used for custom replaced previews so mm CAD exports land near nominal fixture size
++ * without per-axis stretching. Returns null when dims or bbox are unusable.
++ */
++function uniformMedianScaleForDims(dims: ModelDims, size: THREE.Vector3): number | null {
++  if (
++    dims.length == null || dims.width == null || dims.height == null
++    || size.x <= 1e-6 || size.y <= 1e-6 || size.z <= 1e-6
++  ) {
++    return null;
++  }
++  const sx = dims.length / size.x;
++  const sy = dims.height / size.y;
++  const sz = dims.width / size.z;
++  const ratios = [sx, sy, sz];
++  return [...ratios].sort((a, b) => a - b)[1]!;
++}
++
+ /**
+  * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
+  * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
+  *
+- * When `oneToOne` is true (custom replaced uploads), dimension fit is skipped.
++ * Custom replaced uploads skip per-axis fit; when L/W/H exist a single uniform
++ * median scale lands CAD exports near nominal size while preserving proportions.
+  */
+ function wrapModelMeshInternal(
+   meshRoot: THREE.Object3D,
+@@ -376,13 +396,18 @@ function wrapModelMeshInternal(
+   wrapper.name = 'Scene';
+   wrapper.rotation.x = Math.PI / 2;
+ 
++  const bbox = new THREE.Box3().setFromObject(meshRoot);
++  const size = bbox.getSize(new THREE.Vector3());
++
+   if (oneToOne) {
++    const median = uniformMedianScaleForDims(dims, size);
++    if (median != null) {
++      wrapper.scale.setScalar(median);
++    }
+     wrapper.add(meshRoot);
+     return wrapper;
+   }
+ 
+-  const bbox = new THREE.Box3().setFromObject(meshRoot);
+-  const size = bbox.getSize(new THREE.Vector3());
+   if (
+     dims.length != null && dims.width != null && dims.height != null
+     && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6
+@@ -413,9 +438,10 @@ function wrapModelMeshInternal(
+  * mapping (verified on Rivale Profile Base): x = length/bbox.x,
+  * y = height/bbox.y, z = width/bbox.z.
+  *
+- * Custom / replaced uploads skip dimension fit (1:1 authored scale, matching
+- * Orbit `oneToOne` bake) but still get the +90° X glTF Y-up → GDTF Z-up axis
+- * conversion required by the viewer. The preview camera frames the full bbox.
++ * Custom / replaced uploads skip per-axis dimension fit. When GDTF L/W/H exist,
++ * a uniform median scale lands mm CAD exports near nominal fixture size (preview
++ * only — Orbit publish still uses `oneToOne` authored vertices). +90° X glTF
++ * Y-up → GDTF Z-up conversion always applies. Iso camera near/far follow bbox.
+  */
+ function wrapModelMesh(
+   meshRoot: THREE.Object3D,
