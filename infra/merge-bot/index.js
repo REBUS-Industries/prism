@@ -96,15 +96,15 @@ const REPO_CI = {
     workflows: ['web-image', 'server-image'],
     deploysToDev: true,
   },
+  // fixtures-image includes deploy-vm212 (no repository_dispatch to deploy-dev-service).
   'REBUS-Industries/prism-fixtures-service': {
     workflows: ['fixtures-image'],
-    crossRepo: [{ repo: 'REBUS-Industries/prism', workflows: ['deploy-dev-service'] }],
     deploysToDev: true,
     requiresPrCi: false,
   },
+  // models-image includes deploy-vm212 (no repository_dispatch to deploy-dev-service).
   'REBUS-Industries/prism-models-service': {
     workflows: ['models-image'],
-    crossRepo: [{ repo: 'REBUS-Industries/prism', workflows: ['deploy-dev-service'] }],
     deploysToDev: true,
     requiresPrCi: false,
   },
