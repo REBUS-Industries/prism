@@ -621,3 +621,105 @@ export async function deleteModelVersions(
   });
   return data.versionMutations.delete;
 }
+
+/** Version ids with createdAt strictly before `before`, keeping at least one version on the model. */
+export function selectVersionIdsDeletableBefore(
+  items: OrbitVersionSummary[],
+  before: Date,
+): string[] {
+  if (items.length <= 1) return [];
+  const cutoff = before.getTime();
+  const deletable = items.filter((v) => {
+    const t = Date.parse(v.createdAt);
+    return Number.isFinite(t) && t < cutoff;
+  });
+  if (!deletable.length) return [];
+  const ids = deletable.map((v) => v.id);
+  if (ids.length >= items.length) {
+    return ids.filter((id) => id !== items[0]!.id);
+  }
+  return ids;
+}
+
+async function listAllModelVersions(
+  target: OrbitTarget,
+  projectId: string,
+  modelId: string,
+): Promise<OrbitVersionSummary[]> {
+  const all: OrbitVersionSummary[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const res = await listModelVersions(target, projectId, modelId, { limit: 200, cursor });
+    all.push(...res.items);
+    if (!res.cursor || all.length >= res.totalCount) break;
+    cursor = res.cursor;
+  }
+  return all;
+}
+
+export async function purgeModelVersionsBefore(
+  target: OrbitTarget,
+  projectId: string,
+  modelId: string,
+  before: Date,
+  dryRun: boolean,
+): Promise<{ versionIds: string[]; deleted: number }> {
+  const items = await listAllModelVersions(target, projectId, modelId);
+  const versionIds = selectVersionIdsDeletableBefore(items, before);
+  if (!versionIds.length || dryRun) {
+    return { versionIds, deleted: 0 };
+  }
+  await deleteModelVersions(target, projectId, versionIds);
+  return { versionIds, deleted: versionIds.length };
+}
+
+export interface PurgeModelsVersionsResult {
+  dryRun: boolean;
+  before: string;
+  modelsScanned: number;
+  modelsWithDeletions: number;
+  versionCount: number;
+  deletedCount: number;
+  failures: Array<{ modelId: string; error: string }>;
+}
+
+/** Delete Orbit versions older than `before` across many models (one project). */
+export async function purgeModelsVersionsBefore(
+  target: OrbitTarget,
+  projectId: string,
+  modelIds: string[],
+  before: Date,
+  dryRun: boolean,
+): Promise<PurgeModelsVersionsResult> {
+  const unique = [...new Set(modelIds.map((id) => id.trim()).filter(Boolean))];
+  let versionCount = 0;
+  let deletedCount = 0;
+  let modelsWithDeletions = 0;
+  const failures: Array<{ modelId: string; error: string }> = [];
+
+  for (const modelId of unique) {
+    try {
+      const r = await purgeModelVersionsBefore(target, projectId, modelId, before, dryRun);
+      if (r.versionIds.length) {
+        modelsWithDeletions += 1;
+        versionCount += r.versionIds.length;
+        deletedCount += r.deleted;
+      }
+    } catch (err) {
+      failures.push({
+        modelId,
+        error: err instanceof OrbitClientError ? err.message : (err as Error).message ?? 'purge failed',
+      });
+    }
+  }
+
+  return {
+    dryRun,
+    before: before.toISOString(),
+    modelsScanned: unique.length,
+    modelsWithDeletions,
+    versionCount,
+    deletedCount,
+    failures,
+  };
+}
