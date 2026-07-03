@@ -1,4 +1,4 @@
-import type { FixtureBeam, FixturePart } from '../../shared/api';
+import type { FixtureBeam, FixtureDefinition, FixturePart } from '../../shared/api';
 
 /** Standard DMX zoom positions manufacturers ship IES sets for. */
 export const IES_ZOOM_DMX_SLOTS = [0, 128, 255] as const;
@@ -46,6 +46,11 @@ export function iesProfileCount(beam: FixtureBeam): number {
   let n = (beam.iesProfiles ?? []).length;
   if (!n && beam.iesAssetId) n = 1;
   return n;
+}
+
+/** True when any beam carries an uploaded IES profile (legacy or zoom-keyed). */
+export function fixtureHasIesProfiles(definition: FixtureDefinition | null | undefined): boolean {
+  return (definition?.beams ?? []).some((b) => iesProfileCount(b) > 0);
 }
 
 // ---------------------------------------------------------------------------

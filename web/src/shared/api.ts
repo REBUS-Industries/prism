@@ -1951,6 +1951,10 @@ export interface FixtureListItem {
   updateAvailable?: boolean;
   /** Relative preview path for the active version (`GET …/preview.glb` or media URL). */
   previewUrl: string | null;
+  /** True when any linked model mesh was replaced with a custom upload. */
+  hasCustomMeshes?: boolean;
+  /** True when any beam has an uploaded IES photometric profile. */
+  hasIesProfiles?: boolean;
   /** Orbit viewer URL from `definition.metadata.orbitFixtureRef` when published. */
   orbitUrl: string | null;
   /** Stored GDTF revision history with per-version preview URLs. */

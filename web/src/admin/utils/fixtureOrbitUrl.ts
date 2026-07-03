@@ -1,4 +1,6 @@
 import type { FixtureDefinition, FixtureListItem, FixtureOrbitRef } from '../../shared/api';
+import { fixtureHasCustomMeshes } from './fixtureCustomMesh';
+import { fixtureHasIesProfiles } from './fixtureIes';
 
 const DEFAULT_ORBIT_SERVER_URLS = {
   prod: 'https://orbit.rebus.industries',
@@ -71,7 +73,19 @@ export function enrichFixtureListItem<T extends FixtureListItem & { definition?:
   item: T,
 ): T {
   const orbitUrl = resolveFixtureOrbitUrl(item);
-  return orbitUrl && !item.orbitUrl ? { ...item, orbitUrl } : item;
+  const hasCustomMeshes = item.hasCustomMeshes
+    ?? (item.definition ? fixtureHasCustomMeshes(item.definition) : undefined);
+  const hasIesProfiles = item.hasIesProfiles
+    ?? (item.definition ? fixtureHasIesProfiles(item.definition) : undefined);
+  let out: T = item;
+  if (orbitUrl && !item.orbitUrl) out = { ...out, orbitUrl };
+  if (hasCustomMeshes !== undefined && item.hasCustomMeshes !== hasCustomMeshes) {
+    out = { ...out, hasCustomMeshes };
+  }
+  if (hasIesProfiles !== undefined && item.hasIesProfiles !== hasIesProfiles) {
+    out = { ...out, hasIesProfiles };
+  }
+  return out;
 }
 
 const ORBIT_DETAIL_BATCH = 12;
