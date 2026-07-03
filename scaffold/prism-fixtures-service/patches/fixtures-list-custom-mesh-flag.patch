@@ -1,0 +1,80 @@
+diff --git a/package.json b/package.json
+index 0f46f94..8169344 100644
+--- a/package.json
++++ b/package.json
+@@ -8,7 +8,7 @@
+     "start": "node dist/main.js",
+     "dev": "tsx watch src/main.ts",
+     "diagnose:transforms": "tsx src/orbit/diagnoseFixtureTransforms.ts",
+-    "test": "npm run build && node dist/import/xmlEntityOptions.test.js && node dist/import/gdtfShareCatalog.test.js && node dist/fixtures/fixtureCategoryResolve.test.js && node dist/fixtures/fixtureGeometryReferenceResolve.test.js && node dist/fixtures/duplicateFixture.test.js && node dist/fixtures/connectorExport.test.js && node dist/import/gdtfFixtureParser.test.js && node dist/fixtures/fixtureDisplayName.test.js && node dist/import/glbDoubleSided.test.js && node dist/api/fixture-export-docs.test.js && node dist/orbit/fixtureMotionRigExport.test.js && node dist/orbit/orbitObjects.test.js && node dist/orbit/glbParser.test.js && node dist/orbit/fixtureMaterialsOrbit.test.js && node dist/orbit/meshGeometryFixups.test.js && node dist/orbit/fixtureTransformMatrix.test.js && node dist/orbit/gdtfPrimitiveMeshes.test.js && node dist/orbit/renderMaterialRegistry.test.js && node dist/orbit/fixtureGeometryPartModel.test.js && node dist/orbit/fixtureGeometryModeFilter.test.js && node dist/orbit/fixtureGeometryOrbit.test.js && node dist/orbit/fixtureCustomMeshScale.test.js && node dist/orbit/orbitBlobUpload.test.js && node dist/orbit/fixtureMaterialProxies.test.js && node dist/orbit/fixtureInstanceProxies.test.js && node dist/orbit/fixturePublish.test.js && node dist/orbit/fixtureMotionAxisPublish.test.js && node dist/orbit/fixturePartTransformPublish.test.js && node dist/import/gdtfResetHelpers.test.js"
++    "test": "npm run build && node dist/import/xmlEntityOptions.test.js && node dist/import/gdtfShareCatalog.test.js && node dist/fixtures/fixtureCategoryResolve.test.js && node dist/fixtures/fixtureGeometryReferenceResolve.test.js && node dist/fixtures/fixtureCustomMesh.test.js && node dist/fixtures/duplicateFixture.test.js && node dist/fixtures/connectorExport.test.js && node dist/import/gdtfFixtureParser.test.js && node dist/fixtures/fixtureDisplayName.test.js && node dist/import/glbDoubleSided.test.js && node dist/api/fixture-export-docs.test.js && node dist/orbit/fixtureMotionRigExport.test.js && node dist/orbit/orbitObjects.test.js && node dist/orbit/glbParser.test.js && node dist/orbit/fixtureMaterialsOrbit.test.js && node dist/orbit/meshGeometryFixups.test.js && node dist/orbit/fixtureTransformMatrix.test.js && node dist/orbit/gdtfPrimitiveMeshes.test.js && node dist/orbit/renderMaterialRegistry.test.js && node dist/orbit/fixtureGeometryPartModel.test.js && node dist/orbit/fixtureGeometryModeFilter.test.js && node dist/orbit/fixtureGeometryOrbit.test.js && node dist/orbit/fixtureCustomMeshScale.test.js && node dist/orbit/orbitBlobUpload.test.js && node dist/orbit/fixtureMaterialProxies.test.js && node dist/orbit/fixtureInstanceProxies.test.js && node dist/orbit/fixturePublish.test.js && node dist/orbit/fixtureMotionAxisPublish.test.js && node dist/orbit/fixturePartTransformPublish.test.js && node dist/import/gdtfResetHelpers.test.js"
+   },
+   "dependencies": {
+     "@fastify/cookie": "^9.4.0",
+diff --git a/src/api/fixtures.ts b/src/api/fixtures.ts
+index f192738..baf0d72 100644
+--- a/src/api/fixtures.ts
++++ b/src/api/fixtures.ts
+@@ -46,6 +46,7 @@ import { replaceFixtureModel } from '../import/replaceFixtureModel.js';
+ import { prepareDefinitionForServe } from '../fixtures/prepareDefinitionForServe.js';
+ import { inspectGdtfModels } from '../import/inspectGdtfModelQualities.js';
+ import { applyDisplayName, readDisplayName } from '../fixtures/fixtureDisplayName.js';
++import { fixtureHasCustomMeshes } from '../fixtures/fixtureCustomMesh.js';
+ import { duplicateFixture } from '../fixtures/duplicateFixture.js';
+ import { publishFixtureById } from '../orbit/publishFixtureById.js';
+ import { OrbitClientError } from '@rebus-industries/prism-shared/orbit';
+@@ -105,10 +106,11 @@ function fieldValue(fields: unknown, name: string): string | undefined {
+ }
+ 
+ function toSummary(row: typeof fixtureTypes.$inferSelect, updateAvailable?: boolean) {
++  const definition = row.definition as FixtureDefinition;
+   return {
+     id: row.id,
+     name: row.name,
+-    displayName: readDisplayName(row.definition as FixtureDefinition),
++    displayName: readDisplayName(definition),
+     manufacturer: row.manufacturer,
+     fixtureName: row.fixtureName,
+     revision: row.revision,
+@@ -120,6 +122,7 @@ function toSummary(row: typeof fixtureTypes.$inferSelect, updateAvailable?: bool
+     activeVersionId: row.activeVersionId,
+     status: row.status,
+     hasPreview: !!row.previewModelId,
++    hasCustomMeshes: fixtureHasCustomMeshes(definition),
+     updateAvailable,
+     createdAt: row.createdAt.toISOString(),
+     updatedAt: row.updatedAt.toISOString(),
+diff --git a/src/fixtures/fixtureCustomMesh.test.ts b/src/fixtures/fixtureCustomMesh.test.ts
+new file mode 100644
+index 0000000..e60e2dc
+--- /dev/null
++++ b/src/fixtures/fixtureCustomMesh.test.ts
+@@ -0,0 +1,13 @@
++import assert from 'node:assert/strict';
++import { fixtureHasCustomMeshes } from '../fixtures/fixtureCustomMesh.js';
++
++assert.equal(fixtureHasCustomMeshes({ models: [], parts: [] } as never), false);
++assert.equal(fixtureHasCustomMeshes({
++  models: [{ modelId: 'a', metadata: { replaced: true } }],
++  parts: [],
++} as never), true);
++assert.equal(fixtureHasCustomMeshes({
++  models: [{ modelId: 'a', metadata: {} }],
++  parts: [],
++} as never), false);
++console.log('fixtureCustomMesh.test ok');
+diff --git a/src/fixtures/fixtureCustomMesh.ts b/src/fixtures/fixtureCustomMesh.ts
+new file mode 100644
+index 0000000..ee754fa
+--- /dev/null
++++ b/src/fixtures/fixtureCustomMesh.ts
+@@ -0,0 +1,9 @@
++import type { FixtureDefinition } from '@rebus-industries/prism-shared';
++
++/** True when any model carries a custom replaced mesh (`metadata.replaced`). */
++export function fixtureHasCustomMeshes(definition: FixtureDefinition | null | undefined): boolean {
++  return (definition?.models ?? []).some((m) => {
++    const meta = m.metadata as { replaced?: unknown } | undefined;
++    return meta?.replaced === true;
++  });
++}
