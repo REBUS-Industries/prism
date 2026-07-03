@@ -65,6 +65,11 @@ const editTags = ref('');
 
 const deleteBlock = ref<{ texture: Texture; materials: Array<{ id: string; name: string }> } | null>(null);
 
+const cleaningUnused = ref(false);
+const cleanupMessage = ref<string | null>(null);
+
+const unusedOnPageCount = computed(() => textures.value.filter((t) => t.referenceCount === 0).length);
+
 const availableTags = computed<string[]>(() => {
   const set = new Set<string>();
   for (const t of textures.value) for (const tag of t.tags) set.add(tag);
@@ -233,6 +238,32 @@ async function removeTexture(t: Texture): Promise<void> {
   }
 }
 
+async function cleanupUnusedTextures(): Promise<void> {
+  cleaningUnused.value = true;
+  cleanupMessage.value = null;
+  error.value = null;
+  try {
+    const preview = await texturesApi.cleanupUnused({ dryRun: true });
+    if (!preview.deleted) {
+      cleanupMessage.value = 'No unused textures to remove.';
+      return;
+    }
+    const noun = preview.deleted === 1 ? 'texture' : 'textures';
+    if (!confirm(
+      `Remove ${preview.deleted} unused ${noun} from the library?\n\n`
+      + 'Only textures not referenced by any material are deleted. This cannot be undone.',
+    )) return;
+
+    const res = await texturesApi.cleanupUnused();
+    cleanupMessage.value = `Removed ${res.deleted} unused ${res.deleted === 1 ? 'texture' : 'textures'}.`;
+    await load(true);
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'cleanup failed';
+  } finally {
+    cleaningUnused.value = false;
+  }
+}
+
 onMounted(() => void load(true));
 onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 </script>
@@ -240,7 +271,16 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 <template>
   <div class="h-row">
     <h1 class="flex-1">Textures</h1>
-    <button class="primary" :disabled="uploading" @click="fileInput?.click()">
+    <button
+      class="cleanup-btn"
+      :disabled="cleaningUnused || uploading"
+      :title="unusedOnPageCount ? `${unusedOnPageCount} unused on this page` : 'Remove textures not used by any material'"
+      @click="cleanupUnusedTextures"
+    >
+      <Icon name="cleaning_services" :size="16" />
+      {{ cleaningUnused ? 'Cleaning…' : 'Clean up unused' }}
+    </button>
+    <button class="primary" :disabled="uploading || cleaningUnused" @click="fileInput?.click()">
       <Icon name="upload" :size="16" />
       {{ uploading ? 'Uploading…' : 'Upload textures' }}
     </button>
@@ -270,6 +310,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
     <p class="subtle">PNG / JPG / TGA / EXR / HDR / TIFF · max 50&nbsp;MB each</p>
   </div>
   <div v-if="uploadError" class="error-box mt-sm">{{ uploadError }}</div>
+  <div v-if="cleanupMessage" class="info-box mt-sm">{{ cleanupMessage }}</div>
 
   <div class="toolbar mt">
     <input
@@ -398,6 +439,24 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
 <style scoped>
 h1 { font-size: 22px; margin: 0; }
 .small { font-size: 12px; }
+.cleanup-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cleanup-btn:hover:not(:disabled) {
+  border-color: var(--orbit-primary);
+  color: var(--orbit-primary);
+}
+.cleanup-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .toolbar { display: flex; gap: 8px; }
 .slot-filter-row {
   display: flex;
