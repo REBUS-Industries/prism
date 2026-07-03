@@ -22,6 +22,7 @@ import {
   listModels,
   listProjects,
   OrbitClientError,
+  purgeModelsVersionsBefore,
   resolveModelVersion,
   testConnection,
   type OrbitTarget,
@@ -145,6 +146,39 @@ const plugin: FastifyPluginAsync = async (app) => {
     try {
       const ok = await deleteModelVersions(target, req.params.projectId, versionIds);
       return reply.send({ target, projectId: req.params.projectId, ok, deletedCount: versionIds.length });
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // POST /api/orbit/projects/:projectId/versions/purge-before — bulk delete old versions
+  app.post<{
+    Params: { projectId: string };
+    Body: { target?: string; before?: string; modelIds?: string[]; dryRun?: boolean };
+  }>('/projects/:projectId/versions/purge-before', async (req, reply) => {
+    const target = pickTarget(req.body ?? {});
+    const beforeRaw = typeof req.body?.before === 'string' ? req.body.before.trim() : '';
+    const beforeMs = Date.parse(beforeRaw);
+    if (!beforeRaw || !Number.isFinite(beforeMs)) {
+      return reply.code(400).send({ error: 'before must be a valid ISO date/time' });
+    }
+    const modelIds = Array.isArray(req.body?.modelIds)
+      ? req.body.modelIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : [];
+    if (!modelIds.length) return reply.code(400).send({ error: 'modelIds is required' });
+    if (modelIds.length > 500) {
+      return reply.code(400).send({ error: 'modelIds exceeds maximum of 500 per request' });
+    }
+    const dryRun = req.body?.dryRun === true;
+    try {
+      const result = await purgeModelsVersionsBefore(
+        target,
+        req.params.projectId,
+        modelIds,
+        new Date(beforeMs),
+        dryRun,
+      );
+      return reply.send({ target, projectId: req.params.projectId, ...result });
     } catch (err) {
       return errorReply(reply, err);
     }

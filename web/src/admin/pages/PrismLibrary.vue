@@ -28,6 +28,7 @@ import {
   type FixtureOrigin,
   type FixtureDefinition,
   type OrbitVersion,
+  type FixtureOrbitRef,
 } from '../../shared/api';
 
 const router = useRouter();
@@ -91,6 +92,28 @@ const loadingOrbitVersions = ref(false);
 const orbitVersionsError = ref<string | null>(null);
 const deletingOrbitVersionId = ref<string | null>(null);
 let orbitVersionsReq = 0;
+
+type OrbitFixtureTarget = {
+  fixtureId: string;
+  label: string;
+  target: FixtureOrbitRef['target'];
+  projectId: string;
+  modelId: string;
+};
+
+const ORBIT_REF_BATCH = 12;
+
+const showPurgeOrbitVersions = ref(false);
+const purgeBeforeDate = ref('');
+const purgePreviewLoading = ref(false);
+const purgePreview = ref<{ fixtures: number; versions: number } | null>(null);
+const purgePreviewError = ref<string | null>(null);
+const purgingOrbitVersions = ref(false);
+const purgeDone = ref(false);
+const purgeCancelled = ref(false);
+const purgeProgress = ref({ done: 0, total: 0, current: '' });
+const purgeDeleted = ref(0);
+const purgeFailures = ref<RepublishFailure[]>([]);
 
 const ORIGIN_CHIPS: Array<{ key: OriginFilter; label: string }> = [
   { key: 'all', label: 'All' },
@@ -185,6 +208,16 @@ const republishSkipped = computed(() =>
 const republishProgressPct = computed(() => {
   const { done, total } = republishProgress.value;
   return total > 0 ? Math.round((done / total) * 100) : 0;
+});
+
+const purgeProgressPct = computed(() => {
+  const { done, total } = purgeProgress.value;
+  return total > 0 ? Math.round((done / total) * 100) : 0;
+});
+
+const purgeCutoffLabel = computed(() => {
+  const cutoff = parsePurgeCutoff(purgeBeforeDate.value);
+  return cutoff ? cutoff.toLocaleDateString() : '';
 });
 
 async function load(): Promise<void> {
@@ -313,6 +346,181 @@ async function deleteOrbitVersion(version: OrbitVersion): Promise<void> {
   } finally {
     deletingOrbitVersionId.value = null;
   }
+}
+
+function defaultPurgeBeforeDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parsePurgeCutoff(dateStr: string): Date | null {
+  if (!dateStr.trim()) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+
+async function resolveOrbitFixtureTargets(): Promise<OrbitFixtureTarget[]> {
+  type Row = FixtureListItem & { definition?: FixtureDefinition | null };
+  const candidates = fixtures.value.filter((f) => fixtureHasOrbitPublish(f)) as Row[];
+  const missing = candidates.filter((f) => !readFixtureOrbitRef(f.definition));
+  for (let i = 0; i < missing.length; i += ORBIT_REF_BATCH) {
+    const chunk = missing.slice(i, i + ORBIT_REF_BATCH);
+    await Promise.all(chunk.map(async (f) => {
+      try {
+        const detail = await fixturesApi.get(f.id);
+        upsert(detail.fixture);
+      } catch {
+        /* non-fatal */
+      }
+    }));
+  }
+  const out: OrbitFixtureTarget[] = [];
+  for (const f of candidates) {
+    const ref = readFixtureOrbitRef(f.definition);
+    if (!ref) continue;
+    out.push({
+      fixtureId: f.id,
+      label: fixtureLabel(f),
+      target: ref.target,
+      projectId: ref.projectId,
+      modelId: ref.modelId,
+    });
+  }
+  return out;
+}
+
+function groupOrbitTargets(targets: OrbitFixtureTarget[]) {
+  const map = new Map<string, { target: FixtureOrbitRef['target']; projectId: string; modelIds: string[] }>();
+  for (const t of targets) {
+    const key = `${t.target}:${t.projectId}`;
+    let group = map.get(key);
+    if (!group) {
+      group = { target: t.target, projectId: t.projectId, modelIds: [] };
+      map.set(key, group);
+    }
+    if (!group.modelIds.includes(t.modelId)) group.modelIds.push(t.modelId);
+  }
+  return [...map.values()];
+}
+
+function resetPurgeState(): void {
+  purgeDone.value = false;
+  purgeCancelled.value = false;
+  purgeProgress.value = { done: 0, total: 0, current: '' };
+  purgeDeleted.value = 0;
+  purgeFailures.value = [];
+}
+
+function openPurgeOrbitVersions(): void {
+  resetPurgeState();
+  purgeBeforeDate.value = defaultPurgeBeforeDate();
+  purgePreview.value = null;
+  purgePreviewError.value = null;
+  showPurgeOrbitVersions.value = true;
+  void runPurgeOrbitPreview();
+}
+
+function onPurgeModalClose(): void {
+  if (purgingOrbitVersions.value) {
+    purgeCancelled.value = true;
+    return;
+  }
+  showPurgeOrbitVersions.value = false;
+}
+
+async function runPurgeOrbitPreview(): Promise<void> {
+  const cutoff = parsePurgeCutoff(purgeBeforeDate.value);
+  if (!cutoff) {
+    purgePreviewError.value = 'Choose a valid date.';
+    purgePreview.value = null;
+    return;
+  }
+  purgePreviewLoading.value = true;
+  purgePreviewError.value = null;
+  try {
+    const targets = await resolveOrbitFixtureTargets();
+    if (!targets.length) {
+      purgePreview.value = { fixtures: 0, versions: 0 };
+      return;
+    }
+    let versions = 0;
+    let fixtures = 0;
+    for (const group of groupOrbitTargets(targets)) {
+      const res = await orbitApi.purgeVersionsBefore(group.target, group.projectId, {
+        before: cutoff.toISOString(),
+        modelIds: group.modelIds,
+        dryRun: true,
+      });
+      versions += res.versionCount;
+      fixtures += res.modelsWithDeletions;
+    }
+    purgePreview.value = { fixtures, versions };
+  } catch (err) {
+    purgePreviewError.value = (err as ApiError).message ?? 'preview failed';
+    purgePreview.value = null;
+  } finally {
+    purgePreviewLoading.value = false;
+  }
+}
+
+async function runPurgeOrbitVersions(): Promise<void> {
+  const cutoff = parsePurgeCutoff(purgeBeforeDate.value);
+  if (!cutoff || purgingOrbitVersions.value) return;
+  const targets = await resolveOrbitFixtureTargets();
+  if (!targets.length) return;
+
+  purgingOrbitVersions.value = true;
+  purgeDone.value = false;
+  purgeCancelled.value = false;
+  purgeProgress.value = { done: 0, total: targets.length, current: '' };
+  purgeDeleted.value = 0;
+  purgeFailures.value = [];
+  error.value = null;
+
+  for (let i = 0; i < targets.length; i++) {
+    if (purgeCancelled.value) break;
+    const t = targets[i]!;
+    purgeProgress.value = {
+      done: i,
+      total: targets.length,
+      current: t.label,
+    };
+    try {
+      const res = await orbitApi.purgeVersionsBefore(t.target, t.projectId, {
+        before: cutoff.toISOString(),
+        modelIds: [t.modelId],
+        dryRun: false,
+      });
+      purgeDeleted.value += res.deletedCount;
+      for (const failure of res.failures) {
+        purgeFailures.value.push({
+          id: t.fixtureId,
+          label: t.label,
+          message: failure.error,
+        });
+      }
+    } catch (err) {
+      purgeFailures.value.push({
+        id: t.fixtureId,
+        label: t.label,
+        message: (err as ApiError).message ?? 'purge failed',
+      });
+    }
+  }
+
+  purgeProgress.value = {
+    done: purgeCancelled.value ? purgeProgress.value.done : targets.length,
+    total: targets.length,
+    current: '',
+  };
+  purgeDone.value = true;
+  purgingOrbitVersions.value = false;
+  if (selectedId.value) void loadSelectedOrbitVersions();
 }
 
 function openEditor(id: string, query?: Record<string, string>): void {
@@ -587,6 +795,14 @@ onMounted(() => {
           @click="openRepublishAll"
         >
           <Icon name="cloud_upload" :size="16" /> Republish all
+        </button>
+        <button
+          class="btn-outline"
+          :disabled="loading || purgingOrbitVersions || !orbitPublishedCount"
+          :title="!orbitPublishedCount ? 'No fixtures published to Orbit yet' : 'Delete Orbit versions older than a date across all library fixtures'"
+          @click="openPurgeOrbitVersions"
+        >
+          <Icon name="history" :size="16" /> Purge old Orbit versions
         </button>
         <RouterLink :to="{ name: 'fixtures' }" class="btn-primary link-btn">
           <Icon name="travel_explore" :size="16" /> Browse GDTF Share
@@ -920,6 +1136,88 @@ onMounted(() => {
           @click="runRepublishAll"
         >
           <Icon name="cloud_upload" :size="14" /> Start republish
+        </button>
+      </template>
+    </Modal>
+
+    <Modal
+      v-if="showPurgeOrbitVersions"
+      title="Purge old Orbit versions"
+      :subtitle="purgeDone ? 'Bulk purge finished' : `${orbitPublishedCount} fixtures on Orbit`"
+      :max-width="560"
+      @close="onPurgeModalClose"
+    >
+      <div v-if="!purgeDone && !purgingOrbitVersions" class="republish-intro">
+        <p class="muted small">
+          Permanently deletes Orbit model versions created before the selected date for every
+          fixture in the PRISM library that is published to Orbit. At least one version is always
+          kept per model.
+        </p>
+        <label class="purge-date-field">
+          <span class="purge-date-label">Delete versions older than</span>
+          <input
+            v-model="purgeBeforeDate"
+            class="purge-date-input"
+            type="date"
+            :disabled="purgePreviewLoading"
+            @change="runPurgeOrbitPreview"
+          >
+        </label>
+        <p v-if="purgePreviewLoading" class="muted small">Calculating impact…</p>
+        <p v-else-if="purgePreviewError" class="orbit-versions-error">{{ purgePreviewError }}</p>
+        <ul v-else-if="purgePreview" class="republish-summary">
+          <li><strong>{{ purgePreview.versions }}</strong> version{{ purgePreview.versions === 1 ? '' : 's' }} to delete</li>
+          <li><strong>{{ purgePreview.fixtures }}</strong> fixture model{{ purgePreview.fixtures === 1 ? '' : 's' }} affected</li>
+          <li v-if="purgeCutoffLabel"><span class="muted">Before {{ purgeCutoffLabel }}</span></li>
+        </ul>
+        <p v-if="purgePreview && !purgePreview.versions" class="muted small">
+          No Orbit versions match this cutoff.
+        </p>
+        <p v-else class="muted small">
+          This cannot be undone. PRISM may still reference deleted version ids until fixtures are republished.
+        </p>
+      </div>
+
+      <div v-else class="republish-progress">
+        <div class="progress-bar" aria-hidden="true">
+          <div class="progress-fill" :style="{ width: `${purgeProgressPct}%` }" />
+        </div>
+        <p class="republish-status">
+          <template v-if="purgingOrbitVersions">
+            {{ purgeProgress.done + 1 }} / {{ purgeProgress.total }}
+            <span v-if="purgeProgress.current" class="muted"> — {{ purgeProgress.current }}</span>
+          </template>
+          <template v-else-if="purgeCancelled">
+            Stopped after {{ purgeProgress.done }} of {{ purgeProgress.total }}.
+          </template>
+          <template v-else>
+            Completed {{ purgeProgress.total }} fixtures.
+          </template>
+        </p>
+        <p class="republish-result">
+          <span class="ok-count">{{ purgeDeleted }} deleted</span>
+          <span v-if="purgeFailures.length" class="fail-count">{{ purgeFailures.length }} failed</span>
+        </p>
+        <ul v-if="purgeFailures.length" class="republish-failures">
+          <li v-for="item in purgeFailures" :key="`${item.id}-${item.message}`">
+            <strong>{{ item.label }}</strong>
+            <span class="muted"> — {{ item.message }}</span>
+          </li>
+        </ul>
+      </div>
+
+      <template #footer>
+        <button type="button" class="btn-cancel" @click="onPurgeModalClose">
+          {{ purgingOrbitVersions ? 'Stop' : 'Close' }}
+        </button>
+        <button
+          v-if="!purgeDone && !purgingOrbitVersions"
+          type="button"
+          class="btn-save danger-save"
+          :disabled="purgePreviewLoading || !purgePreview?.versions"
+          @click="runPurgeOrbitVersions"
+        >
+          <Icon name="delete" :size="14" /> Delete old versions
         </button>
       </template>
     </Modal>
@@ -1512,6 +1810,37 @@ onMounted(() => {
   list-style: none;
 }
 .republish-failures li + li { margin-top: 6px; }
+
+.purge-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.purge-date-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.purge-date-input {
+  width: 100%;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: inherit;
+  font: inherit;
+}
+.danger-save {
+  background: var(--color-error, #ef4444);
+  border-color: var(--color-error, #ef4444);
+}
+.danger-save:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #dc2626;
+}
 
 .lib-footer {
   display: flex;
