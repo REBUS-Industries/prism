@@ -398,15 +398,7 @@ async function resetToGdtf(): Promise<void> {
   error.value = null;
   carryReport.value = [];
   try {
-    const shareRid = activeStoredVersion.value?.gdtfShareRid;
-    if (shareRid) {
-      await fixturesApi.downloadVersion(props.id, shareRid, {
-        carryEdits: false,
-        modelQuality: modelQuality.value,
-      });
-    } else {
-      await fixturesApi.resetToGdtf(props.id, { modelQuality: modelQuality.value });
-    }
+    await fixturesApi.resetToGdtf(props.id, { modelQuality: modelQuality.value });
     assemblyRevision.value += 1;
     await reload();
     void checkForUpdates();

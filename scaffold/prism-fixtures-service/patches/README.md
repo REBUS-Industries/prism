@@ -43,16 +43,20 @@ the editor preview and the published Orbit mesh stay in sync.
 Pairs with the monorepo **Reset to GDTF** button and **1:1 custom mesh**
 viewer rules.
 
-- `POST /api/fixtures/:id/reset-gdtf` — re-import active GDTF revision/package
-  with `carryEdits: false` (discards part transforms, custom meshes, materials,
-  IES, placement, display name, etc.).
-- `reimportFixtureMeshes(..., carryEdits?)` — optional third arg; `false`
-  skips `carryForwardEdits` for uploaded/manual fixtures.
-- Orbit bake: `metadata.replaced` models skip glTF→GDTF wrap/scale; mesh-offset
-  rotation is ignored (translation only), matching the web viewer.
+**Note:** `POST /api/fixtures/:id/reset-gdtf` is already on `main` (PR #89).
+This patch adds the **full reset** behaviour — re-parse and overwrite even when
+the GDTF version row already exists, and strip custom mesh metadata.
 
-Apply together with (or after) `fixtures-mesh-offset.patch` if that patch is
-not yet on `main`.
+- `importGdtfBytes` no longer short-circuits when `carryEdits: false` — forces
+  a full re-parse and overwrites the working fixture + version snapshot.
+- `definitionAfterGdtfReset()` strips `replaced`, `meshOffset`, `displayName`, etc.
+- `registerGdtfAssets(..., { cleanModelMetadata: true })` — replace model metadata
+  without spreading user flags.
+- `reimportFixtureMeshes(..., carryEdits?)` — when `false`, skip
+  `carryForwardEdits` and overwrite both version + fixture rows with the reset
+  definition.
+
+Apply on top of current `main` (includes reset route from PR #89).
 
 ## fixtures-flip-normals.patch
 
