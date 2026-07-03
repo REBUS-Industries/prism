@@ -9,23 +9,25 @@
  * history + provenance back to GDTF-Share, check for upstream updates, and
  * export the connector/ORBIT payload.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import Icon from '../../shared/Icon.vue';
 import Modal from '../../shared/Modal.vue';
 import FixtureTypeSelect from '../components/FixtureTypeSelect.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { duplicateFixtureName as defaultDuplicateName, fixtureLabel } from '../utils/fixtureLabel';
-import { enrichFixtureListItem, enrichFixturesOrbitFromDetails, fixtureHasOrbitPublish } from '../utils/fixtureOrbitUrl';
+import { enrichFixtureListItem, enrichFixturesOrbitFromDetails, fixtureHasOrbitPublish, readFixtureOrbitRef } from '../utils/fixtureOrbitUrl';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import {
   fixturesApi,
+  orbitApi,
   FIXTURE_ORIGIN_LABELS,
   type ApiError,
   type FixtureConnectorExport,
   type FixtureListItem,
   type FixtureOrigin,
   type FixtureDefinition,
+  type OrbitVersion,
 } from '../../shared/api';
 
 const router = useRouter();
@@ -81,6 +83,14 @@ const republishCancelled = ref(false);
 const republishProgress = ref({ done: 0, total: 0, current: '' });
 const republishSucceeded = ref(0);
 const republishFailures = ref<RepublishFailure[]>([]);
+
+const selectedDefinition = ref<FixtureDefinition | null>(null);
+const orbitVersions = ref<OrbitVersion[]>([]);
+const orbitVersionsTotal = ref(0);
+const loadingOrbitVersions = ref(false);
+const orbitVersionsError = ref<string | null>(null);
+const deletingOrbitVersionId = ref<string | null>(null);
+let orbitVersionsReq = 0;
 
 const ORIGIN_CHIPS: Array<{ key: OriginFilter; label: string }> = [
   { key: 'all', label: 'All' },
@@ -139,6 +149,15 @@ const groupedFixtures = computed(() => {
 });
 
 const selected = computed(() => fixtures.value.find((f) => f.id === selectedId.value) ?? null);
+
+const selectedOrbitRef = computed(() => readFixtureOrbitRef(selectedDefinition.value));
+
+const orbitVersionsUrl = computed(() => {
+  const ref = selectedOrbitRef.value;
+  if (!ref) return null;
+  const base = ref.target === 'dev' ? 'https://orbit-dev.rebus.industries' : 'https://orbit.rebus.industries';
+  return `${base}/projects/${ref.projectId}/models/${ref.modelId}/versions`;
+});
 
 const totalCount = computed(() => fixtures.value.length);
 const withPreview = computed(() => fixtures.value.filter((f) => f.hasPreview).length);
@@ -225,6 +244,75 @@ async function bulkCheckUpdates(): Promise<void> {
 
 function selectFixture(f: FixtureListItem): void {
   selectedId.value = f.id;
+}
+
+async function loadSelectedOrbitVersions(): Promise<void> {
+  const id = selectedId.value;
+  orbitVersions.value = [];
+  orbitVersionsTotal.value = 0;
+  orbitVersionsError.value = null;
+  selectedDefinition.value = null;
+  if (!id) return;
+
+  const reqId = ++orbitVersionsReq;
+  loadingOrbitVersions.value = true;
+  try {
+    const full = await fixturesApi.get(id);
+    if (reqId !== orbitVersionsReq) return;
+    selectedDefinition.value = full.fixture.definition ?? null;
+    upsert(full.fixture);
+
+    const ref = readFixtureOrbitRef(selectedDefinition.value);
+    if (!ref) return;
+
+    const res = await orbitApi.modelVersions(ref.target, ref.projectId, ref.modelId);
+    if (reqId !== orbitVersionsReq) return;
+    orbitVersions.value = res.items;
+    orbitVersionsTotal.value = res.totalCount;
+  } catch (err) {
+    if (reqId !== orbitVersionsReq) return;
+    orbitVersionsError.value = (err as ApiError).message ?? 'failed to load Orbit versions';
+  } finally {
+    if (reqId === orbitVersionsReq) loadingOrbitVersions.value = false;
+  }
+}
+
+function formatOrbitVersionDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+function isLatestOrbitVersion(index: number): boolean {
+  return index === 0;
+}
+
+function isStoredOrbitVersion(versionId: string): boolean {
+  return selectedOrbitRef.value?.versionId === versionId;
+}
+
+async function deleteOrbitVersion(version: OrbitVersion): Promise<void> {
+  const ref = selectedOrbitRef.value;
+  if (!ref || deletingOrbitVersionId.value) return;
+  if (orbitVersions.value.length <= 1) {
+    orbitVersionsError.value = 'Cannot delete the only Orbit version.';
+    return;
+  }
+  const label = version.message?.trim() || version.id.slice(0, 8);
+  if (!window.confirm(`Delete Orbit version "${label}"? This cannot be undone.`)) return;
+
+  deletingOrbitVersionId.value = version.id;
+  orbitVersionsError.value = null;
+  try {
+    await orbitApi.deleteModelVersions(ref.target, ref.projectId, [version.id]);
+    await loadSelectedOrbitVersions();
+  } catch (err) {
+    orbitVersionsError.value = (err as ApiError).message ?? 'failed to delete Orbit version';
+  } finally {
+    deletingOrbitVersionId.value = null;
+  }
 }
 
 function openEditor(id: string, query?: Record<string, string>): void {
@@ -459,7 +547,12 @@ async function runRepublishAll(): Promise<void> {
   };
   republishDone.value = true;
   republishingAll.value = false;
+  if (selectedId.value) void loadSelectedOrbitVersions();
 }
+
+watch(selectedId, () => {
+  void loadSelectedOrbitVersions();
+});
 
 onMounted(() => {
   void store.ensureLoaded();
@@ -705,6 +798,50 @@ onMounted(() => {
             <button type="button" class="btn-export" @click="openExport(selected.id)">
               <Icon name="ios_share" :size="15" /> View export payload
             </button>
+
+            <div v-if="selectedOrbitRef || loadingOrbitVersions" class="orbit-versions-block">
+              <div class="orbit-versions-head">
+                <span class="orbit-versions-title">Orbit versions</span>
+                <a
+                  v-if="orbitVersionsUrl"
+                  class="orbit-versions-link"
+                  :href="orbitVersionsUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open in Orbit
+                </a>
+              </div>
+              <p v-if="selectedOrbitRef" class="muted small orbit-model-id">
+                Model <span class="mono">{{ selectedOrbitRef.modelId }}</span>
+                <span v-if="orbitVersionsTotal"> · {{ orbitVersionsTotal }} version{{ orbitVersionsTotal === 1 ? '' : 's' }}</span>
+              </p>
+              <div v-if="loadingOrbitVersions" class="muted small">Loading Orbit versions…</div>
+              <div v-else-if="orbitVersionsError" class="orbit-versions-error">{{ orbitVersionsError }}</div>
+              <ul v-else-if="orbitVersions.length" class="orbit-version-list">
+                <li v-for="(v, idx) in orbitVersions" :key="v.id">
+                  <div class="orbit-version-main">
+                    <span class="mono orbit-version-id">{{ v.id.slice(0, 8) }}</span>
+                    <span class="muted small orbit-version-date">{{ formatOrbitVersionDate(v.createdAt) }}</span>
+                    <span v-if="isLatestOrbitVersion(idx)" class="pill orbit-pill latest">Latest</span>
+                    <span v-if="isStoredOrbitVersion(v.id)" class="pill orbit-pill stored">PRISM ref</span>
+                  </div>
+                  <p v-if="v.message?.trim()" class="orbit-version-msg muted small">{{ v.message }}</p>
+                  <button
+                    v-if="orbitVersions.length > 1"
+                    type="button"
+                    class="btn-version-delete"
+                    :disabled="deletingOrbitVersionId === v.id"
+                    :title="isLatestOrbitVersion(idx) ? 'Delete latest — previous version becomes latest' : 'Delete this version'"
+                    @click="deleteOrbitVersion(v)"
+                  >
+                    <Icon name="delete" :size="14" />
+                  </button>
+                </li>
+              </ul>
+              <p v-else-if="selectedOrbitRef" class="muted small">No Orbit versions found.</p>
+            </div>
+            <p v-else class="muted small orbit-not-published">Not published to Orbit yet.</p>
           </div>
         </div>
       </aside>
@@ -1229,6 +1366,103 @@ onMounted(() => {
   cursor: pointer;
 }
 .btn-export:hover { background: var(--orbit-primary); color: #fff; }
+
+.orbit-versions-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+.orbit-versions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.orbit-versions-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.orbit-versions-link {
+  font-size: 11px;
+  color: var(--orbit-primary);
+  text-decoration: none;
+}
+.orbit-versions-link:hover { text-decoration: underline; }
+.orbit-model-id { margin: 0 0 8px; }
+.orbit-versions-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error, #ef4444);
+  font-size: 11px;
+}
+.orbit-version-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.orbit-version-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+.orbit-version-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.orbit-version-id { font-size: 11px; }
+.orbit-version-date { font-size: 10px; }
+.orbit-version-msg { margin: 4px 0 0; width: 100%; }
+.orbit-pill {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.orbit-pill.latest {
+  background: var(--orbit-primary-fade);
+  color: var(--orbit-primary);
+}
+.orbit-pill.stored {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--color-success, #16a34a);
+}
+.btn-version-delete {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.btn-version-delete:hover:not(:disabled) {
+  border-color: var(--color-error, #ef4444);
+  color: var(--color-error, #ef4444);
+}
+.btn-version-delete:disabled { opacity: 0.5; cursor: not-allowed; }
+.orbit-not-published { margin: 10px 0 0; }
 
 .republish-intro { display: flex; flex-direction: column; gap: 10px; }
 .republish-summary {

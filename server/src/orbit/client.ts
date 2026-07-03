@@ -48,6 +48,15 @@ export interface OrbitModelSummary {
   updatedAt?: string | null;
 }
 
+export interface OrbitVersionSummary {
+  id: string;
+  message?: string | null;
+  createdAt: string;
+  sourceApplication?: string | null;
+  referencedObject?: string | null;
+  authorName?: string | null;
+}
+
 export class OrbitClientError extends Error {
   constructor(public status: number, message: string, public detail?: unknown) {
     super(message);
@@ -312,6 +321,87 @@ async function getLatestVersionDescriptor(
  * Resolve a model version to its root object hash for third-party viewers.
  * When `versionId` is omitted, uses the latest commit on the model.
  */
+const MODEL_VERSIONS_QUERY = `query ModelVersions($projectId: String!, $modelId: String!, $limit: Int!, $cursor: String) {
+  project(id: $projectId) {
+    model(id: $modelId) {
+      id
+      name
+      versions(limit: $limit, cursor: $cursor) {
+        totalCount
+        cursor
+        items {
+          id
+          message
+          createdAt
+          sourceApplication
+          referencedObject
+          authorUser { name }
+        }
+      }
+    }
+  }
+}`;
+
+interface ModelVersionsResult {
+  project: {
+    model: {
+      id: string;
+      name: string;
+      versions: {
+        totalCount: number;
+        cursor: string | null;
+        items: Array<{
+          id: string;
+          message?: string | null;
+          createdAt: string;
+          sourceApplication?: string | null;
+          referencedObject?: string | null;
+          authorUser?: { name?: string | null } | null;
+        }>;
+      };
+    } | null;
+  } | null;
+}
+
+/** List versions for a model (newest first). */
+export async function listModelVersions(
+  target: OrbitTarget,
+  projectId: string,
+  modelId: string,
+  opts: { limit?: number; cursor?: string } = {},
+): Promise<{
+  modelName: string;
+  totalCount: number;
+  cursor: string | null;
+  items: OrbitVersionSummary[];
+}> {
+  const creds = await getOrbitCreds(target);
+  if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
+
+  const data = await gql<ModelVersionsResult>(creds, MODEL_VERSIONS_QUERY, {
+    projectId,
+    modelId,
+    limit: opts.limit ?? 100,
+    cursor: opts.cursor ?? null,
+  });
+  if (!data.project) throw new OrbitClientError(404, `project ${projectId} not found`);
+  if (!data.project.model) throw new OrbitClientError(404, `model ${modelId} not found in project ${projectId}`);
+  const versions = data.project.model.versions;
+  return {
+    modelName: data.project.model.name,
+    totalCount: versions.totalCount,
+    cursor: versions.cursor,
+    items: versions.items.map((v) => ({
+      id: v.id,
+      message: v.message ?? null,
+      createdAt: v.createdAt,
+      sourceApplication: v.sourceApplication ?? null,
+      referencedObject: v.referencedObject ?? null,
+      authorName: v.authorUser?.name ?? null,
+    })),
+  };
+}
+
 export async function resolveModelVersion(
   target: OrbitTarget,
   projectId: string,
@@ -502,4 +592,32 @@ export async function createModel(
     input: { projectId, name, description: description ?? null },
   });
   return data.modelMutations.create;
+}
+
+const DELETE_VERSIONS_MUTATION = `mutation DeleteVersions($input: DeleteVersionsInput!) {
+  versionMutations {
+    delete(input: $input)
+  }
+}`;
+
+interface DeleteVersionsResult {
+  versionMutations: { delete: boolean };
+}
+
+/** Permanently delete one or more model versions on ORBIT. */
+export async function deleteModelVersions(
+  target: OrbitTarget,
+  projectId: string,
+  versionIds: string[],
+): Promise<boolean> {
+  const ids = [...new Set(versionIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) throw new OrbitClientError(400, 'versionIds is required');
+
+  const creds = await getOrbitCreds(target);
+  if (!creds) throw new OrbitClientError(412, `ORBIT ${target} credentials not configured`);
+
+  const data = await gql<DeleteVersionsResult>(creds, DELETE_VERSIONS_MUTATION, {
+    input: { projectId, versionIds: ids },
+  });
+  return data.versionMutations.delete;
 }

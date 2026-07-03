@@ -14,9 +14,11 @@ import { requireAuth } from '../auth/middleware.js';
 import {
   createModel as createModelFn,
   createProject as createProjectFn,
+  deleteModelVersions,
   fetchBlob,
   fetchObjectBatch,
   fetchObjectJson,
+  listModelVersions,
   listModels,
   listProjects,
   OrbitClientError,
@@ -113,6 +115,40 @@ const plugin: FastifyPluginAsync = async (app) => {
       }
     },
   );
+
+  // GET /api/orbit/projects/:projectId/models/:modelId/versions?target=&limit=&cursor=
+  app.get<{
+    Params: { projectId: string; modelId: string };
+    Querystring: { target?: string; limit?: string; cursor?: string };
+  }>('/projects/:projectId/models/:modelId/versions', async (req, reply) => {
+    const target = pickTarget(req.query);
+    const limit = clampInt(req.query.limit, 1, 200, 100);
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length ? req.query.cursor : undefined;
+    try {
+      const r = await listModelVersions(target, req.params.projectId, req.params.modelId, { limit, cursor });
+      return reply.send({ target, projectId: req.params.projectId, modelId: req.params.modelId, ...r });
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // POST /api/orbit/projects/:projectId/versions/delete — delete model versions
+  app.post<{
+    Params: { projectId: string };
+    Body: { target?: string; versionIds?: string[] };
+  }>('/projects/:projectId/versions/delete', async (req, reply) => {
+    const target = pickTarget(req.body ?? {});
+    const versionIds = Array.isArray(req.body?.versionIds)
+      ? req.body.versionIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : [];
+    if (!versionIds.length) return reply.code(400).send({ error: 'versionIds is required' });
+    try {
+      const ok = await deleteModelVersions(target, req.params.projectId, versionIds);
+      return reply.send({ target, projectId: req.params.projectId, ok, deletedCount: versionIds.length });
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
 
   /* ---------------------------------------------------------------------- */
   /* 3rd-party viewer proxy — Speckle ObjectLoader2 / @speckle/viewer       */

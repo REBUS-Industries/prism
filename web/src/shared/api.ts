@@ -691,6 +691,15 @@ export interface OrbitModel {
   updatedAt?: string | null;
 }
 
+export interface OrbitVersion {
+  id: string;
+  message?: string | null;
+  createdAt: string;
+  sourceApplication?: string | null;
+  referencedObject?: string | null;
+  authorName?: string | null;
+}
+
 export interface OrbitTestOk   { ok: true;  target: 'prod' | 'dev'; user: OrbitUser; serverInfo: OrbitServerInfo; }
 export interface OrbitTestFail { ok: false; target: 'prod' | 'dev'; reason: 'no-creds' | 'no-user'; error: string; serverInfo?: OrbitServerInfo; }
 
@@ -898,6 +907,32 @@ export const orbitApi = {
     api.post<{ target: string; projectId: string; model: OrbitModel }>(
       `/api/orbit/projects/${encodeURIComponent(projectId)}/models`,
       { target, name },
+    ),
+  modelVersions: (
+    target: 'prod' | 'dev',
+    projectId: string,
+    modelId: string,
+    limit = 100,
+  ) =>
+    api.get<{
+      target: string;
+      projectId: string;
+      modelId: string;
+      modelName: string;
+      totalCount: number;
+      cursor: string | null;
+      items: OrbitVersion[];
+    }>(
+      `/api/orbit/projects/${encodeURIComponent(projectId)}/models/${encodeURIComponent(modelId)}/versions?target=${target}&limit=${limit}`,
+    ),
+  deleteModelVersions: (
+    target: 'prod' | 'dev',
+    projectId: string,
+    versionIds: string[],
+  ) =>
+    api.post<{ target: string; projectId: string; ok: boolean; deletedCount: number }>(
+      `/api/orbit/projects/${encodeURIComponent(projectId)}/versions/delete`,
+      { target, versionIds },
     ),
   /** Resolve ORBIT version → root object hash for embedded viewers. */
   resolveViewerVersion: async (
