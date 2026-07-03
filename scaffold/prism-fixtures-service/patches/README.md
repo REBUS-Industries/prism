@@ -46,10 +46,11 @@ viewer rules.
 - `POST /api/fixtures/:id/reset-gdtf` — re-import active GDTF revision/package
   with `carryEdits: false` (discards part transforms, custom meshes, materials,
   IES, placement, display name, etc.).
+- `importGdtfBytes` no longer short-circuits when `carryEdits: false` — forces
+  a full re-parse and overwrites the working fixture + version snapshot.
+- `definitionAfterGdtfReset()` strips `replaced`, `meshOffset`, `displayName`, etc.
 - `reimportFixtureMeshes(..., carryEdits?)` — optional third arg; `false`
   skips `carryForwardEdits` for uploaded/manual fixtures.
-- Orbit bake: `metadata.replaced` models skip glTF→GDTF wrap/scale; mesh-offset
-  rotation is ignored (translation only), matching the web viewer.
 
 Apply together with (or after) `fixtures-mesh-offset.patch` if that patch is
 not yet on `main`.

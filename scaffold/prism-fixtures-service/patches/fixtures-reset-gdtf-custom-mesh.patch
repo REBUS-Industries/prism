@@ -1,3 +1,16 @@
+diff --git a/package.json b/package.json
+index 0a3bc2d..31209f3 100644
+--- a/package.json
++++ b/package.json
+@@ -8,7 +8,7 @@
+     "start": "node dist/main.js",
+     "dev": "tsx watch src/main.ts",
+     "diagnose:transforms": "tsx src/orbit/diagnoseFixtureTransforms.ts",
+-    "test": "npm run build && node dist/import/xmlEntityOptions.test.js && node dist/import/gdtfShareCatalog.test.js && node dist/fixtures/fixtureCategoryResolve.test.js && node dist/fixtures/fixtureGeometryReferenceResolve.test.js && node dist/fixtures/duplicateFixture.test.js && node dist/fixtures/connectorExport.test.js && node dist/import/gdtfFixtureParser.test.js && node dist/fixtures/fixtureDisplayName.test.js && node dist/import/glbDoubleSided.test.js && node dist/api/fixture-export-docs.test.js && node dist/orbit/fixtureMotionRigExport.test.js && node dist/orbit/orbitObjects.test.js && node dist/orbit/glbParser.test.js && node dist/orbit/fixtureMaterialsOrbit.test.js && node dist/orbit/meshGeometryFixups.test.js && node dist/orbit/fixtureTransformMatrix.test.js && node dist/orbit/gdtfPrimitiveMeshes.test.js && node dist/orbit/renderMaterialRegistry.test.js && node dist/orbit/fixtureGeometryPartModel.test.js && node dist/orbit/fixtureGeometryModeFilter.test.js && node dist/orbit/fixtureGeometryOrbit.test.js && node dist/orbit/orbitBlobUpload.test.js && node dist/orbit/fixtureMaterialProxies.test.js && node dist/orbit/fixtureInstanceProxies.test.js && node dist/orbit/fixturePublish.test.js && node dist/orbit/fixtureMotionAxisPublish.test.js && node dist/orbit/fixturePartTransformPublish.test.js"
++    "test": "npm run build && node dist/import/xmlEntityOptions.test.js && node dist/import/gdtfShareCatalog.test.js && node dist/fixtures/fixtureCategoryResolve.test.js && node dist/fixtures/fixtureGeometryReferenceResolve.test.js && node dist/fixtures/duplicateFixture.test.js && node dist/fixtures/connectorExport.test.js && node dist/import/gdtfFixtureParser.test.js && node dist/fixtures/fixtureDisplayName.test.js && node dist/import/glbDoubleSided.test.js && node dist/api/fixture-export-docs.test.js && node dist/orbit/fixtureMotionRigExport.test.js && node dist/orbit/orbitObjects.test.js && node dist/orbit/glbParser.test.js && node dist/orbit/fixtureMaterialsOrbit.test.js && node dist/orbit/meshGeometryFixups.test.js && node dist/orbit/fixtureTransformMatrix.test.js && node dist/orbit/gdtfPrimitiveMeshes.test.js && node dist/orbit/renderMaterialRegistry.test.js && node dist/orbit/fixtureGeometryPartModel.test.js && node dist/orbit/fixtureGeometryModeFilter.test.js && node dist/orbit/fixtureGeometryOrbit.test.js && node dist/orbit/orbitBlobUpload.test.js && node dist/orbit/fixtureMaterialProxies.test.js && node dist/orbit/fixtureInstanceProxies.test.js && node dist/orbit/fixturePublish.test.js && node dist/orbit/fixtureMotionAxisPublish.test.js && node dist/orbit/fixturePartTransformPublish.test.js && node dist/import/gdtfResetHelpers.test.js"
+   },
+   "dependencies": {
+     "@fastify/cookie": "^9.4.0",
 diff --git a/src/api/fixtures.ts b/src/api/fixtures.ts
 index 097c4b3..bcddc92 100644
 --- a/src/api/fixtures.ts
@@ -87,11 +100,180 @@ index 4baed1e..a04d4d1 100644
  export async function checkUpdatesForFixtureIds(
    ids: string[],
  ): Promise<Record<string, boolean>> {
+diff --git a/src/import/gdtfAssetRegistrar.ts b/src/import/gdtfAssetRegistrar.ts
+index 16abab3..63065a3 100644
+--- a/src/import/gdtfAssetRegistrar.ts
++++ b/src/import/gdtfAssetRegistrar.ts
+@@ -158,6 +158,8 @@ function contentTypeForImage(path: string): string {
+ 
+ export interface GdtfAssetRegistrationOptions {
+   modelQuality?: GdtfModelQuality;
++  /** When true, replace model.metadata with only GDTF asset refs (no user mesh flags). */
++  cleanModelMetadata?: boolean;
+ }
+ 
+ export async function registerGdtfAssets(
+@@ -186,12 +188,18 @@ export async function registerGdtfAssets(
+     if (!registered) continue;
+ 
+     model.storagePath = registered.storagePath;
+-    model.metadata = {
+-      ...model.metadata,
+-      mediaId: registered.mediaId,
+-      sourceFile: model.sourceFile,
+-      modelEntry,
+-    };
++    model.metadata = options.cleanModelMetadata
++      ? {
++          mediaId: registered.mediaId,
++          sourceFile: model.sourceFile,
++          modelEntry,
++        }
++      : {
++          ...model.metadata,
++          mediaId: registered.mediaId,
++          sourceFile: model.sourceFile,
++          modelEntry,
++        };
+ 
+     const size = (await readFile(registered.storagePath)).length;
+     if (!previewModelId || size > previewSize) {
+diff --git a/src/import/gdtfImporter.ts b/src/import/gdtfImporter.ts
+index 8612336..d43a105 100644
+--- a/src/import/gdtfImporter.ts
++++ b/src/import/gdtfImporter.ts
+@@ -24,6 +24,7 @@ import {
+ } from './modelEntrySelection.js';
+ import { sha256Hex, getShareItemByRid } from './gdtfShareClient.js';
+ import { carryForwardEdits } from './fixtureEditCarryForward.js';
++import { definitionAfterGdtfReset } from './gdtfResetHelpers.js';
+ 
+ const DATA_DIR = process.env.DATA_DIR ?? '/data/prism';
+ const FIXTURES_ROOT = resolve(DATA_DIR, 'fixtures');
+@@ -199,7 +200,7 @@ export async function importGdtfBytes(
+     );
+     const qualityChanged = requestedQuality != null && storedQuality !== requestedQuality;
+ 
+-    if (existingVer && versionImportComplete(existingVer) && !qualityChanged) {
++    if (existingVer && versionImportComplete(existingVer) && !qualityChanged && carryEdits) {
+       if (activate && fixtureRow.activeVersionId !== existingVer.id) {
+         const [updated] = await db.update(fixtureTypes).set({
+           activeVersionId: existingVer.id,
+@@ -293,6 +294,7 @@ export async function importGdtfBytes(
+   try {
+     assetReg = await registerGdtfAssets(fixtureRow.id, rawDefinition, pkg, DATA_DIR, {
+       modelQuality: meta.modelQuality,
++      cleanModelMetadata: !carryEdits,
+     });
+   } catch (err) {
+     // Never let asset enrichment break the import — keep the parsed definition.
+@@ -314,6 +316,9 @@ export async function importGdtfBytes(
+       );
+       effectiveDefinition = merged.definition;
+     }
++  } else if (!carryEdits) {
++    effectiveDefinition = definitionAfterGdtfReset(rawDefinition);
++    rawDefinition = effectiveDefinition;
+   }
+ 
+   let versionRow = await findVersionByHash(fixtureRow.id, hash);
+@@ -334,10 +339,11 @@ export async function importGdtfBytes(
+     if (!inserted) throw new Error('version insert failed');
+     versionRow = inserted;
+   } else if (
+-    (assetReg.previewModelId && !versionRow.previewModelId)
++    !carryEdits
++    || (assetReg.previewModelId && !versionRow.previewModelId)
+     || !versionImportComplete(versionRow)
+   ) {
+-    // Refresh a previously-empty version row with the freshly parsed data.
++    // Hard reset or refresh a previously-empty version row with freshly parsed data.
+     const [updatedVer] = await db.update(fixtureVersions).set({
+       definition: rawDefinition,
+       previewModelId: assetReg.previewModelId ?? versionRow.previewModelId,
+diff --git a/src/import/gdtfResetHelpers.test.ts b/src/import/gdtfResetHelpers.test.ts
+new file mode 100644
+index 0000000..129cdf8
+--- /dev/null
++++ b/src/import/gdtfResetHelpers.test.ts
+@@ -0,0 +1,25 @@
++import assert from 'node:assert/strict';
++import { definitionAfterGdtfReset } from '../import/gdtfResetHelpers.js';
++
++const reset = definitionAfterGdtfReset({
++  fixtureInformation: { manufacturer: 'M', fixtureName: 'F' },
++  parts: [],
++  models: [{
++    modelId: 'body',
++    name: 'Body',
++    metadata: {
++      mediaId: 'old-media',
++      replaced: true,
++      replacedFilename: 'custom.glb',
++      meshOffset: { position: { x: 1, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } },
++      sourceFile: 'models/body.gltf',
++    },
++  }],
++  metadata: { displayName: 'Pretty name' },
++} as never);
++
++assert.equal((reset.metadata as Record<string, unknown>).displayName, undefined);
++assert.equal(reset.models?.[0]?.metadata?.replaced, undefined);
++assert.equal(reset.models?.[0]?.metadata?.meshOffset, undefined);
++assert.equal(reset.models?.[0]?.metadata?.mediaId, 'old-media');
++console.log('gdtfResetHelpers.test ok');
+diff --git a/src/import/gdtfResetHelpers.ts b/src/import/gdtfResetHelpers.ts
+new file mode 100644
+index 0000000..91b78a3
+--- /dev/null
++++ b/src/import/gdtfResetHelpers.ts
+@@ -0,0 +1,33 @@
++import type { FixtureDefinition } from '@rebus-industries/prism-shared';
++
++const USER_MODEL_METADATA_KEYS = [
++  'replaced',
++  'replacedFilename',
++  'meshOffset',
++  'flipNormals',
++] as const;
++
++const USER_FIXTURE_METADATA_KEYS = [
++  'displayName',
++] as const;
++
++/** Drop PRISM user edits from a freshly parsed GDTF definition before persisting a reset. */
++export function definitionAfterGdtfReset(def: FixtureDefinition): FixtureDefinition {
++  const result = structuredClone(def) as FixtureDefinition;
++
++  if (result.metadata && typeof result.metadata === 'object') {
++    const meta = { ...(result.metadata as Record<string, unknown>) };
++    for (const key of USER_FIXTURE_METADATA_KEYS) delete meta[key];
++    result.metadata = meta;
++  }
++
++  for (const model of result.models ?? []) {
++    if (model.metadata && typeof model.metadata === 'object') {
++      const meta = { ...(model.metadata as Record<string, unknown>) };
++      for (const key of USER_MODEL_METADATA_KEYS) delete meta[key];
++      model.metadata = meta;
++    }
++  }
++
++  return result;
++}
 diff --git a/src/import/reimportFixtureMeshes.ts b/src/import/reimportFixtureMeshes.ts
-index bb7c725..4cfd39a 100644
+index bb7c725..d2eb71d 100644
 --- a/src/import/reimportFixtureMeshes.ts
 +++ b/src/import/reimportFixtureMeshes.ts
-@@ -26,6 +26,7 @@ const FIXTURES_ROOT = resolve(DATA_DIR, 'fixtures');
+@@ -14,6 +14,7 @@ import { extractGdtfPackage } from './gdtfPackageReader.js';
+ import { registerGdtfAssets } from './gdtfAssetRegistrar.js';
+ import { parseGdtfDescription } from './gdtfFixtureParser.js';
+ import { carryForwardEdits } from './fixtureEditCarryForward.js';
++import { definitionAfterGdtfReset } from './gdtfResetHelpers.js';
+ import {
+   detectAvailableModelQualities,
+   detectAvailableModelFormats,
+@@ -26,6 +27,7 @@ const FIXTURES_ROOT = resolve(DATA_DIR, 'fixtures');
  export async function reimportFixtureMeshes(
    fixtureTypeId: string,
    modelQuality: GdtfModelQuality,
@@ -99,14 +281,36 @@ index bb7c725..4cfd39a 100644
  ): Promise<{ fixture: typeof fixtureTypes.$inferSelect }> {
    const ftRows = await db.select().from(fixtureTypes)
      .where(and(eq(fixtureTypes.id, fixtureTypeId), isNull(fixtureTypes.deletedAt)))
-@@ -77,7 +78,9 @@ export async function reimportFixtureMeshes(
+@@ -67,7 +69,10 @@ export async function reimportFixtureMeshes(
+   const availableModelQualities = detectAvailableModelQualities(pkg.entries, sourceFiles);
+   const availableModelFormats = detectAvailableModelFormats(pkg.entries, sourceFiles);
+ 
+-  const assetReg = await registerGdtfAssets(ft.id, freshRaw, pkg, DATA_DIR, { modelQuality });
++  const assetReg = await registerGdtfAssets(ft.id, freshRaw, pkg, DATA_DIR, {
++    modelQuality,
++    cleanModelMetadata: !carryEdits,
++  });
+   assetReg.definition.metadata = {
+     ...assetReg.definition.metadata,
+     availableModelQualities,
+@@ -77,15 +82,17 @@ export async function reimportFixtureMeshes(
  
    const workingDef = ft.definition as FixtureDefinition;
    const oldRawDef = version.definition as FixtureDefinition;
 -  const carried = carryForwardEdits(workingDef, oldRawDef, assetReg.definition).definition;
-+  const carried = carryEdits
++  const freshDefinition = carryEdits
 +    ? carryForwardEdits(workingDef, oldRawDef, assetReg.definition).definition
-+    : assetReg.definition;
++    : definitionAfterGdtfReset(assetReg.definition);
  
    await db.update(fixtureVersions).set({
-     definition: assetReg.definition,
+-    definition: assetReg.definition,
++    definition: freshDefinition,
+     previewModelId: assetReg.previewModelId,
+   }).where(eq(fixtureVersions.id, version.id));
+ 
+   const [updated] = await db.update(fixtureTypes).set({
+-    definition: carried,
++    definition: freshDefinition,
+     previewModelId: assetReg.previewModelId,
+     updatedAt: new Date(),
+   }).where(eq(fixtureTypes.id, fixtureTypeId)).returning();
