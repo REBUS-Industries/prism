@@ -136,6 +136,7 @@ const orbitPatchAddress = ref<number | ''>('');
 const selectedPartId = ref<string | null>(null);
 
 const assemblyRevision = ref(0);
+const assemblyTransformRevision = ref(0);
 
 const gizmoMode = ref<'translate' | 'rotate' | 'scale'>('translate');
 
@@ -1012,10 +1013,12 @@ function updatePivot(pivot: Vec3): void {
 
 
 
-function onGeometryChange(): void {
-
+function onPartPropertiesChange(kind: 'transform' | 'structure' = 'structure'): void {
+  if (kind === 'transform') {
+    assemblyTransformRevision.value += 1;
+    return;
+  }
   assemblyRevision.value += 1;
-
 }
 
 
@@ -1342,7 +1345,7 @@ onMounted(() => {
 
         <section class="preview-card">
 
-          <FixtureQuadPreview :preview-url="previewUrl" :assembly="assembly" :fixture-name="info?.fixtureName" />
+          <FixtureQuadPreview :preview-url="previewUrl" :assembly="assembly" :fixture-name="info?.fixtureName" :assembly-revision="assemblyRevision" :transform-revision="assemblyTransformRevision" />
 
           <p class="muted small preview-caption">
 
@@ -1457,6 +1460,8 @@ onMounted(() => {
 
               :assembly-revision="assemblyRevision"
 
+              :transform-revision="assemblyTransformRevision"
+
               :datums="datumMarkers"
 
               :gdtf-reference-bounds="selectedGdtfBounds"
@@ -1510,7 +1515,7 @@ onMounted(() => {
 
             :fixture-id="fixture.id"
 
-            @change="onGeometryChange"
+            @change="onPartPropertiesChange"
 
           />
 

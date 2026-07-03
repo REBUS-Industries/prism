@@ -13,7 +13,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
-import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, type MotionNode } from '../utils/fixtureAssembly';
+import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, applyPartTransform, type MotionNode } from '../utils/fixtureAssembly';
 import type { GdtfReferenceBounds } from '../utils/fixtureGdtfBounds';
 import { box3FromGdtfBounds } from '../utils/fixtureGdtfBounds';
 import type { ClampPlacement } from '../utils/fixturePlacement';
@@ -90,8 +90,10 @@ const props = withDefaults(defineProps<{
   lightBackground?: boolean;
   /** Fill parent height (quad/debug panels); omit min-height when true. */
   fill?: boolean;
-  /** Bump to force assembly reload after in-place geometry edits. */
+  /** Bump to force assembly reload after mesh/structure edits. */
   assemblyRevision?: number;
+  /** Bump to apply part transform edits without rebuilding the assembly. */
+  transformRevision?: number;
   /** Enable click-to-select picking + a transform gizmo on the selected part. */
   editable?: boolean;
   /** Part the gizmo attaches to (assembly mode only). */
@@ -115,6 +117,7 @@ const props = withDefaults(defineProps<{
   lightBackground: false,
   fill: false,
   assemblyRevision: 0,
+  transformRevision: 0,
   editable: false,
   selectedPartId: null,
   gdtfReferenceBounds: null,
@@ -268,6 +271,45 @@ function fitOrthographicView(preset: 'top' | 'front' | 'side', aspect: number): 
   cam.far = Math.max(cam.near + 1, dist - minF + size.length());
   cam.updateProjectionMatrix();
 }
+function captureCameraForReload(): void {
+  const cam = activeCamera();
+  if (!cam || !controls || !loadedRoot) return;
+  preservedCameraPos.copy(cam.position);
+  preservedCameraQuat.copy(cam.quaternion);
+  preservedTarget.copy(controls.target);
+  preserveCameraOnFrame = true;
+}
+
+function restoreCameraOrPreset(): void {
+  const cam = activeCamera();
+  if (preserveCameraOnFrame && cam && controls) {
+    cam.position.copy(preservedCameraPos);
+    cam.quaternion.copy(preservedCameraQuat);
+    controls.target.copy(preservedTarget);
+    controls.update();
+    cam.updateProjectionMatrix();
+    preserveCameraOnFrame = false;
+    return;
+  }
+  applyCameraPreset();
+}
+
+/** Apply panel/gizmo transform edits to live part groups without a full reload. */
+function syncPartTransformsFromProps(): void {
+  if (!loadedRoot || !props.assembly?.parts?.length || partGroups.size === 0) return;
+  for (const part of props.assembly.parts) {
+    const grp = partGroups.get(part.partId);
+    if (grp) applyPartTransform(grp, part);
+  }
+  syncGizmo();
+  syncBeam();
+  syncDatums();
+}
+/** When true, the next frameLoaded keeps the user's orbit camera instead of applyCameraPreset. */
+let preserveCameraOnFrame = false;
+const preservedCameraPos = new THREE.Vector3();
+const preservedCameraQuat = new THREE.Quaternion();
+const preservedTarget = new THREE.Vector3();
 let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
 const texLoader = new THREE.TextureLoader();
@@ -571,7 +613,7 @@ function frameLoaded(precomputedBox?: THREE.Box3): void {
     modelSize = box.getSize(new THREE.Vector3()).length() || 1;
     box.getCenter(modelCenter);
   }
-  applyCameraPreset();
+  restoreCameraOrPreset();
   syncMotion();
   syncBeam();
   syncDatums();
@@ -686,6 +728,7 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
 }
 
 async function loadContent(): Promise<void> {
+  captureCameraForReload();
   const token = ++loadToken;
   try {
     if (props.assembly && props.assembly.parts?.length) {
@@ -706,6 +749,7 @@ async function loadContent(): Promise<void> {
 }
 
 function resetView(): void {
+  preserveCameraOnFrame = false;
   applyCameraPreset();
   emit('resetView');
 }
@@ -769,9 +813,7 @@ function resize(): void {
   const aspect = width / height;
   perspectiveCamera.aspect = aspect;
   perspectiveCamera.updateProjectionMatrix();
-  if (props.viewPreset === 'iso') {
-    applyCameraPreset();
-  } else {
+  if (props.viewPreset !== 'iso') {
     fitOrthographicView(props.viewPreset, aspect);
   }
 }
@@ -866,8 +908,10 @@ const modelMaterialsKey = (): string =>
   (props.modelMaterialSlots ?? []).map((s) => `${s.name}=${s.materialId ?? ''}`).join('|');
 
 watch(() => [props.url, assemblyKey(), modelMaterialsKey(), props.assemblyRevision], () => { void loadContent(); });
+watch(() => props.transformRevision, () => { syncPartTransformsFromProps(); });
 watch(() => props.datums, syncDatums, { deep: true });
 watch(() => props.viewPreset, () => {
+  preserveCameraOnFrame = false;
   syncActiveCamera();
   applyCameraPreset();
 });

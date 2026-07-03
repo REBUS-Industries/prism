@@ -30,7 +30,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  change: [];
+  change: [kind?: 'transform' | 'structure'];
 }>();
 
 const bboxAnchors = ref<BboxAnchors>({ ...DEFAULT_BBOX_ANCHORS });
@@ -73,14 +73,14 @@ const modelOptions = computed(() =>
   })),
 );
 
-function notify(): void {
-  emit('change');
+function notify(kind: 'transform' | 'structure' = 'structure'): void {
+  emit('change', kind);
 }
 
 function updateName(ev: Event): void {
   if (!props.part) return;
   props.part.name = (ev.target as HTMLInputElement).value;
-  notify();
+  notify('transform');
 }
 
 function posMm(axis: 'x' | 'y' | 'z', mm: number): void {
@@ -88,7 +88,7 @@ function posMm(axis: 'x' | 'y' | 'z', mm: number): void {
   const t = ensureTransform(props.part.localTransform);
   t.position[axis] = mmToMetres(mm);
   props.part.localTransform = buildTransform4x4(t.position, t.rotation, t.scale);
-  notify();
+  notify('transform');
 }
 
 function rotDeg(axis: 'x' | 'y' | 'z', deg: number): void {
@@ -96,7 +96,7 @@ function rotDeg(axis: 'x' | 'y' | 'z', deg: number): void {
   const t = ensureTransform(props.part.localTransform);
   t.rotation[axis] = deg;
   props.part.localTransform = buildTransform4x4(t.position, t.rotation, t.scale);
-  notify();
+  notify('transform');
 }
 
 function posMmValue(axis: 'x' | 'y' | 'z'): number {
