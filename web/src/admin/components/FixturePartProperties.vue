@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import ParamSlider from './ParamSlider.vue';
-import { fixturesApi, type FixtureModel, type FixturePart } from '../../shared/api';
+import { type FixtureModel, type FixturePart } from '../../shared/api';
 import {
   buildTransform4x4,
   ensureTransform,
@@ -13,15 +13,20 @@ import {
 } from '../utils/fixtureTransform';
 import { isCustomReplacedModel } from '../utils/fixtureCustomMesh';
 import { getModelMediaId } from '../utils/fixtureAssembly';
-import { box3FromGdtfBounds, readGdtfBounds } from '../utils/fixtureGdtfBounds';
+import { readGdtfBounds } from '../utils/fixtureGdtfBounds';
 import { readFlipNormals, writeFlipNormals } from '../utils/fixtureFlipNormals';
-import { loadModelBoundsFromUrl } from '../utils/fixtureModelBounds';
 import {
-  alignOffset,
   DEFAULT_BBOX_ANCHORS,
   type BboxAnchor,
   type BboxAnchors,
 } from '../utils/fixtureMeshAlign';
+import {
+  applyIgnoreImportedMeshDatum,
+  clearIgnoreImportedMeshDatum,
+  computeMeshOffsetFromGdtfBounds,
+  readIgnoreImportedMeshDatum,
+  writeIgnoreImportedMeshDatum,
+} from '../utils/fixtureMeshDatum';
 
 const props = defineProps<{
   part: FixturePart | null;
@@ -58,6 +63,10 @@ const isCustomMesh = computed(() => isCustomReplacedModel(linkedModel.value));
 
 const hasGdtfBounds = computed(() =>
   !!readGdtfBounds((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
+);
+
+const ignoreImportedMeshDatum = computed(() =>
+  readIgnoreImportedMeshDatum((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
 );
 
 const hasModelMesh = computed(() => !!getModelMediaId(linkedModel.value ?? undefined));
@@ -187,38 +196,57 @@ async function alignToGdtfBounds(): Promise<void> {
   const fixtureId = props.fixtureId;
   if (!model || !fixtureId) return;
 
-  const gdtfBounds = readGdtfBounds(model.metadata as Record<string, unknown>);
-  if (!gdtfBounds) {
+  if (!readGdtfBounds(model.metadata as Record<string, unknown>)) {
     alignError.value = 'No GDTF reference bounds stored for this model.';
-    return;
-  }
-
-  const mediaId = getModelMediaId(model);
-  if (!mediaId) {
-    alignError.value = 'Custom mesh media is missing.';
     return;
   }
 
   aligning.value = true;
   alignError.value = null;
   try {
-    const customBox = await loadModelBoundsFromUrl(
-      fixturesApi.mediaUrl(fixtureId, mediaId),
-      model,
-      true,
-    );
-    if (!customBox || customBox.isEmpty()) {
+    const offset = await computeMeshOffsetFromGdtfBounds(fixtureId, model, bboxAnchors.value);
+    if (!offset) {
       alignError.value = 'Could not measure the custom mesh bounds.';
       return;
     }
-    const gdtfBox = box3FromGdtfBounds(gdtfBounds);
-    const position = alignOffset(gdtfBox, customBox, bboxAnchors.value);
-    commitMeshOffset({ position, rotation: { x: 0, y: 0, z: 0 } });
+    if (!model.metadata || typeof model.metadata !== 'object') model.metadata = {};
+    writeIgnoreImportedMeshDatum(model.metadata as Record<string, unknown>, true);
+    commitMeshOffset(offset);
   } catch {
     alignError.value = 'Failed to align mesh to GDTF bounds.';
   } finally {
     aligning.value = false;
   }
+}
+
+async function setIgnoreImportedMeshDatum(enabled: boolean): Promise<void> {
+  const model = linkedModel.value;
+  const fixtureId = props.fixtureId;
+  if (!model || !fixtureId) return;
+
+  if (!model.metadata || typeof model.metadata !== 'object') model.metadata = {};
+  const meta = model.metadata as Record<string, unknown>;
+
+  if (!enabled) {
+    clearIgnoreImportedMeshDatum(model);
+    notify('structure');
+    return;
+  }
+
+  if (!readGdtfBounds(meta)) {
+    alignError.value = 'No GDTF reference bounds — replace a GDTF mesh first.';
+    return;
+  }
+
+  writeIgnoreImportedMeshDatum(meta, true);
+  alignError.value = null;
+  const ok = await applyIgnoreImportedMeshDatum(fixtureId, model, bboxAnchors.value);
+  if (!ok) {
+    writeIgnoreImportedMeshDatum(meta, false);
+    alignError.value = 'Could not align custom mesh to GDTF bounds.';
+    return;
+  }
+  notify('structure');
 }
 
 function onModelChange(ev: Event): void {
@@ -372,8 +400,8 @@ function onModelChange(ev: Event): void {
     </fieldset>
 
     <p v-else-if="linkedModel && isCustomMesh" class="muted small dims-hint">
-      Custom mesh — placed at its file origin by default (pivot and datums unchanged).
-      The green wireframe shows the original GDTF bounds. Use mesh offset or Align below to nudge.
+      Custom mesh — placed at its file origin by default. Enable
+      <strong>Ignore imported mesh datum</strong> to align via the original GDTF bounding box instead.
     </p>
     <p v-else class="muted small dims-hint">Link a model to edit Length / Width / Height.</p>
 
@@ -394,8 +422,22 @@ function onModelChange(ev: Event): void {
       </p>
 
       <div v-if="isCustomMesh && hasGdtfBounds" class="align-assist">
+        <label class="field flip-normals-field ignore-datum-field">
+          <span class="field-label">Ignore imported mesh datum</span>
+          <div class="flip-row">
+            <input
+              type="checkbox"
+              :checked="ignoreImportedMeshDatum"
+              @change="setIgnoreImportedMeshDatum(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="muted small flip-hint">
+              Places the custom mesh at the same location as the original GDTF mesh by aligning
+              bounding boxes (default anchors: center X/Y, bottom Z). Uncheck to use the file origin.
+            </span>
+          </div>
+        </label>
         <p class="muted small align-hint">
-          Best-fit assist — verify on asymmetric meshes. Export with the file origin at the GDTF mount point for exact placement without offset.
+          Fine-tune with anchor selectors and <strong>Align to GDTF bounds</strong>, or nudge with mesh offset below.
         </p>
         <div class="anchor-row">
           <label v-for="axis in (['x', 'y', 'z'] as const)" :key="axis" class="anchor-field">

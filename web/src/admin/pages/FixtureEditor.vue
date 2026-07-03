@@ -38,7 +38,11 @@ import DmxModePanel from '../components/DmxModePanel.vue';
 import IesUploader from '../components/IesUploader.vue';
 import { iesProfileCount, beamDisplayLabel } from '../utils/fixtureIes';
 
-import DatumEditor from '../components/DatumEditor.vue';
+import {
+  applyIgnoreImportedMeshDatum,
+  readIgnoreImportedMeshDatum,
+  writeIgnoreImportedMeshDatum,
+} from '../utils/fixtureMeshDatum';
 
 import FixtureModelQualitySelect from '../components/FixtureModelQualitySelect.vue';
 
@@ -626,6 +630,9 @@ async function replaceModel(modelId: string, ev: Event): Promise<void> {
   meshUploadMessage.value = null;
 
   const modelBefore = fixture.value?.definition.models.find((m) => m.modelId === modelId);
+  const ignoreDatumBefore = modelBefore
+    ? readIgnoreImportedMeshDatum(modelBefore.metadata as Record<string, unknown>)
+    : false;
   let capturedBounds: GdtfReferenceBounds | null = null;
   if (
     modelBefore
@@ -651,14 +658,21 @@ async function replaceModel(modelId: string, ev: Event): Promise<void> {
     if (modelAfter && capturedBounds) {
       if (!modelAfter.metadata || typeof modelAfter.metadata !== 'object') modelAfter.metadata = {};
       writeGdtfBounds(modelAfter.metadata as Record<string, unknown>, capturedBounds);
+    }
+    if (modelAfter && ignoreDatumBefore) {
+      if (!modelAfter.metadata || typeof modelAfter.metadata !== 'object') modelAfter.metadata = {};
+      writeIgnoreImportedMeshDatum(modelAfter.metadata as Record<string, unknown>, true);
+      await applyIgnoreImportedMeshDatum(props.id, modelAfter);
+    }
+    if (modelAfter && (capturedBounds || ignoreDatumBefore)) {
       await save();
     }
 
     assemblyRevision.value += 1;
     meshUploadTarget.value = modelId;
     meshUploadMessage.value = orbitFixtureRef.value
-      ? `Uploaded ${file.name}. Mesh uses its file origin by default — adjust Mesh offset if needed, or use Align to GDTF bounds. Republish to Orbit to update the published mesh.`
-      : `Uploaded ${file.name}. Mesh uses its file origin by default — adjust Mesh offset if needed, or use Align to GDTF bounds, then Publish to Orbit.`;
+      ? `Uploaded ${file.name}. ${ignoreDatumBefore ? 'Aligned to GDTF bounds (ignore imported datum).' : 'Mesh uses its file origin by default — enable Ignore imported mesh datum or adjust Mesh offset.'} Republish to Orbit to update the published mesh.`
+      : `Uploaded ${file.name}. ${ignoreDatumBefore ? 'Aligned to GDTF bounds.' : 'Adjust placement if needed, then Publish to Orbit.'}`;
   } catch (err) {
     error.value = (err as ApiError).message ?? 'model replace failed';
   } finally {
@@ -995,20 +1009,6 @@ async function onIesUploaded(): Promise<void> {
   } finally {
     publishingOrbit.value = false;
   }
-}
-
-
-
-function updatePivot(pivot: Vec3): void {
-
-  if (!fixture.value || !selectedPartId.value) return;
-
-  const part = fixture.value.definition.parts.find((p) => p.partId === selectedPartId.value);
-
-  if (!part) return;
-
-  part.pivot = pivot;
-
 }
 
 
@@ -1518,14 +1518,6 @@ onMounted(() => {
             @change="onPartPropertiesChange"
 
           />
-
-          <details class="datum-block">
-
-            <summary>Pivot / datum</summary>
-
-            <DatumEditor :part="selectedPart" @update="updatePivot" />
-
-          </details>
 
         </aside>
 
@@ -2492,34 +2484,6 @@ onMounted(() => {
   padding: 24px;
 
   text-align: center;
-
-}
-
-.datum-block {
-
-  margin-top: 16px;
-
-  padding-top: 12px;
-
-  border-top: 1px solid var(--color-border);
-
-}
-
-.datum-block summary {
-
-  cursor: pointer;
-
-  font-size: 11px;
-
-  font-weight: 700;
-
-  text-transform: uppercase;
-
-  letter-spacing: 0.05em;
-
-  color: var(--color-text-muted);
-
-  margin-bottom: 8px;
 
 }
 

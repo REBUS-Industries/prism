@@ -200,12 +200,14 @@ is needed and asymmetric geometry is handled correctly.
 On the first replace of a GDTF-native model, PRISM captures the wrapped GDTF
 mesh bounding box (part-local metres) into `model.metadata.gdtfBounds` before
 the upload overwrites the media file. The editor draws this box as a **green
-wireframe overlay** on the selected part so you can align by eye.
+wireframe overlay** on the selected part.
 
-Bounding-box alignment is only a **best-fit assist** (asymmetric meshes or
-extra geometry can misalign). Use **Align to GDTF bounds** in part properties
-with per-axis anchors (default: center X/Y, bottom Z) when helpful, then nudge
-with mesh-offset translation sliders or the gizmo.
+**Ignore imported mesh datum** (`metadata.ignoreImportedMeshDatum`): when enabled,
+PRISM computes `meshOffset` translation from GDTF vs custom mesh bounding boxes
+(default anchors: center X/Y, bottom Z) so the replacement lands where the
+original GDTF mesh sat — ignoring the custom file's origin. Uncheck to use the
+file origin (zero offset). The offset is stored in `meshOffset` and publishes
+to Orbit like any manual mesh offset.
 
 ### Viewer and Orbit
 
