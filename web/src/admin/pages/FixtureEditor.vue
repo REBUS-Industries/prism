@@ -411,7 +411,12 @@ async function resetToGdtf(): Promise<void> {
     await reload();
     void checkForUpdates();
   } catch (err) {
-    error.value = (err as ApiError).message ?? 'Reset to GDTF failed';
+    const e = err as ApiError;
+    if (e.status === 404) {
+      error.value = 'Reset to GDTF is unavailable — deploy prism-fixtures-service with POST /api/fixtures/:id/reset-gdtf (see scaffold patch fixtures-reset-gdtf-custom-mesh.patch).';
+    } else {
+      error.value = e.message ?? 'Reset to GDTF failed';
+    }
   } finally {
     resettingToGdtf.value = false;
   }

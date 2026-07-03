@@ -105,8 +105,17 @@ is correct on load.
 
 ```bash
 cd prism-fixtures-service
+git fetch origin main && git checkout main && git pull
 git checkout -b cursor/fixture-reset-gdtf-custom-mesh-dd18
-git am < /path/to/fixtures-reset-gdtf-custom-mesh.patch   # or: git apply
-npm install && npm run build
+git apply /path/to/fixtures-reset-gdtf-custom-mesh.patch
+npm ci && npm run build
 git push -u origin cursor/fixture-reset-gdtf-custom-mesh-dd18
 ```
+
+Open PR and merge, then:
+
+```bash
+gh workflow run fixtures-image --repo REBUS-Industries/prism-fixtures-service --ref main
+```
+
+**Required for Reset to GDTF** on uploaded/manual fixtures (without this route, `POST /api/fixtures/:id/reset-gdtf` returns **404**).
