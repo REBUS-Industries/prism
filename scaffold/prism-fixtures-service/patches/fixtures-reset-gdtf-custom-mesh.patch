@@ -11,95 +11,6 @@ index 0a3bc2d..31209f3 100644
    },
    "dependencies": {
      "@fastify/cookie": "^9.4.0",
-diff --git a/src/api/fixtures.ts b/src/api/fixtures.ts
-index 097c4b3..bcddc92 100644
---- a/src/api/fixtures.ts
-+++ b/src/api/fixtures.ts
-@@ -39,6 +39,7 @@ import {
-   switchActiveVersion,
-   downloadNewVersion,
-   checkUpdatesForFixtureIds,
-+  resetFixtureToGdtf,
- } from '../import/fixtureVersionService.js';
- import { reimportFixtureMeshes } from '../import/reimportFixtureMeshes.js';
- import { replaceFixtureModel } from '../import/replaceFixtureModel.js';
-@@ -442,6 +443,30 @@ const plugin: FastifyPluginAsync = async (app) => {
-     }
-   });
- 
-+  app.post('/:id/reset-gdtf', { preHandler: [requireAuth, requireScope('fixtures:import')] }, async (req, reply) => {
-+    const { id } = idParam.parse(req.params);
-+    const body = z.object({ modelQuality: modelQualitySchema.optional() }).safeParse(req.body ?? {});
-+    if (!body.success) return reply.code(400).send({ error: 'invalid body' });
-+    try {
-+      const result = await resetFixtureToGdtf(id, req.principal, body.data.modelQuality);
-+      const versions = await listFixtureVersions(id);
-+      const activeVersion = versions.find((v) => v.isActive) ?? null;
-+      return {
-+        fixture: {
-+          ...toSummary(result.fixture),
-+          definition: result.fixture.definition,
-+          previewModelId: result.fixture.previewModelId,
-+          activeVersion,
-+          versions,
-+        },
-+      };
-+    } catch (err) {
-+      const msg = err instanceof Error ? err.message : 'reset failed';
-+      if (msg === 'fixture not found') return reply.code(404).send({ error: msg });
-+      return reply.code(400).send({ error: msg });
-+    }
-+  });
-+
-   // Swap a single model's mesh with an uploaded 3D file (e.g. replace the base).
-   app.post('/:id/models/:modelId/replace', { preHandler: [requireAuth, requireScope('fixtures:write')] }, async (req, reply) => {
-     const params = z.object({ id: z.string().uuid(), modelId: z.string().min(1).max(256) }).safeParse(req.params);
-diff --git a/src/import/fixtureVersionService.ts b/src/import/fixtureVersionService.ts
-index 4baed1e..a04d4d1 100644
---- a/src/import/fixtureVersionService.ts
-+++ b/src/import/fixtureVersionService.ts
-@@ -17,6 +17,7 @@ import { getGdtfShareVersions, downloadGdtfShareFixture } from './gdtfShareClien
- import { importGdtfBytes, type GdtfImportMeta } from './gdtfImporter.js';
- import type { GdtfModelQuality } from './modelEntrySelection.js';
- import { carryForwardEdits } from './fixtureEditCarryForward.js';
-+import { reimportFixtureMeshes } from './reimportFixtureMeshes.js';
- 
- function toVersionSummary(
-   row: typeof fixtureVersions.$inferSelect,
-@@ -195,6 +196,33 @@ export async function downloadNewVersion(
-   };
- }
- 
-+/** Re-import the active GDTF revision/package and discard all user edits. */
-+export async function resetFixtureToGdtf(
-+  fixtureTypeId: string,
-+  principal: Principal | undefined,
-+  modelQuality?: GdtfModelQuality,
-+): Promise<{ fixture: typeof fixtureTypes.$inferSelect }> {
-+  const ftRows = await db.select().from(fixtureTypes)
-+    .where(and(eq(fixtureTypes.id, fixtureTypeId), isNull(fixtureTypes.deletedAt)))
-+    .limit(1);
-+  const ft = ftRows[0];
-+  if (!ft) throw new Error('fixture not found');
-+
-+  if (ft.activeVersionId) {
-+    const av = await db.select().from(fixtureVersions)
-+      .where(eq(fixtureVersions.id, ft.activeVersionId)).limit(1);
-+    const shareRid = av[0]?.gdtfShareRid;
-+    if (shareRid) {
-+      const result = await downloadNewVersion(fixtureTypeId, shareRid, principal, false, modelQuality);
-+      return { fixture: result.fixture };
-+    }
-+  }
-+
-+  const quality = modelQuality ?? 'default';
-+  const result = await reimportFixtureMeshes(fixtureTypeId, quality, false);
-+  return { fixture: result.fixture };
-+}
-+
- export async function checkUpdatesForFixtureIds(
-   ids: string[],
- ): Promise<Record<string, boolean>> {
 diff --git a/src/import/gdtfAssetRegistrar.ts b/src/import/gdtfAssetRegistrar.ts
 index 16abab3..63065a3 100644
 --- a/src/import/gdtfAssetRegistrar.ts
@@ -191,78 +102,8 @@ index 8612336..d43a105 100644
      const [updatedVer] = await db.update(fixtureVersions).set({
        definition: rawDefinition,
        previewModelId: assetReg.previewModelId ?? versionRow.previewModelId,
-diff --git a/src/import/gdtfResetHelpers.test.ts b/src/import/gdtfResetHelpers.test.ts
-new file mode 100644
-index 0000000..129cdf8
---- /dev/null
-+++ b/src/import/gdtfResetHelpers.test.ts
-@@ -0,0 +1,25 @@
-+import assert from 'node:assert/strict';
-+import { definitionAfterGdtfReset } from '../import/gdtfResetHelpers.js';
-+
-+const reset = definitionAfterGdtfReset({
-+  fixtureInformation: { manufacturer: 'M', fixtureName: 'F' },
-+  parts: [],
-+  models: [{
-+    modelId: 'body',
-+    name: 'Body',
-+    metadata: {
-+      mediaId: 'old-media',
-+      replaced: true,
-+      replacedFilename: 'custom.glb',
-+      meshOffset: { position: { x: 1, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } },
-+      sourceFile: 'models/body.gltf',
-+    },
-+  }],
-+  metadata: { displayName: 'Pretty name' },
-+} as never);
-+
-+assert.equal((reset.metadata as Record<string, unknown>).displayName, undefined);
-+assert.equal(reset.models?.[0]?.metadata?.replaced, undefined);
-+assert.equal(reset.models?.[0]?.metadata?.meshOffset, undefined);
-+assert.equal(reset.models?.[0]?.metadata?.mediaId, 'old-media');
-+console.log('gdtfResetHelpers.test ok');
-diff --git a/src/import/gdtfResetHelpers.ts b/src/import/gdtfResetHelpers.ts
-new file mode 100644
-index 0000000..91b78a3
---- /dev/null
-+++ b/src/import/gdtfResetHelpers.ts
-@@ -0,0 +1,33 @@
-+import type { FixtureDefinition } from '@rebus-industries/prism-shared';
-+
-+const USER_MODEL_METADATA_KEYS = [
-+  'replaced',
-+  'replacedFilename',
-+  'meshOffset',
-+  'flipNormals',
-+] as const;
-+
-+const USER_FIXTURE_METADATA_KEYS = [
-+  'displayName',
-+] as const;
-+
-+/** Drop PRISM user edits from a freshly parsed GDTF definition before persisting a reset. */
-+export function definitionAfterGdtfReset(def: FixtureDefinition): FixtureDefinition {
-+  const result = structuredClone(def) as FixtureDefinition;
-+
-+  if (result.metadata && typeof result.metadata === 'object') {
-+    const meta = { ...(result.metadata as Record<string, unknown>) };
-+    for (const key of USER_FIXTURE_METADATA_KEYS) delete meta[key];
-+    result.metadata = meta;
-+  }
-+
-+  for (const model of result.models ?? []) {
-+    if (model.metadata && typeof model.metadata === 'object') {
-+      const meta = { ...(model.metadata as Record<string, unknown>) };
-+      for (const key of USER_MODEL_METADATA_KEYS) delete meta[key];
-+      model.metadata = meta;
-+    }
-+  }
-+
-+  return result;
-+}
 diff --git a/src/import/reimportFixtureMeshes.ts b/src/import/reimportFixtureMeshes.ts
-index bb7c725..d2eb71d 100644
+index 4cfd39a..d2eb71d 100644
 --- a/src/import/reimportFixtureMeshes.ts
 +++ b/src/import/reimportFixtureMeshes.ts
 @@ -14,6 +14,7 @@ import { extractGdtfPackage } from './gdtfPackageReader.js';
@@ -273,15 +114,7 @@ index bb7c725..d2eb71d 100644
  import {
    detectAvailableModelQualities,
    detectAvailableModelFormats,
-@@ -26,6 +27,7 @@ const FIXTURES_ROOT = resolve(DATA_DIR, 'fixtures');
- export async function reimportFixtureMeshes(
-   fixtureTypeId: string,
-   modelQuality: GdtfModelQuality,
-+  carryEdits = true,
- ): Promise<{ fixture: typeof fixtureTypes.$inferSelect }> {
-   const ftRows = await db.select().from(fixtureTypes)
-     .where(and(eq(fixtureTypes.id, fixtureTypeId), isNull(fixtureTypes.deletedAt)))
-@@ -67,7 +69,10 @@ export async function reimportFixtureMeshes(
+@@ -68,7 +69,10 @@ export async function reimportFixtureMeshes(
    const availableModelQualities = detectAvailableModelQualities(pkg.entries, sourceFiles);
    const availableModelFormats = detectAvailableModelFormats(pkg.entries, sourceFiles);
  
@@ -293,13 +126,14 @@ index bb7c725..d2eb71d 100644
    assetReg.definition.metadata = {
      ...assetReg.definition.metadata,
      availableModelQualities,
-@@ -77,15 +82,17 @@ export async function reimportFixtureMeshes(
+@@ -78,17 +82,17 @@ export async function reimportFixtureMeshes(
  
    const workingDef = ft.definition as FixtureDefinition;
    const oldRawDef = version.definition as FixtureDefinition;
--  const carried = carryForwardEdits(workingDef, oldRawDef, assetReg.definition).definition;
+-  const carried = carryEdits
 +  const freshDefinition = carryEdits
-+    ? carryForwardEdits(workingDef, oldRawDef, assetReg.definition).definition
+     ? carryForwardEdits(workingDef, oldRawDef, assetReg.definition).definition
+-    : assetReg.definition;
 +    : definitionAfterGdtfReset(assetReg.definition);
  
    await db.update(fixtureVersions).set({
