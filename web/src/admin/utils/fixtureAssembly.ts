@@ -362,10 +362,30 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
 }
 
 /**
+ * Uniform median scale from declared GDTF L/W/H to mesh bbox size (metres).
+ * Used for custom replaced previews so mm CAD exports land near nominal fixture size
+ * without per-axis stretching. Returns null when dims or bbox are unusable.
+ */
+function uniformMedianScaleForDims(dims: ModelDims, size: THREE.Vector3): number | null {
+  if (
+    dims.length == null || dims.width == null || dims.height == null
+    || size.x <= 1e-6 || size.y <= 1e-6 || size.z <= 1e-6
+  ) {
+    return null;
+  }
+  const sx = dims.length / size.x;
+  const sy = dims.height / size.y;
+  const sz = dims.width / size.z;
+  const ratios = [sx, sy, sz];
+  return [...ratios].sort((a, b) => a - b)[1]!;
+}
+
+/**
  * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
  * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
  *
- * When `oneToOne` is true (custom replaced uploads), dimension fit is skipped.
+ * Custom replaced uploads skip per-axis fit; when L/W/H exist a single uniform
+ * median scale lands CAD exports near nominal size while preserving proportions.
  */
 function wrapModelMeshInternal(
   meshRoot: THREE.Object3D,
@@ -376,13 +396,18 @@ function wrapModelMeshInternal(
   wrapper.name = 'Scene';
   wrapper.rotation.x = Math.PI / 2;
 
+  const bbox = new THREE.Box3().setFromObject(meshRoot);
+  const size = bbox.getSize(new THREE.Vector3());
+
   if (oneToOne) {
+    const median = uniformMedianScaleForDims(dims, size);
+    if (median != null) {
+      wrapper.scale.setScalar(median);
+    }
     wrapper.add(meshRoot);
     return wrapper;
   }
 
-  const bbox = new THREE.Box3().setFromObject(meshRoot);
-  const size = bbox.getSize(new THREE.Vector3());
   if (
     dims.length != null && dims.width != null && dims.height != null
     && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6
@@ -413,9 +438,10 @@ function wrapModelMeshInternal(
  * mapping (verified on Rivale Profile Base): x = length/bbox.x,
  * y = height/bbox.y, z = width/bbox.z.
  *
- * Custom / replaced uploads skip dimension fit (1:1 authored scale, matching
- * Orbit `oneToOne` bake) but still get the +90° X glTF Y-up → GDTF Z-up axis
- * conversion required by the viewer. The preview camera frames the full bbox.
+ * Custom / replaced uploads skip per-axis dimension fit. When GDTF L/W/H exist,
+ * a uniform median scale lands mm CAD exports near nominal fixture size (preview
+ * only — Orbit publish still uses `oneToOne` authored vertices). +90° X glTF
+ * Y-up → GDTF Z-up conversion always applies. Iso camera near/far follow bbox.
  */
 function wrapModelMesh(
   meshRoot: THREE.Object3D,
