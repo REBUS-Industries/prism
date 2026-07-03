@@ -107,14 +107,15 @@ is correct on load.
 
 ## fixtures-list-custom-mesh-flag.patch
 
-Pairs with the PRISM Library **custom mesh** icon on list rows
-(`hasCustomMeshes` on `GET /api/fixtures` list/detail summaries).
+Pairs with the PRISM Library row icons for **custom mesh** and **IES profiles**
+(`hasCustomMeshes` / `hasIesProfiles` on `GET /api/fixtures` list/detail summaries).
 
 - `src/fixtures/fixtureCustomMesh.ts` — `fixtureHasCustomMeshes(definition)` (`metadata.replaced`)
-- `src/api/fixtures.ts` — include `hasCustomMeshes` in `toSummary`
+- `src/fixtures/fixtureIesProfiles.ts` — `fixtureHasIesProfiles(definition)` (beam IES uploads)
+- `src/api/fixtures.ts` — include both flags in `toSummary`
 
-Deploy `fixtures-image` with monorepo `web-image`. Without the API field, the web
-UI falls back to batched detail fetches to detect custom meshes.
+Deploy `fixtures-image` with monorepo `web-image`. Without the API fields, the web
+UI falls back to batched detail fetches to detect custom meshes and IES profiles.
 
 ### Apply
 
@@ -123,7 +124,7 @@ cd prism-fixtures-service
 git fetch origin main && git checkout main && git pull
 git checkout -b cursor/fixture-list-custom-mesh-flag-dd18
 git apply /path/to/fixtures-list-custom-mesh-flag.patch
-npm ci && npm run build && node dist/fixtures/fixtureCustomMesh.test.js
+npm ci && npm run build && node dist/fixtures/fixtureCustomMesh.test.js && node dist/fixtures/fixtureIesProfiles.test.js
 git push -u origin cursor/fixture-list-custom-mesh-flag-dd18
 ```
 

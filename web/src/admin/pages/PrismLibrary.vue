@@ -18,6 +18,7 @@ import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtu
 import { duplicateFixtureName as defaultDuplicateName, fixtureLabel } from '../utils/fixtureLabel';
 import { enrichFixtureListItem, enrichFixturesOrbitFromDetails, fixtureHasOrbitPublish, readFixtureOrbitRef } from '../utils/fixtureOrbitUrl';
 import { fixtureHasCustomMeshes } from '../utils/fixtureCustomMesh';
+import { fixtureHasIesProfiles } from '../utils/fixtureIes';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 import {
   fixturesApi,
@@ -180,6 +181,12 @@ const selectedHasCustomMeshes = computed(() => {
   return false;
 });
 
+const selectedHasIesProfiles = computed(() => {
+  if (selected.value?.hasIesProfiles) return true;
+  if (selectedDefinition.value) return fixtureHasIesProfiles(selectedDefinition.value);
+  return false;
+});
+
 const selectedOrbitRef = computed(() => readFixtureOrbitRef(selectedDefinition.value));
 
 const orbitVersionsUrl = computed(() => {
@@ -227,8 +234,10 @@ const purgeCutoffLabel = computed(() => {
   return cutoff ? cutoff.toLocaleDateString() : '';
 });
 
-async function enrichCustomMeshFlags(): Promise<void> {
-  const pending = fixtures.value.filter((f) => f.hasCustomMeshes === undefined);
+async function enrichLibraryAssetFlags(): Promise<void> {
+  const pending = fixtures.value.filter(
+    (f) => f.hasCustomMeshes === undefined || f.hasIesProfiles === undefined,
+  );
   if (!pending.length) return;
 
   const BATCH = 16;
@@ -240,9 +249,10 @@ async function enrichCustomMeshFlags(): Promise<void> {
         upsert({
           ...fixture,
           hasCustomMeshes: fixture.hasCustomMeshes ?? fixtureHasCustomMeshes(fixture.definition),
+          hasIesProfiles: fixture.hasIesProfiles ?? fixtureHasIesProfiles(fixture.definition),
         });
       } catch {
-        /* non-fatal — leave icon hidden for this row */
+        /* non-fatal — leave icons hidden for this row */
       }
     }));
   }
@@ -257,7 +267,7 @@ async function load(): Promise<void> {
     if (!selectedId.value && res.fixtures[0]) selectedId.value = res.fixtures[0].id;
     void bulkCheckUpdates();
     void enrichOrbitStatus();
-    void enrichCustomMeshFlags();
+    void enrichLibraryAssetFlags();
   } catch (err) {
     error.value = (err as ApiError).message ?? 'failed to load PRISM library';
   } finally {
@@ -956,6 +966,13 @@ onMounted(() => {
             </div>
             <span class="origin-badge" :class="`origin-${f.origin}`">{{ originLabel(f.origin) }}</span>
             <span
+              v-if="f.hasIesProfiles"
+              class="data-icon ies-icon on"
+              title="IES profiles assigned"
+            >
+              <Icon name="light_mode" :size="16" />
+            </span>
+            <span
               v-if="f.hasCustomMeshes"
               class="data-icon custom-mesh-icon on"
               title="Custom mesh assigned"
@@ -1003,6 +1020,7 @@ onMounted(() => {
           <div class="status-row">
             <span class="origin-badge" :class="`origin-${selected.origin}`">{{ originLabel(selected.origin) }}</span>
             <span v-if="selected.hasPreview" class="full-gdtf-pill">3D ready</span>
+            <span v-if="selectedHasIesProfiles" class="full-gdtf-pill ies-pill">IES profiles</span>
             <span v-if="selectedHasCustomMeshes" class="full-gdtf-pill custom-mesh-pill">Custom mesh</span>
             <button
               type="button"
@@ -1606,7 +1624,9 @@ onMounted(() => {
 .data-icon { flex-shrink: 0; display: flex; align-items: center; color: var(--color-text-muted); opacity: 0.35; }
 .data-icon.on { opacity: 1; color: var(--orbit-primary); }
 .custom-mesh-icon.on { color: #9333ea; }
+.ies-icon.on { color: #ea580c; }
 .custom-mesh-pill { background: rgba(168, 85, 247, 0.16); color: #9333ea; }
+.ies-pill { background: rgba(249, 115, 22, 0.16); color: #ea580c; }
 
 .detail-panel { min-height: 0; overflow-y: auto; padding: 16px; }
 .detail-empty { padding: 24px 16px; }
