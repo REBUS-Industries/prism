@@ -820,13 +820,15 @@ onMounted(() => {
               <div v-else-if="orbitVersionsError" class="orbit-versions-error">{{ orbitVersionsError }}</div>
               <ul v-else-if="orbitVersions.length" class="orbit-version-list">
                 <li v-for="(v, idx) in orbitVersions" :key="v.id">
-                  <div class="orbit-version-main">
-                    <span class="mono orbit-version-id">{{ v.id.slice(0, 8) }}</span>
+                  <div class="orbit-version-body">
+                    <div class="orbit-version-main">
+                      <span class="mono orbit-version-id">{{ v.id.slice(0, 8) }}</span>
+                      <span v-if="isLatestOrbitVersion(idx)" class="pill orbit-pill latest">Latest</span>
+                      <span v-if="isStoredOrbitVersion(v.id)" class="pill orbit-pill stored">PRISM ref</span>
+                    </div>
                     <span class="muted small orbit-version-date">{{ formatOrbitVersionDate(v.createdAt) }}</span>
-                    <span v-if="isLatestOrbitVersion(idx)" class="pill orbit-pill latest">Latest</span>
-                    <span v-if="isStoredOrbitVersion(v.id)" class="pill orbit-pill stored">PRISM ref</span>
+                    <p v-if="v.message?.trim()" class="orbit-version-msg muted small">{{ v.message }}</p>
                   </div>
-                  <p v-if="v.message?.trim()" class="orbit-version-msg muted small">{{ v.message }}</p>
                   <button
                     v-if="orbitVersions.length > 1"
                     type="button"
@@ -1418,17 +1420,26 @@ onMounted(() => {
   border-radius: var(--radius);
   background: var(--color-bg);
 }
-.orbit-version-main {
+.orbit-version-body {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.orbit-version-main {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
+  gap: 6px;
 }
-.orbit-version-id { font-size: 11px; }
-.orbit-version-date { font-size: 10px; }
-.orbit-version-msg { margin: 4px 0 0; width: 100%; }
+.orbit-version-id { font-size: 11px; font-weight: 600; }
+.orbit-version-date { font-size: 10px; line-height: 1.3; }
+.orbit-version-msg {
+  margin: 0;
+  line-height: 1.35;
+  word-break: break-word;
+}
 .orbit-pill {
   padding: 2px 6px;
   border-radius: 999px;
