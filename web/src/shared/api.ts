@@ -1559,6 +1559,12 @@ export const materialsApi = {
     fd.append('file', file);
     return api.postFormWithProgress<MaterialDetail>(`/api/materials/${id}/thumbnail`, fd, onProgress);
   },
+  /** Cached card preview — append updatedAt (ms or ISO) to bust cache after edits. */
+  previewUrl: (id: string, updatedAt?: string | number): string => {
+    if (updatedAt === undefined) return `/api/materials/${id}/preview`;
+    const ts = typeof updatedAt === 'string' ? Date.parse(updatedAt) : updatedAt;
+    return Number.isFinite(ts) ? `/api/materials/${id}/preview?v=${ts}` : `/api/materials/${id}/preview`;
+  },
 };
 
 // ---------------------------------------------------------------------------

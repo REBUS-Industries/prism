@@ -22,10 +22,14 @@ const STUDIO_HDRI = '/hdri/studio_small_01_1k.hdr';
 const SPHERE_RADIUS = 1;
 const CAMERA_DISTANCE = 3.2;
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sources?: SlotSources;
   parameters?: MaterialParameters;
-}>();
+  /** When false, render one frame after textures settle (library cards). */
+  live?: boolean;
+}>(), {
+  live: true,
+});
 
 const params = computed<MaterialParameters>(() => ({
   ...DEFAULT_MATERIAL_PARAMETERS,
@@ -327,8 +331,16 @@ function resize(): void {
 }
 
 function animate(): void {
-  rafId = requestAnimationFrame(animate);
+  if (props.live) {
+    rafId = requestAnimationFrame(animate);
+  }
   if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+async function renderOnceWhenReady(): Promise<void> {
+  if (props.live || !renderer || !scene || !camera) return;
+  await waitForReady();
+  renderer.render(scene, camera);
 }
 
 function waitForReady(timeoutMs = 4000): Promise<void> {
@@ -388,12 +400,22 @@ onMounted(() => {
   resizeObs = new ResizeObserver(() => resize());
   resizeObs.observe(wrap);
 
-  animate();
-  void loadEnvironment();
+  if (props.live) {
+    animate();
+  }
+  void loadEnvironment().then(() => {
+    if (!props.live) void renderOnceWhenReady();
+  });
 });
 
-watch(() => props.sources, (next) => applySources(next), { deep: true });
-watch(() => props.parameters, () => applyParameters(), { deep: true });
+watch(() => props.sources, (next) => {
+  applySources(next);
+  if (!props.live) void renderOnceWhenReady();
+}, { deep: true });
+watch(() => props.parameters, () => {
+  applyParameters();
+  if (!props.live) void renderOnceWhenReady();
+}, { deep: true });
 
 onBeforeUnmount(() => {
   if (rafId !== null) cancelAnimationFrame(rafId);

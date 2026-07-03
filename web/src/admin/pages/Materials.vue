@@ -187,7 +187,10 @@ function toggleTag(tag: string): void {
 
 function onCardThumbnailUpdated(materialId: string, textureId: string): void {
   const row = materials.value.find((m) => m.id === materialId);
-  if (row) row.thumbnailTextureId = textureId;
+  if (row) {
+    row.thumbnailTextureId = textureId;
+    row.previewUrl = materialsApi.previewUrl(materialId, Date.now());
+  }
 }
 
 function openEditor(id: string): void {
@@ -514,6 +517,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); });
             <MaterialCardPreview
               :material-id="m.id"
               :thumbnail-texture-id="m.thumbnailTextureId"
+              :preview-url="m.previewUrl"
               :alt="m.name"
               @thumbnail-updated="onCardThumbnailUpdated(m.id, $event)"
             />
