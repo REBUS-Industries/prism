@@ -1,33 +1,16 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Cursor Agent <cursoragent@cursor.com>
-Date: Mon, 29 Jun 2026 18:00:00 +0000
-Subject: [PATCH] feat: reset-gdtf endpoint and 1:1 custom mesh Orbit bake
-
-- POST /api/fixtures/:id/reset-gdtf discards user edits and re-imports from
-  GDTF Share (carryEdits:false) or the stored local GDTF package
-- Custom replaced models (metadata.replaced) skip glTF wrap/scale in Orbit bake
-- Mesh-offset rotation is ignored for custom replaced models in Orbit
----
- src/api/fixtures.ts                   | 32 ++++++++++++++++++++++++++++++++
- src/import/fixtureVersionService.ts   | 28 ++++++++++++++++++++++++++++
- src/import/reimportFixtureMeshes.ts   |  9 ++++++---
- src/orbit/fixtureGeometryOrbit.ts    | 33 +++++++++++++++++++++++++++------
- src/orbit/fixtureTransformMatrix.ts  |  7 +++++++
- 5 files changed, 100 insertions(+), 9 deletions(-)
-
 diff --git a/src/api/fixtures.ts b/src/api/fixtures.ts
-index 34b390e..a8c1e2f 100644
+index 097c4b3..bcddc92 100644
 --- a/src/api/fixtures.ts
 +++ b/src/api/fixtures.ts
-@@ -38,6 +38,7 @@ import {
-   checkFixtureUpdates,
-   checkUpdatesForFixtureIds,
-   downloadNewVersion,
-+  resetFixtureToGdtf,
-   listFixtureVersions,
+@@ -39,6 +39,7 @@ import {
    switchActiveVersion,
+   downloadNewVersion,
+   checkUpdatesForFixtureIds,
++  resetFixtureToGdtf,
  } from '../import/fixtureVersionService.js';
-@@ -422,6 +423,37 @@ export async function registerFixturesRoutes(app: FastifyInstance): Promise<void
+ import { reimportFixtureMeshes } from '../import/reimportFixtureMeshes.js';
+ import { replaceFixtureModel } from '../import/replaceFixtureModel.js';
+@@ -442,6 +443,30 @@ const plugin: FastifyPluginAsync = async (app) => {
      }
    });
  
@@ -50,6 +33,7 @@ index 34b390e..a8c1e2f 100644
 +      };
 +    } catch (err) {
 +      const msg = err instanceof Error ? err.message : 'reset failed';
++      if (msg === 'fixture not found') return reply.code(404).send({ error: msg });
 +      return reply.code(400).send({ error: msg });
 +    }
 +  });
@@ -58,18 +42,18 @@ index 34b390e..a8c1e2f 100644
    app.post('/:id/models/:modelId/replace', { preHandler: [requireAuth, requireScope('fixtures:write')] }, async (req, reply) => {
      const params = z.object({ id: z.string().uuid(), modelId: z.string().min(1).max(256) }).safeParse(req.params);
 diff --git a/src/import/fixtureVersionService.ts b/src/import/fixtureVersionService.ts
-index 8b2a1c3..c4d9e0a 100644
+index 4baed1e..a04d4d1 100644
 --- a/src/import/fixtureVersionService.ts
 +++ b/src/import/fixtureVersionService.ts
-@@ -14,6 +14,7 @@ import type {
- import { getGdtfShareVersions, downloadGdtfShareFixture } from './gdtfShareClient.js';
+@@ -17,6 +17,7 @@ import { getGdtfShareVersions, downloadGdtfShareFixture } from './gdtfShareClien
  import { importGdtfBytes, type GdtfImportMeta } from './gdtfImporter.js';
  import type { GdtfModelQuality } from './modelEntrySelection.js';
-+import { reimportFixtureMeshes } from './reimportFixtureMeshes.js';
  import { carryForwardEdits } from './fixtureEditCarryForward.js';
++import { reimportFixtureMeshes } from './reimportFixtureMeshes.js';
  
  function toVersionSummary(
-@@ -268,6 +269,33 @@ export async function downloadNewVersion(
+   row: typeof fixtureVersions.$inferSelect,
+@@ -195,6 +196,33 @@ export async function downloadNewVersion(
    };
  }
  
@@ -95,7 +79,7 @@ index 8b2a1c3..c4d9e0a 100644
 +    }
 +  }
 +
-+  const quality = modelQuality ?? 'standard';
++  const quality = modelQuality ?? 'default';
 +  const result = await reimportFixtureMeshes(fixtureTypeId, quality, false);
 +  return { fixture: result.fixture };
 +}
@@ -104,10 +88,10 @@ index 8b2a1c3..c4d9e0a 100644
    ids: string[],
  ): Promise<Record<string, boolean>> {
 diff --git a/src/import/reimportFixtureMeshes.ts b/src/import/reimportFixtureMeshes.ts
-index 1a2b3c4..5d6e7f8 100644
+index bb7c725..4cfd39a 100644
 --- a/src/import/reimportFixtureMeshes.ts
 +++ b/src/import/reimportFixtureMeshes.ts
-@@ -28,6 +28,7 @@ const FIXTURES_ROOT = resolve(DATA_DIR, 'fixtures');
+@@ -26,6 +26,7 @@ const FIXTURES_ROOT = resolve(DATA_DIR, 'fixtures');
  export async function reimportFixtureMeshes(
    fixtureTypeId: string,
    modelQuality: GdtfModelQuality,
@@ -115,7 +99,7 @@ index 1a2b3c4..5d6e7f8 100644
  ): Promise<{ fixture: typeof fixtureTypes.$inferSelect }> {
    const ftRows = await db.select().from(fixtureTypes)
      .where(and(eq(fixtureTypes.id, fixtureTypeId), isNull(fixtureTypes.deletedAt)))
-@@ -72,9 +73,11 @@ export async function reimportFixtureMeshes(
+@@ -77,7 +78,9 @@ export async function reimportFixtureMeshes(
  
    const workingDef = ft.definition as FixtureDefinition;
    const oldRawDef = version.definition as FixtureDefinition;
@@ -126,90 +110,3 @@ index 1a2b3c4..5d6e7f8 100644
  
    await db.update(fixtureVersions).set({
      definition: assetReg.definition,
-     previewModelId: assetReg.previewModelId,
-diff --git a/src/orbit/fixtureGeometryOrbit.ts b/src/orbit/fixtureGeometryOrbit.ts
-index 97f2ed1..b3a4c5d 100644
---- a/src/orbit/fixtureGeometryOrbit.ts
-+++ b/src/orbit/fixtureGeometryOrbit.ts
-@@ -25,6 +25,8 @@ import {
-   partLocalMatrixFromTransform,
-   readMeshOffset,
-   transformPointRow,
-+  composeMatrixFromTrs,
-+  isCustomReplacedModel,
- } from './fixtureTransformMatrix.js';
- import {
-   filterMeshesForOpticalPart,
-@@ -266,11 +267,17 @@ function fixMeshWinding(meshes: ParsedMesh[]): ParsedMesh[] {
-   });
- }
- 
--function transformGlbMeshes(bytes: Buffer, dims: ModelDims, world: number[]): ParsedMesh[] {
-+function transformGlbMeshes(
-+  bytes: Buffer,
-+  dims: ModelDims,
-+  world: number[],
-+  oneToOne = false,
-+): ParsedMesh[] {
-   const raw = meshesFromGlb(bytes);
-   if (!raw.length) return [];
-+  const wrap = gltfToGdtfWrapMatrix();
-+  if (oneToOne) {
-+    const modelMatrix = multiplyMat4Row(world, wrap);
-+    return applyMatrixToMeshes(raw, modelMatrix, { flipWinding: true });
-+  }
--  if (oneToOne) {
--    return applyMatrixToMeshes(raw, world);
--  }
--  const wrap = gltfToGdtfWrapMatrix();
-   const scale = wrapScaleMatrix(raw, dims);
-   const modelMatrix = multiplyMat4Row(world, multiplyMat4Row(wrap, scale));
-@@ -285,7 +292,8 @@ function loadModelMeshes(
-   if (!bytes?.length) return null;
-   let meshes = glbCache.get(mediaId);
-   if (!meshes) {
--    meshes = transformGlbMeshes(bytes, modelDims(model), identityMat4Row());
-+    const oneToOne = isCustomReplacedModel(model);
-+    meshes = transformGlbMeshes(bytes, modelDims(model), identityMat4Row(), oneToOne);
-     glbCache.set(mediaId, meshes);
-   }
-   return meshes;
-@@ -328,9 +336,16 @@ function buildMeshesAtMatrix(
-   // Per-mesh offset (model.metadata.meshOffset) aligns a custom/imported mesh to
-   // the part origin without moving the part transform/pivot. Applied in the
-   // part-local GDTF frame, matching the web viewer: world · offset · wrap · scale.
--  const meshOffset = readMeshOffset(model.metadata as Record<string, unknown> | undefined);
--  const placementMatrix = meshOffset
--    ? multiplyMat4Row(worldMatrix, meshOffsetMatrixRow(meshOffset))
--    : worldMatrix;
-+  const custom = isCustomReplacedModel(model);
-+  const meshOffset = readMeshOffset(model.metadata as Record<string, unknown> | undefined);
-+  let placementMatrix = worldMatrix;
-+  if (meshOffset) {
-+    placementMatrix = custom
-+      ? multiplyMat4Row(worldMatrix, composeMatrixFromTrs(
-+          meshOffset.position, { x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 },
-+        ))
-+      : multiplyMat4Row(worldMatrix, meshOffsetMatrixRow(meshOffset));
-+  }
-   const placed = applyMatrixToMeshes(baseMeshes, placementMatrix);
-   const prismMaterialId = part.materialId ?? ctx.tagMaterials[part.tag] ?? PRISM_DEFAULT_MATERIAL_ID;
-diff --git a/src/orbit/fixtureTransformMatrix.ts b/src/orbit/fixtureTransformMatrix.ts
-index 5884c81..6a7b8c9 100644
---- a/src/orbit/fixtureTransformMatrix.ts
-+++ b/src/orbit/fixtureTransformMatrix.ts
-@@ -82,6 +82,13 @@ function translationOf(m: number[]): Vec3 {
-   return { x: m[3] ?? 0, y: m[7] ?? 0, z: m[11] ?? 0 };
- }
- 
-+/** True when the model mesh was swapped via Settings → Replace. */
-+export function isCustomReplacedModel(model: { metadata?: unknown } | null | undefined): boolean {
-+  const meta = (model?.metadata ?? {}) as { replaced?: unknown };
-+  return meta.replaced === true;
-+}
-+
- /**
-  * Per-mesh placement offset for a fixture model (GDTF Z-up metres + degrees
-  * XYZ). Applied on top of the part world transform WITHOUT changing it, so the
--- 
-2.43.0
