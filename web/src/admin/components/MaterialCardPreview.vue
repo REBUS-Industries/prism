@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Material library card thumbnail. Lazy-loads material detail and renders a
- * compact sphere swatch so metallic / reflective materials show environment
- * reflections (same capture path as the editor thumbnail).
+ * Material library card thumbnail. Uses the server-cached preview PNG when
+ * available; otherwise lazy-loads material detail and renders a one-shot PBR
+ * sphere swatch (same capture path as the editor thumbnail).
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import MaterialPreviewSwatch from './MaterialPreviewSwatch.vue';
@@ -18,6 +18,7 @@ import {
 const props = defineProps<{
   materialId: string;
   thumbnailTextureId: string | null;
+  previewUrl: string | null;
   alt: string;
 }>();
 
@@ -31,11 +32,27 @@ const shouldRender = ref(false);
 const loading = ref(false);
 const detail = ref<MaterialDetail | null>(null);
 const failed = ref(false);
+const imgFailed = ref(false);
+
+const staticUrl = computed(() =>
+  props.previewUrl
+  ?? (props.thumbnailTextureId ? texturesApi.previewUrl(props.thumbnailTextureId) : null),
+);
+
+const showStaticImage = computed(() =>
+  shouldRender.value && Boolean(staticUrl.value && !imgFailed.value),
+);
+
+const showLiveSwatch = computed(() =>
+  shouldRender.value && !showStaticImage.value && Boolean(detail.value),
+);
 
 const sources = computed<Partial<Record<MaterialSlot, string>>>(() => {
   if (!detail.value) return {};
   const map: Partial<Record<MaterialSlot, string>> = {};
-  for (const s of detail.value.slots) map[s.slot] = s.texture.previewUrl ?? texturesApi.previewUrl(s.textureId);
+  for (const s of detail.value.slots) {
+    map[s.slot] = s.texture.previewUrl ?? texturesApi.previewUrl(s.textureId);
+  }
   return map;
 });
 
@@ -48,7 +65,7 @@ const parameters = computed<MaterialParameters>(() =>
 let observer: IntersectionObserver | null = null;
 
 async function loadPreview(): Promise<void> {
-  if (detail.value || loading.value || failed.value) return;
+  if (staticUrl.value || detail.value || loading.value || failed.value) return;
   loading.value = true;
   try {
     detail.value = await materialsApi.get(props.materialId);
@@ -59,18 +76,27 @@ async function loadPreview(): Promise<void> {
   }
 }
 
+function onImgError(): void {
+  imgFailed.value = true;
+  if (shouldRender.value && !detail.value && !loading.value) void loadPreview();
+}
+
+function beginLazyLoad(): void {
+  if (shouldRender.value) return;
+  shouldRender.value = true;
+  if (!staticUrl.value) void loadPreview();
+}
+
 onMounted(() => {
   const el = rootRef.value;
   if (!el || typeof IntersectionObserver === 'undefined') {
-    shouldRender.value = true;
-    void loadPreview();
+    beginLazyLoad();
     return;
   }
   observer = new IntersectionObserver(
     (entries) => {
       if (entries.some((e) => e.isIntersecting)) {
-        shouldRender.value = true;
-        void loadPreview();
+        beginLazyLoad();
         observer?.disconnect();
         observer = null;
       }
@@ -94,10 +120,18 @@ defineExpose({
 
 <template>
   <span ref="rootRef" class="material-card-preview">
+    <img
+      v-if="showStaticImage"
+      :src="staticUrl!"
+      :alt="alt"
+      loading="lazy"
+      @error="onImgError"
+    />
     <MaterialPreviewSwatch
-      v-if="shouldRender && detail"
+      v-else-if="showLiveSwatch"
       :sources="sources"
       :parameters="parameters"
+      :live="false"
     />
     <span v-else-if="failed" class="preview-placeholder subtle">No preview</span>
     <span v-else-if="shouldRender && loading" class="preview-placeholder subtle">…</span>
@@ -110,6 +144,12 @@ defineExpose({
   display: block;
   width: 100%;
   height: 100%;
+}
+.material-card-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .material-card-preview :deep(.material-preview-swatch) {
   width: 100%;

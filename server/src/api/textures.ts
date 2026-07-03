@@ -26,8 +26,7 @@
  * Reads require `materials:read`; admin sessions and ORBIT bearers bypass
  * scope checks as usual (see auth/middleware.ts requireScope).
  */
-import { createReadStream } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
@@ -38,6 +37,8 @@ import { requireAuth, requireScope } from '../auth/middleware.js';
 import { ALLOWED_SLOTS, isMaterialSlot, slotFilenameTokens } from '../materials/slots.js';
 import { normalizeTextureBody } from '../materials/textureNormalize.js';
 import { texturePreviewUrl } from '../materials/texturePreview.js';
+import { isMaterialPreviewTag } from '../materials/saveThumbnail.js';
+import { streamTexturePreviewBody } from '../materials/streamPreview.js';
 
 const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/prism';
 const TEXTURES_ROOT = resolve(DATA_DIR, 'textures');
@@ -148,16 +149,19 @@ async function loadTexture(id: string): Promise<TextureRow | null> {
 }
 
 async function streamTextureBody(
-  row: Pick<typeof textures.$inferSelect, 'originalFilename' | 'contentType' | 'storagePath'>,
+  row: Pick<typeof textures.$inferSelect, 'id' | 'originalFilename' | 'contentType' | 'storagePath' | 'sizeBytes' | 'tags'>,
   reply: FastifyReply,
-  opts: { cacheControl?: string },
+  opts: { cacheControl?: string; ifNoneMatch?: string | string[] } = {},
 ) {
-  const s = await stat(row.storagePath);
-  reply.header('content-type', row.contentType);
-  reply.header('content-length', String(s.size));
-  reply.header('content-disposition', `inline; filename="${encodeURIComponent(row.originalFilename)}"`);
-  if (opts.cacheControl) reply.header('cache-control', opts.cacheControl);
-  return reply.send(createReadStream(row.storagePath));
+  const etag = `"${row.id}-${row.sizeBytes}"`;
+  const cacheControl = isMaterialPreviewTag(row.tags)
+    ? 'private, max-age=31536000, immutable'
+    : (opts.cacheControl ?? 'private, max-age=3600');
+  return streamTexturePreviewBody(row, reply, {
+    cacheControl,
+    etag,
+    ifNoneMatch: opts.ifNoneMatch,
+  });
 }
 
 const plugin: FastifyPluginAsync = async (app) => {
@@ -397,7 +401,10 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (!row) return reply.code(404).send({ error: 'not found' });
 
     try {
-      return await streamTextureBody(row, reply, { cacheControl: 'private, max-age=3600' });
+      return await streamTextureBody(row, reply, {
+        cacheControl: 'private, max-age=3600',
+        ifNoneMatch: req.headers['if-none-match'],
+      });
     } catch {
       return reply.code(410).send({ error: 'texture body missing on disk' });
     }

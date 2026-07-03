@@ -47,6 +47,8 @@ import { ALLOWED_SLOTS, isMaterialSlot } from '../materials/slots.js';
 import { importMaterialZipBuffer, MAX_MATERIAL_ZIP_BYTES } from '../materials/importZip.js';
 import { duplicateMaterial } from '../materials/duplicate.js';
 import { loadMaterialDetail, SLOTS_TOTAL } from '../materials/loadDetail.js';
+import { materialPreviewUrl } from '../materials/previewUrl.js';
+import { streamMaterialPreview } from '../materials/streamPreview.js';
 import { texturePreviewUrl } from '../materials/texturePreview.js';
 import { saveMaterialThumbnail, MAX_MATERIAL_THUMBNAIL_BYTES } from '../materials/saveThumbnail.js';
 import {
@@ -183,7 +185,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       description: r.description,
       tags: Array.isArray(r.tags) ? r.tags : [],
       thumbnailTextureId: r.thumbnailTextureId,
-      previewUrl: r.thumbnailTextureId ? texturePreviewUrl(r.thumbnailTextureId) : null,
+      previewUrl: materialPreviewUrl(r.id, r.updatedAt, r.thumbnailTextureId),
       branchedFromId: r.branchedFromId ?? null,
       groupId: r.groupId ?? null,
       slotsFilled: Number(r.slotsFilled ?? 0),
@@ -216,6 +218,30 @@ const plugin: FastifyPluginAsync = async (app) => {
 
     const detail = await loadMaterialDetail(inserted[0]!.id);
     return reply.code(201).send(detail);
+  });
+
+  /* ---------- GET /api/materials/:id/preview ---------- */
+  app.get<{ Params: { id: string } }>('/:id/preview', {
+    preHandler: [requireAuth, requireScope('materials:read')],
+  }, async (req, reply) => {
+    const parsed = idParam.safeParse(req.params);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid id' });
+
+    const material = await db.query.materials.findFirst({
+      where: and(eq(materials.id, parsed.data.id), isNull(materials.deletedAt)),
+    });
+    if (!material?.thumbnailTextureId) return reply.code(404).send({ error: 'no preview' });
+
+    const texture = await db.query.textures.findFirst({
+      where: and(eq(textures.id, material.thumbnailTextureId), isNull(textures.deletedAt)),
+    });
+    if (!texture) return reply.code(404).send({ error: 'preview texture not found' });
+
+    try {
+      return await streamMaterialPreview(material, texture, reply, req.headers['if-none-match']);
+    } catch {
+      return reply.code(410).send({ error: 'preview body missing on disk' });
+    }
   });
 
   /* ---------- GET /api/materials/:id ---------- */
