@@ -49,7 +49,6 @@ import { duplicateMaterial } from '../materials/duplicate.js';
 import { loadMaterialDetail, SLOTS_TOTAL } from '../materials/loadDetail.js';
 import { materialPreviewUrl } from '../materials/previewUrl.js';
 import { streamMaterialPreview } from '../materials/streamPreview.js';
-import { texturePreviewUrl } from '../materials/texturePreview.js';
 import { saveMaterialThumbnail, MAX_MATERIAL_THUMBNAIL_BYTES } from '../materials/saveThumbnail.js';
 import {
   type MaterialParametersPatch,
