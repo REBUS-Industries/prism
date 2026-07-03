@@ -934,6 +934,25 @@ export const orbitApi = {
       `/api/orbit/projects/${encodeURIComponent(projectId)}/versions/delete`,
       { target, versionIds },
     ),
+  purgeVersionsBefore: (
+    target: 'prod' | 'dev',
+    projectId: string,
+    body: { before: string; modelIds: string[]; dryRun?: boolean },
+  ) =>
+    api.post<{
+      target: string;
+      projectId: string;
+      dryRun: boolean;
+      before: string;
+      modelsScanned: number;
+      modelsWithDeletions: number;
+      versionCount: number;
+      deletedCount: number;
+      failures: Array<{ modelId: string; error: string }>;
+    }>(
+      `/api/orbit/projects/${encodeURIComponent(projectId)}/versions/purge-before`,
+      { target, ...body },
+    ),
   /** Resolve ORBIT version → root object hash for embedded viewers. */
   resolveViewerVersion: async (
     target: 'prod' | 'dev',
