@@ -29,6 +29,14 @@ If the UI shows **Not Found** / `Route GET:/api/access/invite-keys not found`, t
 must report `features.inviteKeys: true` on `GET /api/access/health` and return **401**
 (not 404) for unauthenticated `GET /api/access/invite-keys`.
 
+## Empty orbitToken on Lite login
+
+If the key is accepted but the connector reports an empty Orbit token, the permissions
+service was minting with an invalid `apiTokenCreate` payload (`userId` + `type: "Project"`).
+Apply `scaffold/prism-permissions-service/patches/invite-key-orbit-mint-empty-token.patch`
+and redeploy. Invite-key sessions then fail with HTTP 503 on mint errors instead of
+returning `orbitToken: ""`. Portal / full-connector login is unchanged.
+
 ## Light default functions
 
 Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions`

@@ -76,7 +76,11 @@ POST /api/access/session { "portalAuthCode": "mock:alice", "orbitTarget": "dev" 
 
 ## Token minting
 
-The service attempts Speckle `apiTokenCreate` with `limitResources` (project whitelist) and
-function-derived scopes. Set `ORBIT_MINT_FALLBACK=0` to fail hard when minting is unavailable.
+The service attempts Speckle `apiTokenCreate` with `limitResources` (project whitelist,
+`type: project`) and function-derived scopes. Orbit's `ApiTokenCreateInput` has no
+`userId` field — the token is owned by the PRISM Orbit admin PAT and scoped by
+`limitResources`. Set `ORBIT_MINT_FALLBACK=0` to fail hard when minting is unavailable
+for **portal** sessions. **Invite-key** sessions always fail hard (HTTP 503) and never
+fall back to the admin PAT.
 
 Audit rows live in `minted_token`; revoke via `POST /api/access/revoke`.
