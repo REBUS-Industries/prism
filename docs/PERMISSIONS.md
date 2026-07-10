@@ -26,7 +26,7 @@ Use `orbit-cli auth login --server <prod|dev>` for full token capabilities (auto
 
 ## Admin login
 
-**Admin â†’ Permissions** (`/admin/#/permissions`) â€” Vue Flow editor for the policy graph.
+**Admin â†’ Permissions** (`/admin/#/permissions`) â€” Vue Flow editor for the policy graph, plus **Guest access (Connector Light)** invite keys for external Rhino collaborators (no portal account).
 
 **Admin â†’ Users** (`/admin/#/users`) â€” link Google Workspace, sync directory users, and
 pre-provision project access / PRISM admin flags before first sign-in.

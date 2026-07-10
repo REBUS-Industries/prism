@@ -9,6 +9,7 @@ import { RouterLink } from 'vue-router';
 import Icon from '../../shared/Icon.vue';
 import PolicyGraphBoard from '../components/permissions/PolicyGraphBoard.vue';
 import PolicyInspector from '../components/permissions/PolicyInspector.vue';
+import GuestInviteKeysPanel from '../components/permissions/GuestInviteKeysPanel.vue';
 import type { PolicyNodeData } from '../utils/policyGraphLayout';
 import {
   policyColumnPosition,
@@ -236,6 +237,8 @@ async function savePolicy() {
       </p>
       <p v-if="accessStatus" class="ok">{{ accessStatus }}</p>
     </section>
+
+    <GuestInviteKeysPanel />
 
     <div v-if="loading" class="muted">Loading policy…</div>
 

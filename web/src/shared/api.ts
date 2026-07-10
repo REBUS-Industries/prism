@@ -2640,8 +2640,92 @@ export interface EffectiveToolAccess {
   tools: PrismTool[];
 }
 
+/** Default REBUS Connector Light function set for invite keys. */
+export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
+  'send',
+  'create_model',
+  'create_version',
+  'list_models',
+  'list_versions',
+];
+
+export interface InviteKeyProject {
+  orbitProjectId: string;
+  projectName?: string | null;
+}
+
+export interface CreateInviteKeyRequest {
+  orbitProjectIds: string[];
+  allowedFunctions?: ConnectorFunction[];
+  orbitTarget?: 'prod' | 'dev';
+  expiresAt?: string | null;
+  label?: string | null;
+  maxRedemptions?: number | null;
+  projectNames?: Record<string, string> | null;
+}
+
+export interface InviteKeyRecord {
+  id: string;
+  label?: string | null;
+  orbitTarget: 'prod' | 'dev';
+  projects: InviteKeyProject[];
+  allowedFunctions: ConnectorFunction[];
+  expiresAt?: string | null;
+  maxRedemptions?: number | null;
+  redemptionCount: number;
+  createdBy: string;
+  createdAt: string;
+  revokedAt?: string | null;
+  lastRedeemedAt?: string | null;
+  /** Present only on create — plaintext key shown once. */
+  key?: string;
+  redeemUrl?: string;
+}
+
+export interface CreateInviteKeyResponse {
+  id: string;
+  key: string;
+  redeemUrl: string;
+  expiresAt?: string | null;
+  projects: InviteKeyProject[];
+  allowedFunctions: ConnectorFunction[];
+  label?: string | null;
+  maxRedemptions?: number | null;
+}
+
+export interface UpdateInviteKeyRequest {
+  label?: string | null;
+  orbitProjectIds?: string[];
+  projectNames?: Record<string, string> | null;
+  allowedFunctions?: ConnectorFunction[];
+  expiresAt?: string | null;
+  maxRedemptions?: number | null;
+}
+
+export interface ListInviteKeysResponse {
+  keys: InviteKeyRecord[];
+}
+
 export const accessApi = {
   me: () => api.get<EffectiveToolAccess>('/api/access/me'),
+  listInviteKeys: () => api.get<ListInviteKeysResponse>('/api/access/invite-keys'),
+  createInviteKey: (body: CreateInviteKeyRequest) =>
+    api.post<CreateInviteKeyResponse>('/api/access/invite-keys', body as unknown as Record<string, unknown>),
+  updateInviteKey: (id: string, body: UpdateInviteKeyRequest) =>
+    api.patch<{ key: InviteKeyRecord }>(
+      `/api/access/invite-keys/${encodeURIComponent(id)}`,
+      body as unknown as Record<string, unknown>,
+    ),
+  revokeInviteKey: (id: string) =>
+    api.post<{ key: InviteKeyRecord }>(`/api/access/invite-keys/${encodeURIComponent(id)}/revoke`, {}),
+  demoInviteKey: () =>
+    api.get<{
+      id: string;
+      key: string;
+      orbitProjectId: string;
+      allowedFunctions: ConnectorFunction[];
+      note?: string;
+    }>('/api/access/invite-keys/demo'),
 };
 
 export type GoogleWorkspaceStatus = 'disconnected' | 'linked' | 'syncing';
