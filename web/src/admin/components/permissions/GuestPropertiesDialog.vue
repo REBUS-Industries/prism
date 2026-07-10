@@ -5,9 +5,11 @@
 import { computed, ref, watch } from 'vue';
 import Icon from '../../../shared/Icon.vue';
 import ProjectAccessTree from './ProjectAccessTree.vue';
+import ModelAccessTree from './ModelAccessTree.vue';
 import {
   LIGHT_CONNECTOR_FUNCTIONS,
   type ConnectorFunction,
+  type InviteModelAccess,
   type OrbitProject,
 } from '../../../shared/api';
 import type { GuestInviteNodeMeta } from '../../utils/policyGraphLayout';
@@ -41,9 +43,16 @@ const orbitTarget = ref<'prod' | 'dev'>('prod');
 const allowedFunctions = ref<ConnectorFunction[]>([...LIGHT_CONNECTOR_FUNCTIONS]);
 const maxRedemptions = ref('');
 const expiresAt = ref('');
+const modelAccess = ref<InviteModelAccess>('all');
+const selectedModelIds = ref<string[]>([]);
 
 const isNew = computed(() => !props.model?.meta.inviteKeyId);
 const functionOptions = LIGHT_CONNECTOR_FUNCTIONS;
+const canSave = computed(() => {
+  if (!projectIds.value.length || !allowedFunctions.value.length) return false;
+  if (modelAccess.value === 'selected' && !selectedModelIds.value.length) return false;
+  return true;
+});
 
 watch(
   () => props.model,
@@ -55,6 +64,8 @@ watch(
     allowedFunctions.value = [...m.meta.allowedFunctions];
     maxRedemptions.value = m.meta.maxRedemptions != null ? String(m.meta.maxRedemptions) : '';
     expiresAt.value = m.meta.expiresAt ? m.meta.expiresAt.slice(0, 16) : '';
+    modelAccess.value = m.meta.modelAccess ?? 'all';
+    selectedModelIds.value = [...(m.meta.selectedModelIds ?? [])];
   },
   { immediate: true },
 );
@@ -85,6 +96,8 @@ function onSave() {
       allowedFunctions: [...allowedFunctions.value],
       maxRedemptions: parseMaxRedemptions(),
       expiresAt: parseExpiresAt(),
+      modelAccess: modelAccess.value,
+      selectedModelIds: modelAccess.value === 'selected' ? [...selectedModelIds.value] : [],
       dirty: true,
     },
   });
@@ -156,6 +169,40 @@ async function copy(text: string) {
         </div>
 
         <div class="block">
+          <span class="field-label">Model access</span>
+          <div class="mode-grid">
+            <label class="mode-radio">
+              <input v-model="modelAccess" type="radio" value="all" />
+              <span>
+                <strong>All models</strong>
+                <span class="muted small">Every model in the granted projects</span>
+              </span>
+            </label>
+            <label class="mode-radio">
+              <input v-model="modelAccess" type="radio" value="selected" />
+              <span>
+                <strong>Selected models</strong>
+                <span class="muted small">Only models you pick below</span>
+              </span>
+            </label>
+            <label class="mode-radio">
+              <input v-model="modelAccess" type="radio" value="authored" />
+              <span>
+                <strong>Authored by this guest</strong>
+                <span class="muted small">Models with Orbit property <code>userId</code> = invite identity</span>
+              </span>
+            </label>
+          </div>
+          <ModelAccessTree
+            v-if="modelAccess === 'selected'"
+            v-model="selectedModelIds"
+            :projects="projects"
+            :project-ids="projectIds"
+            :orbit-target="orbitTarget"
+          />
+        </div>
+
+        <div class="block">
           <span class="field-label">Allowed functions</span>
           <div class="fn-grid">
             <label v-for="fn in functionOptions" :key="fn" class="fn-check">
@@ -188,7 +235,7 @@ async function copy(text: string) {
         <button
           type="button"
           class="primary"
-          :disabled="saving || !projectIds.length || !allowedFunctions.length"
+          :disabled="saving || !canSave"
           @click="onSave"
         >
           {{ saving ? 'Saving…' : isNew ? 'Create key' : 'Save' }}
@@ -281,6 +328,15 @@ label {
 }
 label :is(input, select) { font-weight: 400; }
 .field-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.mode-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.mode-radio {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  font-weight: 400;
+}
+.mode-radio span { display: flex; flex-direction: column; gap: 2px; }
+.mode-radio strong { font-size: 13px; }
 .fn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
 .fn-check { flex-direction: row; align-items: center; gap: 6px; font-weight: 400; }
 .guest-dialog__foot {

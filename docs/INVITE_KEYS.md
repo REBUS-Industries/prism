@@ -37,6 +37,19 @@ Apply `scaffold/prism-permissions-service/patches/invite-key-orbit-mint-empty-to
 and redeploy. Invite-key sessions then fail with HTTP 503 on mint errors instead of
 returning `orbitToken: ""`. Portal / full-connector login is unchanged.
 
+## Model access (guest properties)
+
+Guest invite keys support three model-visibility modes (permissions-service + admin UI):
+
+| Mode | Meaning |
+|------|---------|
+| `all` | Every model in the granted projects |
+| `selected` | Only `selectedModelIds` (picked in the model checkbox tree) |
+| `authored` | Models whose Orbit property `userId` equals `manifest.userId` (`invite:<keyId>`) |
+
+Manifest carries `modelAccess`, `selectedModelIds`, and `authoredProperty: "userId"`.
+Connector Light must filter `list_models` by mode and bake `userId = manifest.userId` on upload for authored guests.
+
 ## Light default functions
 
 Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions`

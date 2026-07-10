@@ -2656,6 +2656,14 @@ export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'list_versions',
 ];
 
+/** Model visibility for Connector Light invite keys. */
+export type InviteModelAccess = 'all' | 'selected' | 'authored';
+
+export const INVITE_MODEL_ACCESS_MODES: InviteModelAccess[] = ['all', 'selected', 'authored'];
+
+/** Orbit model property used for authored-only filtering. */
+export const INVITE_AUTHORED_MODEL_PROPERTY = 'userId' as const;
+
 export interface InviteKeyProject {
   orbitProjectId: string;
   projectName?: string | null;
@@ -2669,6 +2677,9 @@ export interface CreateInviteKeyRequest {
   label?: string | null;
   maxRedemptions?: number | null;
   projectNames?: Record<string, string> | null;
+  modelAccess?: InviteModelAccess;
+  /** Required when modelAccess is `selected`. */
+  selectedModelIds?: string[] | null;
 }
 
 export interface InviteKeyRecord {
@@ -2677,6 +2688,8 @@ export interface InviteKeyRecord {
   orbitTarget: 'prod' | 'dev';
   projects: InviteKeyProject[];
   allowedFunctions: ConnectorFunction[];
+  modelAccess: InviteModelAccess;
+  selectedModelIds: string[];
   expiresAt?: string | null;
   maxRedemptions?: number | null;
   redemptionCount: number;
@@ -2698,6 +2711,8 @@ export interface CreateInviteKeyResponse {
   allowedFunctions: ConnectorFunction[];
   label?: string | null;
   maxRedemptions?: number | null;
+  modelAccess: InviteModelAccess;
+  selectedModelIds: string[];
 }
 
 export interface UpdateInviteKeyRequest {
@@ -2707,6 +2722,8 @@ export interface UpdateInviteKeyRequest {
   allowedFunctions?: ConnectorFunction[];
   expiresAt?: string | null;
   maxRedemptions?: number | null;
+  modelAccess?: InviteModelAccess;
+  selectedModelIds?: string[] | null;
 }
 
 export interface ListInviteKeysResponse {

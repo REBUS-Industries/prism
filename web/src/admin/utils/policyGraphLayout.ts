@@ -1,4 +1,4 @@
-import type { ConnectorFunction, PolicyNodeType } from '../../shared/api';
+import type { ConnectorFunction, InviteModelAccess, PolicyNodeType } from '../../shared/api';
 
 /** Guest invite-key metadata attached to user nodes on the Permissions graph. */
 export interface GuestInviteNodeMeta {
@@ -13,6 +13,10 @@ export interface GuestInviteNodeMeta {
   /** Plaintext key — only present immediately after create. */
   plaintextKey?: string | null;
   redeemUrl?: string | null;
+  /** Model visibility for Connector Light. */
+  modelAccess?: InviteModelAccess;
+  /** When modelAccess is `selected`. */
+  selectedModelIds?: string[];
 }
 
 export interface PolicyNodeData {
