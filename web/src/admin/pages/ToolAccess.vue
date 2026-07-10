@@ -11,6 +11,7 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { MarkerType } from '@vue-flow/core';
+import { RouterLink } from 'vue-router';
 import PolicyGraphBoard from '../components/permissions/PolicyGraphBoard.vue';
 import PolicyInspector from '../components/permissions/PolicyInspector.vue';
 import type { PolicyFlowEdge, PolicyFlowNode } from '../utils/policyGraphLayout';
@@ -242,8 +243,11 @@ onUnmounted(() => {
       <div>
         <h1>PRISM tool access</h1>
         <p class="muted">
-          Role nodes mirror the portal's live role list. Super Admin / Admin / PRISM admins get all tools automatically.
-          Edit roles and grants in the portal — changes appear here within a few seconds.
+          Read-only mirror of portal roles → PRISM admin tools (Convert, Visualiser, libraries).
+          Super Admin / Admin / PRISM admins get all tools automatically. Edit grants in the portal —
+          changes appear here within a few seconds.
+          Guest Connector Light access is on
+          <RouterLink :to="{ name: 'permissions' }">Permissions</RouterLink>.
         </p>
       </div>
     </header>

@@ -15,15 +15,39 @@ const NODE_META: Record<PolicyNodeType, { icon: string; accent: string; kind: st
 
 const props = defineProps<{ data: PolicyNodeData }>();
 
-const meta = computed(() => NODE_META[props.data.policyType] ?? NODE_META.role);
-const accent = computed(() => (props.data.stale ? '#ef4444' : meta.value.accent));
-const subtitle = computed(() => props.data.refValue?.trim() || meta.value.kind);
+const meta = computed(() => {
+  if (props.data.guest) {
+    return { icon: 'person_outline', accent: '#0d9488', kind: 'Guest' };
+  }
+  return NODE_META[props.data.policyType] ?? NODE_META.role;
+});
+const accent = computed(() => {
+  if (props.data.guestMeta?.revoked) return '#ef4444';
+  if (props.data.stale) return '#ef4444';
+  return meta.value.accent;
+});
+const subtitle = computed(() => {
+  if (props.data.guest) {
+    const t = props.data.guestMeta?.orbitTarget ?? 'prod';
+    const dirty = props.data.guestMeta?.dirty ? ' · unsaved' : '';
+    return `${t}${dirty}`;
+  }
+  return props.data.refValue?.trim() || meta.value.kind;
+});
+const kindLabel = computed(() => {
+  if (props.data.guestMeta?.revoked) return 'Revoked';
+  if (props.data.guestMeta?.dirty) return 'Draft';
+  return meta.value.kind;
+});
 </script>
 
 <template>
   <div
     class="policy-node node-drag-handle"
-    :class="{ 'policy-node--stale': data.stale }"
+    :class="{
+      'policy-node--stale': data.stale || data.guestMeta?.revoked,
+      'policy-node--guest': data.guest,
+    }"
     :style="{ '--accent': accent }"
   >
     <Handle v-if="!data.noTarget" type="target" :position="Position.Left" />
@@ -36,8 +60,12 @@ const subtitle = computed(() => props.data.refValue?.trim() || meta.value.kind);
       <span class="policy-node__label">{{ data.label }}</span>
       <span class="policy-node__sub">{{ subtitle }}</span>
     </span>
-    <span v-if="data.stale" class="policy-node__kind policy-node__kind--stale" title="This role has grants but is no longer in the portal's role list">Stale</span>
-    <span v-else class="policy-node__kind">{{ meta.kind }}</span>
+    <span
+      v-if="data.stale"
+      class="policy-node__kind policy-node__kind--stale"
+      title="This role has grants but is no longer in the portal's role list"
+    >Stale</span>
+    <span v-else class="policy-node__kind">{{ kindLabel }}</span>
   </div>
 </template>
 

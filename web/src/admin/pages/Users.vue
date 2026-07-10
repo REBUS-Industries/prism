@@ -180,7 +180,7 @@ onMounted(refresh);
   <p class="muted">
     Link your Google Workspace to import directory users, predefine ORBIT project access and PRISM admin
     rights before they sign in. Effective connector permissions still intersect with
-    <RouterLink :to="{ name: 'tool-access' }">Permissions</RouterLink>.
+    <RouterLink :to="{ name: 'permissions' }">Permissions</RouterLink>.
     Password login via <RouterLink :to="{ name: 'profile' }">Profile</RouterLink> remains available for local admin accounts.
   </p>
 
