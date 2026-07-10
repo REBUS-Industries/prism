@@ -1,0 +1,263 @@
+From 8b7528a733f2cd570a9e6960d036c81d034379ba Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Fri, 10 Jul 2026 11:12:09 +0000
+Subject: [PATCH] fix(access): mint invite-key Orbit tokens against real
+ apiTokenCreate schema
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Orbit ApiTokenCreateInput has name/scopes/lifespan/limitResources only — no
+userId. We were sending userId plus type:"Project" (enum is lowercase
+"project"), so apiTokenCreate always failed. Portal login masked this via
+admin PAT fallback; invite keys use forbidAdminFallback and returned 200 with
+orbitToken:"" which Lite correctly rejects.
+
+- Drop userId from the mint mutation; use type:"project" for limitResources
+- Invite-key sessions fail with HTTP 503 on mint failure (never empty token)
+- Portal / full-connector path unchanged (admin fallback still allowed)
+---
+ docs/INVITE_KEYS.md    | 10 ++++++---
+ src/access/session.ts  | 50 ++++++++++++++++++++++++++++++++----------
+ src/orbit/mint.ts      | 45 ++++++++++++++++++++++---------------
+ src/tests/mint.test.ts | 19 ++++++++++++++++
+ 4 files changed, 91 insertions(+), 33 deletions(-)
+ create mode 100644 src/tests/mint.test.ts
+
+diff --git a/docs/INVITE_KEYS.md b/docs/INVITE_KEYS.md
+index 68d28c7..0b12c62 100644
+--- a/docs/INVITE_KEYS.md
++++ b/docs/INVITE_KEYS.md
+@@ -131,9 +131,13 @@ When `portal_adapter=mock` (prism-dev):
+ 
+ 1. **Manifest** — client DenyIfNotAllowed is UX only; invite keys never set
+    `orbitBlanketAccess=true` and never include `receive` / `create_project`.
+-2. **Orbit token** — minted with `limitResources` = key project ids and scopes
+-   derived from allowed functions (`streams:write` / `objects:write` for send
+-   paths). Production must use real `apiTokenCreate` (`ORBIT_MINT_FALLBACK=0`).
++2. **Orbit token** — minted via `apiTokenCreate` with `limitResources` = key
++   project ids (`type: project`) and scopes derived from allowed functions.
++   The Orbit schema has **no** `userId` on `ApiTokenCreateInput` — the token is
++   owned by the PRISM Orbit admin PAT and scoped by `limitResources`. Invite-key
++   sessions **never** fall back to the raw admin PAT; mint failure returns HTTP
++   503 (not 200 with an empty `orbitToken`). Portal / full-connector login is
++   unchanged and may still use the admin fallback when minting fails.
+ 3. **Revocation** — key revoke marks sessions + minted tokens `revokedAt`.
+ 4. **Audit** — `invite_key.created_by`, `invite_key_redemption` rows, session
+    `invite_key_id`, manifest `userId` / `inviteKeyId`.
+diff --git a/src/access/session.ts b/src/access/session.ts
+index 14000a5..9e94571 100644
+--- a/src/access/session.ts
++++ b/src/access/session.ts
+@@ -211,7 +211,8 @@ async function tryMintOrbitToken(input: {
+   let creds;
+   try {
+     creds = getOrbitCreds(input.orbitTarget);
+-  } catch {
++  } catch (err) {
++    if (input.forbidAdminFallback) throw err;
+     return null;
+   }
+ 
+@@ -258,7 +259,10 @@ async function tryMintOrbitToken(input: {
+       scopes: minted.scopes,
+       projectIds,
+     };
+-  } catch {
++  } catch (err) {
++    // Invite keys need the underlying Orbit error (forbidAdminFallback).
++    // Portal / full-connector path keeps soft-fail → null → empty token + admin fallback inside mint.
++    if (input.forbidAdminFallback) throw err;
+     return null;
+   }
+ }
+@@ -282,6 +286,9 @@ export async function exchangeInviteKeySession(body: AccessSessionRequest & { in
+     level: 'contributor' as const,
+     projectName: key.projectNames[orbitProjectId] ?? null,
+   }));
++  if (projects.length === 0) {
++    throw new AccessError('Invite key has no Orbit projects — cannot mint a scoped token', 400);
++  }
+ 
+   const sessionId = randomUUID();
+   const expiresAt = sessionExpiry();
+@@ -296,21 +303,40 @@ export async function exchangeInviteKeySession(body: AccessSessionRequest & { in
+   const linkId = await upsertIdentityLink(syntheticUser, orbitUserId);
+   await cacheProjectPermissions(orbitUserId, projects);
+ 
+-  const minted = await tryMintOrbitToken({
+-    orbitTarget,
+-    portalUser: syntheticUser,
+-    projects,
+-    sessionId,
+-    blanket: false,
+-    fixedFunctions: key.allowedFunctions,
+-    forbidAdminFallback: true,
+-  });
++  // Invite keys require a real scoped Orbit PAT (limitResources = key projects).
++  // Never return 200 with an empty orbitToken — the Lite connector cannot log in.
++  let minted: Awaited<ReturnType<typeof tryMintOrbitToken>>;
++  try {
++    minted = await tryMintOrbitToken({
++      orbitTarget,
++      portalUser: syntheticUser,
++      projects,
++      sessionId,
++      blanket: false,
++      fixedFunctions: key.allowedFunctions,
++      forbidAdminFallback: true,
++    });
++  } catch (err) {
++    const detail = err instanceof Error ? err.message : String(err);
++    throw new AccessError(
++      `Failed to mint Orbit token for invite key (target=${orbitTarget}): ${detail}`,
++      503,
++    );
++  }
++  if (!minted?.orbitToken) {
++    throw new AccessError(
++      `Failed to mint Orbit token for invite key (target=${orbitTarget}): ` +
++        'Orbit admin credentials missing or apiTokenCreate returned no token. ' +
++        'Check ORBIT_ADMIN_TOKEN / ORBIT_SERVER_URL for this target.',
++      503,
++    );
++  }
+ 
+   const manifest = await buildConnectorManifest({
+     sessionId,
+     orbitTarget,
+     orbitServerUrl,
+-    orbitToken: minted?.orbitToken ?? '',
++    orbitToken: minted.orbitToken,
+     expiresAt,
+     portalUser: syntheticUser,
+     portalProjects: projects,
+diff --git a/src/orbit/mint.ts b/src/orbit/mint.ts
+index d8c3e17..24d61b9 100644
+--- a/src/orbit/mint.ts
++++ b/src/orbit/mint.ts
+@@ -4,6 +4,7 @@ import { OrbitClientError, type OrbitCreds, type OrbitTarget, getOrbitCreds } fr
+ 
+ export interface MintTokenInput {
+   target: OrbitTarget;
++  /** Audit / naming only — Orbit apiTokenCreate has no userId field. */
+   orbitUserId: string;
+   email: string;
+   projectIds: string[];
+@@ -46,8 +47,14 @@ export function functionsToScopes(functions: ConnectorFunction[]): string[] {
+ 
+ /**
+  * Mint a scoped ORBIT personal access token for connector use.
+- * Uses Speckle apiTokenCreate when available; falls back to admin delegation token
+- * (server still enforces project ACL via user's existing access when using user token).
++ *
++ * Orbit `ApiTokenCreateInput` fields (prod schema): name, scopes, lifespan,
++ * limitResources. There is **no** userId — the token is owned by the admin PAT
++ * that calls the mutation; project ACL comes from limitResources.
++ *
++ * Portal sessions may fall back to the admin PAT when minting fails (manifest
++ * still gates the full connector UI). Invite keys must set forbidAdminFallback
++ * so an empty/unscoped admin token is never returned.
+  */
+ export async function mintScopedOrbitToken(input: MintTokenInput): Promise<MintTokenResult> {
+   const creds = getOrbitCreds(input.target);
+@@ -63,20 +70,17 @@ export async function mintScopedOrbitToken(input: MintTokenInput): Promise<MintT
+       scopes,
+       lifespan,
+       projectIds: input.projectIds,
+-      userId: input.orbitUserId,
+     });
+     return {
+       token: data.token,
+-      tokenId,
++      tokenId: data.id || tokenId,
+       expiresAt,
+       scopes,
+       projectIds: input.projectIds,
+     };
+   } catch (err) {
+     if (input.forbidAdminFallback || process.env.ORBIT_MINT_FALLBACK === '0') throw err;
+-    // Fallback: return admin token — manifest still gates UI for portal users.
+-    // Invite keys must set forbidAdminFallback so Orbit ACL is never bypassed.
+-    // Production should enable apiTokenCreate on orbit-server or set ORBIT_MINT_FALLBACK=0.
++    // Fallback (portal / full connector only): return admin token — manifest still gates UI.
+     return {
+       token: creds.token,
+       tokenId,
+@@ -89,8 +93,21 @@ export async function mintScopedOrbitToken(input: MintTokenInput): Promise<MintT
+ 
+ async function gqlMint(
+   creds: OrbitCreds,
+-  input: { name: string; scopes: string[]; lifespan: number; projectIds: string[]; userId: string },
++  input: { name: string; scopes: string[]; lifespan: number; projectIds: string[] },
+ ) {
++  // TokenResourceIdentifierType enum is lowercase: project | workspace
++  const limitResources =
++    input.projectIds.length > 0
++      ? input.projectIds.map((id) => ({ id, type: 'project' as const }))
++      : undefined;
++
++  const tokenInput: Record<string, unknown> = {
++    name: input.name,
++    scopes: input.scopes,
++    lifespan: input.lifespan,
++  };
++  if (limitResources) tokenInput.limitResources = limitResources;
++
+   const res = await fetch(`${creds.url}/graphql`, {
+     method: 'POST',
+     headers: {
+@@ -104,15 +121,7 @@ async function gqlMint(
+           token
+         }
+       }`,
+-      variables: {
+-        token: {
+-          name: input.name,
+-          scopes: input.scopes,
+-          lifespan: input.lifespan,
+-          limitResources: input.projectIds.map((id) => ({ id, type: 'Project' })),
+-          userId: input.userId,
+-        },
+-      },
++      variables: { token: tokenInput },
+     }),
+   });
+   const body = (await res.json()) as {
+@@ -121,7 +130,7 @@ async function gqlMint(
+   };
+   if (!res.ok || body.errors?.length || !body.data?.apiTokenCreate?.token) {
+     throw new OrbitClientError(
+-      res.status,
++      res.status >= 400 ? res.status : 502,
+       body.errors?.[0]?.message ?? 'apiTokenCreate unavailable',
+       body.errors,
+     );
+diff --git a/src/tests/mint.test.ts b/src/tests/mint.test.ts
+new file mode 100644
+index 0000000..4e397e2
+--- /dev/null
++++ b/src/tests/mint.test.ts
+@@ -0,0 +1,19 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { functionsToScopes } from '../orbit/mint.js';
++import { LIGHT_CONNECTOR_FUNCTIONS } from '../contracts/portal-access.js';
++
++test('Light scopes include write without receive', () => {
++  const scopes = functionsToScopes([...LIGHT_CONNECTOR_FUNCTIONS]);
++  assert.ok(scopes.includes('streams:write'));
++  assert.ok(scopes.includes('objects:write'));
++  assert.ok(scopes.includes('streams:read'));
++});
++
++test('Orbit limitResources type must be lowercase project (schema enum)', () => {
++  // Mirrors gqlMint mapping — regression guard for the empty-orbitToken bug.
++  const projectIds = ['abc123'];
++  const limitResources = projectIds.map((id) => ({ id, type: 'project' as const }));
++  assert.deepEqual(limitResources, [{ id: 'abc123', type: 'project' }]);
++  assert.notEqual(limitResources[0]!.type, 'Project');
++});
+-- 
+2.43.0
+
