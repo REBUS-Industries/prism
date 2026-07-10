@@ -21,6 +21,14 @@ Canonical API contract: `REBUS-Industries/prism-permissions-service` → `docs/I
 5. **Double-click an edge** to unlink a project (save to persist).
 6. **Revoke** ends the key and active sessions.
 
+## "Not Found" when minting
+
+If the UI shows **Not Found** / `Route GET:/api/access/invite-keys not found`, the running
+`prism-permissions` container is an older build without invite-keys routes. Redeploy
+`prism-permissions-service` from `main` (`permissions-image` workflow). A healthy deploy
+must report `features.inviteKeys: true` on `GET /api/access/health` and return **401**
+(not 404) for unauthenticated `GET /api/access/invite-keys`.
+
 ## Light default functions
 
 Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions`
@@ -33,11 +41,5 @@ Denied: `receive`, `create_project`
 
 - `POST /api/access/invite-keys` — create (plaintext key in response, once)
 - `GET /api/access/invite-keys` — list (no plaintext)
-- `PATCH /api/access/invite-keys/:id` — update label / projects / functions (see scaffold patch)
+- `PATCH /api/access/invite-keys/:id` — update label / projects / functions
 - `POST /api/access/invite-keys/:id/revoke` — revoke key + sessions
-
-## Permissions service patch
-
-To enable **Save** on existing guests, apply
-`scaffold/prism-permissions-service/patches/invite-keys-update-endpoint.patch` to
-`prism-permissions-service`, merge, and redeploy `permissions-image`.

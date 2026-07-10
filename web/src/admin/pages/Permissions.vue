@@ -236,6 +236,10 @@ async function refresh(preservePositions = false) {
     rebuildGraph(keys, orbitProjects.value, preservePositions);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'Failed to load guest access';
+    if ((err as ApiError).status === 404) {
+      error.value =
+        'Invite-keys API not found on the permissions service. Deploy the latest prism-permissions-service (invite-keys routes), then Refresh.';
+    }
   } finally {
     loading.value = false;
   }

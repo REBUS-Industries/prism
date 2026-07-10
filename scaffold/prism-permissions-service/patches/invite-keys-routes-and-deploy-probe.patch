@@ -1,0 +1,312 @@
+From 45f484025e21c86126dde0a0d6fd388ef5776065 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Fri, 10 Jul 2026 10:46:28 +0000
+Subject: [PATCH] fix(access): register invite-keys on root app + harden deploy
+ probe
+
+Prod was serving a build without invite-keys (session still required only
+portalAuthCode; GET /api/access/invite-keys returned Fastify Route not found).
+
+- Register invite-keys GET/POST/PATCH/revoke on the root Fastify instance with
+  preHandler: requireAdmin (avoid nested plugin registration)
+- Add PATCH updateInviteKey for rename / project edits
+- Expose features.inviteKeys on /api/access/health
+- Fail permissions-image deploy if invite-keys returns 404 instead of 401
+- Pass GIT_SHA into the image for health revision
+---
+ .github/workflows/permissions-image.yml | 28 +++++++--
+ Dockerfile                              |  2 +
+ src/access/inviteKeys.ts                | 76 +++++++++++++++++++++++++
+ src/api/access.ts                       | 71 +++++++++++++++--------
+ src/contracts/portal-access.ts          |  9 +++
+ 5 files changed, 158 insertions(+), 28 deletions(-)
+
+diff --git a/.github/workflows/permissions-image.yml b/.github/workflows/permissions-image.yml
+index 3fb8ff8..3cce44d 100644
+--- a/.github/workflows/permissions-image.yml
++++ b/.github/workflows/permissions-image.yml
+@@ -90,6 +90,7 @@ jobs:
+             tar xzf /tmp/prism-permissions-build.tgz -C "${BUILD_DIR}"
+ 
+             docker build --no-cache --pull \
++              --build-arg "GIT_SHA=${GIT_SHA}" \
+               --label "org.opencontainers.image.revision=${GIT_SHA}" \
+               --label "org.opencontainers.image.source=https://github.com/REBUS-Industries/prism-permissions-service" \
+               -t "${IMAGE}" \
+@@ -127,11 +128,28 @@ jobs:
+               exit 1
+             fi
+ 
+-            # Confirm invite-keys route exists on the new build (best-effort).
+-            if docker exec prism-permissions wget -qO- http://127.0.0.1:8771/api/access/invite-keys/demo 2>/dev/null | grep -q invite_demo; then
+-              echo "invite-keys demo endpoint ok"
+-            else
+-              echo "::warning::invite-keys demo endpoint not reachable (adapter may be non-mock)"
++            # Fail deploy if invite-keys admin route is missing.
++            # wget -S prints headers on stderr; 401 body still goes to stdout with -O-.
++            INVITE_PROBE="$(docker exec prism-permissions sh -c 'wget -S -O- http://127.0.0.1:8771/api/access/invite-keys 2>&1' || true)"
++            echo "invite-keys probe: ${INVITE_PROBE:-<empty>}"
++            if echo "${INVITE_PROBE}" | grep -q 'statusCode.:404\|Not Found'; then
++              echo "::error::GET /api/access/invite-keys returned 404 — invite-keys routes missing from image"
++              docker inspect --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}' prism-permissions || true
++              docker compose logs --tail=120 prism-permissions || true
++              exit 1
++            fi
++            if ! echo "${INVITE_PROBE}" | grep -qE '401|Unauthorized'; then
++              echo "::error::GET /api/access/invite-keys did not return 401 Unauthorized (got: ${INVITE_PROBE:-<empty>})"
++              docker compose logs --tail=120 prism-permissions || true
++              exit 1
++            fi
++            echo "invite-keys admin route ok (401 without cookie)"
++
++            ACCESS_HEALTH="$(docker exec prism-permissions wget -qO- http://127.0.0.1:8771/api/access/health 2>/dev/null || true)"
++            echo "access health: ${ACCESS_HEALTH:-<empty>}"
++            if ! echo "${ACCESS_HEALTH}" | grep -q '"inviteKeys":true'; then
++              echo "::error::/api/access/health missing features.inviteKeys=true — wrong build?"
++              exit 1
+             fi
+ 
+             rm -rf "${BUILD_DIR}" /tmp/prism-permissions-build.tgz
+diff --git a/Dockerfile b/Dockerfile
+index 716b942..18fe4c1 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -8,7 +8,9 @@ RUN npm run build
+ 
+ FROM node:20-alpine
+ WORKDIR /app
++ARG GIT_SHA=
+ ENV NODE_ENV=production
++ENV GIT_SHA=$GIT_SHA
+ COPY package.json package-lock.json* ./
+ RUN npm install --omit=dev
+ COPY --from=build /app/dist ./dist
+diff --git a/src/access/inviteKeys.ts b/src/access/inviteKeys.ts
+index 731da22..8908ca1 100644
+--- a/src/access/inviteKeys.ts
++++ b/src/access/inviteKeys.ts
+@@ -9,6 +9,7 @@ import {
+   type CreateInviteKeyResponse,
+   type InviteKeyProject,
+   type InviteKeyRecord,
++  type UpdateInviteKeyRequest,
+ } from '../contracts/portal-access.js';
+ import { hashApiKey } from '../auth/apiKey.js';
+ import { getDb } from '../db/client.js';
+@@ -152,6 +153,81 @@ export async function listInviteKeys(): Promise<InviteKeyRecord[]> {
+   return rows.map((r) => toRecord(r));
+ }
+ 
++
++export async function updateInviteKey(id: string, input: UpdateInviteKeyRequest): Promise<InviteKeyRecord> {
++  const db = getDb();
++  const rows = await db.select().from(inviteKey).where(eq(inviteKey.id, id)).limit(1);
++  const row = rows[0];
++  if (!row) throw new AccessError('Invite key not found', 404);
++  if (row.revokedAt) throw new AccessError('Revoked invite keys cannot be edited', 400);
++
++  const patch: Partial<typeof inviteKey.$inferInsert> = {};
++
++  if (input.label !== undefined) {
++    patch.label = input.label?.trim() || null;
++  }
++
++  if (input.orbitProjectIds !== undefined) {
++    const projectIds = [...new Set(input.orbitProjectIds.map((pid) => pid.trim()).filter(Boolean))];
++    if (projectIds.length === 0) {
++      throw new AccessError('orbitProjectIds required', 400);
++    }
++    patch.orbitProjectIds = projectIds;
++    const names: Record<string, string> = { ...(row.projectNames ?? {}) };
++    if (input.projectNames) {
++      for (const [pid, name] of Object.entries(input.projectNames)) {
++        if (projectIds.includes(pid) && name) names[pid] = name;
++      }
++    }
++    for (const pid of Object.keys(names)) {
++      if (!projectIds.includes(pid)) delete names[pid];
++    }
++    patch.projectNames = names;
++  } else if (input.projectNames !== undefined && input.projectNames) {
++    const names = { ...(row.projectNames ?? {}) };
++    for (const [pid, name] of Object.entries(input.projectNames)) {
++      if (row.orbitProjectIds.includes(pid) && name) names[pid] = name;
++    }
++    patch.projectNames = names;
++  }
++
++  if (input.allowedFunctions !== undefined) {
++    patch.allowedFunctions = normalizeInviteFunctions(input.allowedFunctions);
++  }
++
++  if (input.expiresAt !== undefined) {
++    if (input.expiresAt == null || input.expiresAt === '') {
++      patch.expiresAt = null;
++    } else {
++      const expiresAt = new Date(input.expiresAt);
++      if (Number.isNaN(expiresAt.getTime())) {
++        throw new AccessError('expiresAt must be a valid ISO timestamp', 400);
++      }
++      if (expiresAt.getTime() <= Date.now()) {
++        throw new AccessError('expiresAt must be in the future', 400);
++      }
++      patch.expiresAt = expiresAt;
++    }
++  }
++
++  if (input.maxRedemptions !== undefined) {
++    const maxRedemptions =
++      input.maxRedemptions == null ? null : Number(input.maxRedemptions);
++    if (maxRedemptions != null && (!Number.isInteger(maxRedemptions) || maxRedemptions < 1)) {
++      throw new AccessError('maxRedemptions must be a positive integer', 400);
++    }
++    patch.maxRedemptions = maxRedemptions;
++  }
++
++  if (Object.keys(patch).length === 0) {
++    return toRecord(row);
++  }
++
++  await db.update(inviteKey).set(patch).where(eq(inviteKey.id, id));
++  const updated = await db.select().from(inviteKey).where(eq(inviteKey.id, id)).limit(1);
++  return toRecord(updated[0]!);
++}
++
+ export async function revokeInviteKey(id: string): Promise<InviteKeyRecord> {
+   const db = getDb();
+   const rows = await db.select().from(inviteKey).where(eq(inviteKey.id, id)).limit(1);
+diff --git a/src/api/access.ts b/src/api/access.ts
+index a20193d..54a64e5 100644
+--- a/src/api/access.ts
++++ b/src/api/access.ts
+@@ -5,6 +5,7 @@ import type {
+   CreateInviteKeyRequest,
+   PrismTool,
+   ToolAuthorizeRequest,
++  UpdateInviteKeyRequest,
+ } from '../contracts/portal-access.js';
+ import { AccessError, exchangePortalSession, getSessionManifest, revokeSession } from '../access/session.js';
+ import {
+@@ -13,6 +14,7 @@ import {
+   listInviteKeys,
+   lookupRedeemableInviteKey,
+   revokeInviteKey,
++  updateInviteKey,
+ } from '../access/inviteKeys.js';
+ import { resolvePortalUser } from '../access/portalUser.js';
+ import { authorizeTool, fullLocalAdminToolAccess, resolveEmailFromAdminUsername, resolveToolAccess } from '../access/tools.js';
+@@ -222,10 +224,12 @@ export async function registerAccessRoutes(app: FastifyInstance, portal: PortalA
+     },
+   );
+ 
+-  await app.register(async (adminRoutes) => {
+-    adminRoutes.addHook('preHandler', requireAdmin);
+-
+-    adminRoutes.post<{ Body: CreateInviteKeyRequest }>('/api/access/invite-keys', async (req, reply) => {
++  // Register on `app` (not a nested plugin) so routes always appear in the
++  // root router — nested register has been observed missing after some deploys.
++  app.post<{ Body: CreateInviteKeyRequest }>(
++    '/api/access/invite-keys',
++    { preHandler: requireAdmin },
++    async (req, reply) => {
+       try {
+         const createdBy = adminUsername(req) ?? 'admin';
+         const result = await createInviteKey(req.body ?? {}, createdBy, publicBaseUrl(req));
+@@ -237,28 +241,46 @@ export async function registerAccessRoutes(app: FastifyInstance, portal: PortalA
+         req.log.error(err);
+         return reply.status(500).send({ error: 'Failed to create invite key' });
+       }
+-    });
++    },
++  );
+ 
+-    adminRoutes.get('/api/access/invite-keys', async () => {
+-      return { keys: await listInviteKeys() };
+-    });
++  app.get('/api/access/invite-keys', { preHandler: requireAdmin }, async () => {
++    return { keys: await listInviteKeys() };
++  });
+ 
+-    adminRoutes.post<{ Params: { id: string } }>(
+-      '/api/access/invite-keys/:id/revoke',
+-      async (req, reply) => {
+-        try {
+-          const key = await revokeInviteKey(req.params.id);
+-          return { key };
+-        } catch (err) {
+-          if (err instanceof AccessError) {
+-            return reply.status(err.status).send({ error: err.message });
+-          }
+-          req.log.error(err);
+-          return reply.status(500).send({ error: 'Failed to revoke invite key' });
++  app.patch<{ Params: { id: string }; Body: UpdateInviteKeyRequest }>(
++    '/api/access/invite-keys/:id',
++    { preHandler: requireAdmin },
++    async (req, reply) => {
++      try {
++        const key = await updateInviteKey(req.params.id, req.body ?? {});
++        return { key };
++      } catch (err) {
++        if (err instanceof AccessError) {
++          return reply.status(err.status).send({ error: err.message });
+         }
+-      },
+-    );
+-  });
++        req.log.error(err);
++        return reply.status(500).send({ error: 'Failed to update invite key' });
++      }
++    },
++  );
++
++  app.post<{ Params: { id: string } }>(
++    '/api/access/invite-keys/:id/revoke',
++    { preHandler: requireAdmin },
++    async (req, reply) => {
++      try {
++        const key = await revokeInviteKey(req.params.id);
++        return { key };
++      } catch (err) {
++        if (err instanceof AccessError) {
++          return reply.status(err.status).send({ error: err.message });
++        }
++        req.log.error(err);
++        return reply.status(500).send({ error: 'Failed to revoke invite key' });
++      }
++    },
++  );
+ 
+   /** Dev helper: echo the seeded demo invite key when mock adapter is active. */
+   app.get('/api/access/invite-keys/demo', async (req, reply) => {
+@@ -300,5 +322,8 @@ export async function registerAccessRoutes(app: FastifyInstance, portal: PortalA
+   app.get('/api/access/health', async () => ({
+     status: 'ok',
+     adapter: await getIntegrationSettingOr('portal_adapter', 'mock'),
++    features: { inviteKeys: true },
++    revision: process.env.GIT_SHA ?? process.env.npm_package_version ?? null,
+   }));
+ }
++
+diff --git a/src/contracts/portal-access.ts b/src/contracts/portal-access.ts
+index 4604c8c..135ebc7 100644
+--- a/src/contracts/portal-access.ts
++++ b/src/contracts/portal-access.ts
+@@ -164,6 +164,15 @@ export interface CreateInviteKeyResponse {
+   maxRedemptions?: number | null;
+ }
+ 
++export interface UpdateInviteKeyRequest {
++  label?: string | null;
++  orbitProjectIds?: string[];
++  projectNames?: Record<string, string> | null;
++  allowedFunctions?: ConnectorFunction[];
++  expiresAt?: string | null;
++  maxRedemptions?: number | null;
++}
++
+ export interface ListInviteKeysResponse {
+   keys: InviteKeyRecord[];
+ }
+-- 
+2.43.0
+
