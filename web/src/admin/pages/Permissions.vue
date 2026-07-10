@@ -115,6 +115,8 @@ function guestMetaFromKey(key: InviteKeyRecord): GuestInviteNodeMeta {
     redemptionCount: key.redemptionCount,
     revoked: !!key.revokedAt,
     dirty: false,
+    modelAccess: key.modelAccess ?? 'all',
+    selectedModelIds: [...(key.selectedModelIds ?? [])],
   };
 }
 
@@ -312,6 +314,8 @@ function addGuest() {
           expiresAt: null,
           redemptionCount: 0,
           dirty: true,
+          modelAccess: 'all',
+          selectedModelIds: [],
         },
       },
     },
@@ -436,11 +440,29 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
         allowedFunctions: model.meta.allowedFunctions,
         maxRedemptions: model.meta.maxRedemptions ?? null,
         expiresAt: model.meta.expiresAt ?? null,
+        modelAccess: model.meta.modelAccess ?? 'all',
+        selectedModelIds:
+          (model.meta.modelAccess ?? 'all') === 'selected'
+            ? [...(model.meta.selectedModelIds ?? [])]
+            : [],
       });
       mintedKey.value = created.key;
       mintedRedeemUrl.value = created.redeemUrl;
       // Replace draft node id with stable guest-<id>
       const newId = guestNodeId(created.id);
+      const createdMeta: GuestInviteNodeMeta = {
+        inviteKeyId: created.id,
+        orbitTarget: model.meta.orbitTarget,
+        allowedFunctions: [...created.allowedFunctions],
+        maxRedemptions: created.maxRedemptions ?? null,
+        expiresAt: created.expiresAt ?? null,
+        redemptionCount: 0,
+        dirty: false,
+        plaintextKey: created.key,
+        redeemUrl: created.redeemUrl,
+        modelAccess: created.modelAccess ?? model.meta.modelAccess ?? 'all',
+        selectedModelIds: [...(created.selectedModelIds ?? model.meta.selectedModelIds ?? [])],
+      };
       nodes.value = nodes.value.map((n) => {
         if (n.id !== nodeId) return n;
         return {
@@ -450,17 +472,7 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
             ...n.data,
             label: created.label?.trim() || model.label,
             refValue: created.id,
-            guestMeta: {
-              inviteKeyId: created.id,
-              orbitTarget: model.meta.orbitTarget,
-              allowedFunctions: [...created.allowedFunctions],
-              maxRedemptions: created.maxRedemptions ?? null,
-              expiresAt: created.expiresAt ?? null,
-              redemptionCount: 0,
-              dirty: false,
-              plaintextKey: created.key,
-              redeemUrl: created.redeemUrl,
-            },
+            guestMeta: createdMeta,
           },
         };
       });
@@ -479,17 +491,7 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
       dialogModel.value = {
         label: created.label?.trim() || model.label,
         projectIds: model.projectIds,
-        meta: {
-          inviteKeyId: created.id,
-          orbitTarget: model.meta.orbitTarget,
-          allowedFunctions: [...created.allowedFunctions],
-          maxRedemptions: created.maxRedemptions ?? null,
-          expiresAt: created.expiresAt ?? null,
-          redemptionCount: 0,
-          dirty: false,
-          plaintextKey: created.key,
-          redeemUrl: created.redeemUrl,
-        },
+        meta: createdMeta,
       };
       status.value = 'Guest key created — copy the plaintext key now.';
     } else {
@@ -501,6 +503,11 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
           allowedFunctions: model.meta.allowedFunctions,
           maxRedemptions: model.meta.maxRedemptions ?? null,
           expiresAt: model.meta.expiresAt ?? null,
+          modelAccess: model.meta.modelAccess ?? 'all',
+          selectedModelIds:
+            (model.meta.modelAccess ?? 'all') === 'selected'
+              ? [...(model.meta.selectedModelIds ?? [])]
+              : [],
         });
       } catch (err) {
         const apiErr = err as ApiError;
