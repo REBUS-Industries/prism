@@ -10,6 +10,7 @@ import {
   MarkerType,
   useVueFlow,
   type Connection,
+  type EdgeMouseEvent,
   type NodeMouseEvent,
 } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
@@ -46,6 +47,8 @@ const emit = defineEmits<{
   'update:edges': [PolicyFlowEdge[]];
   connect: [Connection];
   'update:selectedNodeId': [string | null];
+  'node-contextmenu': [payload: { nodeId: string; event: MouseEvent }];
+  'edge-delete': [edgeId: string];
 }>();
 
 const { fitView } = useVueFlow();
@@ -78,8 +81,21 @@ function onNodeClick(evt: NodeMouseEvent): void {
   emit('update:selectedNodeId', evt.node.id);
 }
 
+function onNodeContextMenu(evt: NodeMouseEvent): void {
+  const native = evt.event;
+  if (native instanceof MouseEvent) {
+    native.preventDefault();
+    emit('node-contextmenu', { nodeId: evt.node.id, event: native });
+  }
+}
+
 function onPaneClick(): void {
   emit('update:selectedNodeId', null);
+}
+
+function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
+  if (props.readonly) return;
+  emit('edge-delete', evt.edge.id);
 }
 </script>
 
@@ -102,6 +118,8 @@ function onPaneClick(): void {
         @update:edges="emit('update:edges', $event as PolicyFlowEdge[])"
         @connect="onConnect"
         @node-click="onNodeClick"
+        @node-contextmenu="onNodeContextMenu"
+        @edge-double-click="onEdgeDoubleClick"
         @pane-click="onPaneClick"
         @nodes-initialized="onNodesInitialized"
       >

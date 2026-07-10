@@ -1,25 +1,33 @@
 # Collaborator invite keys (Connector Light)
 
 Invite keys let an external **REBUS Connector Light** (Rhino) user authenticate without a
-portal/Google account. Admin mints keys on **Permissions → Guest access (Connector Light)**.
+portal/Google account. Admins manage them on **Permissions** as a guest → project graph.
 
-Canonical contract: `REBUS-Industries/prism-permissions-service` → `docs/INVITE_KEYS.md`.
+Canonical API contract: `REBUS-Industries/prism-permissions-service` → `docs/INVITE_KEYS.md`.
 
-## Admin UI
+## Two Permissions pages
 
-| Action | Where |
-|--------|--------|
-| Create guest key (name + projects) | Permissions → **New guest key** |
-| Copy plaintext key / redeem URL | Shown once after create |
-| Rename / change project access | **Edit** on an active key (requires `PATCH /api/access/invite-keys/:id` on the permissions service) |
-| Revoke | **Revoke** — ends key and active sessions |
+| Route | Purpose |
+|-------|---------|
+| `/admin/#/permissions` | **Guest access** — invite keys as guest nodes, ORBIT projects as project nodes, edges = project grants |
+| `/admin/#/permissions/tools` | **Tool access** — read-only portal roles → PRISM admin tools (Convert, Visualiser, libraries) |
 
-## Connector usage
+## Guest graph UX
 
-1. Paste the invite key in Connector Light, **or**
-2. Open `redeemUrl` with `&redirect_uri=http://localhost:29364/`
+1. **Add guest** — creates a draft guest node and opens properties.
+2. **Draw lines** guest → project (or check projects in the properties tree).
+3. **Right-click** a guest (or use Properties) for name, ORBIT target, functions, max redemptions, expiry, and a **project checkbox tree** (grouped by name prefix before ` - `).
+4. **Save** mints the key (plaintext shown once) or updates via `PATCH`.
+5. **Double-click an edge** to unlink a project (save to persist).
+6. **Revoke** ends the key and active sessions.
 
-The connector exchanges the key via `POST /api/access/session` for a scoped `ConnectorManifest`.
+## "Not Found" when minting
+
+If the UI shows **Not Found** / `Route GET:/api/access/invite-keys not found`, the running
+`prism-permissions` container is an older build without invite-keys routes. Redeploy
+`prism-permissions-service` from `main` (`permissions-image` workflow). A healthy deploy
+must report `features.inviteKeys: true` on `GET /api/access/health` and return **401**
+(not 404) for unauthenticated `GET /api/access/invite-keys`.
 
 ## Light default functions
 
@@ -33,11 +41,5 @@ Denied: `receive`, `create_project`
 
 - `POST /api/access/invite-keys` — create (plaintext key in response, once)
 - `GET /api/access/invite-keys` — list (no plaintext)
-- `PATCH /api/access/invite-keys/:id` — update label / projects / functions (see scaffold patch)
+- `PATCH /api/access/invite-keys/:id` — update label / projects / functions
 - `POST /api/access/invite-keys/:id/revoke` — revoke key + sessions
-
-## Permissions service patch
-
-To enable **Edit** in the admin UI, apply
-`scaffold/prism-permissions-service/patches/invite-keys-update-endpoint.patch` to
-`prism-permissions-service`, merge, and redeploy `permissions-image`.

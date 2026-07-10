@@ -1,4 +1,19 @@
-import type { PolicyNodeType } from '../../shared/api';
+import type { ConnectorFunction, PolicyNodeType } from '../../shared/api';
+
+/** Guest invite-key metadata attached to user nodes on the Permissions graph. */
+export interface GuestInviteNodeMeta {
+  inviteKeyId?: string | null;
+  orbitTarget: 'prod' | 'dev';
+  allowedFunctions: ConnectorFunction[];
+  maxRedemptions?: number | null;
+  expiresAt?: string | null;
+  redemptionCount?: number;
+  revoked?: boolean;
+  dirty?: boolean;
+  /** Plaintext key — only present immediately after create. */
+  plaintextKey?: string | null;
+  redeemUrl?: string | null;
+}
 
 export interface PolicyNodeData {
   policyType: PolicyNodeType;
@@ -10,6 +25,9 @@ export interface PolicyNodeData {
   noSource?: boolean;
   /** Role has grants but is no longer in the portal's live role list. */
   stale?: boolean;
+  /** True when this user node is a Connector Light guest invite key. */
+  guest?: boolean;
+  guestMeta?: GuestInviteNodeMeta;
 }
 
 export interface PolicyFlowNode {

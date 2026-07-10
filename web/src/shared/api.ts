@@ -325,6 +325,13 @@ function extractMessage(body: unknown): string | undefined {
   if (typeof body === 'string') return body || undefined;
   if (body && typeof body === 'object') {
     const o = body as Record<string, unknown>;
+    // Fastify default 404: { message: "Route GET:… not found", error: "Not Found", statusCode: 404 }
+    if (o['error'] === 'Not Found' && typeof o['message'] === 'string' && o['message'].includes('invite-keys')) {
+      return 'Invite-keys API not deployed on permissions-service yet. Redeploy prism-permissions with invite-keys support, then retry.';
+    }
+    if (o['error'] === 'Not Found' && typeof o['message'] === 'string' && o['message'].startsWith('Route ')) {
+      return o['message'];
+    }
     if (typeof o['error'] === 'string') {
       if (o['error'] === 'forbidden' && typeof o['scope'] === 'string') {
         return `Permission denied (${o['scope']}). Log in to the admin panel or grant this scope to your API key.`;
