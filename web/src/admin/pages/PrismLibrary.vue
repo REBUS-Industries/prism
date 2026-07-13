@@ -120,6 +120,7 @@ const purgePreview = ref<{
   scanned: number;
   unresolved: number;
   failures: number;
+  failureSamples: string[];
 } | null>(null);
 const purgePreviewError = ref<string | null>(null);
 const purgingOrbitVersions = ref(false);
@@ -417,8 +418,9 @@ function parsePurgeCutoff(dateStr: string): Date | null {
 
 /**
  * Build Orbit model targets for bulk purge.
- * List rows often have `orbitUrl` but strip `definition` on upsert — resolve from URL
- * first, then fetch detail only when neither URL nor cached definition yields a ref.
+ * Prefer definition.metadata.orbitFixtureRef (authoritative model id). List rows
+ * strip definition on upsert and may only have `orbitUrl`, which often embeds
+ * `modelId@versionId` — fetch detail when needed, URL parse only as fallback.
  */
 async function resolveOrbitFixtureTargets(): Promise<OrbitFixtureTarget[]> {
   type Row = FixtureListItem & { definition?: FixtureDefinition | null };
@@ -428,21 +430,22 @@ async function resolveOrbitFixtureTargets(): Promise<OrbitFixtureTarget[]> {
   for (let i = 0; i < candidates.length; i += ORBIT_REF_BATCH) {
     const chunk = candidates.slice(i, i + ORBIT_REF_BATCH);
     await Promise.all(chunk.map(async (f) => {
-      let ref = resolveFixtureOrbitRef(f);
+      let ref = readFixtureOrbitRef(f.definition);
       if (!ref) {
         try {
           const detail = await fixturesApi.get(f.id);
           upsert(detail.fixture);
           // upsert omits definition from the list row — read from the detail response
-          ref = resolveFixtureOrbitRef({
-            ...detail.fixture,
-            definition: detail.fixture.definition,
-            orbitUrl: detail.fixture.orbitUrl ?? f.orbitUrl,
-          });
+          ref = readFixtureOrbitRef(detail.fixture.definition)
+            ?? resolveFixtureOrbitRef({
+              orbitUrl: detail.fixture.orbitUrl ?? f.orbitUrl,
+              definition: detail.fixture.definition,
+            });
         } catch {
-          return;
+          ref = resolveFixtureOrbitRef(f);
         }
       }
+      if (!ref) ref = resolveFixtureOrbitRef(f);
       if (!ref) return;
       out.push({
         fixtureId: f.id,
@@ -515,12 +518,14 @@ async function runPurgeOrbitPreview(): Promise<void> {
         scanned: 0,
         unresolved: published,
         failures: 0,
+        failureSamples: [],
       };
       return;
     }
     let versions = 0;
     let fixtures = 0;
     let failures = 0;
+    const failureSamples: string[] = [];
     for (const group of groupOrbitTargets(targets)) {
       const res = await orbitApi.purgeVersionsBefore(group.target, group.projectId, {
         before: cutoff.toISOString(),
@@ -530,6 +535,10 @@ async function runPurgeOrbitPreview(): Promise<void> {
       versions += res.versionCount;
       fixtures += res.modelsWithDeletions;
       failures += res.failures.length;
+      for (const failure of res.failures) {
+        if (failureSamples.length >= 3) break;
+        failureSamples.push(`${failure.modelId}: ${failure.error}`);
+      }
     }
     purgePreview.value = {
       fixtures,
@@ -537,6 +546,7 @@ async function runPurgeOrbitPreview(): Promise<void> {
       scanned: targets.length,
       unresolved,
       failures,
+      failureSamples,
     };
   } catch (err) {
     purgePreviewError.value = (err as ApiError).message ?? 'preview failed';
@@ -1285,6 +1295,9 @@ onMounted(() => {
         <p v-if="purgePreview?.failures" class="orbit-versions-error">
           {{ purgePreview.failures }} model{{ purgePreview.failures === 1 ? '' : 's' }} failed while listing versions.
         </p>
+        <ul v-if="purgePreview?.failureSamples?.length" class="republish-failures">
+          <li v-for="sample in purgePreview.failureSamples" :key="sample">{{ sample }}</li>
+        </ul>
         <p v-if="purgePreview?.versions" class="muted small">
           This cannot be undone. PRISM may still reference deleted version ids until fixtures are republished.
         </p>

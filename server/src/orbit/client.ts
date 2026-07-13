@@ -649,7 +649,7 @@ async function listAllModelVersions(
   const all: OrbitVersionSummary[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < 20; page++) {
-    const res = await listModelVersions(target, projectId, modelId, { limit: 200, cursor });
+    const res = await listModelVersions(target, projectId, modelId, { limit: 100, cursor });
     all.push(...res.items);
     if (!res.cursor || all.length >= res.totalCount) break;
     cursor = res.cursor;
