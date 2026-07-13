@@ -62,6 +62,52 @@ export function resolveFixtureOrbitUrl(
   return `${base}/projects/${ref.projectId}/models/${ref.modelId}`;
 }
 
+/**
+ * Parse `/projects/{projectId}/models/{modelId}` from an Orbit viewer URL.
+ * Used when list rows expose `orbitUrl` but omit `definition.metadata.orbitFixtureRef`.
+ */
+export function parseOrbitModelUrl(url: string | null | undefined): Pick<
+  FixtureOrbitRef,
+  'target' | 'projectId' | 'modelId'
+> | null {
+  if (!url?.trim()) return null;
+  try {
+    const parsed = new URL(url.trim());
+    const match = parsed.pathname.match(/\/projects\/([^/]+)\/models\/([^/]+)/i);
+    if (!match?.[1] || !match[2]) return null;
+    const host = parsed.hostname.toLowerCase();
+    const target: FixtureOrbitRef['target'] =
+      host.includes('orbit-dev') || host.startsWith('dev.') ? 'dev' : 'prod';
+    return {
+      target,
+      projectId: decodeURIComponent(match[1]),
+      modelId: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve Orbit project/model ids from definition metadata, falling back to `orbitUrl`.
+ * List endpoints often set `orbitUrl` without embedding the full definition.
+ */
+export function resolveFixtureOrbitRef(
+  item: Pick<FixtureListItem, 'orbitUrl'> & { definition?: FixtureDefinition | null },
+): FixtureOrbitRef | null {
+  const fromDef = readFixtureOrbitRef(item.definition);
+  if (fromDef) return fromDef;
+  const fromUrl = parseOrbitModelUrl(item.orbitUrl ?? resolveFixtureOrbitUrl(item));
+  if (!fromUrl) return null;
+  return {
+    ...fromUrl,
+    versionId: '',
+    objectId: '',
+    publishedAt: '',
+    orbitUrl: item.orbitUrl ?? undefined,
+  };
+}
+
 export function fixtureHasOrbitPublish(
   item: Pick<FixtureListItem, 'orbitUrl'> & { definition?: FixtureDefinition | null },
 ): boolean {

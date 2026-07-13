@@ -16,7 +16,13 @@ import Modal from '../../shared/Modal.vue';
 import FixtureTypeSelect from '../components/FixtureTypeSelect.vue';
 import { fixtureCategoryFromTags, tagsWithFixtureCategory } from '../utils/fixtureTypes';
 import { duplicateFixtureName as defaultDuplicateName, fixtureLabel } from '../utils/fixtureLabel';
-import { enrichFixtureListItem, enrichFixturesOrbitFromDetails, fixtureHasOrbitPublish, readFixtureOrbitRef } from '../utils/fixtureOrbitUrl';
+import {
+  enrichFixtureListItem,
+  enrichFixturesOrbitFromDetails,
+  fixtureHasOrbitPublish,
+  readFixtureOrbitRef,
+  resolveFixtureOrbitRef,
+} from '../utils/fixtureOrbitUrl';
 import { fixtureHasCustomMeshes } from '../utils/fixtureCustomMesh';
 import { fixtureHasIesProfiles } from '../utils/fixtureIes';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
@@ -108,7 +114,13 @@ const ORBIT_REF_BATCH = 12;
 const showPurgeOrbitVersions = ref(false);
 const purgeBeforeDate = ref('');
 const purgePreviewLoading = ref(false);
-const purgePreview = ref<{ fixtures: number; versions: number } | null>(null);
+const purgePreview = ref<{
+  fixtures: number;
+  versions: number;
+  scanned: number;
+  unresolved: number;
+  failures: number;
+} | null>(null);
 const purgePreviewError = ref<string | null>(null);
 const purgingOrbitVersions = ref(false);
 const purgeDone = ref(false);
@@ -403,32 +415,43 @@ function parsePurgeCutoff(dateStr: string): Date | null {
   return new Date(y, m - 1, d, 0, 0, 0, 0);
 }
 
+/**
+ * Build Orbit model targets for bulk purge.
+ * List rows often have `orbitUrl` but strip `definition` on upsert — resolve from URL
+ * first, then fetch detail only when neither URL nor cached definition yields a ref.
+ */
 async function resolveOrbitFixtureTargets(): Promise<OrbitFixtureTarget[]> {
   type Row = FixtureListItem & { definition?: FixtureDefinition | null };
   const candidates = fixtures.value.filter((f) => fixtureHasOrbitPublish(f)) as Row[];
-  const missing = candidates.filter((f) => !readFixtureOrbitRef(f.definition));
-  for (let i = 0; i < missing.length; i += ORBIT_REF_BATCH) {
-    const chunk = missing.slice(i, i + ORBIT_REF_BATCH);
-    await Promise.all(chunk.map(async (f) => {
-      try {
-        const detail = await fixturesApi.get(f.id);
-        upsert(detail.fixture);
-      } catch {
-        /* non-fatal */
-      }
-    }));
-  }
   const out: OrbitFixtureTarget[] = [];
-  for (const f of candidates) {
-    const ref = readFixtureOrbitRef(f.definition);
-    if (!ref) continue;
-    out.push({
-      fixtureId: f.id,
-      label: fixtureLabel(f),
-      target: ref.target,
-      projectId: ref.projectId,
-      modelId: ref.modelId,
-    });
+
+  for (let i = 0; i < candidates.length; i += ORBIT_REF_BATCH) {
+    const chunk = candidates.slice(i, i + ORBIT_REF_BATCH);
+    await Promise.all(chunk.map(async (f) => {
+      let ref = resolveFixtureOrbitRef(f);
+      if (!ref) {
+        try {
+          const detail = await fixturesApi.get(f.id);
+          upsert(detail.fixture);
+          // upsert omits definition from the list row — read from the detail response
+          ref = resolveFixtureOrbitRef({
+            ...detail.fixture,
+            definition: detail.fixture.definition,
+            orbitUrl: detail.fixture.orbitUrl ?? f.orbitUrl,
+          });
+        } catch {
+          return;
+        }
+      }
+      if (!ref) return;
+      out.push({
+        fixtureId: f.id,
+        label: fixtureLabel(f),
+        target: ref.target,
+        projectId: ref.projectId,
+        modelId: ref.modelId,
+      });
+    }));
   }
   return out;
 }
@@ -482,13 +505,22 @@ async function runPurgeOrbitPreview(): Promise<void> {
   purgePreviewLoading.value = true;
   purgePreviewError.value = null;
   try {
+    const published = orbitPublishedCount.value;
     const targets = await resolveOrbitFixtureTargets();
+    const unresolved = Math.max(0, published - targets.length);
     if (!targets.length) {
-      purgePreview.value = { fixtures: 0, versions: 0 };
+      purgePreview.value = {
+        fixtures: 0,
+        versions: 0,
+        scanned: 0,
+        unresolved: published,
+        failures: 0,
+      };
       return;
     }
     let versions = 0;
     let fixtures = 0;
+    let failures = 0;
     for (const group of groupOrbitTargets(targets)) {
       const res = await orbitApi.purgeVersionsBefore(group.target, group.projectId, {
         before: cutoff.toISOString(),
@@ -497,8 +529,15 @@ async function runPurgeOrbitPreview(): Promise<void> {
       });
       versions += res.versionCount;
       fixtures += res.modelsWithDeletions;
+      failures += res.failures.length;
     }
-    purgePreview.value = { fixtures, versions };
+    purgePreview.value = {
+      fixtures,
+      versions,
+      scanned: targets.length,
+      unresolved,
+      failures,
+    };
   } catch (err) {
     purgePreviewError.value = (err as ApiError).message ?? 'preview failed';
     purgePreview.value = null;
@@ -511,7 +550,11 @@ async function runPurgeOrbitVersions(): Promise<void> {
   const cutoff = parsePurgeCutoff(purgeBeforeDate.value);
   if (!cutoff || purgingOrbitVersions.value) return;
   const targets = await resolveOrbitFixtureTargets();
-  if (!targets.length) return;
+  if (!targets.length) {
+    purgePreviewError.value =
+      'Could not resolve Orbit model ids for published fixtures.';
+    return;
+  }
 
   purgingOrbitVersions.value = true;
   purgeDone.value = false;
@@ -1223,12 +1266,26 @@ onMounted(() => {
         <ul v-else-if="purgePreview" class="republish-summary">
           <li><strong>{{ purgePreview.versions }}</strong> version{{ purgePreview.versions === 1 ? '' : 's' }} to delete</li>
           <li><strong>{{ purgePreview.fixtures }}</strong> fixture model{{ purgePreview.fixtures === 1 ? '' : 's' }} affected</li>
+          <li><span class="muted">{{ purgePreview.scanned }} model{{ purgePreview.scanned === 1 ? '' : 's' }} scanned</span></li>
           <li v-if="purgeCutoffLabel"><span class="muted">Before {{ purgeCutoffLabel }}</span></li>
         </ul>
-        <p v-if="purgePreview && !purgePreview.versions" class="muted small">
-          No Orbit versions match this cutoff.
+        <p v-if="purgePreview && !purgePreview.scanned" class="muted small">
+          Could not resolve Orbit model ids for published fixtures. Open a fixture detail and confirm it is published, then try again.
         </p>
-        <p v-else class="muted small">
+        <p v-else-if="purgePreview && !purgePreview.versions" class="muted small">
+          No deletable versions before this cutoff
+          <template v-if="purgePreview.scanned">
+            (scanned {{ purgePreview.scanned }}; sole versions are always kept).
+          </template>
+          <template v-else>.</template>
+        </p>
+        <p v-if="purgePreview?.unresolved" class="muted small">
+          {{ purgePreview.unresolved }} published fixture{{ purgePreview.unresolved === 1 ? '' : 's' }} could not be resolved to an Orbit model id.
+        </p>
+        <p v-if="purgePreview?.failures" class="orbit-versions-error">
+          {{ purgePreview.failures }} model{{ purgePreview.failures === 1 ? '' : 's' }} failed while listing versions.
+        </p>
+        <p v-if="purgePreview?.versions" class="muted small">
           This cannot be undone. PRISM may still reference deleted version ids until fixtures are republished.
         </p>
       </div>
