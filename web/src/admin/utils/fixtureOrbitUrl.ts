@@ -64,7 +64,8 @@ export function resolveFixtureOrbitUrl(
 
 /**
  * Parse `/projects/{projectId}/models/{modelId}` from an Orbit viewer URL.
- * Used when list rows expose `orbitUrl` but omit `definition.metadata.orbitFixtureRef`.
+ * Viewer links often use `{modelId}@{versionId}` — strip the version suffix so
+ * GraphQL `model(id:)` lookups receive the bare model id.
  */
 export function parseOrbitModelUrl(url: string | null | undefined): Pick<
   FixtureOrbitRef,
@@ -78,10 +79,14 @@ export function parseOrbitModelUrl(url: string | null | undefined): Pick<
     const host = parsed.hostname.toLowerCase();
     const target: FixtureOrbitRef['target'] =
       host.includes('orbit-dev') || host.startsWith('dev.') ? 'dev' : 'prod';
+    const rawModel = decodeURIComponent(match[2]);
+    // Speckle/Orbit viewer paths: `modelId@versionId` (and ignore trailing junk)
+    const modelId = rawModel.split('@')[0]?.trim() ?? '';
+    if (!modelId) return null;
     return {
       target,
       projectId: decodeURIComponent(match[1]),
-      modelId: decodeURIComponent(match[2]),
+      modelId,
     };
   } catch {
     return null;
