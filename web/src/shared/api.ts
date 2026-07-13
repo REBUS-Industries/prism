@@ -1110,7 +1110,7 @@ export const SLOT_LABELS: Record<MaterialSlot, string> = {
   ao:           'Ambient Occlusion',
   emissive:     'Emissive',
   opacity:      'Opacity',
-  displacement: 'Displacement / Bump',
+  displacement: 'Height / Bump',
 };
 
 /** Short suffix examples for slot filter UI. Mirrors server/src/materials/slots.ts. */

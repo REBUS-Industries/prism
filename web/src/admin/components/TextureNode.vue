@@ -216,23 +216,18 @@ function onPicked(tex: Texture): void {
 
       <template v-else-if="slot === 'displacement'">
         <ParamSlider
-          label="Displacement"
-          :sublabel="texture ? 'map scale' : 'needs a height map'"
+          label="Bump strength"
+          :sublabel="texture ? 'height → shading only' : 'needs a height map'"
           :min="0"
           :max="0.5"
           :step="0.005"
           :model-value="params.displacementScale"
           @update:model-value="(v) => onParam('displacementScale', v)"
         />
-        <ParamSlider
-          label="Bias"
-          sublabel="offset"
-          :min="-0.5"
-          :max="0.5"
-          :step="0.005"
-          :model-value="params.displacementBias"
-          @update:model-value="(v) => onParam('displacementBias', v)"
-        />
+        <p class="tn-hint muted">
+          Preview uses bump mapping so mesh edges stay fixed. True vertex
+          displacement is not applied in the editor (it tears hard-edged meshes).
+        </p>
       </template>
     </div>
 
@@ -334,6 +329,12 @@ function onPicked(tex: Texture): void {
   cursor: pointer;
 }
 .tn-check input { width: 14px; height: 14px; cursor: pointer; }
+.tn-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
 button.danger { color: var(--color-error); }
 button.danger:hover { border-color: var(--color-error); }
 </style>

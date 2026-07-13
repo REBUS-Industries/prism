@@ -41,7 +41,7 @@ const SLOT_FILTER_LABELS: Record<MaterialSlot, string> = {
   ao:           'AO',
   emissive:     'Emissive',
   opacity:      'Opacity',
-  displacement: 'Displacement',
+  displacement: 'Height / Bump',
 };
 
 const textures = ref<Texture[]>([]);
