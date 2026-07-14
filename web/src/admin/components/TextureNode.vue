@@ -216,17 +216,26 @@ function onPicked(tex: Texture): void {
 
       <template v-else-if="slot === 'displacement'">
         <ParamSlider
-          label="Bump strength"
-          :sublabel="texture ? 'height → shading only' : 'needs a height map'"
+          label="Height strength"
+          :sublabel="texture ? 'bump, or displace if normal map set' : 'needs a height map'"
           :min="0"
           :max="0.5"
           :step="0.005"
           :model-value="params.displacementScale"
           @update:model-value="(v) => onParam('displacementScale', v)"
         />
+        <ParamSlider
+          label="Bias"
+          sublabel="displacement offset"
+          :min="-0.5"
+          :max="0.5"
+          :step="0.005"
+          :model-value="params.displacementBias"
+          @update:model-value="(v) => onParam('displacementBias', v)"
+        />
         <p class="tn-hint muted">
-          Preview uses bump mapping so mesh edges stay fixed. True vertex
-          displacement is not applied in the editor (it tears hard-edged meshes).
+          With a normal map, Three.js ignores bump — preview uses gentle
+          displacement instead (cube edges are welded so seams stay closed).
         </p>
       </template>
     </div>
