@@ -25,8 +25,9 @@ import {
   type MaterialParameters,
   type MaterialSlot,
 } from '../../shared/api';
-import { applyHeightBumpScale, applyHeightSlotAsBump } from '../utils/materialHeightPreview';
+import { applyHeightPreview } from '../utils/materialHeightPreview';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 type SlotSources = Partial<Record<MaterialSlot, string | null>>;
 type Shape = 'sphere' | 'cube' | 'plane';
@@ -109,8 +110,14 @@ let lastAlphaTest = 0;
 function buildGeometry(shape: Shape): THREE.BufferGeometry {
   let geo: THREE.BufferGeometry;
   if (shape === 'sphere') geo = new THREE.SphereGeometry(1, 160, 120);
-  else if (shape === 'cube') geo = new THREE.BoxGeometry(1.4, 1.4, 1.4, 80, 80, 80);
-  else geo = new THREE.PlaneGeometry(2.2, 2.2, 256, 256);
+  else if (shape === 'cube') {
+    // Box faces don't share edge vertices — displacement tears seams apart.
+    // Weld + smooth normals so height maps can displace without exploding.
+    geo = new THREE.BoxGeometry(1.4, 1.4, 1.4, 80, 80, 80);
+    geo.deleteAttribute('normal');
+    geo = mergeVertices(geo);
+    geo.computeVertexNormals();
+  } else geo = new THREE.PlaneGeometry(2.2, 2.2, 256, 256);
 
   const uv = geo.getAttribute('uv');
   if (uv) {
@@ -201,7 +208,11 @@ function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
   const m = material as THREE.MeshPhysicalMaterial;
   switch (slot) {
     case 'albedo':       m.map = tex; break;
-    case 'normal':       m.normalMap = tex; break;
+    case 'normal':
+      m.normalMap = tex;
+      // Normal map presence switches height between bump vs displacement.
+      applyHeightPreview(m, loadedTextures.displacement ?? null, p.displacementScale, p.displacementBias);
+      break;
     case 'roughness':    m.roughnessMap = tex; break;
     case 'metallic':
       if (p.specularMapInMetallicSlot) {
@@ -216,9 +227,7 @@ function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
     case 'emissive':     m.emissiveMap = tex; break;
     case 'opacity':      m.alphaMap = tex; break;
     case 'displacement':
-      // Height → bump (shading only). True displacement tears hard-edged previews.
-      applyHeightSlotAsBump(m, tex);
-      applyHeightBumpScale(m, p.displacementScale);
+      applyHeightPreview(m, tex, p.displacementScale, p.displacementBias);
       break;
   }
 }
@@ -352,7 +361,7 @@ function applyParameters(): void {
   m.emissiveIntensity = p.emissiveIntensity * p.emissiveStrength;
   m.opacity = p.transmissionFactor > 0 ? 1 : p.opacity;
   m.aoMapIntensity = p.aoIntensity;
-  applyHeightBumpScale(m, p.displacementScale);
+  applyHeightPreview(m, loadedTextures.displacement ?? null, p.displacementScale, p.displacementBias);
   m.normalScale.set(p.normalScale, p.flipNormalY ? -p.normalScale : p.normalScale);
 
   m.clearcoat = p.clearCoatFactor;

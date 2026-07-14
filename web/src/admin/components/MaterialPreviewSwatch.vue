@@ -14,7 +14,7 @@ import {
   type MaterialParameters,
   type MaterialSlot,
 } from '../../shared/api';
-import { applyHeightBumpScale, applyHeightSlotAsBump } from '../utils/materialHeightPreview';
+import { applyHeightPreview } from '../utils/materialHeightPreview';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
 
 type SlotSources = Partial<Record<MaterialSlot, string | null>>;
@@ -135,7 +135,10 @@ function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
   const m = material as THREE.MeshPhysicalMaterial;
   switch (slot) {
     case 'albedo': m.map = tex; break;
-    case 'normal': m.normalMap = tex; break;
+    case 'normal':
+      m.normalMap = tex;
+      applyHeightPreview(m, loadedTextures.displacement ?? null, p.displacementScale, p.displacementBias);
+      break;
     case 'roughness': m.roughnessMap = tex; break;
     case 'metallic':
       if (p.specularMapInMetallicSlot) {
@@ -150,8 +153,7 @@ function assignMap(slot: MaterialSlot, tex: THREE.Texture | null): void {
     case 'emissive': m.emissiveMap = tex; break;
     case 'opacity': m.alphaMap = tex; break;
     case 'displacement':
-      applyHeightSlotAsBump(m, tex);
-      applyHeightBumpScale(m, p.displacementScale);
+      applyHeightPreview(m, tex, p.displacementScale, p.displacementBias);
       break;
   }
 }
@@ -269,7 +271,7 @@ function applyParameters(): void {
   m.emissiveIntensity = p.emissiveIntensity * p.emissiveStrength;
   m.opacity = p.transmissionFactor > 0 ? 1 : p.opacity;
   m.aoMapIntensity = p.aoIntensity;
-  applyHeightBumpScale(m, p.displacementScale);
+  applyHeightPreview(m, loadedTextures.displacement ?? null, p.displacementScale, p.displacementBias);
   m.normalScale.set(p.normalScale, p.flipNormalY ? -p.normalScale : p.normalScale);
   m.clearcoat = p.clearCoatFactor;
   m.clearcoatRoughness = p.clearCoatRoughness;
