@@ -364,7 +364,7 @@ function onModelChange(ev: Event): void {
       </button>
       <p v-if="clampLibraryLoading" class="muted small">Loading library models…</p>
       <p v-else-if="clampLibraryShowingAll" class="muted small">
-        Showing all library models with a preview. Tag or category <strong>clamp</strong> filters this list.
+        No models with category/tag <strong>clamp</strong> — showing all library models.
       </p>
       <label class="model-swap-btn clamp-upload-btn" :class="{ busy: clampMeshBusy }">
         {{ clampMeshBusy ? 'Uploading…' : (clampHasUpload ? 'Replace upload' : 'Upload mesh') }}
