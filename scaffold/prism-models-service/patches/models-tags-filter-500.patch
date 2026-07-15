@@ -1,0 +1,18 @@
+diff --git a/src/api/models.ts b/src/api/models.ts
+index 5a2fa51..a5344d9 100644
+--- a/src/api/models.ts
++++ b/src/api/models.ts
+@@ -108,7 +108,12 @@ const plugin: FastifyPluginAsync = async (app: FastifyInstance) => {
+     }
+     if (q.tags) {
+       const tags = q.tags.split(',').map((t) => t.trim()).filter(Boolean);
+-      if (tags.length) conditions.push(sql`${modelTypes.tags} && ${tags}::text[]`);
++      // Bind each tag as a param — `${tags}::text[]` 500s (JS array is not a PG array literal).
++      if (tags.length) {
++        conditions.push(
++          sql`${modelTypes.tags} && ARRAY[${sql.join(tags.map((t) => sql`${t}`), sql`, `)}]::text[]`,
++        );
++      }
+     }
+     if (q.category) {
+       const cats = q.category.split(',').map((s) => s.trim()).filter(Boolean);

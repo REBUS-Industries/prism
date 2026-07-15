@@ -537,15 +537,14 @@ function mergeModelLists(...lists: ModelListItem[][]): ModelListItem[] {
 async function loadClampLibraryModels(): Promise<void> {
   clampLibraryLoading.value = true;
   try {
-    // Server-side category/tag filters — listing all models (max 100) and
-    // filtering client-side missed clamps that were not on the first page.
-    const [byCategory, byTag] = await Promise.all([
-      // Exact match on the API — include common casings for older rows.
-      modelsApi.list({ category: 'clamp,Clamp,CLAMP', limit: 100 }),
-      modelsApi.list({ tags: ['clamp'], limit: 100 }),
-    ]);
-    const clamps = mergeModelLists(byCategory.models, byTag.models)
-      .filter(isClampLibraryModel);
+    // Prefer category filter. Do NOT call ?tags= — prism-models-service currently
+    // 500s on that query (`${tags}::text[]` binding). Category is the source of
+    // truth for clamp models (canonical value: `clamp`).
+    const byCategory = await modelsApi.list({
+      category: 'clamp,Clamp,CLAMP',
+      limit: 100,
+    });
+    const clamps = mergeModelLists(byCategory.models).filter(isClampLibraryModel);
 
     if (clamps.length > 0) {
       clampLibraryModels.value = clamps;
@@ -554,7 +553,7 @@ async function loadClampLibraryModels(): Promise<void> {
     }
 
     // Fallback: show every library model so the picker is never empty when the
-    // library has content but nothing is tagged/categorised as clamp yet.
+    // library has content but nothing is categorised as clamp yet.
     const all = await modelsApi.list({ limit: 100 });
     clampLibraryModels.value = mergeModelLists(all.models);
     clampLibraryShowingAll.value = clampLibraryModels.value.length > 0;
@@ -1821,7 +1820,7 @@ onMounted(() => {
               </label>
               <p v-if="clampLibraryLoading" class="muted small">Loading clamp models…</p>
               <p v-else-if="clampLibraryShowingAll" class="muted small">
-                No models with category/tag <strong>clamp</strong> found — showing all library models. Set Category to clamp on the model to filter this list.
+                No models with category <strong>clamp</strong> found — showing all library models. Set Category to clamp on the model to filter this list.
               </p>
               <p v-else-if="clampLibraryModels.length === 0" class="muted small">
                 No clamp models in the library yet. Open the Model Library, set Category to <strong>clamp</strong>, ensure a preview mesh exists, then return here.
