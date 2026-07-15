@@ -371,8 +371,12 @@ function onModelChange(ev: Event): void {
       </div>
     </label>
 
-    <fieldset v-if="linkedModel && !isCustomMesh" class="field-group">
+    <fieldset v-if="linkedModel" class="field-group">
       <legend>Model dimensions <span class="unit">mm</span></legend>
+      <p v-if="isCustomMesh" class="muted small dims-hint">
+        Size of the uploaded mesh, measured on import — the mesh renders at this size.
+        Edit to rescale it (uniform, keeps proportions).
+      </p>
       <ParamSlider
         label="Length"
         :min="0"
@@ -399,10 +403,6 @@ function onModelChange(ev: Event): void {
       />
     </fieldset>
 
-    <p v-else-if="linkedModel && isCustomMesh" class="muted small dims-hint">
-      Custom mesh — placed at its file origin by default. Enable
-      <strong>Ignore imported mesh datum</strong> to align via the original GDTF bounding box instead.
-    </p>
     <p v-else class="muted small dims-hint">Link a model to edit Length / Width / Height.</p>
 
     <fieldset v-if="linkedModel" class="field-group">
