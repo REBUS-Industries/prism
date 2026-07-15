@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue';
 import FixtureViewer from './FixtureViewer.vue';
+import ParamSlider from './ParamSlider.vue';
 import {
   fixturesApi,
   type FixtureDetail,
@@ -9,8 +10,19 @@ import {
 } from '../../shared/api';
 import { fixtureZOffsetM, readClampPlacement } from '../utils/fixturePlacement';
 import { buildFixtureBeamSpecs } from '../utils/fixtureBeamSpecs';
+import { ensureTransform, metresToMm, mmToMetres } from '../utils/fixtureTransform';
+import { setPartPivotPosition } from '../utils/fixturePivot';
 
-const props = defineProps<{ fixture: FixtureDetail }>();
+const props = defineProps<{
+  fixture: FixtureDetail;
+  /** Bump from parent after external assembly rebuilds. */
+  assemblyRevision?: number;
+  transformRevision?: number;
+}>();
+const emit = defineEmits<{
+  change: [kind?: 'transform' | 'structure'];
+}>();
+
 const fixture = toRef(props, 'fixture');
 
 const dimmer = ref(0.5);
@@ -20,6 +32,8 @@ const zoomT = ref(0);
 const motionAngles = ref<Record<string, number>>({});
 const appliedAngles = ref<Record<string, number>>({});
 const liveFade = ref(true);
+const selectedAxisId = ref<string | null>(null);
+const selectedPartId = ref<string | null>(null);
 
 const previewUrl = computed(() =>
   fixture.value.hasPreview ? fixturesApi.previewUrl(fixture.value.id) : null,
@@ -185,7 +199,62 @@ watch(motionControls, (controls) => {
   for (const c of controls) next[c.axis.motionAxisId] = motionAngles.value[c.axis.motionAxisId] ?? c.axis.defaultValue ?? 0;
   motionAngles.value = next;
   appliedAngles.value = { ...next };
+  if (!controls.some((c) => c.axis.motionAxisId === selectedAxisId.value)) {
+    selectedAxisId.value = controls[0]?.axis.motionAxisId ?? null;
+  }
 }, { immediate: true });
+
+const selectedAxis = computed(() =>
+  motionControls.value.find((c) => c.axis.motionAxisId === selectedAxisId.value)?.axis ?? null,
+);
+
+const selectedControlledPart = computed<FixturePart | null>(() => {
+  const id = selectedAxis.value?.controlledPartId;
+  if (!id) return null;
+  return fixture.value.definition.parts.find((p) => p.partId === id) ?? null;
+});
+
+watch(selectedAxis, (axis) => {
+  selectedPartId.value = axis?.controlledPartId ?? null;
+}, { immediate: true });
+
+/** Pivot = controlled part localTransform origin (parent-space mm). */
+function pivotMm(axis: 'x' | 'y' | 'z'): number {
+  const part = selectedControlledPart.value;
+  if (!part) return 0;
+  return metresToMm(ensureTransform(part.localTransform).position[axis]);
+}
+
+function setPivotMm(axis: 'x' | 'y' | 'z', mm: number): void {
+  const part = selectedControlledPart.value;
+  if (!part) return;
+  const t = ensureTransform(part.localTransform);
+  const next = {
+    x: t.position.x,
+    y: t.position.y,
+    z: t.position.z,
+    [axis]: mmToMetres(mm),
+  };
+  if (!setPartPivotPosition(fixture.value.definition, part.partId, next)) return;
+  emit('change', 'transform');
+}
+
+function selectAxis(axisId: string): void {
+  selectedAxisId.value = axisId;
+}
+
+function onSelectPart(partId: string): void {
+  selectedPartId.value = partId;
+  const match = motionControls.value.find((c) => c.axis.controlledPartId === partId);
+  if (match) selectedAxisId.value = match.axis.motionAxisId;
+}
+
+/** Part ids that have a motion axis — show pivot markers at group origins. */
+const pivotPartIds = computed(() =>
+  motionControls.value
+    .map((c) => c.axis.controlledPartId)
+    .filter((id): id is string => !!id),
+);
 
 const axisById = computed(() => new Map(correctedAxes.value.map((a) => [a.motionAxisId, a])));
 interface Tween { from: number; to: number; t0: number; dur: number }
@@ -284,6 +353,61 @@ onBeforeUnmount(() => { if (motionRaf != null) cancelAnimationFrame(motionRaf); 
             </span>
           </p>
         </section>
+
+        <section v-if="motionControls.length" class="ctrl-block">
+          <h3>Axis pivot</h3>
+          <p class="muted small pivot-intro">
+            Click a mesh in the viewer or pick an axis. The pivot is where pan/tilt
+            rotates — moving it keeps the mesh in place. Save the fixture to persist.
+          </p>
+          <div class="axis-pick-list">
+            <button
+              v-for="c in motionControls"
+              :key="c.axis.motionAxisId"
+              type="button"
+              class="axis-pick"
+              :class="{ active: selectedAxisId === c.axis.motionAxisId }"
+              @click="selectAxis(c.axis.motionAxisId)"
+            >
+              <strong>{{ c.axis.axisType }}</strong>
+              <span class="muted">{{ c.axis.controlledPartId ? partName(c.axis.controlledPartId) : '—' }}</span>
+            </button>
+          </div>
+          <template v-if="selectedControlledPart">
+            <p class="muted small pivot-part">
+              Mesh · {{ selectedControlledPart.name }}
+              <span class="pill">{{ selectedControlledPart.tag }}</span>
+            </p>
+            <ParamSlider
+              label="Pivot X"
+              sublabel="mm"
+              :min="-2000"
+              :max="2000"
+              :step="1"
+              :model-value="pivotMm('x')"
+              @update:model-value="(v) => setPivotMm('x', v)"
+            />
+            <ParamSlider
+              label="Pivot Y"
+              sublabel="mm"
+              :min="-2000"
+              :max="2000"
+              :step="1"
+              :model-value="pivotMm('y')"
+              @update:model-value="(v) => setPivotMm('y', v)"
+            />
+            <ParamSlider
+              label="Pivot Z"
+              sublabel="mm"
+              :min="-2000"
+              :max="2000"
+              :step="1"
+              :model-value="pivotMm('z')"
+              @update:model-value="(v) => setPivotMm('z', v)"
+            />
+          </template>
+          <p v-else class="muted small">Select a motion axis that controls a part.</p>
+        </section>
       </aside>
 
       <section class="fg-control-viewer">
@@ -292,15 +416,24 @@ onBeforeUnmount(() => { if (motionRaf != null) cancelAnimationFrame(motionRaf); 
             v-if="previewUrl || assembly"
             :url="previewUrl"
             :assembly="assembly"
+            :assembly-revision="assemblyRevision ?? 0"
+            :transform-revision="transformRevision ?? 0"
             :motion-angles="appliedAngles"
             :dimmer="dimmer"
             :show-beam="showBeam"
             :beams="beamSpecs"
+            :pivot-part-ids="pivotPartIds"
+            :editable="!!assembly"
+            :show-gizmo="false"
+            :selected-part-id="selectedPartId"
             fill
             light-background
+            @select-part="onSelectPart"
+            @select-datum="onSelectPart"
           />
           <p v-else class="muted no-preview">No GLB preview available.</p>
         </div>
+        <p class="muted small viewer-hint">Orange / cyan markers show axis pivots · click a mesh to select its axis</p>
       </section>
     </div>
   </div>
@@ -319,7 +452,7 @@ onBeforeUnmount(() => { if (motionRaf != null) cancelAnimationFrame(motionRaf); 
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
 }
@@ -399,6 +532,50 @@ onBeforeUnmount(() => { if (motionRaf != null) cancelAnimationFrame(motionRaf); 
 }
 .ies-note { margin: 4px 0 0; }
 .zoom-note { margin: 0 0 4px; }
+.pivot-intro { margin: 0 0 10px; line-height: 1.4; }
+.pivot-part {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+.pivot-part .pill {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.axis-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.axis-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.axis-pick:hover { border-color: var(--orbit-primary); }
+.axis-pick.active {
+  border-color: var(--orbit-primary);
+  background: color-mix(in srgb, var(--orbit-primary) 12%, transparent);
+}
+.axis-pick strong { font-size: 12px; }
+.viewer-hint { margin: 8px 0 0; }
 
 .no-preview {
   position: absolute;
