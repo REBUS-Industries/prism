@@ -5,6 +5,36 @@ Changes to the `prism-fixtures-service` polyrepo that pair with a monorepo
 the polyrepo and merge via the normal `/prism-merge prism-fixtures-service#N`
 flow so `fixtures-image` redeploys.
 
+## fixtures-orbit-custom-mesh-appid.patch
+
+**Critical:** Orbit was keeping the GDTF head/base after Settings → Replace
+because mesh `applicationId` stayed `${fixture}:${part}:0` and Orbit deduped to
+the old object. Also fixes stale XYZ after the #95–#101 dim thrash.
+
+- Stamp **mediaId** into mesh `applicationId` / `prismPartKey`
+- Custom meshes: translation-only meshOffset (match web)
+- Merge: keep stored replacement media, keep client offsets/dims
+- Slot-dim heal: clear stale meshOffset
+- Carry-forward: preserve custom replaced meshes on reimport
+- PUT: sync definition to active version
+
+Also in `docs/handoffs/FIXTURE_ORBIT_CUSTOM_MESH_APPID.md` +
+`docs/handoffs/fixture-orbit-custom-mesh-appid.patch`.
+
+### Apply
+
+```bash
+cd prism-fixtures-service
+git fetch origin main && git checkout main && git pull
+git checkout -b cursor/fix-orbit-custom-mesh-appid-dd18
+git am < /path/to/fixtures-orbit-custom-mesh-appid.patch   # or: git apply
+npm ci && npm run build && node dist/orbit/fixtureGeometryOrbit.test.js
+git push -u origin HEAD
+```
+
+Deploy **fixtures-image** (required). Web companion only reloads after save;
+Orbit mesh identity fix is entirely in this service patch.
+
 ## fixtures-mesh-offset.patch
 
 Pairs with the monorepo per-mesh offset feature (`model.metadata.meshOffset`).

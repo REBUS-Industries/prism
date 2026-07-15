@@ -1,0 +1,389 @@
+From 02bfa282bfab272eb06b403f333a16c919cf13ea Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Wed, 15 Jul 2026 13:47:19 +0000
+Subject: [PATCH] fix: Orbit must not reuse GDTF mesh after custom replace
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Orbit dedupes Objects.Geometry.Mesh by applicationId. Stable ids like
+`${fixture}:${part}:0` caused republish after Settings → Replace to keep the
+prior GDTF head/base geometry. Stamp mediaId into applicationId, keep client
+meshOffset when preserving stored replacement media, translate-only offsets for
+custom meshes, clear stale offsets on slot-dim heal, carry custom meshes across
+reimport, and sync PUT definitions to the active version.
+---
+ src/api/fixtures.ts                           |  8 +++
+ src/fixtures/fixtureDisplayName.test.ts       | 34 +++++++++++++
+ .../mergeDefinitionPreservingModels.test.ts   | 14 +++++-
+ .../mergeDefinitionPreservingModels.ts        | 50 ++++++++++++++-----
+ src/import/backfillReplacedModelDims.ts       |  7 +++
+ src/import/fixtureEditCarryForward.ts         | 34 +++++++++++++
+ src/orbit/fixtureGeometryOrbit.test.ts        |  4 +-
+ src/orbit/fixtureGeometryOrbit.ts             | 29 ++++++++---
+ src/orbit/glbToOrbitMeshes.ts                 |  6 ++-
+ 9 files changed, 161 insertions(+), 25 deletions(-)
+
+diff --git a/src/api/fixtures.ts b/src/api/fixtures.ts
+index 3d7bdf9..06684ac 100644
+--- a/src/api/fixtures.ts
++++ b/src/api/fixtures.ts
+@@ -14,6 +14,7 @@ import {
+   eq,
+   fixtureTypes,
+   fixtureMedia,
++  fixtureVersions,
+   gdtfCache,
+   ilike,
+   isNull,
+@@ -373,6 +374,13 @@ const plugin: FastifyPluginAsync = async (app) => {
+     }
+ 
+     const [row] = await db.update(fixtureTypes).set(patch).where(eq(fixtureTypes.id, id)).returning();
++    // Keep the active version snapshot aligned with the working definition so
++    // quality switches / version ops don't resurrect pre-replace GDTF media.
++    if (patch.definition && row?.activeVersionId) {
++      await db.update(fixtureVersions)
++        .set({ definition: patch.definition })
++        .where(eq(fixtureVersions.id, row.activeVersionId));
++    }
+     return { fixture: { ...toSummary(row!), definition: row!.definition } };
+   });
+ 
+diff --git a/src/fixtures/fixtureDisplayName.test.ts b/src/fixtures/fixtureDisplayName.test.ts
+index d5a8ce2..bc474c2 100644
+--- a/src/fixtures/fixtureDisplayName.test.ts
++++ b/src/fixtures/fixtureDisplayName.test.ts
+@@ -57,4 +57,38 @@ assert.equal(effectiveName('ACME Tornado', emptyDef()), 'ACME Tornado');
+   assert.equal(readDisplayName(merged.definition), null, 'no displayName → none added');
+ }
+ 
++// carryForwardEdits preserves custom replaced meshes (mediaId + offset)
++{
++  const working = emptyDef();
++  working.models = [{
++    modelId: 'head',
++    partTag: 'HEAD',
++    assignedPartIds: [],
++    storagePath: '/data/custom-head.glb',
++    metadata: {
++      mediaId: 'custom-media',
++      replaced: true,
++      replacedFilename: 'head.fbx',
++      length: 0.2,
++      width: 0.15,
++      height: 0.1,
++      meshOffset: { position: { x: 0.01, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } },
++    },
++  }];
++  const newRaw = emptyDef();
++  newRaw.models = [{
++    modelId: 'head',
++    partTag: 'HEAD',
++    assignedPartIds: [],
++    storagePath: '/data/gdtf-head.glb',
++    metadata: { mediaId: 'gdtf-media', length: 0.2, width: 0.15, height: 0.1 },
++  }];
++  const merged = carryForwardEdits(working, emptyDef(), newRaw);
++  const head = merged.definition.models[0]!;
++  assert.equal(head.metadata.mediaId, 'custom-media', 'custom media kept');
++  assert.equal(head.metadata.replaced, true);
++  assert.equal(head.storagePath, '/data/custom-head.glb');
++  assert.ok(merged.report.applied.includes('model:head:custom-mesh'));
++}
++
+ console.log('fixtureDisplayName.test.ts: ok');
+diff --git a/src/fixtures/mergeDefinitionPreservingModels.test.ts b/src/fixtures/mergeDefinitionPreservingModels.test.ts
+index 9aef89f..b43345c 100644
+--- a/src/fixtures/mergeDefinitionPreservingModels.test.ts
++++ b/src/fixtures/mergeDefinitionPreservingModels.test.ts
+@@ -76,16 +76,28 @@ function def(partial: Partial<FixtureDefinition>): FixtureDefinition {
+ 
+ {
+   // Stale save must not clobber a just-replaced mesh with pre-replace media.
++  // Client meshOffset / dim edits on that model are still kept.
+   const stored = def({
+     models: [model('base', 'media-replaced', true), model('head', 'media-head')],
+   });
++  const incomingBase = model('base', 'media-stale');
++  (incomingBase.metadata as Record<string, unknown>).meshOffset = {
++    position: { x: 0.01, y: 0, z: 0 },
++    rotation: { x: 0, y: 0, z: 0 },
++  };
++  (incomingBase.metadata as Record<string, unknown>).length = 0.25;
+   const incoming = def({
+-    models: [model('base', 'media-stale'), model('head', 'media-head')],
++    models: [incomingBase, model('head', 'media-head')],
+   });
+   const merged = mergeDefinitionPreservingModels(stored, incoming);
+   const base = merged.models.find((m) => m.modelId === 'base')!;
+   assert.equal(base.metadata.mediaId, 'media-replaced');
+   assert.equal(base.metadata.replaced, true);
++  assert.equal((base.metadata as { length?: number }).length, 0.25);
++  assert.deepEqual(
++    (base.metadata as { meshOffset?: unknown }).meshOffset,
++    { position: { x: 0.01, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } },
++  );
+ }
+ 
+ {
+diff --git a/src/fixtures/mergeDefinitionPreservingModels.ts b/src/fixtures/mergeDefinitionPreservingModels.ts
+index 8080417..2ee3c69 100644
+--- a/src/fixtures/mergeDefinitionPreservingModels.ts
++++ b/src/fixtures/mergeDefinitionPreservingModels.ts
+@@ -12,7 +12,8 @@ import type { FixtureDefinition, FixtureModel } from '@rebus-industries/prism-sh
+  * Rules:
+  * - Incoming wins for entries present in both, except when the stored model is
+  *   a `replaced` mesh whose mediaId the incoming payload does not reflect —
+- *   then keep the stored replacement.
++ *   then keep the stored replacement **media wiring** while still applying the
++ *   client's meshOffset / dim / flip edits onto that model.
+  * - Models/parts/beams/motion axes/wheels that exist only on the server are
+  *   appended.
+  * - All other top-level definition fields come from the incoming payload.
+@@ -23,12 +24,7 @@ export function mergeDefinitionPreservingModels(
+ ): FixtureDefinition {
+   const result = structuredClone(incoming) as FixtureDefinition;
+ 
+-  result.models = mergeById(
+-    stored.models ?? [],
+-    result.models ?? [],
+-    (m) => m.modelId,
+-    preferStoredReplacement,
+-  );
++  result.models = mergeModels(stored.models ?? [], result.models ?? []);
+   result.parts = mergeById(
+     stored.parts ?? [],
+     result.parts ?? [],
+@@ -57,23 +53,33 @@ function mergeById<T>(
+   stored: T[],
+   incoming: T[],
+   idOf: (row: T) => string,
+-  preferStored?: (stored: T, incoming: T) => boolean,
+ ): T[] {
+   const incomingById = new Map(incoming.map((row) => [idOf(row), row]));
+-  const storedById = new Map(stored.map((row) => [idOf(row), row]));
++  const merged = [...incoming];
++  for (const s of stored) {
++    if (!incomingById.has(idOf(s))) merged.push(structuredClone(s));
++  }
++  return merged;
++}
++
++function mergeModels(stored: FixtureModel[], incoming: FixtureModel[]): FixtureModel[] {
++  const incomingById = new Map(incoming.map((m) => [m.modelId, m]));
++  const storedById = new Map(stored.map((m) => [m.modelId, m]));
+   const merged = incoming.map((row) => {
+-    const s = storedById.get(idOf(row));
+-    if (s && preferStored?.(s, row)) return structuredClone(s);
++    const s = storedById.get(row.modelId);
++    if (s && storedReplacementMediaStaleOnClient(s, row)) {
++      return applyStoredReplacementMedia(s, row);
++    }
+     return row;
+   });
+   for (const s of stored) {
+-    if (!incomingById.has(idOf(s))) merged.push(structuredClone(s));
++    if (!incomingById.has(s.modelId)) merged.push(structuredClone(s));
+   }
+   return merged;
+ }
+ 
+ /** True when stored has a replaced mesh the incoming payload has not caught up to. */
+-function preferStoredReplacement(stored: FixtureModel, incoming: FixtureModel): boolean {
++function storedReplacementMediaStaleOnClient(stored: FixtureModel, incoming: FixtureModel): boolean {
+   const sMeta = (stored.metadata ?? {}) as Record<string, unknown>;
+   const iMeta = (incoming.metadata ?? {}) as Record<string, unknown>;
+   if (sMeta.replaced !== true) return false;
+@@ -82,3 +88,21 @@ function preferStoredReplacement(stored: FixtureModel, incoming: FixtureModel):
+   const iMedia = typeof iMeta.mediaId === 'string' ? iMeta.mediaId : null;
+   return iMedia !== sMedia;
+ }
++
++/**
++ * Keep the client's transforms/offsets/dims, but force the stored custom-mesh
++ * mediaId / replaced flags / storagePath so a stale save cannot revert to GDTF.
++ */
++function applyStoredReplacementMedia(stored: FixtureModel, incoming: FixtureModel): FixtureModel {
++  const sMeta = (stored.metadata ?? {}) as Record<string, unknown>;
++  const iMeta = { ...(incoming.metadata ?? {}) } as Record<string, unknown>;
++  iMeta.mediaId = sMeta.mediaId;
++  iMeta.replaced = true;
++  if (typeof sMeta.replacedFilename === 'string') iMeta.replacedFilename = sMeta.replacedFilename;
++  if (typeof sMeta.sourceFilename === 'string') iMeta.sourceFilename = sMeta.sourceFilename;
++  const next: FixtureModel = { ...incoming, metadata: iMeta };
++  if (typeof stored.storagePath === 'string' && stored.storagePath) {
++    next.storagePath = stored.storagePath;
++  }
++  return next;
++}
+diff --git a/src/import/backfillReplacedModelDims.ts b/src/import/backfillReplacedModelDims.ts
+index b824712..c10954c 100644
+--- a/src/import/backfillReplacedModelDims.ts
++++ b/src/import/backfillReplacedModelDims.ts
+@@ -67,6 +67,13 @@ function restoreSlotDimsInto(
+     // retrying on the next serve/publish.
+     if (!restored) continue;
+     delete next[MESH_MEASURED_KEY];
++    // meshOffset / ignoreImportedMeshDatum were often computed while dims were
++    // the authored mesh bbox (scale ≈ 1). After restoring GDTF slot dims the
++    // fit scale changes, so those offsets are no longer valid — drop them so
++    // Orbit/preview don't bake a double-compensated XYZ. Users can re-enable
++    // "Ignore imported mesh datum" to realign.
++    delete next.meshOffset;
++    delete next.ignoreImportedMeshDatum;
+     model.metadata = next;
+     changed = true;
+   }
+diff --git a/src/import/fixtureEditCarryForward.ts b/src/import/fixtureEditCarryForward.ts
+index a55c6f2..df31918 100644
+--- a/src/import/fixtureEditCarryForward.ts
++++ b/src/import/fixtureEditCarryForward.ts
+@@ -88,5 +88,39 @@ export function carryForwardEdits(
+     report.applied.push('displayName');
+   }
+ 
++  // Preserve custom replaced meshes across reimport / version carry. Fresh GDTF
++  // registration always wires GDTF mediaIds; without this, Settings → Replace
++  // uploads vanish on quality switch and Orbit publishes the stock head/base.
++  const workModels = new Map((workingDef.models ?? []).map((m) => [m.modelId, m]));
++  for (const model of result.models ?? []) {
++    const work = workModels.get(model.modelId);
++    if (!work) continue;
++    const wMeta = (work.metadata ?? {}) as Record<string, unknown>;
++    if (wMeta.replaced !== true) continue;
++    const mediaId = typeof wMeta.mediaId === 'string' ? wMeta.mediaId : null;
++    if (!mediaId) continue;
++
++    const nextMeta: Record<string, unknown> = {
++      ...(model.metadata ?? {}),
++      mediaId,
++      replaced: true,
++    };
++    if (typeof wMeta.replacedFilename === 'string') nextMeta.replacedFilename = wMeta.replacedFilename;
++    if (typeof wMeta.sourceFilename === 'string') nextMeta.sourceFilename = wMeta.sourceFilename;
++    if (wMeta.meshOffset && typeof wMeta.meshOffset === 'object') {
++      nextMeta.meshOffset = structuredClone(wMeta.meshOffset);
++    }
++    if (wMeta.ignoreImportedMeshDatum === true) nextMeta.ignoreImportedMeshDatum = true;
++    if (wMeta.gdtfBounds && typeof wMeta.gdtfBounds === 'object') {
++      nextMeta.gdtfBounds = structuredClone(wMeta.gdtfBounds);
++    }
++    if (wMeta.flipNormals === true) nextMeta.flipNormals = true;
++    model.metadata = nextMeta;
++    if (typeof work.storagePath === 'string' && work.storagePath) {
++      model.storagePath = work.storagePath;
++    }
++    report.applied.push(`model:${model.modelId}:custom-mesh`);
++  }
++
+   return { definition: result, report };
+ }
+diff --git a/src/orbit/fixtureGeometryOrbit.test.ts b/src/orbit/fixtureGeometryOrbit.test.ts
+index 006c102..e01f912 100644
+--- a/src/orbit/fixtureGeometryOrbit.test.ts
++++ b/src/orbit/fixtureGeometryOrbit.test.ts
+@@ -114,8 +114,8 @@ assert.equal(partCollections[0]!.publishBuildRevision, 'unknown');
+ 
+ const meshes = partCollections[0]!.elements as Record<string, unknown>[];
+ assert.equal(meshes.length, 1);
+-assert.equal(meshes[0]!.prismPartKey, `${fixtureId}:${partId}:0`);
+-assert.equal(meshes[0]!.applicationId, `${fixtureId}:${partId}:0`);
++assert.equal(meshes[0]!.prismPartKey, `${fixtureId}:${partId}:${mediaId}:0`);
++assert.equal(meshes[0]!.applicationId, `${fixtureId}:${partId}:${mediaId}:0`);
+ assert.equal(meshes[0]!.prismMaterialId, 'mat-1');
+ assert.equal(meshes[0]!.publishBuildRevision, 'unknown');
+ assert.equal(meshes[0]!.partId, partId);
+diff --git a/src/orbit/fixtureGeometryOrbit.ts b/src/orbit/fixtureGeometryOrbit.ts
+index d1d442a..17cbacd 100644
+--- a/src/orbit/fixtureGeometryOrbit.ts
++++ b/src/orbit/fixtureGeometryOrbit.ts
+@@ -6,7 +6,8 @@
+  * - Applies glTF Y-up → GDTF Z-up (+90° X) and model dimension scaling
+  * - Applies part local/world transforms from the GDTF geometry tree
+  * - Instanced GeometryReference subtrees (mirrored yoke arms, pixel cells, …)
+- * - Organises meshes into per-part sub-collections with stable applicationIds
++ * - Organises meshes into per-part sub-collections; mesh applicationIds include
++ *   the model mediaId so Orbit cannot dedupe a custom replacement back to GDTF
+  * - Falls back to the preview GLB when no part meshes resolve
+  */
+ import type { FixtureDefinition, FixtureModel, FixturePart } from '@rebus-industries/prism-shared';
+@@ -15,6 +16,7 @@ import {
+   type ParsedMesh,
+ } from './glbParser.js';
+ import {
++  composeMatrixFromTrs,
+   identityMat4Row,
+   matrixDet3Sign,
+   matrixWithinTemplateSubtree,
+@@ -327,11 +329,19 @@ function buildMeshesAtMatrix(
+ 
+   // Optional per-mesh offset (model.metadata.meshOffset) nudges a mesh to the
+   // part origin without moving the part transform/pivot, in the part-local GDTF
+-  // frame: world · offset · wrap · scale.
+-  const meshOffset = readMeshOffset(model.metadata as Record<string, unknown> | undefined);
+-  const placementMatrix = meshOffset
+-    ? multiplyMat4Row(worldMatrix, meshOffsetMatrixRow(meshOffset))
+-    : worldMatrix;
++  // frame: world · offset · wrap · scale. Custom replaced meshes match the web
++  // viewer: translation only (ignore leftover rotation on meshOffset).
++  const meta = model.metadata as Record<string, unknown> | undefined;
++  const custom = meta?.replaced === true;
++  const meshOffset = readMeshOffset(meta);
++  let placementMatrix = worldMatrix;
++  if (meshOffset) {
++    placementMatrix = custom
++      ? multiplyMat4Row(worldMatrix, composeMatrixFromTrs(
++        meshOffset.position, { x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 },
++      ))
++      : multiplyMat4Row(worldMatrix, meshOffsetMatrixRow(meshOffset));
++  }
+   const placed = applyMatrixToMeshes(baseMeshes, placementMatrix);
+   const prismMaterialId = part.materialId ?? ctx.tagMaterials[part.tag] ?? PRISM_DEFAULT_MATERIAL_ID;
+   const material = renderMaterialForPart(
+@@ -340,12 +350,15 @@ function buildMeshesAtMatrix(
+     ctx.tagMaterials,
+     ctx.renderMaterials,
+   );
++  // Include mediaId so Orbit cannot dedupe a custom replacement back to the
++  // previous GDTF mesh that shared `${fixture}:${part}:0`.
++  const mediaKey = mediaId ?? (usePrimitive ? 'primitive' : 'none');
+   const out: Record<string, unknown>[] = [];
+   for (let i = 0; i < placed.length; i++) {
+     const parsed: ParsedMesh = {
+       ...placed[i]!,
+       name: `${part.name || part.partId}_${i}`,
+-      applicationId: `${ctx.fixtureId}:${meshKeyPrefix}:${i}`,
++      applicationId: `${ctx.fixtureId}:${meshKeyPrefix}:${mediaKey}:${i}`,
+       partId: collectionPartId,
+       partTag: part.tag,
+       materialId: prismMaterialId,
+@@ -531,7 +544,7 @@ export function buildFixtureGeometryObjects(input: FixtureGeometryInput): Fixtur
+       for (let i = 0; i < meshes.length; i++) {
+         const parsed: ParsedMesh = {
+           ...meshes[i]!,
+-          applicationId: `${fixtureId}:preview:${i}`,
++          applicationId: `${fixtureId}:preview:${previewModelId}:${i}`,
+           partId: 'preview',
+           partTag: 'BASE',
+         };
+diff --git a/src/orbit/glbToOrbitMeshes.ts b/src/orbit/glbToOrbitMeshes.ts
+index f85896b..b31a545 100644
+--- a/src/orbit/glbToOrbitMeshes.ts
++++ b/src/orbit/glbToOrbitMeshes.ts
+@@ -23,7 +23,11 @@ export function parsedMeshToOrbitObject(
+     // reuse immutable pre-fix mesh objects (detached renderMaterial stubs).
+     publishBuildRevision: process.env.BUILD_REVISION ?? 'unknown',
+   };
+-  // Stable mesh id for Speckle renderMaterialProxies (Rhino material dedup).
++  // Stable PRISM part/mesh identity for connectors (Rhino material proxies).
++  // applicationId MUST change when the underlying GLB media changes — Orbit
++  // dedupes Objects.Geometry.Mesh by applicationId and will silently reuse a
++  // prior GDTF mesh after Settings → Replace if the id stays
++  // `${fixtureId}:${partId}:0`. Callers stamp mediaId into applicationId.
+   if (mesh.applicationId) {
+     obj.prismPartKey = mesh.applicationId;
+     obj.applicationId = mesh.applicationId;
+-- 
+2.43.0
+
