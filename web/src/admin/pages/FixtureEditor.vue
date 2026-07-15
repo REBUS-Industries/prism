@@ -517,8 +517,53 @@ function isClampLibraryModel(m: ModelListItem): boolean {
 function clampLibraryOptionLabel(m: ModelListItem): string {
   let label = m.name;
   if (m.status === 'draft') label += ' (draft)';
+  if (!m.hasPreview) label += ' (no preview)';
   if (clampLibraryShowingAll.value && m.category) label += ` [${m.category}]`;
   return label;
+}
+
+function mergeModelLists(...lists: ModelListItem[][]): ModelListItem[] {
+  const byId = new Map<string, ModelListItem>();
+  for (const list of lists) {
+    for (const m of list) byId.set(m.id, m);
+  }
+  return [...byId.values()].sort((a, b) => {
+    // Prefer models with a preview GLB, then name.
+    if (a.hasPreview !== b.hasPreview) return a.hasPreview ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  });
+}
+
+async function loadClampLibraryModels(): Promise<void> {
+  clampLibraryLoading.value = true;
+  try {
+    // Server-side category/tag filters — listing all models (max 100) and
+    // filtering client-side missed clamps that were not on the first page.
+    const [byCategory, byTag] = await Promise.all([
+      // Exact match on the API — include common casings for older rows.
+      modelsApi.list({ category: 'clamp,Clamp,CLAMP', limit: 100 }),
+      modelsApi.list({ tags: ['clamp'], limit: 100 }),
+    ]);
+    const clamps = mergeModelLists(byCategory.models, byTag.models)
+      .filter(isClampLibraryModel);
+
+    if (clamps.length > 0) {
+      clampLibraryModels.value = clamps;
+      clampLibraryShowingAll.value = false;
+      return;
+    }
+
+    // Fallback: show every library model so the picker is never empty when the
+    // library has content but nothing is tagged/categorised as clamp yet.
+    const all = await modelsApi.list({ limit: 100 });
+    clampLibraryModels.value = mergeModelLists(all.models);
+    clampLibraryShowingAll.value = clampLibraryModels.value.length > 0;
+  } catch {
+    clampLibraryModels.value = [];
+    clampLibraryShowingAll.value = false;
+  } finally {
+    clampLibraryLoading.value = false;
+  }
 }
 
 function clampInstanceMeshLabel(part: FixturePart): string {
@@ -586,27 +631,6 @@ async function refreshClampLibraryDefs(): Promise<void> {
     if (id) ids.add(id);
   }
   await Promise.all([...ids].map((id) => loadClampLibDef(id)));
-}
-
-async function loadClampLibraryModels(): Promise<void> {
-  clampLibraryLoading.value = true;
-  try {
-    const res = await modelsApi.list({ limit: 200 });
-    const withPreview = res.models.filter((m) => m.hasPreview);
-    const clampMatches = withPreview.filter(isClampLibraryModel);
-    if (clampMatches.length > 0) {
-      clampLibraryModels.value = clampMatches;
-      clampLibraryShowingAll.value = false;
-    } else {
-      clampLibraryModels.value = withPreview;
-      clampLibraryShowingAll.value = withPreview.length > 0;
-    }
-  } catch {
-    clampLibraryModels.value = [];
-    clampLibraryShowingAll.value = false;
-  } finally {
-    clampLibraryLoading.value = false;
-  }
 }
 
 function onFixtureZOffsetChange(): void {
@@ -1797,10 +1821,10 @@ onMounted(() => {
               </label>
               <p v-if="clampLibraryLoading" class="muted small">Loading clamp models…</p>
               <p v-else-if="clampLibraryShowingAll" class="muted small">
-                Showing all library models with a preview. Set Category to <strong>clamp</strong> (or tag <strong>clamp</strong>) to filter.
+                No models with category/tag <strong>clamp</strong> found — showing all library models. Set Category to clamp on the model to filter this list.
               </p>
               <p v-else-if="clampLibraryModels.length === 0" class="muted small">
-                No clamp models with a preview yet. Import one in the Model Library, or upload a mesh below.
+                No clamp models in the library yet. Open the Model Library, set Category to <strong>clamp</strong>, ensure a preview mesh exists, then return here.
               </p>
               <div class="clamp-add-actions">
                 <button

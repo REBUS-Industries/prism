@@ -323,14 +323,24 @@ function finalizeModelMesh(wrapped: THREE.Object3D, model: FixtureModel | undefi
 }
 
 /**
- * Place one clamp mesh under its part group. Placement (position / rotation /
- * mirror scale) comes from `part.localTransform` — multi-clamp fixtures use
- * one part per clamp instead of the legacy ClampRig mirror flag.
+ * Place one clamp mesh under its part group. The part group's localTransform is
+ * the fixture-space placement (origin = fixture 0,0,0). Recenter the authored
+ * mesh so its bbox centre sits on that part origin — otherwise the transform
+ * gizmo (attached to the part group) floats away from the visible clamp.
  */
 function attachClampMesh(partGroup: THREE.Group, mesh: THREE.Object3D): number {
-  const primary = mesh.clone(true);
-  primary.name = 'Clamp';
-  partGroup.add(primary);
+  const holder = new THREE.Group();
+  holder.name = 'Clamp';
+  holder.add(mesh);
+  holder.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(holder);
+  if (!box.isEmpty()) {
+    const center = box.getCenter(new THREE.Vector3());
+    mesh.position.x -= center.x;
+    mesh.position.y -= center.y;
+    mesh.position.z -= center.z;
+  }
+  partGroup.add(holder);
   return 1;
 }
 
