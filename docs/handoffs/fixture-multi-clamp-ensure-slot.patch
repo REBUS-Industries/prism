@@ -1,0 +1,121 @@
+diff --git a/src/fixtures/ensureClampSlot.ts b/src/fixtures/ensureClampSlot.ts
+index 16920dd..ae507e3 100644
+--- a/src/fixtures/ensureClampSlot.ts
++++ b/src/fixtures/ensureClampSlot.ts
+@@ -2,71 +2,68 @@ import type { FixtureDefinition, FixtureModel, FixturePart } from '@rebus-indust
+ 
+ /** Stable id for the REBUS clamp model slot (not from GDTF). */
+ export const REBUS_CLAMP_MODEL_ID = 'rebus-clamp';
+-/** Stable id for the clamp geometry part. */
++/** Stable id for the primary / first clamp geometry part. */
+ export const REBUS_CLAMP_PART_ID = 'rebus-clamp-part';
+ 
++function isRebusClampPart(part: FixturePart): boolean {
++  if (part.partId === REBUS_CLAMP_PART_ID) return true;
++  if (part.partId.startsWith('rebus-clamp-part-')) return true;
++  return part.tag === 'CLAMP'
++    && (part.metadata as { rebusSlot?: unknown } | undefined)?.rebusSlot === true;
++}
++
++function sameIdSet(a: string[], b: string[]): boolean {
++  if (a.length !== b.length) return false;
++  const set = new Set(a);
++  return b.every((id) => set.has(id));
++}
++
+ /**
+- * Ensure every fixture exposes a CLAMP part + model slot so users can upload a
+- * hanging clamp / omega bracket in the editor even when the GDTF has no clamp
+- * geometry. Safe to call on every read — returns a shallow clone when changed.
++ * Ensure every fixture exposes a REBUS clamp *model* slot so users can upload a
++ * hanging clamp / omega bracket (or pick a Model Library mesh) even when the
++ * GDTF has no clamp geometry.
++ *
++ * Clamp *instances* are optional multi-parts (`rebus-clamp-part`,
++ * `rebus-clamp-part-2`, …). This helper syncs `assignedPartIds` to whatever
++ * rebus clamp parts exist and does **not** re-create a part after the user
++ * deletes all clamps. Safe to call on every read — returns a shallow clone
++ * when changed.
+  */
+ export function ensureClampSlot(def: FixtureDefinition): FixtureDefinition {
+-  const hasPart = def.parts?.some((p) => p.partId === REBUS_CLAMP_PART_ID);
+-  const hasModel = def.models?.some((m) => m.modelId === REBUS_CLAMP_MODEL_ID);
+-  if (hasPart && hasModel) return def;
+-
+-  let changed = false;
+-  const parts = [...(def.parts ?? [])];
++  const parts = def.parts ?? [];
++  const clampPartIds = parts.filter(isRebusClampPart).map((p) => p.partId);
+   const models = [...(def.models ?? [])];
++  let changed = false;
+ 
+-  if (!hasModel) {
++  const existingIdx = models.findIndex((m) => m.modelId === REBUS_CLAMP_MODEL_ID);
++  if (existingIdx < 0) {
+     models.push({
+       modelId: REBUS_CLAMP_MODEL_ID,
+       partTag: 'CLAMP',
+-      assignedPartIds: [REBUS_CLAMP_PART_ID],
++      assignedPartIds: [...clampPartIds],
+       metadata: { rebusSlot: true },
+     } satisfies FixtureModel);
+     changed = true;
+   } else {
+-    const m = models.find((mm) => mm.modelId === REBUS_CLAMP_MODEL_ID)!;
+-    if (!m.assignedPartIds.includes(REBUS_CLAMP_PART_ID)) {
+-      m.assignedPartIds = [...m.assignedPartIds, REBUS_CLAMP_PART_ID];
++    const prev = models[existingIdx]!;
++    let next: FixtureModel = prev;
++    if (!sameIdSet(prev.assignedPartIds ?? [], clampPartIds)) {
++      next = { ...next, assignedPartIds: [...clampPartIds] };
+       changed = true;
+     }
+-  }
+-
+-  if (!hasPart) {
+-    const clampPart: FixturePart = {
+-      partId: REBUS_CLAMP_PART_ID,
+-      sourceGdtfGeometryId: 'Clamp',
+-      name: 'Clamp',
+-      tag: 'CLAMP',
+-      parentPartId: null,
+-      childPartIds: [],
+-      modelId: REBUS_CLAMP_MODEL_ID,
+-      materialId: null,
+-      localTransform: {
+-        position: { x: 0, y: 0, z: 0 },
+-        rotation: { x: 0, y: 0, z: 0 },
+-        scale: { x: 1, y: 1, z: 1 },
+-        matrix4x4: [
+-          1, 0, 0, 0,
+-          0, 1, 0, 0,
+-          0, 0, 1, 0,
+-          0, 0, 0, 1,
+-        ],
+-      },
+-      pivot: { x: 0, y: 0, z: 0 },
+-      motionAxisId: null,
+-      cellId: null,
+-      beamId: null,
+-      dmxLinks: [],
+-      metadata: { rebusSlot: true },
+-    };
+-    parts.push(clampPart);
+-    changed = true;
++    const meta = (next.metadata && typeof next.metadata === 'object')
++      ? { ...(next.metadata as Record<string, unknown>) }
++      : {};
++    if (meta.rebusSlot !== true) {
++      meta.rebusSlot = true;
++      next = { ...next, metadata: meta };
++      changed = true;
++    } else if (next !== prev) {
++      next = { ...next, metadata: meta };
++    }
++    if (next !== prev) models[existingIdx] = next;
+   }
+ 
+   if (!changed) return def;
+-  return { ...def, parts, models };
++  return { ...def, models };
+ }

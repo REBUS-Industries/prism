@@ -1000,8 +1000,14 @@ const assemblyKey = (): string => {
   const a = props.assembly;
   if (!a) return '';
   const mats = a.parts?.map((p) => `${p.partId}=${p.materialId ?? ''}`).join('|') ?? '';
-  const clamp = a.clampPlacement;
-  const clampKey = clamp ? `${clamp.mirrorZ ? 1 : 0}:${clamp.rotateZDeg}` : '0:0';
+  const clampPartsKey = (a.parts ?? [])
+    .filter((p) => {
+      if (p.partId === 'rebus-clamp-part' || p.partId.startsWith('rebus-clamp-part-')) return true;
+      return p.tag === 'CLAMP'
+        && (p.metadata as { rebusSlot?: unknown } | undefined)?.rebusSlot === true;
+    })
+    .map((p) => p.partId)
+    .join('|');
   const clampSlots = (a.clampMaterialSlots ?? []).map((s) => `${s.name}=${s.materialId ?? ''}`).join('|');
   const clampXform = a.clampModelTransform
     ? `${a.clampModelTransform.position.x},${a.clampModelTransform.position.y},${a.clampModelTransform.position.z}|${a.clampModelTransform.rotation.x},${a.clampModelTransform.rotation.y},${a.clampModelTransform.rotation.z}|${a.clampModelTransform.scale.x},${a.clampModelTransform.scale.y},${a.clampModelTransform.scale.z}`
@@ -1013,7 +1019,7 @@ const assemblyKey = (): string => {
       return `${m.modelId}=${String(meta?.mediaId ?? '')}:${flip}`;
     })
     .join('|');
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${modelMedia}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${modelMedia}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampPartsKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
 };
 
 const modelMaterialsKey = (): string =>

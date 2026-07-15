@@ -16,11 +16,6 @@ import {
   collectReferencedGeometryIds,
   isLibraryGeometryPart,
 } from './fixtureGeometryRefs';
-import {
-  REBUS_CLAMP_PART_ID,
-  type ClampPlacement,
-  readClampPlacement,
-} from './fixturePlacement';
 
 export interface MeshOrigin {
   partId: string;
@@ -63,50 +58,16 @@ function modelLabel(model: FixtureModel | undefined): string {
 
 const round = (n: number): number => Math.round(n * 1e6) / 1e6;
 
-function isRebusClampPart(part: FixturePart): boolean {
-  return part.partId === REBUS_CLAMP_PART_ID
-    || (part.tag === 'CLAMP' && (part.metadata as { rebusSlot?: boolean })?.rebusSlot === true);
-}
-
-function modelHasMesh(model: FixtureModel | undefined): boolean {
-  const id = (model?.metadata as { mediaId?: unknown } | undefined)?.mediaId;
-  return typeof id === 'string' && id.length > 0;
-}
-
-/** Origin placeholders matching the clamp rig in buildFixtureAssembly. */
-function attachClampOriginRig(
-  partGroup: THREE.Group,
-  partId: string,
-  placement: ClampPlacement,
-): void {
-  delete partGroup.userData.partId;
-  const rig = new THREE.Group();
-  rig.rotation.z = THREE.MathUtils.degToRad(placement.rotateZDeg);
-
-  const primary = new THREE.Group();
-  primary.userData.partId = partId;
-  rig.add(primary);
-
-  if (placement.mirrorZ) {
-    const mirrored = new THREE.Group();
-    mirrored.scale.z = -1;
-    mirrored.userData.partId = partId;
-    mirrored.userData.instanceOf = 'Z mirror';
-    rig.add(mirrored);
-  }
-
-  partGroup.add(rig);
-}
-
 /**
  * Build per-mesh origins for a fixture in GDTF Z-up metres. Only parts that
  * carry a real model (mesh) are emitted; GDTF primitives are skipped.
+ * Clamp parts use their own localTransform (multi-clamp — no legacy ClampRig).
  */
 export function computeMeshOrigins(
   parts: FixturePart[],
   models: FixtureModel[],
   fixtureZOffsetM = 0,
-  metadata?: Record<string, unknown>,
+  _metadata?: Record<string, unknown>,
 ): MeshOrigin[] {
   const partById = new Map(parts.map((p) => [p.partId, p]));
   const modelById = new Map(models.map((m) => [m.modelId, m]));
@@ -154,13 +115,6 @@ export function computeMeshOrigins(
     const clone = targetGroup.clone(true);
     clone.traverse((o) => { o.userData.instanceOf = part.name; });
     host.add(clone);
-  }
-
-  const clampPlacement = readClampPlacement(metadata);
-  for (const part of parts) {
-    if (!isRebusClampPart(part) || !part.modelId) continue;
-    if (!modelHasMesh(modelById.get(part.modelId))) continue;
-    attachClampOriginRig(groups.get(part.partId)!, part.partId, clampPlacement);
   }
 
   root.updateMatrixWorld(true);

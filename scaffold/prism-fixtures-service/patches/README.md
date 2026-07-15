@@ -5,6 +5,30 @@ Changes to the `prism-fixtures-service` polyrepo that pair with a monorepo
 the polyrepo and merge via the normal `/prism-merge prism-fixtures-service#N`
 flow so `fixtures-image` redeploys.
 
+## fixtures-multi-clamp-ensure-slot.patch
+
+Pairs with monorepo **multi-clamp** (`cursor/fixture-multi-clamp-dd18`): N clamp
+parts with per-part `localTransform`, add/remove in Settings + Parts.
+
+`ensureClampSlot` must keep the shared `rebus-clamp` **model** but must **not**
+re-create `rebus-clamp-part` after the user deletes all clamps. Syncs
+`assignedPartIds` to existing rebus clamp parts only.
+
+Also in `docs/handoffs/FIXTURE_MULTI_CLAMP.md`.
+
+### Apply
+
+```bash
+cd prism-fixtures-service
+git fetch origin main && git checkout main && git pull
+git checkout -b cursor/fixture-multi-clamp-dd18
+git apply /path/to/fixtures-multi-clamp-ensure-slot.patch
+npm ci && npm run build
+git push -u origin HEAD
+```
+
+Deploy **fixtures-image** with monorepo `web-image`.
+
 ## fixtures-orbit-custom-mesh-appid.patch
 
 **Critical:** (1) Orbit kept the GDTF head after Settings → Replace because mesh
