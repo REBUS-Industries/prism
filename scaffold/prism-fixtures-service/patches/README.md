@@ -5,6 +5,34 @@ Changes to the `prism-fixtures-service` polyrepo that pair with a monorepo
 the polyrepo and merge via the normal `/prism-merge prism-fixtures-service#N`
 flow so `fixtures-image` redeploys.
 
+## fixtures-orbit-custom-mesh-appid.patch
+
+**Critical:** (1) Orbit kept the GDTF head after Settings → Replace because mesh
+`applicationId` stayed `${fixture}:${part}:0`. (2) Custom uploads were
+**anisotropically squashed** into the GDTF L×W×H slot (#99/#101) instead of
+staying 1:1 with uniform mm→m unit conversion.
+
+- Stamp **mediaId** into mesh `applicationId` / `prismPartKey`
+- Custom meshes: measure authored metre dims on replace; **uniform** scale only
+- Stop healing custom dims back to the GDTF slot
+- Translation-only meshOffset for custom (match web)
+- Merge / carry-forward / PUT active-version sync for replacement media
+
+Also in `docs/handoffs/FIXTURE_ORBIT_CUSTOM_MESH_APPID.md`.
+
+### Apply
+
+```bash
+cd prism-fixtures-service
+git fetch origin main && git checkout main && git pull
+git checkout -b cursor/fix-orbit-custom-mesh-appid-dd18
+git am < /path/to/fixtures-orbit-custom-mesh-appid.patch   # or: git apply
+npm ci && npm run build && node dist/orbit/fixtureCustomMeshScale.test.js
+git push -u origin HEAD
+```
+
+Deploy **fixtures-image** (required) with monorepo `web-image` from prism #305.
+
 ## fixtures-mesh-offset.patch
 
 Pairs with the monorepo per-mesh offset feature (`model.metadata.meshOffset`).

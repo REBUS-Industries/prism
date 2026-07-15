@@ -394,15 +394,18 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
 
 /**
  * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
- * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H
- * (metres). Applied to every model — including custom replaced uploads — so
- * mm / cm / m CAD files all fit the same slot. Non-uniform scale is intentional:
- * a uniform (median) scale leaves the mesh overflowing the GDTF bounds whenever
- * the mesh aspect ratio differs from the slot (the green reference box).
+ * +90° X rotation, then scale so the mesh bbox matches model L×W×H (metres).
+ *
+ * - Stock GDTF meshes: per-axis fit to the GDTF slot (may be non-uniform).
+ * - Custom replaced uploads: **uniform** scale only (preserve authored
+ *   proportions). Dims are the measured metre bbox after mm→m conversion, so
+ *   this is effectively a unit conversion — we do not squash height/width/depth
+ *   into the GDTF reference box.
  */
 function wrapModelMeshInternal(
   meshRoot: THREE.Object3D,
   dims: ModelDims,
+  uniform = false,
 ): THREE.Group {
   const wrapper = new THREE.Group();
   wrapper.name = 'Scene';
@@ -415,13 +418,18 @@ function wrapModelMeshInternal(
     dims.length != null && dims.width != null && dims.height != null
     && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6
   ) {
-    // Same mapping as Orbit wrapScaleMatrix / GDTF models:
-    // x = length/bbox.x, y = height/bbox.y, z = width/bbox.z.
-    wrapper.scale.set(
-      dims.length / size.x,
-      dims.height / size.y,
-      dims.width / size.z,
-    );
+    const sx = dims.length / size.x;
+    const sy = dims.height / size.y;
+    const sz = dims.width / size.z;
+    if (uniform) {
+      const ratios = [sx, sy, sz].sort((a, b) => a - b);
+      const s = ratios[1]!;
+      wrapper.scale.setScalar(s);
+    } else {
+      // GDTF mapping (verified on Rivale Profile Base):
+      // x = length/bbox.x, y = height/bbox.y, z = width/bbox.z.
+      wrapper.scale.set(sx, sy, sz);
+    }
   }
 
   wrapper.add(meshRoot);
@@ -429,22 +437,15 @@ function wrapModelMeshInternal(
 }
 
 /**
- * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
- * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
- *
- * After +90° X: mesh local Y → world Z, local Z → world −Y. Builder scale
- * mapping (verified on Rivale Profile Base): x = length/bbox.x,
- * y = height/bbox.y, z = width/bbox.z.
- *
- * Custom replaced uploads use the same per-axis fit as GDTF meshes so the
- * preview matches the green GDTF reference box regardless of file units.
+ * Wrap a Y-up glTF mesh. Custom replaced models use uniform scale (1:1
+ * proportions); stock GDTF models use per-axis slot fit.
  */
 function wrapModelMesh(
   meshRoot: THREE.Object3D,
   dims: ModelDims,
-  _model?: FixtureModel,
+  model?: FixtureModel,
 ): THREE.Group {
-  return wrapModelMeshInternal(meshRoot, dims);
+  return wrapModelMeshInternal(meshRoot, dims, isCustomReplacedModel(model));
 }
 
 /** Load a fixture model GLB from a same-origin URL. */
@@ -469,7 +470,11 @@ export function computeModelPartLocalBounds(
   _oneToOne?: boolean,
 ): THREE.Box3 {
   const dims = modelDims(model);
-  const wrapped = wrapModelMeshInternal(meshRoot.clone(true), dims);
+  const wrapped = wrapModelMeshInternal(
+    meshRoot.clone(true),
+    dims,
+    isCustomReplacedModel(model),
+  );
   wrapped.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(wrapped);
   disposeAssembly(wrapped);
