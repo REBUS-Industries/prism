@@ -96,10 +96,14 @@ const props = withDefaults(defineProps<{
   transformRevision?: number;
   /** Enable click-to-select picking + a transform gizmo on the selected part. */
   editable?: boolean;
+  /** When false, picking still works but the transform gizmo is hidden. */
+  showGizmo?: boolean;
   /** Part the gizmo attaches to (assembly mode only). */
   selectedPartId?: string | null;
   /** GDTF reference bounds overlay for custom-mesh alignment (part-local metres). */
   gdtfReferenceBounds?: GdtfReferenceBounds | null;
+  /** Draw spheres at part-group origins (true pan/tilt rotation centres). */
+  pivotPartIds?: string[];
   /** Active gizmo transform mode. */
   gizmoMode?: 'translate' | 'rotate' | 'scale';
   /** Gizmo coordinate space. 'local' aligns with GDTF axes (matches panel). */
@@ -119,8 +123,10 @@ const props = withDefaults(defineProps<{
   assemblyRevision: 0,
   transformRevision: 0,
   editable: false,
+  showGizmo: true,
   selectedPartId: null,
   gdtfReferenceBounds: null,
+  pivotPartIds: () => [],
   gizmoMode: 'translate',
   gizmoSpace: 'local',
 });
@@ -315,6 +321,8 @@ function syncPartTransformsFromProps(): void {
 
 let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
+/** Pivot markers parented to part groups (local origin = rotation centre). */
+const pivotMeshes = new Map<string, THREE.Object3D>();
 const texLoader = new THREE.TextureLoader();
 /** REBUS materials built for the current assembly — disposed on reload. */
 let builtMaterials: BuiltMaterial[] = [];
@@ -374,6 +382,7 @@ function dispose(): void {
     scene?.remove(m);
   }
   datumMeshes.clear();
+  clearPivotMarkers();
   const dom = renderer?.domElement;
   renderer?.dispose();
   if (dom && wrapRef.value?.contains(dom)) wrapRef.value.removeChild(dom);
@@ -497,7 +506,7 @@ function syncGdtfReferenceOverlay(): void {
 /** Attach / detach the transform gizmo based on editable + selectedPartId. */
 function syncGizmo(): void {
   if (!transformControls) return;
-  const grp = props.editable && props.selectedPartId
+  const grp = props.editable && props.showGizmo && props.selectedPartId
     ? partGroups.get(props.selectedPartId)
     : undefined;
   if (grp) {
@@ -576,6 +585,72 @@ function syncBeam(): void {
   }
 }
 
+function clearPivotMarkers(): void {
+  for (const [id, obj] of [...pivotMeshes.entries()]) {
+    obj.removeFromParent();
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      mesh.geometry?.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else mat?.dispose();
+    });
+    pivotMeshes.delete(id);
+  }
+}
+
+/** Spheres at part-group origins — the live pan/tilt rotation centres. */
+function syncPivotMarkers(): void {
+  const want = new Set(props.pivotPartIds ?? []);
+  for (const [id, obj] of [...pivotMeshes.entries()]) {
+    if (!want.has(id) || !partGroups.has(id)) {
+      obj.removeFromParent();
+      obj.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat?.dispose();
+      });
+      pivotMeshes.delete(id);
+    }
+  }
+  for (const id of want) {
+    const grp = partGroups.get(id);
+    if (!grp) continue;
+    let marker = pivotMeshes.get(id);
+    const selected = props.selectedPartId === id;
+    if (!marker) {
+      marker = new THREE.Group();
+      marker.name = 'PivotMarker';
+      const geo = new THREE.SphereGeometry(0.025, 16, 12);
+      const mat = new THREE.MeshStandardMaterial({
+        color: selected ? 0xff6600 : 0x38bdf8,
+        emissive: selected ? 0x441100 : 0x082f49,
+        depthTest: false,
+      });
+      const sphere = new THREE.Mesh(geo, mat);
+      sphere.renderOrder = 10;
+      sphere.userData.datumId = id;
+      marker.add(sphere);
+      const axes = new THREE.AxesHelper(0.08);
+      axes.renderOrder = 11;
+      marker.add(axes);
+      pivotMeshes.set(id, marker);
+      grp.add(marker);
+    } else if (marker.parent !== grp) {
+      marker.removeFromParent();
+      grp.add(marker);
+    }
+    const sphere = marker.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+    if (sphere) {
+      const mat = sphere.material as THREE.MeshStandardMaterial;
+      mat.color.set(selected ? 0xff6600 : 0x38bdf8);
+      mat.emissive.set(selected ? 0x441100 : 0x082f49);
+    }
+  }
+}
+
 function syncDatums(): void {
   if (!scene) return;
   const want = new Set((props.datums ?? []).map((d) => d.id));
@@ -598,7 +673,9 @@ function syncDatums(): void {
       scene.add(mesh);
     }
     mesh.position.set(d.position.x, d.position.y, d.position.z);
+    (mesh.material as THREE.MeshStandardMaterial).color.set(d.color ?? '#ff6600');
   }
+  syncPivotMarkers();
 }
 
 function frameLoaded(
@@ -808,10 +885,21 @@ function onPointerDown(ev: PointerEvent): void {
   const ray = new THREE.Raycaster();
   ray.setFromCamera(new THREE.Vector2(x, y), cam);
 
-  const datumHits = ray.intersectObjects([...datumMeshes.values()]);
-  if (datumHits[0]?.object.userData.datumId) {
-    emit('selectDatum', datumHits[0].object.userData.datumId as string);
-    return;
+  const datumHits = ray.intersectObjects([
+    ...datumMeshes.values(),
+    ...[...pivotMeshes.values()].flatMap((g) => {
+      const meshes: THREE.Object3D[] = [];
+      g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o); });
+      return meshes;
+    }),
+  ]);
+  if (datumHits[0]) {
+    const id = (datumHits[0].object.userData.datumId as string | undefined)
+      ?? resolvePartId(datumHits[0].object);
+    if (id) {
+      emit('selectDatum', id);
+      return;
+    }
   }
 
   if (props.editable && loadedRoot) {
@@ -934,6 +1022,7 @@ const modelMaterialsKey = (): string =>
 watch(() => [props.url, assemblyKey(), modelMaterialsKey(), props.assemblyRevision], () => { void loadContent(); });
 watch(() => props.transformRevision, () => { syncPartTransformsFromProps(); });
 watch(() => props.datums, syncDatums, { deep: true });
+watch(() => [props.pivotPartIds, props.selectedPartId], () => { syncPivotMarkers(); }, { deep: true });
 watch(() => props.viewPreset, () => {
   syncActiveCamera();
   applyCameraPreset();
@@ -944,7 +1033,7 @@ watch(() => props.dimmer, syncDimmer);
 watch(() => props.showBeam, syncBeam);
 watch(() => props.beams, syncBeam, { deep: true });
 watch(() => props.interactive, (v) => { if (controls) controls.enabled = v; });
-watch(() => [props.editable, props.selectedPartId, props.gizmoMode, props.gizmoSpace, props.gdtfReferenceBounds], syncGizmo);
+watch(() => [props.editable, props.selectedPartId, props.gizmoMode, props.gizmoSpace, props.gdtfReferenceBounds, props.showGizmo], syncGizmo);
 watch(() => props.lightBackground, (v) => {
   if (scene) scene.background = new THREE.Color(v ? 0xe8eaed : 0x1a1a1f);
 });

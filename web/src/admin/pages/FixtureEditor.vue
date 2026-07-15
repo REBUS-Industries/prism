@@ -1539,7 +1539,13 @@ onMounted(() => {
 
       <div v-else-if="activeTab === 'control'" class="tab-panel control-tab-panel">
 
-        <FixtureGdtfDebugPanel v-if="fixture" :fixture="fixture" />
+        <FixtureGdtfDebugPanel
+          v-if="fixture"
+          :fixture="fixture"
+          :assembly-revision="assemblyRevision"
+          :transform-revision="assemblyTransformRevision"
+          @change="onPartPropertiesChange"
+        />
 
       </div>
 
