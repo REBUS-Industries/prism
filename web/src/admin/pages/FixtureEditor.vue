@@ -1846,6 +1846,12 @@ onMounted(() => {
             <p class="muted small">
               Select a clamp above (or in the Parts tree) to edit its mesh, XYZ position, and rotation.
             </p>
+            <p
+              v-if="meshUploadMessage && isRebusClampModel(fixture.definition.models.find((m) => m.modelId === meshUploadTarget) ?? null)"
+              class="muted small sync-ok"
+            >
+              {{ meshUploadMessage }}
+            </p>
           </div>
         </section>
 
