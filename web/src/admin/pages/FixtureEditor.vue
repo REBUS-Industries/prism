@@ -64,12 +64,19 @@ import {
   downloadTextFile,
 } from '../utils/fixtureOrigins';
 
-import { fixtureZOffsetM, readClampModelLibraryId, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
+import { fixtureZOffsetM } from '../utils/fixturePlacement';
 import {
   addRebusClampPart,
+  clampMeshLabel,
+  ensureDedicatedClampModel,
+  isRebusClampModel,
+  isRebusClampPart,
   listRebusClampParts,
+  migrateLegacyClampLibraryId,
   migrateLegacyClampPlacement,
+  readClampLibraryIdFromModel,
   removeRebusClampPart,
+  writeClampLibraryIdToModel,
 } from '../utils/fixtureClamps';
 import { isModelLengthUnit, type ModelLengthUnit } from '../utils/modelUnits';
 
@@ -263,10 +270,7 @@ const assembly = computed(() => {
     motionAxes: def.motionRig ?? [],
     selectedModeGeometryId: selectedModeGeometryId.value,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
-    clampModelUrl: clampModelLibraryId.value ? modelsApi.previewUrl(clampModelLibraryId.value) : undefined,
-    clampMaterialSlots: clampMaterialSlots.value.length ? clampMaterialSlots.value : undefined,
-    clampModelTransform: clampModelLibraryId.value ? clampModelTransform.value ?? undefined : undefined,
-    clampSourceUnits: clampModelLibraryId.value ? clampSourceUnits.value ?? undefined : undefined,
+    clampLibraryByModelId: clampLibraryByModelId.value,
   };
 });
 
@@ -460,26 +464,50 @@ function customMeshFilename(m: FixtureModel | undefined): string | null {
     : 'custom mesh';
 }
 
-const clampCustomMeshFilename = computed(() =>
-  customMeshFilename(
-    fixture.value?.definition.models?.find((m) => m.modelId === REBUS_CLAMP_MODEL_ID),
-  ),
-);
-
 /** Millimetres to lower the fixture body (clamp stays at the hang point). */
 const fixtureZOffsetMm = ref(0);
-const clampModelLibraryId = ref<string | null>(null);
-const clampMaterialSlots = ref<ModelMaterialSlot[]>([]);
-const clampModelTransform = ref<ModelTransform | null>(null);
-const clampSourceUnits = ref<ModelLengthUnit | null>(null);
 const clampLibraryModels = ref<ModelListItem[]>([]);
 const clampLibraryLoading = ref(false);
-const clampLibraryPreviewMissing = ref(false);
 const clampLibraryShowingAll = ref(false);
+/** Inline “add clamp” composer in Settings. */
+const addingClamp = ref(false);
+const addClampLibraryId = ref<string | null>(null);
+const addClampBusy = ref(false);
+/** Cached Model Library defs keyed by library model id (for viewport). */
+const clampLibDefCache = ref<Record<string, {
+  materialSlots: ModelMaterialSlot[];
+  transform: ModelTransform | null;
+  sourceUnits: ModelLengthUnit | null;
+  name: string;
+}>>({});
 
 const rebusClampParts = computed(() =>
   fixture.value ? listRebusClampParts(fixture.value.definition) : [],
 );
+
+const clampLibraryByModelId = computed(() => {
+  const out: Record<string, {
+    url: string;
+    transform?: ModelTransform | null;
+    sourceUnits?: string | null;
+    materialSlots?: ModelMaterialSlot[];
+  }> = {};
+  if (!fixture.value) return out;
+  for (const part of listRebusClampParts(fixture.value.definition)) {
+    if (!part.modelId) continue;
+    const model = fixture.value.definition.models.find((m) => m.modelId === part.modelId);
+    const libId = readClampLibraryIdFromModel(model);
+    if (!libId) continue;
+    const cached = clampLibDefCache.value[libId];
+    out[part.modelId] = {
+      url: modelsApi.previewUrl(libId),
+      transform: cached?.transform ?? null,
+      sourceUnits: cached?.sourceUnits ?? null,
+      materialSlots: cached?.materialSlots,
+    };
+  }
+  return out;
+});
 
 function isClampLibraryModel(m: ModelListItem): boolean {
   if (m.category?.toLowerCase() === 'clamp') return true;
@@ -493,26 +521,24 @@ function clampLibraryOptionLabel(m: ModelListItem): string {
   return label;
 }
 
-const clampHasUploadedMesh = computed(() => {
-  const meta = fixture.value?.definition.models
-    ?.find((m) => m.modelId === REBUS_CLAMP_MODEL_ID)?.metadata as { mediaId?: unknown } | undefined;
-  return typeof meta?.mediaId === 'string' && meta.mediaId.length > 0;
-});
-
-const clampHasMesh = computed(() =>
-  clampHasUploadedMesh.value || !!clampModelLibraryId.value,
-);
+function clampInstanceMeshLabel(part: FixturePart): string {
+  const libId = part.modelId
+    ? readClampLibraryIdFromModel(
+      fixture.value?.definition.models.find((m) => m.modelId === part.modelId),
+    )
+    : null;
+  const libName = libId ? clampLibDefCache.value[libId]?.name : null;
+  return clampMeshLabel(part, fixture.value?.definition.models ?? [], libName);
+}
 
 const swapModels = computed(() =>
-  (fixture.value?.definition.models ?? []).filter((m) => m.modelId !== REBUS_CLAMP_MODEL_ID),
+  (fixture.value?.definition.models ?? []).filter((m) => !isRebusClampModel(m)),
 );
 
 function syncPlacementFromFixture(): void {
   const meta = fixture.value?.definition.metadata;
   fixtureZOffsetMm.value = Math.round(fixtureZOffsetM(meta) * 1000);
-  clampModelLibraryId.value = readClampModelLibraryId(meta);
-  void verifyClampLibraryPreview();
-  void loadClampLibraryDefinition();
+  void refreshClampLibraryDefs();
 }
 
 function applyPlacementToDefinition(): void {
@@ -521,38 +547,45 @@ function applyPlacementToDefinition(): void {
     ...fixture.value.definition.metadata,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
   };
-  // Legacy global clamp mirror/rotate moved onto per-part localTransforms.
+  // Legacy global clamp fields — placement is per-part; library id is per-model.
   delete meta.clampMirrorZ;
   delete meta.clampMirrorY;
   delete meta.clampRotateZDeg;
-  if (clampModelLibraryId.value) {
-    meta.clampModelLibraryId = clampModelLibraryId.value;
-  } else {
-    delete meta.clampModelLibraryId;
-  }
+  delete meta.clampModelLibraryId;
   fixture.value.definition.metadata = meta;
 }
 
-async function loadClampLibraryDefinition(): Promise<void> {
-  const id = clampModelLibraryId.value;
-  if (!id) {
-    clampMaterialSlots.value = [];
-    clampModelTransform.value = null;
-    clampSourceUnits.value = null;
-    return;
-  }
+async function loadClampLibDef(libraryId: string): Promise<void> {
+  if (clampLibDefCache.value[libraryId]) return;
   try {
-    const res = await modelsApi.get(id);
+    const res = await modelsApi.get(libraryId);
     const def = res.model.definition;
-    clampMaterialSlots.value = def?.materialSlots ?? [];
-    clampModelTransform.value = def?.transform ?? null;
     const su = (def as { sourceUnits?: unknown } | undefined)?.sourceUnits;
-    clampSourceUnits.value = isModelLengthUnit(su) ? su : null;
+    clampLibDefCache.value = {
+      ...clampLibDefCache.value,
+      [libraryId]: {
+        materialSlots: def?.materialSlots ?? [],
+        transform: def?.transform ?? null,
+        sourceUnits: isModelLengthUnit(su) ? su : null,
+        name: res.model.name,
+      },
+    };
   } catch {
-    clampMaterialSlots.value = [];
-    clampModelTransform.value = null;
-    clampSourceUnits.value = null;
+    /* preview may still load without transform/slots */
   }
+}
+
+async function refreshClampLibraryDefs(): Promise<void> {
+  if (!fixture.value) return;
+  const ids = new Set<string>();
+  for (const part of listRebusClampParts(fixture.value.definition)) {
+    const model = part.modelId
+      ? fixture.value.definition.models.find((m) => m.modelId === part.modelId)
+      : undefined;
+    const id = readClampLibraryIdFromModel(model);
+    if (id) ids.add(id);
+  }
+  await Promise.all([...ids].map((id) => loadClampLibDef(id)));
 }
 
 async function loadClampLibraryModels(): Promise<void> {
@@ -568,11 +601,6 @@ async function loadClampLibraryModels(): Promise<void> {
       clampLibraryModels.value = withPreview;
       clampLibraryShowingAll.value = withPreview.length > 0;
     }
-    const assignedId = clampModelLibraryId.value;
-    if (assignedId && !clampLibraryModels.value.some((m) => m.id === assignedId)) {
-      const assigned = res.models.find((m) => m.id === assignedId);
-      if (assigned) clampLibraryModels.value = [assigned, ...clampLibraryModels.value];
-    }
   } catch {
     clampLibraryModels.value = [];
     clampLibraryShowingAll.value = false;
@@ -581,51 +609,62 @@ async function loadClampLibraryModels(): Promise<void> {
   }
 }
 
-async function verifyClampLibraryPreview(): Promise<void> {
-  const id = clampModelLibraryId.value;
-  if (!id) {
-    clampLibraryPreviewMissing.value = false;
-    return;
-  }
-  try {
-    const res = await modelsApi.get(id);
-    clampLibraryPreviewMissing.value = !res.model.hasPreview;
-  } catch {
-    clampLibraryPreviewMissing.value = true;
-  }
-}
-
-function onClampLibraryChange(): void {
-  applyPlacementToDefinition();
-  void verifyClampLibraryPreview();
-  void loadClampLibraryDefinition();
-  if (
-    clampModelLibraryId.value
-    && fixture.value
-    && listRebusClampParts(fixture.value.definition).length === 0
-  ) {
-    const part = addRebusClampPart(fixture.value.definition);
-    selectedPartId.value = part.partId;
-  }
-  assemblyRevision.value += 1;
-}
-
-function clearClampLibrary(): void {
-  clampModelLibraryId.value = null;
-  onClampLibraryChange();
-}
-
 function onFixtureZOffsetChange(): void {
   applyPlacementToDefinition();
   assemblyRevision.value += 1;
 }
 
-function addClamp(): void {
-  if (!fixture.value) return;
-  const part = addRebusClampPart(fixture.value.definition);
-  selectedPartId.value = part.partId;
-  activeTab.value = 'parts';
-  assemblyRevision.value += 1;
+function beginAddClamp(): void {
+  addingClamp.value = true;
+  addClampLibraryId.value = null;
+  void loadClampLibraryModels();
+}
+
+function cancelAddClamp(): void {
+  addingClamp.value = false;
+  addClampLibraryId.value = null;
+}
+
+async function confirmAddClampFromLibrary(): Promise<void> {
+  if (!fixture.value || !addClampLibraryId.value) return;
+  addClampBusy.value = true;
+  try {
+    const { part } = addRebusClampPart(fixture.value.definition, {
+      libraryModelId: addClampLibraryId.value,
+    });
+    await loadClampLibDef(addClampLibraryId.value);
+    addingClamp.value = false;
+    addClampLibraryId.value = null;
+    selectedPartId.value = part.partId;
+    activeTab.value = 'parts';
+    assemblyRevision.value += 1;
+  } finally {
+    addClampBusy.value = false;
+  }
+}
+
+async function confirmAddClampFromUpload(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file || !fixture.value) return;
+  addClampBusy.value = true;
+  error.value = null;
+  try {
+    const { part, model } = addRebusClampPart(fixture.value.definition);
+    applyPlacementToDefinition();
+    // Persist the new model row before replaceModel (server looks it up by id).
+    await save();
+    await replaceModel(model.modelId, ev);
+    selectedPartId.value = part.partId;
+    activeTab.value = 'parts';
+    addingClamp.value = false;
+    addClampLibraryId.value = null;
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'failed to add clamp';
+  } finally {
+    addClampBusy.value = false;
+    input.value = '';
+  }
 }
 
 function removeClamp(partId: string): void {
@@ -642,7 +681,34 @@ function removeClamp(partId: string): void {
 function selectClampInParts(partId: string): void {
   selectedPartId.value = partId;
   activeTab.value = 'parts';
+  void loadClampLibraryModels();
 }
+
+async function setSelectedClampLibrary(libraryId: string | null): Promise<void> {
+  if (!fixture.value || !selectedPart.value || !isRebusClampPart(selectedPart.value)) return;
+  const model = ensureDedicatedClampModel(fixture.value.definition, selectedPart.value.partId);
+  if (!model) return;
+  writeClampLibraryIdToModel(model, libraryId);
+  if (libraryId) await loadClampLibDef(libraryId);
+  assemblyRevision.value += 1;
+}
+
+async function uploadSelectedClampMesh(ev: Event): Promise<void> {
+  if (!fixture.value || !selectedPart.value || !isRebusClampPart(selectedPart.value)) return;
+  const model = ensureDedicatedClampModel(fixture.value.definition, selectedPart.value.partId);
+  if (!model) return;
+  // Prefer upload over library preview for this instance.
+  writeClampLibraryIdToModel(model, null);
+  applyPlacementToDefinition();
+  await save();
+  await replaceModel(model.modelId, ev);
+}
+
+watch(selectedPartId, (id) => {
+  if (!id || !fixture.value) return;
+  const part = fixture.value.definition.parts.find((p) => p.partId === id);
+  if (isRebusClampPart(part)) void loadClampLibraryModels();
+});
 
 watch(fixture, () => syncPlacementFromFixture(), { immediate: true });
 
@@ -691,17 +757,6 @@ async function replaceModel(modelId: string, ev: Event): Promise<void> {
     }
     if (modelAfter && (capturedBounds || ignoreDatumBefore)) {
       await save();
-    }
-
-    // After clamp mesh upload, ensure at least one clamp instance exists so the
-    // mesh is visible (placement is edited in Parts).
-    if (
-      modelId === REBUS_CLAMP_MODEL_ID
-      && fixture.value
-      && listRebusClampParts(fixture.value.definition).length === 0
-    ) {
-      addRebusClampPart(fixture.value.definition);
-      selectedPartId.value = listRebusClampParts(fixture.value.definition)[0]?.partId ?? null;
     }
 
     assemblyRevision.value += 1;
@@ -873,6 +928,10 @@ async function reload(): Promise<void> {
     if (migrateLegacyClampPlacement(fixture.value.definition)) {
       assemblyRevision.value += 1;
     }
+    if (migrateLegacyClampLibraryId(fixture.value.definition)) {
+      assemblyRevision.value += 1;
+    }
+    void refreshClampLibraryDefs();
 
     name.value = res.fixture.name;
 
@@ -1555,8 +1614,14 @@ onMounted(() => {
             :part="selectedPart"
             :models="fixture.definition.models"
             :fixture-id="fixture.id"
+            :clamp-library-models="clampLibraryModels"
+            :clamp-library-loading="clampLibraryLoading"
+            :clamp-library-showing-all="clampLibraryShowingAll"
+            :replacing-model-id="replacingModelId"
             @change="onPartPropertiesChange"
             @remove="selectedPart && removeClamp(selectedPart.partId)"
+            @clamp-library-change="setSelectedClampLibrary"
+            @clamp-upload="uploadSelectedClampMesh"
           />
 
         </aside>
@@ -1693,85 +1758,99 @@ onMounted(() => {
         <section class="panel-card settings-card">
           <h2>Clamp</h2>
           <p class="muted small">
-            Pick a clamp from the Model Library or upload a custom mesh. Add as many clamps as you need —
-            set each clamp’s position and rotation in the <strong>Parts</strong> panel.
-          </p>
-          <label class="clamp-library-label">
-            Model Library
-            <div class="clamp-library-row">
-              <select
-                v-model="clampModelLibraryId"
-                class="clamp-library-select"
-                :disabled="clampLibraryLoading"
-                @change="onClampLibraryChange"
-              >
-                <option :value="null">— None (use upload) —</option>
-                <option v-for="m in clampLibraryModels" :key="m.id" :value="m.id">{{ clampLibraryOptionLabel(m) }}</option>
-              </select>
-              <button
-                v-if="clampModelLibraryId"
-                type="button"
-                class="btn-link small"
-                @click="clearClampLibrary"
-              >
-                Clear
-              </button>
-            </div>
-          </label>
-          <p v-if="clampLibraryLoading" class="muted small">Loading clamp models…</p>
-          <p v-else-if="clampLibraryShowingAll" class="muted small">
-            Showing all library models with a preview mesh. Set Category to <strong>clamp</strong> (or add a <strong>clamp</strong> tag) in the Model Editor to filter this list.
-          </p>
-          <p v-else-if="!clampLibraryLoading && clampLibraryModels.length === 0" class="muted small">
-            No clamp models with a preview yet. In the Model Library, import or convert a mesh, set Category to <strong>clamp</strong> (or tag <strong>clamp</strong>), then pick it here. Draft models are included.
-          </p>
-          <p v-if="clampLibraryPreviewMissing" class="warn small">
-            The assigned library model is missing or has no preview — the viewport may not show a clamp until you pick another model or upload one.
-          </p>
-          <div class="clamp-upload-row">
-            <label class="model-swap-btn" :class="{ busy: replacingModelId === REBUS_CLAMP_MODEL_ID }">
-              <Icon name="upload_file" :size="14" />
-              {{ replacingModelId === REBUS_CLAMP_MODEL_ID ? 'Converting…' : (clampHasUploadedMesh ? 'Replace clamp upload' : 'Upload clamp model') }}
-              <input
-                type="file"
-                accept=".gltf,.glb,.obj,.fbx,.3ds,.stl,.dae,.ply"
-                :disabled="!!replacingModelId"
-                @change="replaceModel(REBUS_CLAMP_MODEL_ID, $event)"
-              />
-            </label>
-            <span v-if="clampHasMesh" class="pill online">Attached</span>
-            <span v-else class="pill muted-pill">No model</span>
-          </div>
-          <p v-if="clampCustomMeshFilename" class="muted small">Custom mesh: {{ clampCustomMeshFilename }}</p>
-          <p v-if="meshUploadMessage && meshUploadTarget === REBUS_CLAMP_MODEL_ID" class="muted small sync-ok">
-            {{ meshUploadMessage }}
-          </p>
-          <p v-if="clampModelLibraryId && clampHasUploadedMesh" class="muted small">
-            Library model is used in the viewport when set; the uploaded mesh remains for ORBIT export until you clear the library pick.
+            Add clamp instances — each one picks its own Model Library mesh or custom upload.
+            Set position and rotation in the <strong>Parts</strong> panel.
           </p>
 
           <div class="clamp-instances">
             <div class="clamp-instances-head">
               <h3 class="clamp-instances-title">Clamp instances</h3>
-              <button type="button" class="btn-secondary small" @click="addClamp">
+              <button
+                v-if="!addingClamp"
+                type="button"
+                class="btn-secondary small"
+                :disabled="addClampBusy || !!replacingModelId"
+                @click="beginAddClamp"
+              >
                 Add clamp
               </button>
             </div>
-            <p v-if="rebusClampParts.length === 0" class="muted small">
-              No clamp instances yet. Upload or pick a library model, then add a clamp — place it in Parts.
-            </p>
-            <ul v-else class="clamp-instance-list">
-              <li v-for="c in rebusClampParts" :key="c.partId" class="clamp-instance-row">
-                <button type="button" class="btn-link clamp-instance-name" @click="selectClampInParts(c.partId)">
-                  {{ c.name || c.partId }}
+
+            <div v-if="addingClamp" class="clamp-add-panel">
+              <p class="muted small">Choose a mesh for the new clamp instance:</p>
+              <label class="clamp-library-label">
+                Model Library
+                <div class="clamp-library-row">
+                  <select
+                    v-model="addClampLibraryId"
+                    class="clamp-library-select"
+                    :disabled="clampLibraryLoading || addClampBusy"
+                  >
+                    <option :value="null">— Select a library model —</option>
+                    <option
+                      v-for="m in clampLibraryModels"
+                      :key="m.id"
+                      :value="m.id"
+                    >{{ clampLibraryOptionLabel(m) }}</option>
+                  </select>
+                </div>
+              </label>
+              <p v-if="clampLibraryLoading" class="muted small">Loading clamp models…</p>
+              <p v-else-if="clampLibraryShowingAll" class="muted small">
+                Showing all library models with a preview. Set Category to <strong>clamp</strong> (or tag <strong>clamp</strong>) to filter.
+              </p>
+              <p v-else-if="clampLibraryModels.length === 0" class="muted small">
+                No clamp models with a preview yet. Import one in the Model Library, or upload a mesh below.
+              </p>
+              <div class="clamp-add-actions">
+                <button
+                  type="button"
+                  class="btn-secondary small"
+                  :disabled="!addClampLibraryId || addClampBusy"
+                  @click="confirmAddClampFromLibrary"
+                >
+                  {{ addClampBusy ? 'Adding…' : 'Add from library' }}
                 </button>
+                <label class="model-swap-btn" :class="{ busy: addClampBusy || !!replacingModelId }">
+                  <Icon name="upload_file" :size="14" />
+                  {{ addClampBusy || replacingModelId ? 'Uploading…' : 'Upload mesh' }}
+                  <input
+                    type="file"
+                    accept=".gltf,.glb,.obj,.fbx,.3ds,.stl,.dae,.ply"
+                    :disabled="addClampBusy || !!replacingModelId"
+                    @change="confirmAddClampFromUpload"
+                  />
+                </label>
+                <button type="button" class="btn-link small" :disabled="addClampBusy" @click="cancelAddClamp">
+                  Cancel
+                </button>
+              </div>
+            </div>
+
+            <p v-if="rebusClampParts.length === 0 && !addingClamp" class="muted small">
+              No clamp instances yet. Click <strong>Add clamp</strong> to pick a library mesh or upload one.
+            </p>
+            <ul v-else-if="rebusClampParts.length > 0" class="clamp-instance-list">
+              <li v-for="c in rebusClampParts" :key="c.partId" class="clamp-instance-row">
+                <div class="clamp-instance-meta">
+                  <button type="button" class="btn-link clamp-instance-name" @click="selectClampInParts(c.partId)">
+                    {{ c.name || c.partId }}
+                  </button>
+                  <span class="muted small">{{ clampInstanceMeshLabel(c) }}</span>
+                </div>
                 <button type="button" class="btn-link danger-link small" @click="removeClamp(c.partId)">
                   Remove
                 </button>
               </li>
             </ul>
             <p class="muted small">
-              Select a clamp above (or in the Parts tree) to edit its XYZ position and rotation. Removing a clamp deletes that instance only — the shared mesh stays available for other clamps.
+              Select a clamp above (or in the Parts tree) to edit its mesh, XYZ position, and rotation.
+            </p>
+            <p
+              v-if="meshUploadMessage && isRebusClampModel(fixture.definition.models.find((m) => m.modelId === meshUploadTarget) ?? null)"
+              class="muted small sync-ok"
+            >
+              {{ meshUploadMessage }}
             </p>
           </div>
         </section>
@@ -1911,7 +1990,7 @@ onMounted(() => {
                 </label>
               </li>
             </ul>
-            <p v-if="meshUploadMessage && meshUploadTarget !== REBUS_CLAMP_MODEL_ID" class="muted small sync-ok">
+            <p v-if="meshUploadMessage && !isRebusClampModel(fixture.definition.models.find((m) => m.modelId === meshUploadTarget) ?? null)" class="muted small sync-ok">
               {{ meshUploadMessage }}
             </p>
           </div>
@@ -2198,9 +2277,9 @@ onMounted(() => {
   font-size: 13px;
 }
 .clamp-instances {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border, #333);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 .clamp-instances-head {
   display: flex;
@@ -2231,9 +2310,36 @@ onMounted(() => {
   background: var(--color-bg-input, #1a1a1a);
   border-radius: var(--radius-sm, 4px);
 }
+.clamp-instance-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
 .clamp-instance-name {
   font-weight: 500;
   text-align: left;
+}
+.clamp-add-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, transparent);
+}
+.clamp-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.btn-secondary.small {
+  font-size: 12px;
+  padding: 4px 10px;
 }
 .danger-link { color: var(--color-danger, #e55); }
 .range-orange { accent-color: var(--orbit-primary); }

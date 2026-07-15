@@ -69,25 +69,36 @@ export interface FixtureAssemblyInput {
    */
   clampPlacement?: ClampPlacement;
   /**
-   * When set, the REBUS clamp part loads this GLB URL (Model Library preview)
-   * instead of the fixture's own clamp media upload.
+   * Per clamp-model Model Library preview override (keyed by fixture modelId).
+   * When present for a rebus clamp's model, loads this GLB instead of uploaded media.
+   */
+  clampLibraryByModelId?: Record<string, ClampLibraryOverride>;
+  /**
+   * @deprecated Use `clampLibraryByModelId`. Applied to every rebus clamp that
+   * has no per-model override (legacy single-library pick).
    */
   clampModelUrl?: string;
   /**
-   * Model Library material slots for the linked clamp GLB. When present with
-   * `clampModelUrl`, slot materials are painted on the clamp mesh instead of
-   * the fixture part's `materialId`.
+   * @deprecated Use per-model override in `clampLibraryByModelId`.
    */
   clampMaterialSlots?: ModelMaterialSlot[];
-  /** Built slot material maps (from fetchSlotMaterials). */
+  /** Built slot material maps for the deprecated single `clampModelUrl`. */
   clampSlotMaterialMaps?: SlotMaterialMaps;
   /**
-   * Model Library root transform for the linked clamp GLB (metres, degrees).
-   * Applied inside each clamp part before `part.localTransform`.
+   * @deprecated Use per-model override in `clampLibraryByModelId`.
    */
   clampModelTransform?: ModelTransform | null;
-  /** Vertex units of the library clamp GLB; scaled to metres when not `m`. */
+  /** @deprecated Use per-model override in `clampLibraryByModelId`. */
   clampSourceUnits?: string | null;
+}
+
+/** Model Library preview payload for one clamp model instance. */
+export interface ClampLibraryOverride {
+  url: string;
+  transform?: ModelTransform | null;
+  sourceUnits?: string | null;
+  materialSlots?: ModelMaterialSlot[];
+  slotMaterialMaps?: SlotMaterialMaps;
 }
 
 /** A reference to the Three.js object that represents a motion axis node. */
@@ -595,30 +606,42 @@ export async function buildFixtureAssembly(
     const mediaId = modelMediaId(model);
     const partGroup = partGroups.get(part.partId)!;
 
-    const clampUrl = isRebusClampPart(part) && input.clampModelUrl ? input.clampModelUrl : null;
-    const meshUrl = clampUrl ?? (mediaId ? input.resolveUrl(mediaId) : null);
+    const perModelLib = isRebusClampPart(part) && part.modelId
+      ? input.clampLibraryByModelId?.[part.modelId]
+      : undefined;
+    const legacyLibUrl = isRebusClampPart(part) && !perModelLib ? input.clampModelUrl : undefined;
+    const clampLib = perModelLib ?? (legacyLibUrl
+      ? {
+        url: legacyLibUrl,
+        transform: input.clampModelTransform,
+        sourceUnits: input.clampSourceUnits,
+        materialSlots: input.clampMaterialSlots,
+        slotMaterialMaps: input.clampSlotMaterialMaps,
+      }
+      : undefined);
+    const meshUrl = clampLib?.url ?? (mediaId ? input.resolveUrl(mediaId) : null);
     if (meshUrl) {
       const obj = await loadGlbUrl(meshUrl);
       if (obj) {
-        const wrapped = clampUrl
+        const wrapped = clampLib
           ? wrapLibraryClampMesh(
             obj.clone(true),
             dims,
-            input.clampModelTransform,
-            input.clampSourceUnits,
+            clampLib.transform,
+            clampLib.sourceUnits,
           )
           : wrapModelMesh(obj.clone(true), dims, model);
         if (
-          isRebusClampPart(part) && clampUrl
-          && input.clampMaterialSlots?.length
-          && input.clampSlotMaterialMaps
+          isRebusClampPart(part) && clampLib
+          && clampLib.materialSlots?.length
+          && clampLib.slotMaterialMaps
           && (
-            input.clampSlotMaterialMaps.byMeshName.size
-            || input.clampSlotMaterialMaps.bySourceMaterialName.size
-            || input.clampSlotMaterialMaps.byLegacyName.size
+            clampLib.slotMaterialMaps.byMeshName.size
+            || clampLib.slotMaterialMaps.bySourceMaterialName.size
+            || clampLib.slotMaterialMaps.byLegacyName.size
           )
         ) {
-          paintModelMaterialSlots(wrapped, input.clampMaterialSlots, input.clampSlotMaterialMaps);
+          paintModelMaterialSlots(wrapped, clampLib.materialSlots, clampLib.slotMaterialMaps);
         } else {
           paintMaterial(wrapped, part);
         }
