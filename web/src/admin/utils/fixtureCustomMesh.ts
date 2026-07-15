@@ -13,6 +13,6 @@ export function fixtureHasCustomMeshes(definition: FixtureDefinition | null | un
 
 /**
  * Orbit publish stamps each mesh applicationId with the model mediaId so a
- * Settings → Replace cannot be silently deduped back to the prior GDTF mesh.
- * Preview uses media URLs directly — no applicationId involved.
+ * Settings → Replace cannot be silently deduped to the prior GDTF mesh.
+ * Custom meshes keep 1:1 authored proportions (uniform unit scale only).
  */

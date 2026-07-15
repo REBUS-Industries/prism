@@ -1,42 +1,38 @@
-# Handoff — Orbit reuses GDTF mesh after custom replace (applicationId dedupe)
+# Handoff — Orbit custom mesh: applicationId dedupe + 1:1 scale
 
 **Repo to change:** `REBUS-Industries/prism-fixtures-service`  
 **Patch:** `fixture-orbit-custom-mesh-appid.patch` (this folder)  
-**Companion web PR:** same branch `cursor/fix-orbit-custom-mesh-appid-dd18` on `prism`  
+**Also:** `scaffold/prism-fixtures-service/patches/fixtures-orbit-custom-mesh-appid.patch`  
+**Companion web PR:** `cursor/fix-orbit-custom-mesh-appid-dd18` on `prism` (#305)  
 **This agent cannot push to `prism-fixtures-service` (403 for `cursor[bot]`).**
 
-## Symptom
+## Symptoms
 
-Fixture e.g. `abe7d96a-f6c4-4a21-b8dc-edfd19d0ae2c`: head + base have custom
-meshes in PRISM, but **Orbit publish still shows the GDTF head** and wrong XYZ.
+1. Custom head/base in PRISM, but Orbit still shows the **GDTF head** (wrong mesh).
+2. Custom uploads are **squashed** — height/width/depth altered to fill the GDTF
+   L×W×H slot instead of staying 1:1 (uniform unit conversion only).
 
-## Root cause (fixtures-service)
+## Root causes
 
-Orbit dedupes `Objects.Geometry.Mesh` by `applicationId`. Publish used stable ids:
-
-```text
-${fixtureId}:${partId}:0
-```
-
-After Settings → Replace, the custom GLB was uploaded and baked, but Orbit kept
-resolving the **previous GDTF mesh object** with the same applicationId.
-
-Secondary issues from today's dim/merge flip-flop (#95–#101):
-
-- Stale `meshOffset` after slot-dim heal (authored-size → GDTF fit) → wrong XYZ
-- Merge preferred the **entire** stored model when mediaIds differed (dropped
-  client meshOffset edits)
-- `carryForwardEdits` did not preserve custom replaced meshes on reimport
-- PUT updated working definition only (active version could still hold GDTF media)
+1. Orbit dedupes `Objects.Geometry.Mesh` by `applicationId`. Stable ids
+   `${fixture}:${part}:0` reused the prior GDTF mesh after Settings → Replace.
+2. PRs #99/#101 + web #303 forced **per-axis** fit of custom meshes into the
+   GDTF slot — that anisotropically changes proportions.
 
 ## Fix (in the patch)
 
 1. Stamp **mediaId** into mesh `applicationId` / `prismPartKey`
-2. Custom meshes: translation-only meshOffset (match web preview)
-3. Merge: keep stored replacement **media**, keep client offsets/dims
-4. Slot-dim heal: clear stale `meshOffset` / `ignoreImportedMeshDatum`
-5. Carry-forward: preserve `replaced` media + offset across reimport
+2. Custom meshes: **uniform** scale; measure authored metre dims on replace
+   (mm→m when needed); stop restoring GDTF slot dims over custom uploads
+3. Translation-only meshOffset for custom (match web)
+4. Merge: keep stored replacement **media**, keep client offsets/dims
+5. Carry-forward: preserve custom replaced meshes + measured dims
 6. PUT: sync definition to the active version row
+
+## Web companion (already in prism PR)
+
+- Preview: uniform scale for `metadata.replaced` models
+- Re-fetch after save so healed measured dims match publish
 
 ## Apply
 
@@ -52,7 +48,7 @@ git push -u origin HEAD
 
 ## Verify
 
-1. Open fixture with custom head/base → Republish to Orbit.
-2. Orbit must show the **custom** head mesh (not GDTF), coherent XYZ with PRISM.
-3. Replace one mesh again → republish → Orbit updates that part only.
-4. Reimport / quality switch must keep custom replaced media.
+1. Replace a part with a mm CAD mesh that is already correct real-world size.
+2. Preview: proportions match the file (green GDTF box may not be filled).
+3. Republish to Orbit: **custom** mesh (not GDTF), same proportions/XYZ as PRISM.
+4. Re-replace / quality switch keeps the custom media.

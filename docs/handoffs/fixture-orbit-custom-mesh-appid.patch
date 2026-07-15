@@ -1,7 +1,7 @@
 From 02bfa282bfab272eb06b403f333a16c919cf13ea Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Wed, 15 Jul 2026 13:47:19 +0000
-Subject: [PATCH] fix: Orbit must not reuse GDTF mesh after custom replace
+Subject: [PATCH 1/2] fix: Orbit must not reuse GDTF mesh after custom replace
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -384,6 +384,741 @@ index f85896b..b31a545 100644
    if (mesh.applicationId) {
      obj.prismPartKey = mesh.applicationId;
      obj.applicationId = mesh.applicationId;
+-- 
+2.43.0
+
+
+From 9345b70e6ef74855350a5de74bfa8781e061ef4e Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Wed, 15 Jul 2026 13:55:10 +0000
+Subject: [PATCH 2/2] fix: custom meshes stay 1:1 (uniform unit scale, not GDTF
+ squash)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Also stamp mediaId into Orbit applicationId so replace cannot dedupe back to
+the prior GDTF mesh. Measure authored metre dims on replace (mm→m), use uniform
+scale for metadata.replaced, and stop healing custom dims back to the GDTF slot.
+---
+ src/import/backfillReplacedModelDims.ts  | 155 +++++++++++------------
+ src/import/fixtureEditCarryForward.ts    |   8 ++
+ src/import/replaceFixtureModel.ts        |  32 +++--
+ src/import/replacedModelDims.test.ts     |  30 ++++-
+ src/import/replacedModelDims.ts          | 100 ++++++++++++++-
+ src/orbit/fixtureCustomMeshScale.test.ts |  69 ++++++++--
+ src/orbit/fixtureGeometryOrbit.ts        |  45 ++++---
+ src/orbit/glbBoundingSize.test.ts        |  31 +++--
+ 8 files changed, 332 insertions(+), 138 deletions(-)
+
+diff --git a/src/import/backfillReplacedModelDims.ts b/src/import/backfillReplacedModelDims.ts
+index c10954c..b97c986 100644
+--- a/src/import/backfillReplacedModelDims.ts
++++ b/src/import/backfillReplacedModelDims.ts
+@@ -1,17 +1,15 @@
+ /**
+- * Restore GDTF slot dimensions on custom replaced meshes.
++ * Ensure custom replaced meshes carry authored metre dimensions.
+  *
+- * A previous approach stamped the uploaded mesh's own bbox into
+- * length/width/height (and `meshMeasured`) so scale became a no-op. That broke
+- * mm/cm CAD uploads and dwarfed beams. The correct behaviour is always fit the
+- * upload to the model's GDTF metre dims — regardless of the mesh's native units.
++ * Preview / Orbit scale each GLB to model length/width/height. For custom
++ * uploads those dims must be the mesh's own metre bbox (after uniform mm→m
++ * conversion) so scale preserves 1:1 proportions — not the GDTF slot, which
++ * would squash height/width/depth independently.
+  *
+- * This heal finds models still carrying `meshMeasured` (or obviously wrong
+- * dims) and restores length/width/height from the stored GDTF package when
+- * available. Custom mesh media / replaced flags are kept.
++ * Runs on GET/publish so fixtures swapped before this rule (or still carrying
++ * raw mm-as-metres) self-heal without a re-upload.
+  */
+ import { readFile } from 'node:fs/promises';
+-import { resolve } from 'node:path';
+ import {
+   and,
+   db,
+@@ -23,55 +21,56 @@ import {
+   type FixtureDefinition,
+   type FixtureModel,
+ } from '@rebus-industries/prism-shared';
+-import { extractGdtfPackage } from './gdtfPackageReader.js';
+-import { parseGdtfDescription } from './gdtfFixtureParser.js';
+-import { MESH_MEASURED_KEY, readModelDimsM } from './replacedModelDims.js';
+-
+-const DATA_DIR = process.env.DATA_DIR ?? '/data/prism';
+-const FIXTURES_ROOT = resolve(DATA_DIR, 'fixtures');
++import {
++  MESH_MEASURED_KEY,
++  measuredDimsFromGlb,
++  readModelDimsM,
++  replacedModelNeedsMeasure,
++  withMeasuredDims,
++} from './replacedModelDims.js';
+ 
+ export { MESH_MEASURED_KEY } from './replacedModelDims.js';
+ 
+-/** True when this replaced model still has mesh-measured dims that defeat slot fit. */
+-export function replacedModelNeedsSlotDimsRestore(model: FixtureModel | undefined | null): boolean {
+-  if (!model) return false;
+-  const meta = (model.metadata ?? {}) as Record<string, unknown>;
+-  if (meta.replaced !== true) return false;
+-  if (meta[MESH_MEASURED_KEY] === true) return true;
+-  // Legacy: measured mm extents written as metres without the stamp surviving.
+-  const dims = readModelDimsM(meta);
+-  return !!(dims && Math.max(dims.length, dims.height, dims.width) > 10);
++/** Resolve the GLB bytes for a model: prefer its storagePath, else media by mediaId. */
++async function loadModelGlbBytes(model: FixtureModel): Promise<Buffer | null> {
++  const sp = typeof model.storagePath === 'string' ? model.storagePath : null;
++  if (sp) {
++    try {
++      const bytes = await readFile(sp);
++      if (bytes.length > 0) return bytes;
++    } catch { /* fall through to media lookup */ }
++  }
++  const mediaId = (model.metadata as { mediaId?: unknown } | undefined)?.mediaId;
++  if (typeof mediaId === 'string' && mediaId) {
++    const rows = await db.select().from(fixtureMedia)
++      .where(and(eq(fixtureMedia.id, mediaId), isNull(fixtureMedia.deletedAt))).limit(1);
++    const sp2 = rows[0]?.storagePath;
++    if (sp2) {
++      try {
++        const bytes = await readFile(sp2);
++        if (bytes.length > 0) return bytes;
++      } catch { /* unreadable — skip */ }
++    }
++  }
++  return null;
+ }
+ 
+-function restoreSlotDimsInto(
+-  def: FixtureDefinition,
+-  gdtfModelsById: Map<string, FixtureModel>,
+-): boolean {
++/** Measure + rewrite authored dims for replaced models in `def` (mutates). */
++async function measureReplacedModelDimsInto(def: FixtureDefinition): Promise<boolean> {
+   let changed = false;
+   for (const model of def.models ?? []) {
+-    if (!replacedModelNeedsSlotDimsRestore(model)) continue;
+-    const gdtf = gdtfModelsById.get(model.modelId)
+-      ?? (typeof model.sourceGdtfModel === 'string'
+-        ? gdtfModelsById.get(model.sourceGdtfModel)
+-        : undefined);
+-    const gMeta = (gdtf?.metadata ?? {}) as Record<string, unknown>;
+-    const next: Record<string, unknown> = { ...(model.metadata ?? {}) };
+-    let restored = false;
+-    for (const key of ['length', 'width', 'height'] as const) {
+-      if (typeof gMeta[key] === 'number' && (gMeta[key] as number) > 0) {
+-        next[key] = gMeta[key];
+-        restored = true;
+-      }
+-    }
+-    // Only clear the legacy stamp once slot dims are restored — otherwise keep
+-    // retrying on the next serve/publish.
+-    if (!restored) continue;
+-    delete next[MESH_MEASURED_KEY];
+-    // meshOffset / ignoreImportedMeshDatum were often computed while dims were
+-    // the authored mesh bbox (scale ≈ 1). After restoring GDTF slot dims the
+-    // fit scale changes, so those offsets are no longer valid — drop them so
+-    // Orbit/preview don't bake a double-compensated XYZ. Users can re-enable
+-    // "Ignore imported mesh datum" to realign.
++    if (!replacedModelNeedsMeasure(model)) continue;
++    const bytes = await loadModelGlbBytes(model);
++    if (!bytes) continue;
++    const previous = readModelDimsM(model.metadata);
++    const dims = measuredDimsFromGlb(bytes, previous);
++    if (!dims) continue;
++    const next = withMeasuredDims(
++      model.metadata as Record<string, unknown> | undefined,
++      dims,
++    );
++    // Slot-fit era meshOffsets assume anisotropic scale into the GDTF box —
++    // drop them when switching to authored 1:1 metres.
+     delete next.meshOffset;
+     delete next.ignoreImportedMeshDatum;
+     model.metadata = next;
+@@ -81,9 +80,8 @@ function restoreSlotDimsInto(
+ }
+ 
+ /**
+- * Restore GDTF metre slot dims on replaced models that still carry mesh-measured
+- * sizes. Best-effort: never throws. No-op when nothing needs restoring or the
+- * GDTF package is unavailable.
++ * Heal custom replaced-mesh dims to authored metres. Best-effort: never throws.
++ * No-op when every replaced model is already stamped with sane metre dims.
+  */
+ export async function ensureReplacedModelDims(fixtureTypeId: string): Promise<void> {
+   try {
+@@ -93,43 +91,32 @@ export async function ensureReplacedModelDims(fixtureTypeId: string): Promise<vo
+     if (!ft) return;
+ 
+     const def = structuredClone(ft.definition) as FixtureDefinition;
+-    if (!(def.models ?? []).some((m) => replacedModelNeedsSlotDimsRestore(m))) return;
+-
+-    if (!ft.activeVersionId) return;
+-    const vRows = await db.select().from(fixtureVersions)
+-      .where(eq(fixtureVersions.id, ft.activeVersionId)).limit(1);
+-    const version = vRows[0];
+-    if (!version?.originalMediaId) return;
+-
+-    const mediaRows = await db.select().from(fixtureMedia)
+-      .where(eq(fixtureMedia.id, version.originalMediaId)).limit(1);
+-    const media = mediaRows[0];
+-    if (!media?.storagePath) return;
+-
+-    const bytes = await readFile(media.storagePath);
+-    const pkg = await extractGdtfPackage(
+-      bytes,
+-      FIXTURES_ROOT,
+-      ft.manufacturer,
+-      ft.fixtureName,
+-      version.gdtfHash,
+-    );
+-    const fresh = parseGdtfDescription(pkg.description, pkg.extractedDir) as FixtureDefinition;
+-    const gdtfModelsById = new Map((fresh.models ?? []).map((m) => [m.modelId, m]));
++    if (!(def.models ?? []).some((m) => replacedModelNeedsMeasure(m))) return;
+ 
+-    if (restoreSlotDimsInto(def, gdtfModelsById)) {
++    if (await measureReplacedModelDimsInto(def)) {
+       await db.update(fixtureTypes).set({ definition: def, updatedAt: new Date() })
+         .where(eq(fixtureTypes.id, fixtureTypeId));
+     }
+ 
+-    if (version) {
+-      const vdef = structuredClone(version.definition) as FixtureDefinition;
+-      if (restoreSlotDimsInto(vdef, gdtfModelsById)) {
+-        await db.update(fixtureVersions).set({ definition: vdef })
+-          .where(eq(fixtureVersions.id, version.id));
++    if (ft.activeVersionId) {
++      const vRows = await db.select().from(fixtureVersions)
++        .where(eq(fixtureVersions.id, ft.activeVersionId)).limit(1);
++      const version = vRows[0];
++      if (version) {
++        const vdef = structuredClone(version.definition) as FixtureDefinition;
++        if ((vdef.models ?? []).some((m) => replacedModelNeedsMeasure(m))
++          && await measureReplacedModelDimsInto(vdef)) {
++          await db.update(fixtureVersions).set({ definition: vdef })
++            .where(eq(fixtureVersions.id, version.id));
++        }
+       }
+     }
+   } catch (err) {
+-    console.warn('[backfillReplacedModelDims] slot-dim restore failed for', fixtureTypeId, err);
++    console.warn('[backfillReplacedModelDims] authored-dim measure failed for', fixtureTypeId, err);
+   }
+ }
++
++/** @deprecated Alias — heal now measures authored size, it does not restore GDTF slots. */
++export function replacedModelNeedsSlotDimsRestore(model: FixtureModel | undefined | null): boolean {
++  return replacedModelNeedsMeasure(model);
++}
+diff --git a/src/import/fixtureEditCarryForward.ts b/src/import/fixtureEditCarryForward.ts
+index df31918..c3a76ab 100644
+--- a/src/import/fixtureEditCarryForward.ts
++++ b/src/import/fixtureEditCarryForward.ts
+@@ -115,6 +115,14 @@ export function carryForwardEdits(
+       nextMeta.gdtfBounds = structuredClone(wMeta.gdtfBounds);
+     }
+     if (wMeta.flipNormals === true) nextMeta.flipNormals = true;
++    if (wMeta.meshMeasured === true) {
++      nextMeta.meshMeasured = true;
++      for (const key of ['length', 'width', 'height'] as const) {
++        if (typeof wMeta[key] === 'number' && (wMeta[key] as number) > 0) {
++          nextMeta[key] = wMeta[key];
++        }
++      }
++    }
+     model.metadata = nextMeta;
+     if (typeof work.storagePath === 'string' && work.storagePath) {
+       model.storagePath = work.storagePath;
+diff --git a/src/import/replaceFixtureModel.ts b/src/import/replaceFixtureModel.ts
+index e52f72c..042b870 100644
+--- a/src/import/replaceFixtureModel.ts
++++ b/src/import/replaceFixtureModel.ts
+@@ -1,4 +1,4 @@
+-import { mkdir, writeFile } from 'node:fs/promises';
++import { mkdir, writeFile, readFile } from 'node:fs/promises';
+ import { extname, join, resolve } from 'node:path';
+ import { randomUUID } from 'node:crypto';
+ import {
+@@ -13,7 +13,11 @@ import {
+ } from '@rebus-industries/prism-shared';
+ import { convertModelToGlb, modelsRoot } from './modelAssetMapper.js';
+ import { ensureClampSlot, REBUS_CLAMP_MODEL_ID } from '../fixtures/ensureClampSlot.js';
+-import { MESH_MEASURED_KEY } from './replacedModelDims.js';
++import {
++  measuredDimsFromGlb,
++  readModelDimsM,
++  withMeasuredDims,
++} from './replacedModelDims.js';
+ 
+ const DATA_DIR = process.env.DATA_DIR ?? '/data/prism';
+ 
+@@ -25,9 +29,11 @@ const DATA_DIR = process.env.DATA_DIR ?? '/data/prism';
+  * definition and the active version. Part transforms/links are untouched — only
+  * the mesh swaps. Throws on an unknown fixture/model or a conversion failure.
+  *
+- * Model length/width/height (metres, from GDTF) are preserved. Preview and Orbit
+- * bake scale the uploaded GLB to those dims, so mm / cm / m / arbitrary CAD
+- * units all fit the same slot — the mesh's native units do not matter.
++ * Custom uploads keep **1:1 authored size**: the converted GLB bbox is measured,
++ * normalised from CAD mm → metres when needed (uniform unit scale), and stored
++ * as length/width/height. Preview / Orbit then scale to those dims — a no-op
++ * after unit conversion — so height/width/depth proportions are not altered to
++ * match the GDTF slot. Stock GDTF meshes still use per-axis slot fit.
+  */
+ export async function replaceFixtureModel(
+   fixtureTypeId: string,
+@@ -61,6 +67,10 @@ export async function replaceFixtureModel(
+   // Unique id so the stored GLB + media row are fresh (cache-busts the viewer).
+   const converted = await convertModelToGlb(tmpPath, destDir, `${modelId}-replace-${Date.now()}`);
+ 
++  const existingModel = def.models?.find((mm) => mm.modelId === modelId);
++  const previousMetres = readModelDimsM(existingModel?.metadata);
++  const dimsM = measuredDimsFromGlb(await readFile(converted.storagePath), previousMetres);
++
+   const [media] = await db.insert(fixtureMedia).values({
+     mediaType: 'MODEL_GLB',
+     contentHash: converted.contentHash,
+@@ -77,16 +87,18 @@ export async function replaceFixtureModel(
+     const m = d.models?.find((mm) => mm.modelId === modelId);
+     if (!m) return;
+     m.storagePath = converted.storagePath;
+-    // Keep length/width/height — those are the target slot in metres. Do not
+-    // overwrite them with the mesh bbox (that made scale a no-op and broke
+-    // mm/cm uploads). Drop any prior meshMeasured stamp from that approach.
+-    const nextMeta: Record<string, unknown> = {
++    let nextMeta: Record<string, unknown> = {
+       ...(m.metadata ?? {}),
+       mediaId: media.id,
+       replaced: true,
+       replacedFilename: filename,
+     };
+-    delete nextMeta[MESH_MEASURED_KEY];
++    if (dimsM) {
++      nextMeta = withMeasuredDims(nextMeta, dimsM);
++      // Fresh upload — drop offsets computed under a previous scale regime.
++      delete nextMeta.meshOffset;
++      delete nextMeta.ignoreImportedMeshDatum;
++    }
+     m.metadata = nextMeta;
+   };
+   applyToDef(def);
+diff --git a/src/import/replacedModelDims.test.ts b/src/import/replacedModelDims.test.ts
+index dc2afa0..952c716 100644
+--- a/src/import/replacedModelDims.test.ts
++++ b/src/import/replacedModelDims.test.ts
+@@ -1,5 +1,11 @@
+ import assert from 'node:assert/strict';
+-import { MESH_MEASURED_KEY, readModelDimsM } from './replacedModelDims.js';
++import {
++  MESH_MEASURED_KEY,
++  measuredExtentsLookLikeMillimetres,
++  normalizeMeasuredDimsToMetres,
++  readModelDimsM,
++  withMeasuredDims,
++} from './replacedModelDims.js';
+ 
+ assert.equal(readModelDimsM(undefined), null);
+ assert.equal(readModelDimsM({ length: 0.3 }), null, 'incomplete → null');
+@@ -9,4 +15,26 @@ assert.deepEqual(
+ );
+ assert.equal(MESH_MEASURED_KEY, 'meshMeasured');
+ 
++assert.equal(
++  measuredExtentsLookLikeMillimetres({ x: 400, y: 300, z: 200 }, { length: 0.4, height: 0.3, width: 0.2 }),
++  true,
++  'mm vs metre slot',
++);
++assert.equal(
++  measuredExtentsLookLikeMillimetres({ x: 0.4, y: 0.3, z: 0.2 }, { length: 0.4, height: 0.3, width: 0.2 }),
++  false,
++  'already metres',
++);
++
++assert.deepEqual(
++  normalizeMeasuredDimsToMetres({ x: 400, y: 300, z: 200 }, { length: 0.4, height: 0.3, width: 0.2 }),
++  { length: 0.4, height: 0.3, width: 0.2 },
++  'uniform mm→m',
++);
++
++const stamped = withMeasuredDims({ replaced: true }, { length: 0.4, height: 0.3, width: 0.2 });
++assert.equal(stamped[MESH_MEASURED_KEY], true);
++assert.equal(stamped.length, 0.4);
++assert.equal(stamped.replaced, true);
++
+ console.log('replacedModelDims.test.ts: ok');
+diff --git a/src/import/replacedModelDims.ts b/src/import/replacedModelDims.ts
+index 9eef7c5..17b455b 100644
+--- a/src/import/replacedModelDims.ts
++++ b/src/import/replacedModelDims.ts
+@@ -1,13 +1,21 @@
+ /**
+- * Markers / helpers around custom replaced-mesh dimensions.
++ * Helpers for custom replaced-mesh dimensions (Settings → Replace).
+  *
+- * Product rule: model length/width/height are always the **GDTF slot in metres**.
+- * Uploaded meshes (any units) are scaled to those dims by the preview / Orbit
+- * bakers — we never write the mesh bbox into length/width/height.
++ * Product rule for **custom** uploads:
++ * - Keep the mesh 1:1 (authored proportions and size).
++ * - Only apply a **uniform** unit conversion (typically CAD mm → metres).
++ * - Do **not** squash independently into the GDTF L×W×H slot.
+  *
+- * `meshMeasured` is a legacy stamp from when replace recorded the mesh bbox as
+- * dims (making scale a no-op). Heal paths clear it and restore GDTF slot dims.
++ * On replace we measure the GLB bbox, normalise mm→m when needed, and store
++ * those metres as `length`/`width`/`height` with a `meshMeasured` stamp. Preview
++ * and Orbit then scale to those dims — which is a no-op per axis after the unit
++ * conversion, so aspect ratio is preserved.
++ *
++ * Stock GDTF meshes still use the GDTF slot dims and per-axis fit.
+  */
++import { glbBoundingSize } from '../orbit/glbParser.js';
++
++/** Metadata flag: length/width/height were measured from the uploaded mesh. */
+ export const MESH_MEASURED_KEY = 'meshMeasured';
+ 
+ export interface ModelDimsM {
+@@ -16,6 +24,21 @@ export interface ModelDimsM {
+   width: number;
+ }
+ 
++interface ModelLike {
++  storagePath?: unknown;
++  metadata?: unknown;
++}
++
++/** True for a custom replaced model that still needs metre dims from its mesh. */
++export function replacedModelNeedsMeasure(model: ModelLike | undefined | null): boolean {
++  const meta = (model?.metadata ?? {}) as Record<string, unknown>;
++  if (meta.replaced !== true) return false;
++  if (meta[MESH_MEASURED_KEY] !== true) return true;
++  // Earlier builds stamped raw mm extents as metres — remeasure those.
++  const dims = readModelDimsM(meta);
++  return !!(dims && Math.max(dims.length, dims.height, dims.width) > 10);
++}
++
+ /** Read metre dims from model metadata, or null when incomplete. */
+ export function readModelDimsM(metadata: unknown): ModelDimsM | null {
+   const m = (metadata ?? {}) as Record<string, unknown>;
+@@ -25,3 +48,68 @@ export function readModelDimsM(metadata: unknown): ModelDimsM | null {
+   if (!(length > 0) || !(height > 0) || !(width > 0)) return null;
+   return { length, height, width };
+ }
++
++/**
++ * True when `measured` glTF bbox extents look like millimetres rather than
++ * metres. Lighting parts are almost never >10 m on a side; CAD exports commonly
++ * use mm (~50–2000). Also detect ~1000× vs the previous GDTF slot dims.
++ */
++export function measuredExtentsLookLikeMillimetres(
++  measured: { x: number; y: number; z: number },
++  previousMetres: ModelDimsM | null | undefined,
++): boolean {
++  const maxM = Math.max(measured.x, measured.y, measured.z);
++  if (maxM > 10) return true;
++  if (previousMetres) {
++    const maxPrev = Math.max(
++      previousMetres.length,
++      previousMetres.height,
++      previousMetres.width,
++    );
++    if (maxPrev > 1e-4) {
++      const ratio = maxM / maxPrev;
++      if (ratio >= 50) return true;
++    }
++  }
++  return false;
++}
++
++/**
++ * Convert a raw glTF bbox into metre model dims (length=x, height=y, width=z).
++ * Divides by 1000 when the extents look like millimetres (uniform unit scale).
++ */
++export function normalizeMeasuredDimsToMetres(
++  measured: { x: number; y: number; z: number },
++  previousMetres?: ModelDimsM | null,
++): ModelDimsM {
++  const scale = measuredExtentsLookLikeMillimetres(measured, previousMetres) ? 0.001 : 1;
++  return {
++    length: measured.x * scale,
++    height: measured.y * scale,
++    width: measured.z * scale,
++  };
++}
++
++/** Model dims in metres from a GLB, or null. Optionally pass prior GDTF slot dims. */
++export function measuredDimsFromGlb(
++  bytes: Buffer,
++  previousMetres?: ModelDimsM | null,
++): ModelDimsM | null {
++  const size = glbBoundingSize(bytes);
++  if (!size || size.x <= 1e-6 || size.y <= 1e-6 || size.z <= 1e-6) return null;
++  return normalizeMeasuredDimsToMetres(size, previousMetres);
++}
++
++/** Merge measured dims + the measured stamp onto a model's metadata (pure). */
++export function withMeasuredDims(
++  metadata: Record<string, unknown> | undefined,
++  dims: ModelDimsM,
++): Record<string, unknown> {
++  return {
++    ...(metadata ?? {}),
++    length: dims.length,
++    height: dims.height,
++    width: dims.width,
++    [MESH_MEASURED_KEY]: true,
++  };
++}
+diff --git a/src/orbit/fixtureCustomMeshScale.test.ts b/src/orbit/fixtureCustomMeshScale.test.ts
+index b0d99b6..f1dc7aa 100644
+--- a/src/orbit/fixtureCustomMeshScale.test.ts
++++ b/src/orbit/fixtureCustomMeshScale.test.ts
+@@ -79,8 +79,8 @@ const identity = {
+   position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
+   matrix4x4: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+ };
+-const dims = { length: 0.2, width: 0.2, height: 0.2 };
+ 
++// Base = stock GDTF slot (0.2³). Head = custom with authored measured dims (= mesh 2³).
+ const result = buildFixtureGeometryObjects({
+   fixtureId,
+   definition: {
+@@ -89,10 +89,19 @@ const result = buildFixtureGeometryObjects({
+       { partId: 'base', name: 'Base', tag: 'BASE', childPartIds: [], parentPartId: null, localTransform: identity, dmxLinks: [], metadata: {}, modelId: 'base-model' },
+       { partId: 'head', name: 'Head', tag: 'HEAD', childPartIds: [], parentPartId: null, localTransform: identity, dmxLinks: [], metadata: {}, modelId: 'head-model' },
+     ],
+-    // Head is a CUSTOM replaced model (metadata.replaced) as written by replaceFixtureModel.
+     models: [
+-      { modelId: 'base-model', partTag: 'BASE', assignedPartIds: ['base'], metadata: { mediaId: baseMedia, ...dims } },
+-      { modelId: 'head-model', partTag: 'HEAD', assignedPartIds: ['head'], metadata: { mediaId: headMedia, replaced: true, ...dims } },
++      {
++        modelId: 'base-model', partTag: 'BASE', assignedPartIds: ['base'],
++        metadata: { mediaId: baseMedia, length: 0.2, width: 0.2, height: 0.2 },
++      },
++      {
++        modelId: 'head-model', partTag: 'HEAD', assignedPartIds: ['head'],
++        // meshMeasured dims == glTF bbox → uniform scale is identity (1:1 metres).
++        metadata: {
++          mediaId: headMedia, replaced: true, meshMeasured: true,
++          length: 2, width: 2, height: 2,
++        },
++      },
+     ],
+     beams: [], motionRig: [], wheels: [], dmxMapping: {}, metadata: {},
+   } as unknown as FixtureDefinition,
+@@ -101,7 +110,6 @@ const result = buildFixtureGeometryObjects({
+   tagMaterials: {},
+ });
+ 
+-// Replacing one part's mesh must keep the whole assembly, not collapse to the head.
+ assert.equal(result.meshCount, 2, 'both base and head parts are baked');
+ 
+ const baseBox = bboxOfPart(result.geometryRoot, 'base');
+@@ -109,18 +117,55 @@ const headBox = bboxOfPart(result.geometryRoot, 'head');
+ assert.ok(baseBox, 'base part meshed');
+ assert.ok(headBox, 'head part meshed');
+ 
+-// The custom replaced mesh must scale to its GDTF bounds (0.2 m), exactly like
+-// the GDTF mesh it swaps — not bake at raw glTF scale (2.0), which dwarfs the
+-// rest of the fixture so only the head is visible.
++// Stock GDTF base still fits the 0.2 m slot.
+ for (const axis of ['x', 'y', 'z'] as const) {
+   assert.ok(
+-    Math.abs(headBox![axis] - 0.2) < 1e-6,
+-    `head custom mesh scaled to GDTF bounds on ${axis} (got ${headBox![axis]})`,
++    Math.abs(baseBox![axis] - 0.2) < 1e-6,
++    `base GDTF mesh scaled to slot on ${axis} (got ${baseBox![axis]})`,
+   );
++}
++
++// Custom head keeps authored 2 m size (1:1) — not squashed to the 0.2 slot.
++for (const axis of ['x', 'y', 'z'] as const) {
+   assert.ok(
+-    Math.abs(headBox![axis] - baseBox![axis]) < 1e-6,
+-    `head matches base scale on ${axis} (head ${headBox![axis]} vs base ${baseBox![axis]})`,
++    Math.abs(headBox![axis] - 2) < 1e-6,
++    `head custom mesh stays 1:1 on ${axis} (got ${headBox![axis]})`,
+   );
+ }
+ 
++// Non-cube authored dims must not be anisotropically forced into a cube slot.
++const tallGlb = makeTetraGlb(); // still 2×2×2 raw; we declare measured 2×1×0.5
++const tallMedia = '44444444-4444-4444-8444-444444444444';
++const tallResult = buildFixtureGeometryObjects({
++  fixtureId: '55555555-5555-4555-8555-555555555555',
++  definition: {
++    fixtureInformation: { manufacturer: 'T', fixtureName: 'Tall' },
++    parts: [
++      {
++        partId: 'head', name: 'Head', tag: 'HEAD', childPartIds: [], parentPartId: null,
++        localTransform: identity, dmxLinks: [], metadata: {}, modelId: 'head-model',
++      },
++    ],
++    models: [{
++      modelId: 'head-model', partTag: 'HEAD', assignedPartIds: ['head'],
++      // Dims match mesh after a uniform 1.0 unit scale — ratios equal → cube stays cube.
++      // (Real CAD: measured axes differ; here we prove uniform scale when slot would squash.)
++      metadata: {
++        mediaId: tallMedia, replaced: true, meshMeasured: true,
++        // Deliberately mismatched vs a 0.2 cube slot: if we used per-axis slot fit
++        // with dims=slot we'd squash. With measured 2² we stay 1:1.
++        length: 2, width: 2, height: 2,
++      },
++    }],
++    beams: [], motionRig: [], wheels: [], dmxMapping: {}, metadata: {},
++  } as unknown as FixtureDefinition,
++  glbByMediaId: new Map([[tallMedia, tallGlb]]),
++  renderMaterials: new Map(),
++  tagMaterials: {},
++});
++const tallBox = bboxOfPart(tallResult.geometryRoot, 'head');
++assert.ok(tallBox);
++assert.ok(Math.abs(tallBox!.x - tallBox!.y) < 1e-6, 'custom uniform scale keeps aspect x≈y');
++assert.ok(Math.abs(tallBox!.y - tallBox!.z) < 1e-6, 'custom uniform scale keeps aspect y≈z');
++
+ console.log('fixtureCustomMeshScale.test.ts: ok');
+diff --git a/src/orbit/fixtureGeometryOrbit.ts b/src/orbit/fixtureGeometryOrbit.ts
+index 17cbacd..e58ecee 100644
+--- a/src/orbit/fixtureGeometryOrbit.ts
++++ b/src/orbit/fixtureGeometryOrbit.ts
+@@ -210,7 +210,12 @@ function bboxSize(meshes: ParsedMesh[]): { x: number; y: number; z: number } {
+   return { x: maxX - minX, y: maxY - minY, z: maxZ - minZ };
+ }
+ 
+-function wrapScaleMatrix(meshes: ParsedMesh[], dims: ModelDims): number[] {
++function wrapScaleMatrix(
++  meshes: ParsedMesh[],
++  dims: ModelDims,
++  /** When true, apply one scale on all axes (custom uploads — preserve aspect). */
++  uniform = false,
++): number[] {
+   const size = bboxSize(meshes);
+   if (
+     dims.length == null || dims.width == null || dims.height == null
+@@ -218,13 +223,18 @@ function wrapScaleMatrix(meshes: ParsedMesh[], dims: ModelDims): number[] {
+   ) {
+     return identityMat4Row();
+   }
+-  // Always per-axis fit to the GDTF slot. A uniform/median fallback left custom
+-  // meshes overflowing the reference box when mesh aspect ≠ slot aspect.
+-  return scaleMatrix(
+-    dims.length / size.x,
+-    dims.height / size.y,
+-    dims.width / size.z,
+-  );
++  const sx = dims.length / size.x;
++  const sy = dims.height / size.y;
++  const sz = dims.width / size.z;
++  if (uniform) {
++    // Keep authored proportions. After replace measures the mesh bbox into
++    // length/width/height (mm→m), sx≈sy≈sz and this is a pure unit conversion.
++    const ratios = [sx, sy, sz].sort((a, b) => a - b);
++    const s = ratios[1]!;
++    return scaleMatrix(s, s, s);
++  }
++  // Stock GDTF meshes: per-axis fit to declared L×W×H.
++  return scaleMatrix(sx, sy, sz);
+ }
+ 
+ function applyMatrixToMeshes(
+@@ -264,15 +274,19 @@ function applyMatrixToMeshes(
+   });
+ }
+ 
+-function transformGlbMeshes(bytes: Buffer, dims: ModelDims, world: number[]): ParsedMesh[] {
++function transformGlbMeshes(
++  bytes: Buffer,
++  dims: ModelDims,
++  world: number[],
++  uniformScale = false,
++): ParsedMesh[] {
+   const raw = meshesFromGlb(bytes);
+   if (!raw.length) return [];
+   const wrap = gltfToGdtfWrapMatrix();
+-  // Scale every model GLB to its GDTF slot dims (length/width/height in metres).
+-  // Custom replaced meshes keep those slot dims on upload — the fit scale maps
+-  // whatever units the CAD file used (mm, cm, m, …) into the same metre slot,
+-  // so the assembly and beams stay coherent.
+-  const scale = wrapScaleMatrix(raw, dims);
++  // Stock GDTF: per-axis fit to slot dims. Custom replaced: uniform scale so
++  // authored proportions stay 1:1 (dims are the measured metre bbox after
++  // mm→m conversion — scale is effectively a unit conversion only).
++  const scale = wrapScaleMatrix(raw, dims, uniformScale);
+   const modelMatrix = multiplyMat4Row(world, multiplyMat4Row(wrap, scale));
+   // Y-up → Z-up axis conversion requires a winding flip; det is +1 for pure rotation.
+   return applyMatrixToMeshes(raw, modelMatrix, { flipWinding: true });
+@@ -288,7 +302,8 @@ function loadModelMeshes(
+   if (!bytes?.length) return null;
+   let meshes = glbCache.get(mediaId);
+   if (!meshes) {
+-    meshes = transformGlbMeshes(bytes, modelDims(model), identityMat4Row());
++    const custom = (model?.metadata as { replaced?: unknown } | undefined)?.replaced === true;
++    meshes = transformGlbMeshes(bytes, modelDims(model), identityMat4Row(), custom);
+     glbCache.set(mediaId, meshes);
+   }
+   return meshes;
+diff --git a/src/orbit/glbBoundingSize.test.ts b/src/orbit/glbBoundingSize.test.ts
+index 1aceaa5..a738202 100644
+--- a/src/orbit/glbBoundingSize.test.ts
++++ b/src/orbit/glbBoundingSize.test.ts
+@@ -85,10 +85,11 @@ const identity = {
+   matrix4x4: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+ };
+ 
+-// GDTF slot in metres — replace must keep these so any-unit uploads fit here.
+-const slotDims = { length: 0.4, height: 0.18, width: 0.42 };
++// Custom uploads store measured metre dims (meshMeasured) — bake stays 1:1.
++// CAD mm 400×180×420 → measured 0.4×0.18×0.42 after uniform /1000.
++const measuredMm = { length: 0.4, height: 0.18, width: 0.42, meshMeasured: true };
+ 
+-function bakeWith(glb: Buffer, dims: Record<string, number>): BBox | null {
++function bakeWith(glb: Buffer, dims: Record<string, number | boolean>): BBox | null {
+   const result = buildFixtureGeometryObjects({
+     fixtureId: '22222222-2222-4222-8222-222222222222',
+     definition: {
+@@ -104,21 +105,31 @@ function bakeWith(glb: Buffer, dims: Record<string, number>): BBox | null {
+   return bakedBox(result.geometryRoot);
+ }
+ 
+-// mm mesh + metre slot → baked size matches the slot (units irrelevant).
+-const fitted = bakeWith(glbMm, slotDims);
+-assert.ok(fitted, 'baked with slot fit');
++// mm mesh + measured metre dims → baked size is authored metres (uniform unit scale).
++const fitted = bakeWith(glbMm, measuredMm);
++assert.ok(fitted, 'baked with authored measured dims');
+ const got = [fitted!.x, fitted!.y, fitted!.z].sort((a, b) => a - b);
+ const want = [0.4, 0.18, 0.42].sort((a, b) => a - b);
+ for (let i = 0; i < 3; i++) {
+-  assert.ok(Math.abs(got[i]! - want[i]!) < 1e-6, `slot-fit extent ${i}: ${got[i]} vs ${want[i]}`);
++  assert.ok(Math.abs(got[i]! - want[i]!) < 1e-6, `1:1 authored extent ${i}: ${got[i]} vs ${want[i]}`);
+ }
+ 
+-// Same mesh authored in metres still fits the same slot.
++// Same mesh already in metres with matching measured dims → identity scale.
+ const glbM = makeBoxGlb(0.4, 0.18, 0.42);
+-const fittedM = bakeWith(glbM, slotDims);
++const fittedM = bakeWith(glbM, measuredMm);
+ const gotM = [fittedM!.x, fittedM!.y, fittedM!.z].sort((a, b) => a - b);
+ for (let i = 0; i < 3; i++) {
+-  assert.ok(Math.abs(gotM[i]! - want[i]!) < 1e-6, `metre mesh slot-fit ${i}`);
++  assert.ok(Math.abs(gotM[i]! - want[i]!) < 1e-6, `metre mesh 1:1 ${i}`);
+ }
+ 
++// Uniform scale must not squash a non-cube mesh into a cube slot.
++const cubeSlot = { length: 0.2, height: 0.2, width: 0.2 };
++const squashed = bakeWith(glbM, cubeSlot);
++assert.ok(squashed);
++const extents = [squashed!.x, squashed!.y, squashed!.z].sort((a, b) => a - b);
++const aspect = extents[2]! / extents[0]!;
++// Raw mesh aspect 0.42/0.18 ≈ 2.33 — uniform scale preserves it; per-axis slot
++// fit would force all axes to 0.2 (aspect 1).
++assert.ok(aspect > 2, `uniform preserves mesh aspect (got ${aspect})`);
++
+ console.log('glbBoundingSize.test.ts: ok');
 -- 
 2.43.0
 
