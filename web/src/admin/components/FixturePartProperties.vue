@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import ParamSlider from './ParamSlider.vue';
-import { type FixtureModel, type FixturePart } from '../../shared/api';
+import { type FixtureModel, type FixturePart, type ModelListItem } from '../../shared/api';
 import {
   buildTransform4x4,
   ensureTransform,
@@ -12,7 +12,10 @@ import {
   type MeshOffset,
 } from '../utils/fixtureTransform';
 import { isCustomReplacedModel } from '../utils/fixtureCustomMesh';
-import { isRebusClampPart } from '../utils/fixtureClamps';
+import {
+  isRebusClampPart,
+  readClampLibraryIdFromModel,
+} from '../utils/fixtureClamps';
 import { getModelMediaId } from '../utils/fixtureAssembly';
 import { readGdtfBounds } from '../utils/fixtureGdtfBounds';
 import { readFlipNormals, writeFlipNormals } from '../utils/fixtureFlipNormals';
@@ -33,11 +36,17 @@ const props = defineProps<{
   part: FixturePart | null;
   models: FixtureModel[];
   fixtureId?: string;
+  clampLibraryModels?: ModelListItem[];
+  clampLibraryLoading?: boolean;
+  clampLibraryShowingAll?: boolean;
+  replacingModelId?: string | null;
 }>();
 
 const emit = defineEmits<{
   change: [kind?: 'transform' | 'structure'];
   remove: [];
+  'clamp-library-change': [libraryId: string | null];
+  'clamp-upload': [ev: Event];
 }>();
 
 const bboxAnchors = ref<BboxAnchors>({ ...DEFAULT_BBOX_ANCHORS });
@@ -64,6 +73,41 @@ const linkedModel = computed(() => {
 const isCustomMesh = computed(() => isCustomReplacedModel(linkedModel.value));
 
 const isRebusClamp = computed(() => isRebusClampPart(props.part));
+
+const clampLibraryId = computed(() => readClampLibraryIdFromModel(linkedModel.value));
+
+const clampHasUpload = computed(() => {
+  const meta = linkedModel.value?.metadata as { mediaId?: unknown } | undefined;
+  return typeof meta?.mediaId === 'string' && meta.mediaId.length > 0;
+});
+
+const clampMeshBusy = computed(() =>
+  !!props.replacingModelId && props.replacingModelId === props.part?.modelId,
+);
+
+function clampLibraryOptionLabel(m: ModelListItem): string {
+  let label = m.name;
+  if (m.status === 'draft') label += ' (draft)';
+  if (props.clampLibraryShowingAll && m.category) label += ` [${m.category}]`;
+  return label;
+}
+
+function onClampLibrarySelect(ev: Event): void {
+  const value = (ev.target as HTMLSelectElement).value;
+  emit('clamp-library-change', value || null);
+}
+
+function clearClampLibrary(): void {
+  emit('clamp-library-change', null);
+}
+
+function onClampUpload(ev: Event): void {
+  emit('clamp-upload', ev);
+}
+
+function removeThisClamp(): void {
+  emit('remove');
+}
 
 const hasGdtfBounds = computed(() =>
   !!readGdtfBounds((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
@@ -276,10 +320,6 @@ function onModelChange(ev: Event): void {
 
   notify();
 }
-
-function removeThisClamp(): void {
-  emit('remove');
-}
 </script>
 
 <template>
@@ -292,8 +332,52 @@ function removeThisClamp(): void {
     </header>
 
     <p v-if="isRebusClamp" class="muted small clamp-hint">
-      REBUS clamp instance — edit position and rotation below. Shared mesh is set under Settings → Clamp.
+      REBUS clamp instance — set this instance’s mesh below, then edit position and rotation.
     </p>
+
+    <fieldset v-if="isRebusClamp" class="field-group clamp-mesh-group">
+      <legend>Clamp mesh</legend>
+      <label class="field">
+        <span class="field-label">Model Library</span>
+        <select
+          class="field-input"
+          :value="clampLibraryId ?? ''"
+          :disabled="clampLibraryLoading || clampMeshBusy"
+          @change="onClampLibrarySelect"
+        >
+          <option value="">— None (use upload) —</option>
+          <option
+            v-for="m in (clampLibraryModels ?? [])"
+            :key="m.id"
+            :value="m.id"
+          >{{ clampLibraryOptionLabel(m) }}</option>
+        </select>
+      </label>
+      <button
+        v-if="clampLibraryId"
+        type="button"
+        class="reset-btn"
+        :disabled="clampMeshBusy"
+        @click="clearClampLibrary"
+      >
+        Clear library
+      </button>
+      <p v-if="clampLibraryLoading" class="muted small">Loading library models…</p>
+      <p v-else-if="clampLibraryShowingAll" class="muted small">
+        Showing all library models with a preview. Tag or category <strong>clamp</strong> filters this list.
+      </p>
+      <label class="model-swap-btn clamp-upload-btn" :class="{ busy: clampMeshBusy }">
+        {{ clampMeshBusy ? 'Uploading…' : (clampHasUpload ? 'Replace upload' : 'Upload mesh') }}
+        <input
+          type="file"
+          accept=".gltf,.glb,.obj,.fbx,.3ds,.stl,.dae,.ply"
+          :disabled="clampMeshBusy"
+          @change="onClampUpload"
+        />
+      </label>
+      <span v-if="clampLibraryId || clampHasUpload" class="pill online clamp-mesh-pill">Attached</span>
+      <span v-else class="pill muted-pill clamp-mesh-pill">No mesh</span>
+    </fieldset>
 
     <label class="field">
       <span class="field-label">Name</span>
@@ -678,6 +762,35 @@ function removeThisClamp(): void {
 }
 .clamp-hint {
   margin: 0;
+}
+.clamp-mesh-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.clamp-upload-btn {
+  align-self: flex-start;
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, #fff);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.clamp-upload-btn input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.clamp-upload-btn.busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.clamp-mesh-pill {
+  align-self: flex-start;
 }
 .clamp-actions {
   margin-top: 4px;

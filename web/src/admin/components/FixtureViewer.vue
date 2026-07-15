@@ -45,13 +45,20 @@ interface AssemblyProp {
   fixtureZOffsetM?: number;
   /** REBUS clamp Z mirror + Z rotation through fixture origin. */
   clampPlacement?: ClampPlacement;
-  /** Model Library preview GLB for the REBUS clamp (overrides fixture upload). */
+  /** Per clamp-model Model Library preview (keyed by fixture modelId). */
+  clampLibraryByModelId?: Record<string, {
+    url: string;
+    transform?: ModelTransform | null;
+    sourceUnits?: string | null;
+    materialSlots?: ModelMaterialSlot[];
+  }>;
+  /** @deprecated Prefer clampLibraryByModelId. */
   clampModelUrl?: string;
-  /** Model Library material slots for the linked clamp (when clampModelUrl is set). */
+  /** @deprecated Prefer clampLibraryByModelId. */
   clampMaterialSlots?: ModelMaterialSlot[];
-  /** Model Library root transform for the linked clamp (metres, degrees). */
+  /** @deprecated Prefer clampLibraryByModelId. */
   clampModelTransform?: ModelTransform | null;
-  /** Vertex units of the library clamp GLB. */
+  /** @deprecated Prefer clampLibraryByModelId. */
   clampSourceUnits?: string | null;
 }
 
@@ -765,6 +772,23 @@ async function loadAssembly(
   }));
 
   let clampSlotMaterialMaps: SlotMaterialMaps | undefined;
+  const clampLibraryByModelId: Record<string, {
+    url: string;
+    transform?: ModelTransform | null;
+    sourceUnits?: string | null;
+    materialSlots?: ModelMaterialSlot[];
+    slotMaterialMaps?: SlotMaterialMaps;
+  }> = { ...(a.clampLibraryByModelId ?? {}) };
+
+  await Promise.all(Object.entries(clampLibraryByModelId).map(async ([modelId, override]) => {
+    if (!override.materialSlots?.length) return;
+    const maps = await fetchSlotMaterials(override.materialSlots, texLoader, maxAniso);
+    if (maps.byMeshName.size || maps.bySourceMaterialName.size || maps.byLegacyName.size) {
+      clampLibraryByModelId[modelId] = { ...override, slotMaterialMaps: maps };
+      newBuilt.push(...maps.built);
+    }
+  }));
+
   if (a.clampModelUrl && a.clampMaterialSlots?.length) {
     const maps = await fetchSlotMaterials(a.clampMaterialSlots, texLoader, maxAniso);
     if (maps.byMeshName.size || maps.bySourceMaterialName.size || maps.byLegacyName.size) {
@@ -780,6 +804,7 @@ async function loadAssembly(
     selectedModeGeometryId: a.selectedModeGeometryId ?? null,
     fixtureZOffsetM: a.fixtureZOffsetM ?? 0,
     clampPlacement: a.clampPlacement,
+    clampLibraryByModelId,
     clampModelUrl: a.clampModelUrl,
     clampMaterialSlots: a.clampMaterialSlots,
     clampModelTransform: a.clampModelTransform,
@@ -1008,18 +1033,28 @@ const assemblyKey = (): string => {
     })
     .map((p) => p.partId)
     .join('|');
+  const clampLibKey = Object.entries(a.clampLibraryByModelId ?? {})
+    .map(([id, o]) => {
+      const slots = (o.materialSlots ?? []).map((s) => `${s.name}=${s.materialId ?? ''}`).join('|');
+      const x = o.transform
+        ? `${o.transform.position.x},${o.transform.position.y},${o.transform.position.z}|${o.transform.rotation.x},${o.transform.rotation.y},${o.transform.rotation.z}|${o.transform.scale.x},${o.transform.scale.y},${o.transform.scale.z}`
+        : '';
+      return `${id}=${o.url}:${o.sourceUnits ?? ''}:${slots}:${x}`;
+    })
+    .join(';');
   const clampSlots = (a.clampMaterialSlots ?? []).map((s) => `${s.name}=${s.materialId ?? ''}`).join('|');
   const clampXform = a.clampModelTransform
     ? `${a.clampModelTransform.position.x},${a.clampModelTransform.position.y},${a.clampModelTransform.position.z}|${a.clampModelTransform.rotation.x},${a.clampModelTransform.rotation.y},${a.clampModelTransform.rotation.z}|${a.clampModelTransform.scale.x},${a.clampModelTransform.scale.y},${a.clampModelTransform.scale.z}`
     : '';
   const modelMedia = (a.models ?? [])
     .map((m) => {
-      const meta = m.metadata as { mediaId?: unknown; flipNormals?: unknown } | undefined;
+      const meta = m.metadata as { mediaId?: unknown; flipNormals?: unknown; clampModelLibraryId?: unknown } | undefined;
       const flip = meta?.flipNormals === true ? '1' : '0';
-      return `${m.modelId}=${String(meta?.mediaId ?? '')}:${flip}`;
+      const lib = typeof meta?.clampModelLibraryId === 'string' ? meta.clampModelLibraryId : '';
+      return `${m.modelId}=${String(meta?.mediaId ?? '')}:${flip}:${lib}`;
     })
     .join('|');
-  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${modelMedia}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampPartsKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
+  return `${a.fixtureId}:${a.parts?.length ?? 0}:${a.models?.length ?? 0}:${modelMedia}:${a.selectedModeGeometryId ?? ''}:${a.fixtureZOffsetM ?? 0}:${clampPartsKey}:${clampLibKey}:${a.clampModelUrl ?? ''}:${clampSlots}:${clampXform}:${a.clampSourceUnits ?? ''}:${mats}`;
 };
 
 const modelMaterialsKey = (): string =>
