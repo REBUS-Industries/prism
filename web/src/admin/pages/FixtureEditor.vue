@@ -64,7 +64,13 @@ import {
   downloadTextFile,
 } from '../utils/fixtureOrigins';
 
-import { fixtureZOffsetM, readClampModelLibraryId, readClampPlacement, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
+import { fixtureZOffsetM, readClampModelLibraryId, REBUS_CLAMP_MODEL_ID } from '../utils/fixturePlacement';
+import {
+  addRebusClampPart,
+  listRebusClampParts,
+  migrateLegacyClampPlacement,
+  removeRebusClampPart,
+} from '../utils/fixtureClamps';
 import { isModelLengthUnit, type ModelLengthUnit } from '../utils/modelUnits';
 
 import { fixtureInformationParams } from '../utils/fixtureInformation';
@@ -257,10 +263,6 @@ const assembly = computed(() => {
     motionAxes: def.motionRig ?? [],
     selectedModeGeometryId: selectedModeGeometryId.value,
     fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
-    clampPlacement: {
-      mirrorZ: clampMirrorZ.value,
-      rotateZDeg: clampRotateZDeg.value,
-    },
     clampModelUrl: clampModelLibraryId.value ? modelsApi.previewUrl(clampModelLibraryId.value) : undefined,
     clampMaterialSlots: clampMaterialSlots.value.length ? clampMaterialSlots.value : undefined,
     clampModelTransform: clampModelLibraryId.value ? clampModelTransform.value ?? undefined : undefined,
@@ -466,8 +468,6 @@ const clampCustomMeshFilename = computed(() =>
 
 /** Millimetres to lower the fixture body (clamp stays at the hang point). */
 const fixtureZOffsetMm = ref(0);
-const clampMirrorZ = ref(false);
-const clampRotateZDeg = ref(0);
 const clampModelLibraryId = ref<string | null>(null);
 const clampMaterialSlots = ref<ModelMaterialSlot[]>([]);
 const clampModelTransform = ref<ModelTransform | null>(null);
@@ -476,6 +476,10 @@ const clampLibraryModels = ref<ModelListItem[]>([]);
 const clampLibraryLoading = ref(false);
 const clampLibraryPreviewMissing = ref(false);
 const clampLibraryShowingAll = ref(false);
+
+const rebusClampParts = computed(() =>
+  fixture.value ? listRebusClampParts(fixture.value.definition) : [],
+);
 
 function isClampLibraryModel(m: ModelListItem): boolean {
   if (m.category?.toLowerCase() === 'clamp') return true;
@@ -506,12 +510,27 @@ const swapModels = computed(() =>
 function syncPlacementFromFixture(): void {
   const meta = fixture.value?.definition.metadata;
   fixtureZOffsetMm.value = Math.round(fixtureZOffsetM(meta) * 1000);
-  const clamp = readClampPlacement(meta);
-  clampMirrorZ.value = clamp.mirrorZ;
-  clampRotateZDeg.value = clamp.rotateZDeg;
   clampModelLibraryId.value = readClampModelLibraryId(meta);
   void verifyClampLibraryPreview();
   void loadClampLibraryDefinition();
+}
+
+function applyPlacementToDefinition(): void {
+  if (!fixture.value) return;
+  const meta: Record<string, unknown> = {
+    ...fixture.value.definition.metadata,
+    fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
+  };
+  // Legacy global clamp mirror/rotate moved onto per-part localTransforms.
+  delete meta.clampMirrorZ;
+  delete meta.clampMirrorY;
+  delete meta.clampRotateZDeg;
+  if (clampModelLibraryId.value) {
+    meta.clampModelLibraryId = clampModelLibraryId.value;
+  } else {
+    delete meta.clampModelLibraryId;
+  }
+  fixture.value.definition.metadata = meta;
 }
 
 async function loadClampLibraryDefinition(): Promise<void> {
@@ -534,27 +553,6 @@ async function loadClampLibraryDefinition(): Promise<void> {
     clampModelTransform.value = null;
     clampSourceUnits.value = null;
   }
-}
-
-function applyPlacementToDefinition(): void {
-  if (!fixture.value) return;
-  const meta: Record<string, unknown> = {
-    ...fixture.value.definition.metadata,
-    fixtureZOffsetM: fixtureZOffsetMm.value / 1000,
-    clampRotateZDeg: clampRotateZDeg.value,
-  };
-  if (clampMirrorZ.value) {
-    meta.clampMirrorZ = true;
-  } else {
-    delete meta.clampMirrorZ;
-  }
-  delete meta.clampMirrorY;
-  if (clampModelLibraryId.value) {
-    meta.clampModelLibraryId = clampModelLibraryId.value;
-  } else {
-    delete meta.clampModelLibraryId;
-  }
-  fixture.value.definition.metadata = meta;
 }
 
 async function loadClampLibraryModels(): Promise<void> {
@@ -601,6 +599,14 @@ function onClampLibraryChange(): void {
   applyPlacementToDefinition();
   void verifyClampLibraryPreview();
   void loadClampLibraryDefinition();
+  if (
+    clampModelLibraryId.value
+    && fixture.value
+    && listRebusClampParts(fixture.value.definition).length === 0
+  ) {
+    const part = addRebusClampPart(fixture.value.definition);
+    selectedPartId.value = part.partId;
+  }
   assemblyRevision.value += 1;
 }
 
@@ -614,9 +620,28 @@ function onFixtureZOffsetChange(): void {
   assemblyRevision.value += 1;
 }
 
-function onClampPlacementChange(): void {
-  applyPlacementToDefinition();
+function addClamp(): void {
+  if (!fixture.value) return;
+  const part = addRebusClampPart(fixture.value.definition);
+  selectedPartId.value = part.partId;
+  activeTab.value = 'parts';
   assemblyRevision.value += 1;
+}
+
+function removeClamp(partId: string): void {
+  if (!fixture.value) return;
+  if (!removeRebusClampPart(fixture.value.definition, partId)) return;
+  if (selectedPartId.value === partId) {
+    selectedPartId.value = listRebusClampParts(fixture.value.definition)[0]?.partId
+      ?? fixture.value.definition.parts[0]?.partId
+      ?? null;
+  }
+  assemblyRevision.value += 1;
+}
+
+function selectClampInParts(partId: string): void {
+  selectedPartId.value = partId;
+  activeTab.value = 'parts';
 }
 
 watch(fixture, () => syncPlacementFromFixture(), { immediate: true });
@@ -666,6 +691,17 @@ async function replaceModel(modelId: string, ev: Event): Promise<void> {
     }
     if (modelAfter && (capturedBounds || ignoreDatumBefore)) {
       await save();
+    }
+
+    // After clamp mesh upload, ensure at least one clamp instance exists so the
+    // mesh is visible (placement is edited in Parts).
+    if (
+      modelId === REBUS_CLAMP_MODEL_ID
+      && fixture.value
+      && listRebusClampParts(fixture.value.definition).length === 0
+    ) {
+      addRebusClampPart(fixture.value.definition);
+      selectedPartId.value = listRebusClampParts(fixture.value.definition)[0]?.partId ?? null;
     }
 
     assemblyRevision.value += 1;
@@ -833,6 +869,10 @@ async function reload(): Promise<void> {
     const res = await fixturesApi.get(props.id);
 
     fixture.value = res.fixture;
+
+    if (migrateLegacyClampPlacement(fixture.value.definition)) {
+      assemblyRevision.value += 1;
+    }
 
     name.value = res.fixture.name;
 
@@ -1512,15 +1552,11 @@ onMounted(() => {
         >
 
           <FixturePartProperties
-
             :part="selectedPart"
-
             :models="fixture.definition.models"
-
             :fixture-id="fixture.id"
-
             @change="onPartPropertiesChange"
-
+            @remove="selectedPart && removeClamp(selectedPart.partId)"
           />
 
         </aside>
@@ -1657,7 +1693,8 @@ onMounted(() => {
         <section class="panel-card settings-card">
           <h2>Clamp</h2>
           <p class="muted small">
-            Pick a clamp from the Model Library or upload a custom mesh. It renders at the fixture origin while the body can be lowered separately.
+            Pick a clamp from the Model Library or upload a custom mesh. Add as many clamps as you need —
+            set each clamp’s position and rotation in the <strong>Parts</strong> panel.
           </p>
           <label class="clamp-library-label">
             Model Library
@@ -1712,39 +1749,31 @@ onMounted(() => {
           <p v-if="clampModelLibraryId && clampHasUploadedMesh" class="muted small">
             Library model is used in the viewport when set; the uploaded mesh remains for ORBIT export until you clear the library pick.
           </p>
-          <template v-if="clampHasMesh">
-            <label class="check-row clamp-option">
-              <input v-model="clampMirrorZ" type="checkbox" @change="onClampPlacementChange" />
-              Mirror on Z axis (dual clamp)
-            </label>
-            <label class="clamp-rotate-label">
-              Rotate around centre Z
-              <div class="clamp-rotate-row">
-                <input
-                  v-model.number="clampRotateZDeg"
-                  type="range"
-                  min="-180"
-                  max="180"
-                  step="1"
-                  class="range-orange"
-                  @input="onClampPlacementChange"
-                />
-                <input
-                  v-model.number="clampRotateZDeg"
-                  type="number"
-                  min="-180"
-                  max="180"
-                  step="1"
-                  class="clamp-rotate-input"
-                  @input="onClampPlacementChange"
-                />
-                <span class="muted small">°</span>
-              </div>
-            </label>
-            <p class="muted small">
-              Z mirror duplicates the clamp mesh across the fixture centre line; Z rotation spins both clamps around the hang point.
+
+          <div class="clamp-instances">
+            <div class="clamp-instances-head">
+              <h3 class="clamp-instances-title">Clamp instances</h3>
+              <button type="button" class="btn-secondary small" @click="addClamp">
+                Add clamp
+              </button>
+            </div>
+            <p v-if="rebusClampParts.length === 0" class="muted small">
+              No clamp instances yet. Upload or pick a library model, then add a clamp — place it in Parts.
             </p>
-          </template>
+            <ul v-else class="clamp-instance-list">
+              <li v-for="c in rebusClampParts" :key="c.partId" class="clamp-instance-row">
+                <button type="button" class="btn-link clamp-instance-name" @click="selectClampInParts(c.partId)">
+                  {{ c.name || c.partId }}
+                </button>
+                <button type="button" class="btn-link danger-link small" @click="removeClamp(c.partId)">
+                  Remove
+                </button>
+              </li>
+            </ul>
+            <p class="muted small">
+              Select a clamp above (or in the Parts tree) to edit its XYZ position and rotation. Removing a clamp deletes that instance only — the shared mesh stays available for other clamps.
+            </p>
+          </div>
         </section>
 
         <section class="panel-card settings-card">
@@ -1766,9 +1795,10 @@ onMounted(() => {
           <p class="muted small">
             Shifts base, yoke, head, lenses and motion downward in Z (GDTF metres) so a clamp model can sit at the hang point above the fixture.
           </p>
+        </section>
 
         <section class="panel-card settings-card">
-<h2>Orbit publish</h2>
+          <h2>Orbit publish</h2>
           <p class="muted small">
             Publishes this fixture type to the Orbit Fixtures project. Republish after edits to update the existing Orbit model (new version, same model id).
           </p>
@@ -1800,8 +1830,6 @@ onMounted(() => {
           >
             {{ publishingOrbit ? 'Publishing…' : (orbitFixtureRef ? 'Republish to Orbit' : 'Publish to Orbit') }}
           </button>
-        </section>
-
         </section>
 
         <section class="panel-card settings-card">
@@ -2169,28 +2197,45 @@ onMounted(() => {
   gap: 8px;
   font-size: 13px;
 }
-.clamp-option { margin-top: 12px; }
-.clamp-rotate-label {
-  display: block;
-  margin-top: 12px;
-  font-size: 13px;
+.clamp-instances {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border, #333);
 }
-.clamp-rotate-row {
+.clamp-instances-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 6px;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
 }
-.clamp-rotate-row .range-orange { flex: 1; min-width: 120px; }
-.clamp-rotate-input {
-  width: 72px;
-  padding: 6px 8px;
+.clamp-instances-title {
+  margin: 0;
   font-size: 13px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-input);
-  color: var(--color-text);
+  font-weight: 600;
 }
+.clamp-instance-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.clamp-instance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  background: var(--color-bg-input, #1a1a1a);
+  border-radius: var(--radius-sm, 4px);
+}
+.clamp-instance-name {
+  font-weight: 500;
+  text-align: left;
+}
+.danger-link { color: var(--color-danger, #e55); }
 .range-orange { accent-color: var(--orbit-primary); }
 .offset-label { display: block; margin-top: 10px; font-size: 13px; }
 .offset-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }

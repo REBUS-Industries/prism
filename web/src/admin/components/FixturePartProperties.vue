@@ -12,6 +12,7 @@ import {
   type MeshOffset,
 } from '../utils/fixtureTransform';
 import { isCustomReplacedModel } from '../utils/fixtureCustomMesh';
+import { isRebusClampPart } from '../utils/fixtureClamps';
 import { getModelMediaId } from '../utils/fixtureAssembly';
 import { readGdtfBounds } from '../utils/fixtureGdtfBounds';
 import { readFlipNormals, writeFlipNormals } from '../utils/fixtureFlipNormals';
@@ -36,6 +37,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   change: [kind?: 'transform' | 'structure'];
+  remove: [];
 }>();
 
 const bboxAnchors = ref<BboxAnchors>({ ...DEFAULT_BBOX_ANCHORS });
@@ -60,6 +62,8 @@ const linkedModel = computed(() => {
 });
 
 const isCustomMesh = computed(() => isCustomReplacedModel(linkedModel.value));
+
+const isRebusClamp = computed(() => isRebusClampPart(props.part));
 
 const hasGdtfBounds = computed(() =>
   !!readGdtfBounds((linkedModel.value?.metadata ?? {}) as Record<string, unknown>),
@@ -272,6 +276,10 @@ function onModelChange(ev: Event): void {
 
   notify();
 }
+
+function removeThisClamp(): void {
+  emit('remove');
+}
 </script>
 
 <template>
@@ -282,6 +290,10 @@ function onModelChange(ev: Event): void {
       <h3>Properties</h3>
       <span class="pill tag">{{ part.tag }}</span>
     </header>
+
+    <p v-if="isRebusClamp" class="muted small clamp-hint">
+      REBUS clamp instance — edit position and rotation below. Shared mesh is set under Settings → Clamp.
+    </p>
 
     <label class="field">
       <span class="field-label">Name</span>
@@ -511,6 +523,12 @@ function onModelChange(ev: Event): void {
       />
       </template>
     </fieldset>
+
+    <div v-if="isRebusClamp" class="clamp-actions">
+      <button type="button" class="remove-clamp-btn" @click="removeThisClamp">
+        Remove this clamp
+      </button>
+    </div>
   </div>
 </template>
 
@@ -657,6 +675,26 @@ function onModelChange(ev: Event): void {
   margin: 0;
   font-size: 11px;
   color: var(--color-danger, #c0392b);
+}
+.clamp-hint {
+  margin: 0;
+}
+.clamp-actions {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border, #333);
+}
+.remove-clamp-btn {
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-danger, #c0392b);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-danger, #c0392b);
+  cursor: pointer;
+}
+.remove-clamp-btn:hover {
+  background: color-mix(in srgb, var(--color-danger, #c0392b) 12%, transparent);
 }
 .offset-sub {
   font-size: 10px;

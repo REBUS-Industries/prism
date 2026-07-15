@@ -21,11 +21,11 @@ import {
   REBUS_CLAMP_PART_ID,
   type ClampPlacement,
 } from './fixturePlacement';
+import { isRebusClampPart as isRebusClampPartShared } from './fixtureClamps';
 import {
   collectReferencedGeometryIds,
   isLibraryGeometryPart,
 } from './fixtureGeometryRefs';
-
 /** Minimal motion axis descriptor passed from FixtureDefinition.motionRig. */
 interface MotionAxisRef {
   axisType: string;
@@ -63,7 +63,10 @@ export interface FixtureAssemblyInput {
    * at the hanging point. Positive values shift base/yoke/head/motion downward.
    */
   fixtureZOffsetM?: number;
-  /** REBUS clamp mirror + Z rotation (GDTF space, through fixture origin). */
+  /**
+   * @deprecated Legacy global clamp mirror/rotate — ignored. Placement is per
+   * clamp part via `localTransform` (multi-clamp).
+   */
   clampPlacement?: ClampPlacement;
   /**
    * When set, the REBUS clamp part loads this GLB URL (Model Library preview)
@@ -80,7 +83,7 @@ export interface FixtureAssemblyInput {
   clampSlotMaterialMaps?: SlotMaterialMaps;
   /**
    * Model Library root transform for the linked clamp GLB (metres, degrees).
-   * Applied before fixture clamp placement (mirror Z, rotate Z on ClampRig).
+   * Applied inside each clamp part before `part.localTransform`.
    */
   clampModelTransform?: ModelTransform | null;
   /** Vertex units of the library clamp GLB; scaled to metres when not `m`. */
@@ -239,7 +242,8 @@ export function findGeometryReferenceEmissionNode(
 }
 
 function isRebusClampPart(part: FixturePart): boolean {
-  return part.partId === REBUS_CLAMP_PART_ID
+  return isRebusClampPartShared(part)
+    || part.partId === REBUS_CLAMP_PART_ID
     || (part.tag === 'CLAMP' && partMeta(part).rebusSlot === true);
 }
 
@@ -308,39 +312,21 @@ function finalizeModelMesh(wrapped: THREE.Object3D, model: FixtureModel | undefi
 }
 
 /**
- * Place one or two (Z-mirrored) clamp meshes, rotated around GDTF Z at the origin.
- * `mesh` should already include any Model Library root transform when loaded from
- * the library; this rig applies fixture-level mirror Z + rotate Z afterward.
+ * Place one clamp mesh under its part group. Placement (position / rotation /
+ * mirror scale) comes from `part.localTransform` — multi-clamp fixtures use
+ * one part per clamp instead of the legacy ClampRig mirror flag.
  */
-function attachClampMeshes(
-  partGroup: THREE.Group,
-  mesh: THREE.Object3D,
-  placement: ClampPlacement,
-): number {
-  const rig = new THREE.Group();
-  rig.name = 'ClampRig';
-  rig.rotation.z = THREE.MathUtils.degToRad(placement.rotateZDeg);
-  partGroup.add(rig);
-
+function attachClampMesh(partGroup: THREE.Group, mesh: THREE.Object3D): number {
   const primary = mesh.clone(true);
   primary.name = 'Clamp';
-  rig.add(primary);
-  let count = 1;
-
-  if (placement.mirrorZ) {
-    const mirrored = mesh.clone(true);
-    mirrored.name = 'ClampMirror';
-    mirrored.scale.z *= -1;
-    rig.add(mirrored);
-    count += 1;
-  }
-  return count;
+  partGroup.add(primary);
+  return 1;
 }
 
 /**
  * Orient a Model Library clamp GLB like ModelViewer, then apply the stored root
  * transform. Order (inner → outer): GLB → unit scale → +90° X wrap → model transform.
- * Fixture ClampRig mirror/rotation is applied afterward by attachClampMeshes.
+ * Fixture part localTransform is applied by the part group.
  */
 function wrapLibraryClampMesh(
   meshRoot: THREE.Object3D,
@@ -637,11 +623,10 @@ export async function buildFixtureAssembly(
           paintMaterial(wrapped, part);
         }
         if (isRebusClampPart(part)) {
-          const placement = input.clampPlacement ?? { mirrorZ: false, rotateZDeg: 0 };
           if (readFlipNormals(model?.metadata as Record<string, unknown> | undefined)) {
             applyFlipNormals(wrapped);
           }
-          meshCount += attachClampMeshes(partGroup, wrapped, placement);
+          meshCount += attachClampMesh(partGroup, wrapped);
         } else {
           partGroup.add(finalizeModelMesh(wrapped, model));
           meshCount += 1;
