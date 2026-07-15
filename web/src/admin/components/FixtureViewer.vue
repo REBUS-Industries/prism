@@ -13,7 +13,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { readContainerCssSize, threePixelRatio } from '../utils/threeResize';
-import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, applyPartTransform, type MotionNode } from '../utils/fixtureAssembly';
+import { buildFixtureAssembly, disposeAssembly, findGeometryReferenceEmissionNode, applyPartTransform, syncMeshOffsetGroups, type MotionNode } from '../utils/fixtureAssembly';
 import type { GdtfReferenceBounds } from '../utils/fixtureGdtfBounds';
 import { box3FromGdtfBounds } from '../utils/fixtureGdtfBounds';
 import type { ClampPlacement } from '../utils/fixturePlacement';
@@ -271,27 +271,33 @@ function fitOrthographicView(preset: 'top' | 'front' | 'side', aspect: number): 
   cam.far = Math.max(cam.near + 1, dist - minF + size.length());
   cam.updateProjectionMatrix();
 }
-function captureCameraForReload(): void {
+function captureCameraSnapshot(): {
+  pos: THREE.Vector3;
+  quat: THREE.Quaternion;
+  target: THREE.Vector3;
+} | null {
   const cam = activeCamera();
-  if (!cam || !controls || !loadedRoot) return;
-  preservedCameraPos.copy(cam.position);
-  preservedCameraQuat.copy(cam.quaternion);
-  preservedTarget.copy(controls.target);
-  preserveCameraOnFrame = true;
+  if (!cam || !controls || !loadedRoot) return null;
+  return {
+    pos: cam.position.clone(),
+    quat: cam.quaternion.clone(),
+    target: controls.target.clone(),
+  };
 }
 
-function restoreCameraOrPreset(): void {
+function restoreCameraSnapshot(snap: {
+  pos: THREE.Vector3;
+  quat: THREE.Quaternion;
+  target: THREE.Vector3;
+} | null | undefined): boolean {
   const cam = activeCamera();
-  if (preserveCameraOnFrame && cam && controls) {
-    cam.position.copy(preservedCameraPos);
-    cam.quaternion.copy(preservedCameraQuat);
-    controls.target.copy(preservedTarget);
-    controls.update();
-    cam.updateProjectionMatrix();
-    preserveCameraOnFrame = false;
-    return;
-  }
-  applyCameraPreset();
+  if (!snap || !cam || !controls) return false;
+  cam.position.copy(snap.pos);
+  cam.quaternion.copy(snap.quat);
+  controls.target.copy(snap.target);
+  controls.update();
+  cam.updateProjectionMatrix();
+  return true;
 }
 
 /** Apply panel/gizmo transform edits to live part groups without a full reload. */
@@ -301,15 +307,12 @@ function syncPartTransformsFromProps(): void {
     const grp = partGroups.get(part.partId);
     if (grp) applyPartTransform(grp, part);
   }
+  syncMeshOffsetGroups(partGroups, props.assembly.parts, props.assembly.models ?? []);
   syncGizmo();
   syncBeam();
   syncDatums();
 }
-/** When true, the next frameLoaded keeps the user's orbit camera instead of applyCameraPreset. */
-let preserveCameraOnFrame = false;
-const preservedCameraPos = new THREE.Vector3();
-const preservedCameraQuat = new THREE.Quaternion();
-const preservedTarget = new THREE.Vector3();
+
 let loadToken = 0;
 const datumMeshes = new Map<string, THREE.Mesh>();
 const texLoader = new THREE.TextureLoader();
@@ -598,7 +601,10 @@ function syncDatums(): void {
   }
 }
 
-function frameLoaded(precomputedBox?: THREE.Box3): void {
+function frameLoaded(
+  precomputedBox?: THREE.Box3,
+  camSnap?: { pos: THREE.Vector3; quat: THREE.Quaternion; target: THREE.Vector3 } | null,
+): void {
   if (!loadedRoot) return;
   // Prefer a pre-computed box (from buildFixtureAssembly, computed while root
   // had no parent) to avoid stale parent-matrixWorld reads that occur when
@@ -613,21 +619,27 @@ function frameLoaded(precomputedBox?: THREE.Box3): void {
     modelSize = box.getSize(new THREE.Vector3()).length() || 1;
     box.getCenter(modelCenter);
   }
-  restoreCameraOrPreset();
+  if (!restoreCameraSnapshot(camSnap)) applyCameraPreset();
   syncMotion();
   syncBeam();
   syncDatums();
 }
 
-async function loadGlb(url: string): Promise<boolean> {
+async function loadGlb(
+  url: string,
+  token: number,
+  camSnap: { pos: THREE.Vector3; quat: THREE.Quaternion; target: THREE.Vector3 } | null,
+): Promise<boolean> {
   if (!scene || !glbOrient) return false;
   const loader = new GLTFLoader();
   const gltf = await loader.loadAsync(url);
+  if (token !== loadToken) return false;
   clearLoaded();
   loadedRoot = gltf.scene;
   glbOrient.add(loadedRoot);
   await applyModelSlotMaterials();
-  frameLoaded();
+  if (token !== loadToken) return false;
+  frameLoaded(undefined, camSnap);
   return true;
 }
 
@@ -651,7 +663,11 @@ async function applyModelSlotMaterials(): Promise<void> {
   builtMaterials = builtMaterials.concat(built);
 }
 
-async function loadAssembly(a: AssemblyProp): Promise<boolean> {
+async function loadAssembly(
+  a: AssemblyProp,
+  token: number,
+  camSnap: { pos: THREE.Vector3; quat: THREE.Quaternion; target: THREE.Vector3 } | null,
+): Promise<boolean> {
   if (!scene || !a.parts?.length) return false;
 
   // Build the REBUS materials assigned to parts (by resolved materialId) so the
@@ -695,6 +711,11 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
     materialsById,
     resolveUrl: (mediaId) => fixturesApi.mediaUrl(a.fixtureId, mediaId),
   });
+  if (token !== loadToken) {
+    disposeAssembly(root);
+    for (const bm of newBuilt) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
+    return false;
+  }
   if (meshCount === 0 || box.isEmpty()) {
     disposeAssembly(root);
     for (const bm of newBuilt) { bm.material.dispose(); bm.textures.forEach((t) => t.dispose()); }
@@ -723,25 +744,29 @@ async function loadAssembly(a: AssemblyProp): Promise<boolean> {
   // Add directly to scene so Base stays static and only Yoke / Head rotate.
   // The legacy panGroup/tiltGroup remain for single-GLB mode.
   scene.add(root);
-  frameLoaded(box);
+  frameLoaded(box, camSnap);
   return true;
 }
 
 async function loadContent(): Promise<void> {
-  captureCameraForReload();
+  // Snapshot before mutating the scene so rapid property edits (slider drags)
+  // each restore their own orbit instead of racing a shared preserve flag.
+  const camSnap = captureCameraSnapshot();
   const token = ++loadToken;
   try {
     if (props.assembly && props.assembly.parts?.length) {
-      const ok = await loadAssembly(props.assembly);
+      const ok = await loadAssembly(props.assembly, token, camSnap);
       if (token !== loadToken) return;
       if (ok) {
         syncGizmo();
         return;
       }
     }
+    if (token !== loadToken) return;
     if (props.url) {
-      await loadGlb(props.url);
+      await loadGlb(props.url, token, camSnap);
     }
+    if (token !== loadToken) return;
     syncGizmo();
   } catch (err) {
     console.warn('[FixtureViewer] failed to load preview content', err);
@@ -749,7 +774,6 @@ async function loadContent(): Promise<void> {
 }
 
 function resetView(): void {
-  preserveCameraOnFrame = false;
   applyCameraPreset();
   emit('resetView');
 }
@@ -911,7 +935,6 @@ watch(() => [props.url, assemblyKey(), modelMaterialsKey(), props.assemblyRevisi
 watch(() => props.transformRevision, () => { syncPartTransformsFromProps(); });
 watch(() => props.datums, syncDatums, { deep: true });
 watch(() => props.viewPreset, () => {
-  preserveCameraOnFrame = false;
   syncActiveCamera();
   applyCameraPreset();
 });
