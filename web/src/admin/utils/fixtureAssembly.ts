@@ -245,14 +245,13 @@ function isRebusClampPart(part: FixturePart): boolean {
 
 /**
  * Wrap a placed mesh in a per-model offset group (GDTF Z-up metres + degrees
- * XYZ) when `model.metadata.meshOffset` is set. The offset shifts the mesh
- * inside the part's local frame WITHOUT touching the part `localTransform`, so
- * the pan/tilt pivot is unaffected. Composition matches the Orbit baker:
- * partWorld · offset · wrap(+90°X) · scale.
+ * XYZ). Always creates the group (identity when no offset) so live slider edits
+ * can update translation/rotation without rebuilding the assembly. Composition
+ * matches the Orbit baker: partWorld · offset · wrap(+90°X) · scale.
  */
 function applyMeshOffset(wrapped: THREE.Object3D, model: FixtureModel | undefined): THREE.Object3D {
-  const offset = readMeshOffset(model?.metadata as Record<string, unknown> | undefined);
-  if (!offset) return wrapped;
+  const offset = readMeshOffset(model?.metadata as Record<string, unknown> | undefined)
+    ?? { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } };
   const offsetGroup = new THREE.Group();
   offsetGroup.name = 'MeshOffset';
   offsetGroup.position.set(offset.position.x, offset.position.y, offset.position.z);
@@ -266,6 +265,38 @@ function applyMeshOffset(wrapped: THREE.Object3D, model: FixtureModel | undefine
   }
   offsetGroup.add(wrapped);
   return offsetGroup;
+}
+
+/**
+ * Push current `metadata.meshOffset` values onto live MeshOffset groups without
+ * a full assembly rebuild (used by transformRevision sync).
+ */
+export function syncMeshOffsetGroups(
+  partGroups: Map<string, THREE.Object3D>,
+  parts: FixturePart[],
+  models: FixtureModel[],
+): void {
+  const byId = new Map(models.map((m) => [m.modelId, m]));
+  for (const part of parts) {
+    const group = partGroups.get(part.partId);
+    if (!group || !part.modelId) continue;
+    const model = byId.get(part.modelId);
+    const offsetGroup = group.children.find((c) => c.name === 'MeshOffset');
+    if (!offsetGroup) continue;
+    const offset = readMeshOffset(model?.metadata as Record<string, unknown> | undefined)
+      ?? { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 } };
+    offsetGroup.position.set(offset.position.x, offset.position.y, offset.position.z);
+    if (isCustomReplacedModel(model)) {
+      offsetGroup.rotation.set(0, 0, 0);
+    } else {
+      offsetGroup.rotation.set(
+        THREE.MathUtils.degToRad(offset.rotation.x),
+        THREE.MathUtils.degToRad(offset.rotation.y),
+        THREE.MathUtils.degToRad(offset.rotation.z),
+        'XYZ',
+      );
+    }
+  }
 }
 
 /** Apply optional user flip-normals toggle, then mesh-offset translation. */

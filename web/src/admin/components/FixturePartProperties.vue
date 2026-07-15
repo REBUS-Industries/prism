@@ -156,7 +156,7 @@ function commitMeshOffset(offset: MeshOffset): void {
     ? { position: { ...offset.position }, rotation: { x: 0, y: 0, z: 0 } }
     : offset;
   writeMeshOffset(model.metadata as Record<string, unknown>, toWrite);
-  notify();
+  notify('transform');
 }
 
 function meshOffsetPosMmValue(axis: 'x' | 'y' | 'z'): number {
