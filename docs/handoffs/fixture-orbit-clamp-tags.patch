@@ -1,0 +1,181 @@
+diff --git a/docs/fixture-assembly-and-motion.md b/docs/fixture-assembly-and-motion.md
+index 004138c..b4921b7 100644
+--- a/docs/fixture-assembly-and-motion.md
++++ b/docs/fixture-assembly-and-motion.md
+@@ -475,6 +475,45 @@ Orbit model version
+ **Viewer rule:** walk `@instanceDefinitionGeometry`, apply
+ `meshVisibleForMode`, render the subset.
+ 
++### Clamp filter (“with clamps” / “without clamps”)
++
++Clamp meshes are always published with the fixture (same pattern as modes —
++publish all, filter at import). Every clamp mesh and part collection carries:
++
++```json
++{
++  "partTag": "CLAMP",
++  "isClamp": true,
++  "modeGeometryIds": []
++}
++```
++
++Root Collection `properties` and `FixtureType` also advertise:
++
++```json
++{
++  "hasClamps": true,
++  "clampPartIds": ["rebus-clamp-part", "rebus-clamp-part-2"],
++  "clampPartCount": 2
++}
++```
++
++Connector import UI should offer **With clamps** / **Without clamps** when
++`hasClamps` is true (or when any mesh has `partTag === "CLAMP"` /
++`isClamp === true`):
++
++```javascript
++function meshVisibleForClamps(mesh, includeClamps) {
++  if (includeClamps) return true;
++  if (mesh.isClamp === true) return false;
++  return mesh.partTag !== 'CLAMP';
++}
++
++const visibleMeshes = allDefinitionMeshes
++  .filter((m) => meshVisibleForMode(m, selectedMode.geometryRoot))
++  .filter((m) => meshVisibleForClamps(m, includeClamps));
++```
++
+ ### API smoke test
+ 
+ ```bash
+diff --git a/src/orbit/fixtureGeometryOrbit.ts b/src/orbit/fixtureGeometryOrbit.ts
+index e58ecee..a19f4c7 100644
+--- a/src/orbit/fixtureGeometryOrbit.ts
++++ b/src/orbit/fixtureGeometryOrbit.ts
+@@ -405,6 +405,7 @@ function buildPartCollection(group: PartMeshGroup): Record<string, unknown> {
+   if (group.motionAxisId) collection.motionAxisId = group.motionAxisId;
+   if (group.axisType) collection.axisType = group.axisType;
+   collection.modeGeometryIds = group.modeGeometryIds;
++  if (group.partTag === 'CLAMP') collection.isClamp = true;
+   return collection;
+ }
+ 
+diff --git a/src/orbit/fixturePublish.test.ts b/src/orbit/fixturePublish.test.ts
+index d88edd2..bea0975 100644
+--- a/src/orbit/fixturePublish.test.ts
++++ b/src/orbit/fixturePublish.test.ts
+@@ -66,6 +66,9 @@ assert.equal((props.beamSummary as { count: number }).count, 1);
+ // Custom display name surfaces on root properties (canonical name unchanged).
+ assert.equal(props.displayName, 'Upstage Spot');
+ assert.equal(props.name, 'Martin KHAMSIN');
++assert.equal(props.hasClamps, false);
++assert.deepEqual(props.clampPartIds, []);
++assert.equal(props.clampPartCount, 0);
+ 
+ const geometryRoot = {
+   speckle_type: 'Speckle.Core.Models.Collections.Collection',
+diff --git a/src/orbit/fixturePublishBuild.ts b/src/orbit/fixturePublishBuild.ts
+index d9d28d2..70d68e7 100644
+--- a/src/orbit/fixturePublishBuild.ts
++++ b/src/orbit/fixturePublishBuild.ts
+@@ -105,12 +105,20 @@ function beamSummary(beams: FixtureDefinition['beams']): Record<string, unknown>
+   };
+ }
+ 
++/** Part ids tagged CLAMP (GDTF omega + REBUS multi-clamp instances). */
++function clampPartIds(def: FixtureDefinition): string[] {
++  return (def.parts ?? [])
++    .filter((p) => p.tag === 'CLAMP')
++    .map((p) => p.partId);
++}
++
+ /** Connector-readable metadata on the root Collection for generic receive paths. */
+ export function buildFixtureRootProperties(input: PublishFixtureBuildInput): Record<string, unknown> {
+   const def = input.exportPayload.definition;
+   const prov = input.exportPayload.provenance;
+   const motion = enrichMotionRigForOrbit(def);
+   const modeExport = buildFixtureModes(def);
++  const clamps = clampPartIds(def);
+   return {
+     prismFixtureTypeId: input.fixtureId,
+     name: input.name,
+@@ -125,6 +133,9 @@ export function buildFixtureRootProperties(input: PublishFixtureBuildInput): Rec
+     tags: input.tags,
+     dmxFootprint: dmxFootprintSummary(def.dmxMapping),
+     beamSummary: beamSummary(def.beams),
++    hasClamps: clamps.length > 0,
++    clampPartIds: clamps,
++    clampPartCount: clamps.length,
+     partCount: def.parts?.length ?? 0,
+     modelCount: def.models?.length ?? 0,
+     wheelCount: def.wheels?.length ?? 0,
+@@ -149,6 +160,7 @@ function fixtureTypeToOrbitObject(
+   const template = readPublishTemplate(input.definition);
+   const motion = enrichMotionRigForOrbit(def);
+   const modeExport = buildFixtureModes(def);
++  const clamps = clampPartIds(def);
+   return {
+     speckle_type: 'Orbit.Objects.Lighting.FixtureType',
+     applicationId: input.fixtureId,
+@@ -176,6 +188,9 @@ function fixtureTypeToOrbitObject(
+     defaultModeId: modeExport.defaultModeId,
+     wheels: def.wheels,
+     dmxMapping: def.dmxMapping,
++    hasClamps: clamps.length > 0,
++    clampPartIds: clamps,
++    clampPartCount: clamps.length,
+     provenance: input.exportPayload.provenance,
+     assets: orbitAssets,
+     activeVersion: input.exportPayload.activeVersion,
+@@ -186,6 +201,8 @@ function fixtureTypeToOrbitObject(
+       prismFixtureTypeId: input.fixtureId,
+       prismUpdatedAt: input.exportPayload.exportedAt,
+       ...(input.displayName ? { displayName: input.displayName } : {}),
++      hasClamps: clamps.length > 0,
++      clampPartIds: clamps,
+     },
+   };
+ }
+diff --git a/src/orbit/glbParser.test.ts b/src/orbit/glbParser.test.ts
+index fef9719..3800de1 100644
+--- a/src/orbit/glbParser.test.ts
++++ b/src/orbit/glbParser.test.ts
+@@ -93,4 +93,23 @@ assert.ok(
+   `rotated vertex expected (0,0,1) got (${v[6]}, ${v[7]}, ${v[8]})`,
+ );
+ 
++const clampOrbit = parsedMeshToOrbitObject({
++  name: 'clamp',
++  vertices: [0, 0, 0, 1, 0, 0, 0, 1, 0],
++  faces: [3, 0, 1, 2],
++  applicationId: 'fx:clamp:media:0',
++  partId: 'rebus-clamp-part',
++  partTag: 'CLAMP',
++});
++assert.equal(clampOrbit.partTag, 'CLAMP');
++assert.equal(clampOrbit.isClamp, true);
++
++const baseOrbit = parsedMeshToOrbitObject({
++  name: 'base',
++  vertices: [0, 0, 0, 1, 0, 0, 0, 1, 0],
++  faces: [3, 0, 1, 2],
++  partTag: 'BASE',
++});
++assert.equal(baseOrbit.isClamp, undefined);
++
+ console.log('glbParser.test.ts: ok');
+diff --git a/src/orbit/glbToOrbitMeshes.ts b/src/orbit/glbToOrbitMeshes.ts
+index b31a545..eaa087a 100644
+--- a/src/orbit/glbToOrbitMeshes.ts
++++ b/src/orbit/glbToOrbitMeshes.ts
+@@ -34,6 +34,10 @@ export function parsedMeshToOrbitObject(
+   }
+   if (mesh.partId) obj.partId = mesh.partId;
+   if (mesh.partTag) obj.partTag = mesh.partTag;
++  // Explicit clamp stamp for connector “with / without clamps” import filtering.
++  // partTag === "CLAMP" is the canonical signal; isClamp mirrors it for clients
++  // that prefer a boolean flag.
++  if (mesh.partTag === 'CLAMP') obj.isClamp = true;
+   obj.modeGeometryIds = modeGeometryIds;
+   if (prismMaterialId) obj.prismMaterialId = prismMaterialId;
+   if (mesh.vertexNormals?.length) obj.vertexNormals = mesh.vertexNormals;

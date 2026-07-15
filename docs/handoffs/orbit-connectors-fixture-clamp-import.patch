@@ -1,0 +1,732 @@
+diff --git a/src/OrbitConnector.Rhino/Fixtures/FixtureMeshTagger.cs b/src/OrbitConnector.Rhino/Fixtures/FixtureMeshTagger.cs
+index 5875bc8..3767370 100644
+--- a/src/OrbitConnector.Rhino/Fixtures/FixtureMeshTagger.cs
++++ b/src/OrbitConnector.Rhino/Fixtures/FixtureMeshTagger.cs
+@@ -49,6 +49,10 @@ public static class FixtureMeshTagger
+         mesh["prismPartKey"] = BuildPartKey(fixtureTypeId, partId);
+         if (!string.IsNullOrWhiteSpace(partTag))
+             mesh["partTag"] = partTag;
++        var isClamp = member.Attributes.GetUserString("isClamp");
++        if (string.Equals(isClamp, "true", StringComparison.OrdinalIgnoreCase)
++            || string.Equals(partTag, "CLAMP", StringComparison.OrdinalIgnoreCase))
++            mesh["isClamp"] = true;
+ 
+         var prismMaterialId = ReadUserString(member, "ORBIT_renderMaterialId")
+             ?? ReadUserString(member, PrismMaterialIdHelper.RhinoMaterialIdParam)
+diff --git a/src/OrbitConnector.Rhino/Library/FixtureBlockDefinitionCache.cs b/src/OrbitConnector.Rhino/Library/FixtureBlockDefinitionCache.cs
+index e0ea8e4..42474c2 100644
+--- a/src/OrbitConnector.Rhino/Library/FixtureBlockDefinitionCache.cs
++++ b/src/OrbitConnector.Rhino/Library/FixtureBlockDefinitionCache.cs
+@@ -14,13 +14,16 @@ public static class FixtureBlockDefinitionCache
+         string fixtureId,
+         string versionId,
+         string? geometryRoot = null,
+-        string? bodyMaterialId = null)
++        string? bodyMaterialId = null,
++        bool includeClamps = true)
+     {
+         var key = string.IsNullOrWhiteSpace(geometryRoot)
+             ? $"{fixtureId}::{versionId}"
+             : $"{fixtureId}::{versionId}::{geometryRoot}";
+         if (!string.IsNullOrWhiteSpace(bodyMaterialId))
+             key += $"::mat::{bodyMaterialId}";
++        if (!includeClamps)
++            key += "::noclamps";
+         return key;
+     }
+ 
+@@ -30,12 +33,13 @@ public static class FixtureBlockDefinitionCache
+         string versionId,
+         out FixtureBlockBuildResult? result,
+         string? geometryRoot = null,
+-        string? bodyMaterialId = null)
++        string? bodyMaterialId = null,
++        bool includeClamps = true)
+     {
+         result = null;
+         if (CacheSettings.Disabled)
+             return false;
+-        var cacheKey = Key(fixtureId, versionId, geometryRoot, bodyMaterialId);
++        var cacheKey = Key(fixtureId, versionId, geometryRoot, bodyMaterialId, includeClamps);
+         if (!_cache.TryGetValue(cacheKey, out var entry))
+             return false;
+ 
+@@ -62,15 +66,14 @@ public static class FixtureBlockDefinitionCache
+         string versionId,
+         FixtureBlockBuildResult result,
+         string? geometryRoot = null,
+-        string? bodyMaterialId = null) =>
+-        _cache[Key(fixtureId, versionId, geometryRoot, bodyMaterialId)] = (result, doc.RuntimeSerialNumber);
+-
+-    public static void InvalidateDocument(uint docSerial)
++        string? bodyMaterialId = null,
++        bool includeClamps = true)
+     {
+-        foreach (var key in _cache.Keys.ToList())
+-        {
+-            if (_cache[key].DocSerial == docSerial)
+-                _cache.Remove(key);
+-        }
++        if (CacheSettings.Disabled)
++            return;
++        _cache[Key(fixtureId, versionId, geometryRoot, bodyMaterialId, includeClamps)] =
++            (result, doc.RuntimeSerialNumber);
+     }
++
++    public static void Clear() => _cache.Clear();
+ }
+diff --git a/src/OrbitConnector.Rhino/Library/FixtureClampHelper.cs b/src/OrbitConnector.Rhino/Library/FixtureClampHelper.cs
+new file mode 100644
+index 0000000..71d076b
+--- /dev/null
++++ b/src/OrbitConnector.Rhino/Library/FixtureClampHelper.cs
+@@ -0,0 +1,93 @@
++using Newtonsoft.Json.Linq;
++
++namespace OrbitConnector.Rhino.Library;
++
++/// <summary>
++/// Clamp mesh detection + import filtering for fixture receive.
++/// PRISM stamps <c>partTag: "CLAMP"</c> and <c>isClamp: true</c> on clamp
++/// meshes / part collections at Orbit publish time.
++/// </summary>
++public static class FixtureClampHelper
++{
++    private static readonly string[] PartTagKeys = { "partTag", "gdtfTag", "tag", "prism:partTag" };
++
++    /// <summary>
++    /// True when the fixture definition (or Orbit root props) advertises clamp parts.
++    /// </summary>
++    public static bool FixtureHasClamps(JToken? definition, JToken? rootProperties = null)
++    {
++        if (rootProperties is JObject props)
++        {
++            if (props.Value<bool?>("hasClamps") == true) return true;
++            if (props["clampPartIds"] is JArray ids && ids.Count > 0) return true;
++            if (props.Value<int?>("clampPartCount") is > 0) return true;
++        }
++
++        if (definition?["parts"] is not JArray parts)
++            return false;
++
++        foreach (var token in parts)
++        {
++            if (token is not JObject part) continue;
++            if (IsClampPartTag(ReadPartTag(part))) return true;
++        }
++
++        return false;
++    }
++
++    public static bool IsClampPartTag(string? tag)
++        => string.Equals(tag?.Trim(), "CLAMP", StringComparison.OrdinalIgnoreCase);
++
++    /// <summary>
++    /// True when a wire mesh / part collection is clamp geometry.
++    /// </summary>
++    public static bool IsClampMesh(JObject node)
++    {
++        if (ReadBool(node, "isClamp") == true) return true;
++        if (node["properties"] is JObject props && ReadBool(props, "isClamp") == true)
++            return true;
++
++        return IsClampPartTag(ReadPartTag(node));
++    }
++
++    /// <summary>
++    /// Include the mesh when importing with clamps, or when it is not a clamp mesh.
++    /// </summary>
++    public static bool MeshVisibleForClamps(JObject mesh, bool includeClamps)
++    {
++        if (includeClamps) return true;
++        return !IsClampMesh(mesh);
++    }
++
++    private static string? ReadPartTag(JObject node)
++    {
++        foreach (var key in PartTagKeys)
++        {
++            var v = node[key]?.Value<string>();
++            if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
++        }
++
++        if (node["properties"] is JObject props)
++        {
++            foreach (var key in PartTagKeys)
++            {
++                var v = props[key]?.Value<string>();
++                if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
++            }
++        }
++
++        return null;
++    }
++
++    private static bool? ReadBool(JObject node, string key)
++    {
++        var token = node[key];
++        return token?.Type switch
++        {
++            JTokenType.Boolean => token.Value<bool>(),
++            JTokenType.Integer => token.Value<int>() != 0,
++            JTokenType.String => bool.TryParse(token.Value<string>(), out var b) ? b : null,
++            _ => null,
++        };
++    }
++}
+diff --git a/src/OrbitConnector.Rhino/Library/FixtureImportPanelBridge.cs b/src/OrbitConnector.Rhino/Library/FixtureImportPanelBridge.cs
+index f149eb7..a9b6686 100644
+--- a/src/OrbitConnector.Rhino/Library/FixtureImportPanelBridge.cs
++++ b/src/OrbitConnector.Rhino/Library/FixtureImportPanelBridge.cs
+@@ -4,7 +4,7 @@ using OrbitConnector.Rhino.Fixtures;
+ namespace OrbitConnector.Rhino.Library;
+ 
+ /// <summary>
+-/// Combined fixture import prompt (DMX mode + unit number + body material).
++/// Combined fixture import prompt (DMX mode + unit number + body material + clamps).
+ /// </summary>
+ public sealed class FixtureImportPanelBridge
+ {
+@@ -22,14 +22,17 @@ public sealed class FixtureImportPanelBridge
+         IReadOnlyList<(string Id, string Name)>? Materials = null,
+         string? DefaultMaterialId = null,
+         string? PreselectMaterialId = null,
+-        string? PreselectModeId = null);
++        string? PreselectModeId = null,
++        bool ShowClamps = false,
++        bool DefaultIncludeClamps = true);
+ 
+     public sealed record FixtureImportPromptResult(
+         bool Accepted,
+         FixtureDmxMode? Mode = null,
+         string? FixtureId = null,
+         string? MaterialId = null,
+-        LightEngine LightEngine = LightEngine.None);
++        LightEngine LightEngine = LightEngine.None,
++        bool IncludeClamps = true);
+ 
+     public Task<FixtureImportPromptResult> PromptAsync(
+         FixtureImportPromptOptions options,
+@@ -58,6 +61,8 @@ public sealed class FixtureImportPanelBridge
+             showUnit = options.ShowUnit,
+             showMaterial = options.ShowMaterial,
+             showLightEngine = options.ShowLightEngine,
++            showClamps = options.ShowClamps,
++            defaultIncludeClamps = options.DefaultIncludeClamps,
+             vrayAvailable = options.VRayAvailable,
+             defaultLightEngine = "none",
+             defaultModeId = defaultMode?.ModeId,
+@@ -134,7 +139,12 @@ public sealed class FixtureImportPanelBridge
+             };
+         }
+ 
+-        pending.Tcs.TrySetResult(new FixtureImportPromptResult(true, mode, fixtureId, materialId, lightEngine));
++        // Default true when the clamp picker was hidden (fixture has no clamps).
++        var includeClamps = data.Value<bool?>("showClamps") != true
++            || data.Value<bool?>("includeClamps") != false;
++
++        pending.Tcs.TrySetResult(
++            new FixtureImportPromptResult(true, mode, fixtureId, materialId, lightEngine, includeClamps));
+         _pending = null;
+         return true;
+     }
+diff --git a/src/OrbitConnector.Rhino/Library/LibraryBlockPlacer.cs b/src/OrbitConnector.Rhino/Library/LibraryBlockPlacer.cs
+index 1ee6401..4a8349c 100644
+--- a/src/OrbitConnector.Rhino/Library/LibraryBlockPlacer.cs
++++ b/src/OrbitConnector.Rhino/Library/LibraryBlockPlacer.cs
+@@ -19,13 +19,16 @@ public static class LibraryBlockPlacer
+         string sourceItemId,
+         string orbitVersionId,
+         string? geometryRoot = null,
+-        string? bodyMaterialId = null)
++        string? bodyMaterialId = null,
++        bool includeClamps = true)
+     {
+         var raw = string.IsNullOrWhiteSpace(geometryRoot)
+             ? $"PRISM:{libraryCategory}:{sourceItemId}:{orbitVersionId}"
+             : $"PRISM:{libraryCategory}:{sourceItemId}:{orbitVersionId}:{geometryRoot}";
+         if (!string.IsNullOrWhiteSpace(bodyMaterialId))
+             raw += $":mat:{bodyMaterialId}";
++        if (!includeClamps)
++            raw += ":noclamps";
+         foreach (var ch in Path.GetInvalidFileNameChars())
+             raw = raw.Replace(ch, '_');
+         return raw;
+diff --git a/src/OrbitConnector.Rhino/Pipeline/RhinoReceivePipeline.cs b/src/OrbitConnector.Rhino/Pipeline/RhinoReceivePipeline.cs
+index 70b3a50..4bb3c06 100644
+--- a/src/OrbitConnector.Rhino/Pipeline/RhinoReceivePipeline.cs
++++ b/src/OrbitConnector.Rhino/Pipeline/RhinoReceivePipeline.cs
+@@ -199,9 +199,17 @@ public class RhinoReceivePipeline
+     /// </summary>
+     private string? _modelLayerPrefix;
+ 
+-    /// <summary>Mode mesh filter: prefer the part-id subtree, else the geometry-root tag.</summary>
++    /// <summary>Mode + clamp mesh filter for fixture library receive.</summary>
+     private bool VisibleForFixtureMode(JObject node) =>
+-        FixtureModeHelper.MeshVisibleForMode(node, _fixtureGeometryRootFilter, _fixtureModePartIds);
++        FixtureModeHelper.MeshVisibleForMode(node, _fixtureGeometryRootFilter, _fixtureModePartIds)
++        && FixtureClampHelper.MeshVisibleForClamps(node, _includeClamps);
++
++    /// <summary>
++    /// When false, meshes stamped <c>partTag: "CLAMP"</c> / <c>isClamp: true</c>
++    /// are skipped during fixture library receive (“without clamps” import).
++    /// Defaults to true (include clamps).
++    /// </summary>
++    private bool _includeClamps = true;
+ 
+     /// <summary>
+     /// Library fixture block build (Place/Import): geometry is transient — only the
+@@ -237,12 +245,14 @@ public class RhinoReceivePipeline
+         IProgress<(string status, int percent)>? progress = null,
+         string? fixtureGeometryRoot = null,
+         IReadOnlyCollection<string>? fixtureModePartIds = null,
++        bool includeClamps = true,
+         CancellationToken ct = default)
+     {
+         _fixtureGeometryRootFilter = fixtureGeometryRoot;
+         _fixtureModePartIds = fixtureModePartIds is { Count: > 0 }
+             ? new HashSet<string>(fixtureModePartIds, StringComparer.OrdinalIgnoreCase)
+             : null;
++        _includeClamps = includeClamps;
+         try
+         {
+         var serverUrl = card.ServerUrl(config);
+@@ -309,6 +319,7 @@ public class RhinoReceivePipeline
+         {
+             _fixtureGeometryRootFilter = null;
+             _fixtureModePartIds = null;
++            _includeClamps = true;
+             _modelLayerPrefix = null;
+         }
+     }
+@@ -2631,6 +2642,7 @@ public class RhinoReceivePipeline
+         CopyUserString(node, attrs, "partTag");
+         CopyUserString(node, attrs, "tag");
+         CopyUserString(node, attrs, "prism:partTag");
++        CopyUserString(node, attrs, "isClamp");
+     }
+ 
+     private static void CopyUserString(JObject node, ObjectAttributes attrs, string key)
+diff --git a/src/OrbitConnector.Rhino/UI/OrbitPanel.cs b/src/OrbitConnector.Rhino/UI/OrbitPanel.cs
+index 64c321d..d3df912 100644
+--- a/src/OrbitConnector.Rhino/UI/OrbitPanel.cs
++++ b/src/OrbitConnector.Rhino/UI/OrbitPanel.cs
+@@ -2576,7 +2576,8 @@ public class OrbitPanel : Panel, IPanel
+                     materials: materialChoices,
+                     defaultMaterialId: materialCatalog.DefaultMaterialId,
+                     preselectMaterialId: preselectMaterial,
+-                    showLightEngine: HasFixtureBeams(export.Definition))
++                    showLightEngine: HasFixtureBeams(export.Definition),
++                    showClamps: HasFixtureClamps(export.Definition))
+                 .ConfigureAwait(false);
+             if (!importPrompt.Accepted)
+             {
+@@ -2610,7 +2611,8 @@ public class OrbitPanel : Panel, IPanel
+                     versionId,
+                     loggedInTarget,
+                     selectedMode,
+-                    bodyMaterialId)
++                    bodyMaterialId,
++                    importPrompt.IncludeClamps)
+                 .ConfigureAwait(false);
+             if (build == null)
+             {
+@@ -4213,6 +4215,7 @@ public class OrbitPanel : Panel, IPanel
+         bool sendDoneMessage = true,
+         string? fixtureGeometryRoot = null,
+         IReadOnlyCollection<string>? fixtureModePartIds = null,
++        bool includeClamps = true,
+         CancellationToken ct = default)
+     {
+         if (_client == null || string.IsNullOrEmpty(_token) || string.IsNullOrEmpty(_serverUrl))
+@@ -4250,6 +4253,7 @@ public class OrbitPanel : Panel, IPanel
+                 card, _config, doc, _client, _token, progress,
+                 fixtureGeometryRoot: fixtureGeometryRoot,
+                 fixtureModePartIds: fixtureModePartIds,
++                includeClamps: includeClamps,
+                 ct: ct)
+             .ConfigureAwait(false);
+ 
+@@ -4330,7 +4334,9 @@ public class OrbitPanel : Panel, IPanel
+         string? defaultMaterialId,
+         string? preselectMaterialId = null,
+         string? preselectModeId = null,
+-        bool showLightEngine = true)
++        bool showLightEngine = true,
++        bool showClamps = false,
++        bool defaultIncludeClamps = true)
+     {
+         return await _fixtureImportBridge.PromptAsync(
+                 new FixtureImportPanelBridge.FixtureImportPromptOptions(
+@@ -4344,7 +4350,9 @@ public class OrbitPanel : Panel, IPanel
+                     materials,
+                     defaultMaterialId,
+                     preselectMaterialId,
+-                    preselectModeId),
++                    preselectModeId,
++                    showClamps,
++                    defaultIncludeClamps),
+                 SendToJs)
+             .ConfigureAwait(false);
+     }
+@@ -4397,6 +4405,9 @@ public class OrbitPanel : Panel, IPanel
+     private static bool HasFixtureBeams(JToken? definition)
+         => FixtureBeamModel.Parse(definition?["beams"]).Count > 0;
+ 
++    private static bool HasFixtureClamps(JToken? definition)
++        => FixtureClampHelper.FixtureHasClamps(definition);
++
+     private static string? ReadBodyMaterialIdFromInstance(RhinoDoc doc, InstanceObject inst)
+     {
+         var idef = inst.InstanceDefinition;
+@@ -4422,13 +4433,14 @@ public class OrbitPanel : Panel, IPanel
+         ServerTarget loggedInTarget,
+         FixtureDmxMode? selectedMode = null,
+         string? bodyMaterialId = null,
++        bool includeClamps = true,
+         CancellationToken ct = default)
+     {
+         var fixtureLabel = PrismFixtureLabel.From(export);
+         var orbitVersionId = versionId;
+         var geometryRoot = selectedMode?.GeometryRoot;
+         var blockName = LibraryBlockPlacer.DefinitionName(
+-            category, fixtureId, orbitVersionId, geometryRoot, bodyMaterialId);
++            category, fixtureId, orbitVersionId, geometryRoot, bodyMaterialId, includeClamps);
+         var mergedAxes = FixtureModeHelper.FilterMotionAxes(
+             export.MotionAxes,
+             selectedMode);
+@@ -4444,18 +4456,19 @@ public class OrbitPanel : Panel, IPanel
+         RhinoApp.WriteLine(
+             $"[REBUS] prism-fixture: mode “{selectedMode?.Name ?? "(default)"}” " +
+             $"geometryRoot={geometryRoot ?? "(none)"} modeParts={modePartIds.Count} " +
+-            $"axisIds={selectedMode?.MotionAxisIds?.Count ?? 0} scopedAxes={mergedAxes.Count}");
++            $"axisIds={selectedMode?.MotionAxisIds?.Count ?? 0} scopedAxes={mergedAxes.Count} " +
++            $"includeClamps={includeClamps}");
+ 
+         FixtureBlockBuildResult StoreBuild(FixtureBlockBuildResult build)
+         {
+             FixtureBlockDefinitionCache.Store(
+-                doc, fixtureId, orbitVersionId, build, geometryRoot, bodyMaterialId);
++                doc, fixtureId, orbitVersionId, build, geometryRoot, bodyMaterialId, includeClamps);
+             return build;
+         }
+ 
+         if (await RhinoUiThread.RunAsync(() =>
+                 FixtureBlockDefinitionCache.TryGet(
+-                    doc, fixtureId, orbitVersionId, out var cachedBuild, geometryRoot, bodyMaterialId)
++                    doc, fixtureId, orbitVersionId, out var cachedBuild, geometryRoot, bodyMaterialId, includeClamps)
+                     ? cachedBuild
+                     : null).ConfigureAwait(false) is { } cachedHit)
+         {
+@@ -4573,6 +4586,7 @@ public class OrbitPanel : Panel, IPanel
+                 sendDoneMessage: false,
+                 fixtureGeometryRoot: geometryRoot,
+                 fixtureModePartIds: modePartIds,
++                includeClamps: includeClamps,
+                 ct: ct)
+             .ConfigureAwait(false);
+         PlaceTrace.Line(result == null
+@@ -4963,39 +4977,43 @@ public class OrbitPanel : Panel, IPanel
+                 modes, firstSourceDmxMode, export.Definition);
+ 
+             var showMode = modes.Count > 1;
+-            var showMaterial = materialChoices.Count > 0;
+-            var hasBeams = HasFixtureBeams(export.Definition);
++        var showMaterial = materialChoices.Count > 0;
++        var showClamps = HasFixtureClamps(export.Definition);
++        var hasBeams = HasFixtureBeams(export.Definition);
+ 
+-            string? exchangeBodyMaterialId = materialCatalog.DefaultMaterialId;
+-            FixtureDmxMode? exchangeSelectedMode = null;
+-            LightEngine exchangeLightEngine = LightEngine.None;
+-            if (showMode || showMaterial || hasBeams)
++        string? exchangeBodyMaterialId = materialCatalog.DefaultMaterialId;
++        FixtureDmxMode? exchangeSelectedMode = null;
++        LightEngine exchangeLightEngine = LightEngine.None;
++        var exchangeIncludeClamps = true;
++        if (showMode || showMaterial || hasBeams || showClamps)
++        {
++            var prompt = await PromptFixtureImportAsync(
++                    fixtureLabel,
++                    showMode: showMode,
++                    showUnit: false,
++                    showMaterial: showMaterial,
++                    modes: showMode ? modes : null,
++                    materials: materialChoices,
++                    defaultMaterialId: materialCatalog.DefaultMaterialId,
++                    preselectMaterialId: preselectMaterial ?? materialCatalog.DefaultMaterialId,
++                    preselectModeId: preselectMode?.ModeId,
++                    showLightEngine: hasBeams,
++                    showClamps: showClamps)
++                .ConfigureAwait(false);
++            if (!prompt.Accepted)
+             {
+-                var prompt = await PromptFixtureImportAsync(
+-                        fixtureLabel,
+-                        showMode: showMode,
+-                        showUnit: false,
+-                        showMaterial: showMaterial,
+-                        modes: showMode ? modes : null,
+-                        materials: materialChoices,
+-                        defaultMaterialId: materialCatalog.DefaultMaterialId,
+-                        preselectMaterialId: preselectMaterial ?? materialCatalog.DefaultMaterialId,
+-                        preselectModeId: preselectMode?.ModeId,
+-                        showLightEngine: hasBeams)
+-                    .ConfigureAwait(false);
+-                if (!prompt.Accepted)
+-                {
+-                    SendToJs(new { type = "libAssignCancelled", category = "fixtures" });
+-                    return;
+-                }
+-
+-                if (showMode)
+-                    exchangeSelectedMode = prompt.Mode;
+-                if (showMaterial)
+-                    exchangeBodyMaterialId = prompt.MaterialId ?? materialCatalog.DefaultMaterialId;
+-                exchangeLightEngine = prompt.LightEngine;
++                SendToJs(new { type = "libAssignCancelled", category = "fixtures" });
++                return;
+             }
+ 
++            if (showMode)
++                exchangeSelectedMode = prompt.Mode;
++            if (showMaterial)
++                exchangeBodyMaterialId = prompt.MaterialId ?? materialCatalog.DefaultMaterialId;
++            exchangeLightEngine = prompt.LightEngine;
++            exchangeIncludeClamps = prompt.IncludeClamps;
++        }
++
+             var exchangeLightOptions = await BuildLightImportOptionsAsync(
+                     exchangeLightEngine,
+                     export,
+@@ -5006,7 +5024,8 @@ public class OrbitPanel : Panel, IPanel
+             var buildCache = new Dictionary<string, FixtureBlockBuildResult>(StringComparer.Ordinal);
+             async Task<FixtureBlockBuildResult?> GetBuildForModeAsync(FixtureDmxMode mode)
+             {
+-                var key = (mode.GeometryRoot ?? mode.Name ?? "") + "::" + (exchangeBodyMaterialId ?? "");
++                var key = (mode.GeometryRoot ?? mode.Name ?? "") + "::" + (exchangeBodyMaterialId ?? "")
++                    + "::" + (exchangeIncludeClamps ? "clamps" : "noclamps");
+                 if (buildCache.TryGetValue(key, out var cached))
+                     return cached;
+ 
+@@ -5033,7 +5052,7 @@ public class OrbitPanel : Panel, IPanel
+ 
+                 var build = await EnsureFixtureBlockDefinitionAsync(
+                         client, export, itemId, doc, "fixtures", versionId, loggedInTarget, enriched,
+-                        exchangeBodyMaterialId, placeCt)
++                        exchangeBodyMaterialId, exchangeIncludeClamps, placeCt)
+                     .ConfigureAwait(false);
+                 if (build == null)
+                     return null;
+@@ -5454,9 +5473,11 @@ public class OrbitPanel : Panel, IPanel
+         var buildCache = new Dictionary<string, FixtureBlockBuildResult>(StringComparer.Ordinal);
+         async Task<FixtureBlockBuildResult?> GetBuildForModeAsync(
+             FixtureDmxMode mode,
+-            string? bodyMaterialId)
++            string? bodyMaterialId,
++            bool includeClamps = true)
+         {
+-            var key = (mode.GeometryRoot ?? mode.Name ?? "") + "::" + (bodyMaterialId ?? "");
++            var key = (mode.GeometryRoot ?? mode.Name ?? "") + "::" + (bodyMaterialId ?? "")
++                + "::" + (includeClamps ? "clamps" : "noclamps");
+             if (buildCache.TryGetValue(key, out var cached))
+                 return cached;
+ 
+@@ -5474,7 +5495,7 @@ public class OrbitPanel : Panel, IPanel
+ 
+             var build = await EnsureFixtureBlockDefinitionAsync(
+                     client, export, itemId, doc, "fixtures", versionId, loggedInTarget, enriched,
+-                    bodyMaterialId, ct)
++                    bodyMaterialId, includeClamps, ct)
+                 .ConfigureAwait(false);
+             if (build == null)
+                 return null;
+@@ -5609,7 +5630,8 @@ public class OrbitPanel : Panel, IPanel
+                 modes,
+                 materialChoices,
+                 materialCatalog.DefaultMaterialId,
+-                showLightEngine: HasFixtureBeams(export.Definition))
++                showLightEngine: HasFixtureBeams(export.Definition),
++                showClamps: HasFixtureClamps(export.Definition))
+             .ConfigureAwait(false);
+         if (!importPrompt.Accepted)
+         {
+@@ -5680,7 +5702,7 @@ public class OrbitPanel : Panel, IPanel
+         PlaceTrace.Line("AssignFixtureAsync: EnsureFixtureBlockDefinitionAsync start");
+         var build = await EnsureFixtureBlockDefinitionAsync(
+                 client, export, itemId, doc, category, versionId, loggedInTarget, selectedMode,
+-                bodyMaterialId, ct)
++                bodyMaterialId, importPrompt.IncludeClamps, ct)
+             .ConfigureAwait(false);
+         PlaceTrace.Line(build == null
+             ? "AssignFixtureAsync: block build FAILED"
+diff --git a/src/OrbitConnector.Shared/UI/wwwroot/index.html b/src/OrbitConnector.Shared/UI/wwwroot/index.html
+index 96d64f2..286910b 100644
+--- a/src/OrbitConnector.Shared/UI/wwwroot/index.html
++++ b/src/OrbitConnector.Shared/UI/wwwroot/index.html
+@@ -250,6 +250,14 @@
+           <option value="vray">V-Ray Lights</option>
+         </select>
+       </section>
++      <section id="fixture-import-clamp-section" class="fixture-import-section hidden">
++        <p id="fixture-import-clamp-hint">This fixture was published with clamp geometry. Choose whether to place the clamps with the fixture or import body geometry only.</p>
++        <div class="field-label">Clamps</div>
++        <select class="input" id="fixture-import-clamp-select" aria-label="Include clamps">
++          <option value="with" selected>With clamps</option>
++          <option value="without">Without clamps</option>
++        </select>
++      </section>
+     </div>
+     <div class="pan-tilt-actions">
+       <button type="button" class="btn btn-ghost btn-sm" id="btn-fixture-import-cancel">Cancel</button>
+diff --git a/src/OrbitConnector.Shared/UI/wwwroot/js/app.js b/src/OrbitConnector.Shared/UI/wwwroot/js/app.js
+index c9234b7..b6a6f4b 100644
+--- a/src/OrbitConnector.Shared/UI/wwwroot/js/app.js
++++ b/src/OrbitConnector.Shared/UI/wwwroot/js/app.js
+@@ -76,6 +76,7 @@ const state = {
+     showUnit: false,
+     showMaterial: false,
+     showLightEngine: false,
++    showClamps: false,
+     vrayAvailable: false,
+     modes: [],
+     materials: [],
+@@ -970,6 +971,7 @@ function onFixtureImportPrompt(m) {
+   state.fixtureImport.showUnit = !!m.showUnit;
+   state.fixtureImport.showMaterial = !!m.showMaterial;
+   state.fixtureImport.showLightEngine = !!m.showLightEngine;
++  state.fixtureImport.showClamps = !!m.showClamps;
+   state.fixtureImport.vrayAvailable = !!m.vrayAvailable;
+   state.fixtureImport.modes = m.modes || [];
+   state.fixtureImport.materials = m.materials || [];
+@@ -982,10 +984,12 @@ function onFixtureImportPrompt(m) {
+   const unitSection = document.getElementById('fixture-import-unit-section');
+   const materialSection = document.getElementById('fixture-import-material-section');
+   const lightSection = document.getElementById('fixture-import-light-section');
++  const clampSection = document.getElementById('fixture-import-clamp-section');
+   const modeSelect = document.getElementById('fixture-import-mode-select');
+   const idInput = document.getElementById('fixture-import-id-input');
+   const materialSelect = document.getElementById('fixture-import-material-select');
+   const lightSelect = document.getElementById('fixture-import-light-select');
++  const clampSelect = document.getElementById('fixture-import-clamp-select');
+   if (!modal || !title) return;
+ 
+   title.textContent = m.name ? ('Import fixture — ' + m.name) : 'Import fixture';
+@@ -994,6 +998,7 @@ function onFixtureImportPrompt(m) {
+   if (unitSection) unitSection.classList.toggle('hidden', !state.fixtureImport.showUnit);
+   if (materialSection) materialSection.classList.toggle('hidden', !state.fixtureImport.showMaterial);
+   if (lightSection) lightSection.classList.toggle('hidden', !state.fixtureImport.showLightEngine);
++  if (clampSection) clampSection.classList.toggle('hidden', !state.fixtureImport.showClamps);
+ 
+   if (modeSelect && state.fixtureImport.showMode) {
+     modeSelect.innerHTML = '';
+@@ -1041,12 +1046,17 @@ function onFixtureImportPrompt(m) {
+       : (defaultEngine === 'rhino' ? 'rhino' : 'none');
+   }
+ 
++  if (clampSelect && state.fixtureImport.showClamps) {
++    clampSelect.value = m.defaultIncludeClamps === false ? 'without' : 'with';
++  }
++
+   modal.classList.add('open');
+   setTimeout(() => {
+     if (state.fixtureImport.showMode && modeSelect) modeSelect.focus();
+     else if (state.fixtureImport.showUnit && idInput) { idInput.focus(); idInput.select(); }
+     else if (state.fixtureImport.showMaterial && materialSelect) materialSelect.focus();
+     else if (state.fixtureImport.showLightEngine && lightSelect) lightSelect.focus();
++    else if (state.fixtureImport.showClamps && clampSelect) clampSelect.focus();
+   }, 0);
+ }
+ 
+@@ -1064,6 +1074,7 @@ function submitFixtureImport() {
+   const modeSelect = document.getElementById('fixture-import-mode-select');
+   const idInput = document.getElementById('fixture-import-id-input');
+   const materialSelect = document.getElementById('fixture-import-material-select');
++  const clampSelect = document.getElementById('fixture-import-clamp-select');
+ 
+   const payload = {
+     promptId: state.fixtureImport.promptId,
+@@ -1071,6 +1082,7 @@ function submitFixtureImport() {
+     showUnit: state.fixtureImport.showUnit,
+     showMaterial: state.fixtureImport.showMaterial,
+     showLightEngine: state.fixtureImport.showLightEngine,
++    showClamps: state.fixtureImport.showClamps,
+   };
+ 
+   if (state.fixtureImport.showMode) {
+@@ -1105,6 +1117,13 @@ function submitFixtureImport() {
+     if (lightSelect) lightSelect.blur();
+   }
+ 
++  if (state.fixtureImport.showClamps) {
++    payload.includeClamps = !(clampSelect && clampSelect.value === 'without');
++    if (clampSelect) clampSelect.blur();
++  } else {
++    payload.includeClamps = true;
++  }
++
+   sendToHost('fixtureImportSubmit', payload);
+   hideFixtureImportModal();
+ }
+diff --git a/tests/OrbitConnector.Rhino.Tests/Fixtures/FixtureClampHelperTests.cs b/tests/OrbitConnector.Rhino.Tests/Fixtures/FixtureClampHelperTests.cs
+new file mode 100644
+index 0000000..13d6c9b
+--- /dev/null
++++ b/tests/OrbitConnector.Rhino.Tests/Fixtures/FixtureClampHelperTests.cs
+@@ -0,0 +1,56 @@
++using Newtonsoft.Json.Linq;
++using OrbitConnector.Rhino.Library;
++using Xunit;
++
++namespace OrbitConnector.Rhino.Tests.Fixtures;
++
++public class FixtureClampHelperTests
++{
++    [Fact]
++    public void IsClampMesh_reads_isClamp_flag()
++    {
++        var mesh = new JObject { ["isClamp"] = true, ["partTag"] = "BASE" };
++        Assert.True(FixtureClampHelper.IsClampMesh(mesh));
++    }
++
++    [Fact]
++    public void IsClampMesh_reads_partTag_CLAMP()
++    {
++        var mesh = new JObject { ["partTag"] = "CLAMP" };
++        Assert.True(FixtureClampHelper.IsClampMesh(mesh));
++        Assert.False(FixtureClampHelper.IsClampMesh(new JObject { ["partTag"] = "HEAD" }));
++    }
++
++    [Fact]
++    public void MeshVisibleForClamps_excludes_clamps_when_requested()
++    {
++        var clamp = new JObject { ["partTag"] = "CLAMP", ["isClamp"] = true };
++        var head = new JObject { ["partTag"] = "HEAD" };
++        Assert.True(FixtureClampHelper.MeshVisibleForClamps(clamp, includeClamps: true));
++        Assert.False(FixtureClampHelper.MeshVisibleForClamps(clamp, includeClamps: false));
++        Assert.True(FixtureClampHelper.MeshVisibleForClamps(head, includeClamps: false));
++    }
++
++    [Fact]
++    public void FixtureHasClamps_from_definition_parts()
++    {
++        var def = new JObject
++        {
++            ["parts"] = new JArray(
++                new JObject { ["partId"] = "base", ["tag"] = "BASE" },
++                new JObject { ["partId"] = "rebus-clamp-part", ["tag"] = "CLAMP" }),
++        };
++        Assert.True(FixtureClampHelper.FixtureHasClamps(def));
++        Assert.False(FixtureClampHelper.FixtureHasClamps(new JObject
++        {
++            ["parts"] = new JArray(new JObject { ["partId"] = "base", ["tag"] = "BASE" }),
++        }));
++    }
++
++    [Fact]
++    public void FixtureHasClamps_from_root_properties()
++    {
++        var props = new JObject { ["hasClamps"] = true, ["clampPartIds"] = new JArray("c1") };
++        Assert.True(FixtureClampHelper.FixtureHasClamps(definition: null, rootProperties: props));
++    }
++}
