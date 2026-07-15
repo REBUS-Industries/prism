@@ -5,6 +5,31 @@ Changes to the `prism-fixtures-service` polyrepo that pair with a monorepo
 the polyrepo and merge via the normal `/prism-merge prism-fixtures-service#N`
 flow so `fixtures-image` redeploys.
 
+## fixtures-orbit-clamp-tags.patch
+
+Stamp clamp identity on Orbit publish so connectors can filter:
+
+- Mesh / part collection: `isClamp: true` when `partTag === "CLAMP"`
+- Root + FixtureType: `hasClamps`, `clampPartIds`, `clampPartCount`
+- Docs: clamp filter next to mode filter
+
+Also in `docs/handoffs/FIXTURE_ORBIT_CLAMP_TAGS.md`. Companion connector patch:
+`docs/handoffs/orbit-connectors-fixture-clamp-import.patch`.
+
+### Apply
+
+```bash
+cd prism-fixtures-service
+git fetch origin main && git checkout main && git pull
+git checkout -b cursor/fixture-orbit-clamp-tags-dd18
+git apply /path/to/fixtures-orbit-clamp-tags.patch
+npm ci && npm run build
+node dist/orbit/glbParser.test.js && node dist/orbit/fixturePublish.test.js
+git push -u origin HEAD
+```
+
+Deploy **fixtures-image**, then republish fixtures that have clamps.
+
 ## fixtures-multi-clamp-ensure-slot.patch
 
 Pairs with monorepo **multi-clamp** (`cursor/fixture-multi-clamp-dd18`): N clamp
