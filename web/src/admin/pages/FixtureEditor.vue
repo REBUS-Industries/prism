@@ -890,7 +890,7 @@ async function save(): Promise<void> {
     applyIdentityToDefinition();
     applyOrbitPublishTemplate();
 
-    const res = await fixturesApi.update(props.id, {
+    await fixturesApi.update(props.id, {
 
       name: name.value.trim(),
 
@@ -910,9 +910,13 @@ async function save(): Promise<void> {
 
     });
 
-    fixture.value = res.fixture;
+    // Re-fetch after save so slot-dim heal + prepareDefinitionForServe match
+    // what Orbit publish reads (PUT returns the raw stored row only).
+    const fresh = await fixturesApi.get(props.id);
+    fixture.value = fresh.fixture;
 
     syncIdentityFromFixture();
+    syncOrbitPublishFields();
 
   } catch (err) {
 

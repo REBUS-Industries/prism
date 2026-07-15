@@ -10,3 +10,9 @@ export function isCustomReplacedModel(model: FixtureModel | null | undefined): b
 export function fixtureHasCustomMeshes(definition: FixtureDefinition | null | undefined): boolean {
   return (definition?.models ?? []).some((m) => isCustomReplacedModel(m));
 }
+
+/**
+ * Orbit publish stamps each mesh applicationId with the model mediaId so a
+ * Settings → Replace cannot be silently deduped back to the prior GDTF mesh.
+ * Preview uses media URLs directly — no applicationId involved.
+ */
