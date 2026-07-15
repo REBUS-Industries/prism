@@ -393,35 +393,16 @@ export function applyPartTransform(group: THREE.Object3D, part: FixturePart): vo
 }
 
 /**
- * Uniform median scale from declared GDTF L/W/H to mesh bbox size (metres).
- * Used for custom replaced previews so mm CAD exports land near nominal fixture size
- * without per-axis stretching. Returns null when dims or bbox are unusable.
- */
-function uniformMedianScaleForDims(dims: ModelDims, size: THREE.Vector3): number | null {
-  if (
-    dims.length == null || dims.width == null || dims.height == null
-    || size.x <= 1e-6 || size.y <= 1e-6 || size.z <= 1e-6
-  ) {
-    return null;
-  }
-  const sx = dims.length / size.x;
-  const sy = dims.height / size.y;
-  const sz = dims.width / size.z;
-  const ratios = [sx, sy, sz];
-  return [...ratios].sort((a, b) => a - b)[1]!;
-}
-
-/**
  * Wrap a Y-up glTF mesh like the builder's inner `Scene` group:
- * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H.
- *
- * Custom replaced uploads skip per-axis fit; when L/W/H exist a single uniform
- * median scale lands CAD exports near nominal size while preserving proportions.
+ * +90° X rotation, then per-axis scale so the mesh bbox matches GDTF L×W×H
+ * (metres). Applied to every model — including custom replaced uploads — so
+ * mm / cm / m CAD files all fit the same slot. Non-uniform scale is intentional:
+ * a uniform (median) scale leaves the mesh overflowing the GDTF bounds whenever
+ * the mesh aspect ratio differs from the slot (the green reference box).
  */
 function wrapModelMeshInternal(
   meshRoot: THREE.Object3D,
   dims: ModelDims,
-  oneToOne: boolean,
 ): THREE.Group {
   const wrapper = new THREE.Group();
   wrapper.name = 'Scene';
@@ -430,31 +411,17 @@ function wrapModelMeshInternal(
   const bbox = new THREE.Box3().setFromObject(meshRoot);
   const size = bbox.getSize(new THREE.Vector3());
 
-  if (oneToOne) {
-    const median = uniformMedianScaleForDims(dims, size);
-    if (median != null) {
-      wrapper.scale.setScalar(median);
-    }
-    wrapper.add(meshRoot);
-    return wrapper;
-  }
-
   if (
     dims.length != null && dims.width != null && dims.height != null
     && size.x > 1e-6 && size.y > 1e-6 && size.z > 1e-6
   ) {
-    const sx = dims.length / size.x;
-    const sy = dims.height / size.y;
-    const sz = dims.width / size.z;
-    const ratios = [sx, sy, sz];
-    const min = Math.min(...ratios);
-    const max = Math.max(...ratios);
-    if (min > 0 && max / min > 8) {
-      const median = [...ratios].sort((a, b) => a - b)[1]!;
-      wrapper.scale.setScalar(median);
-    } else {
-      wrapper.scale.set(sx, sy, sz);
-    }
+    // Same mapping as Orbit wrapScaleMatrix / GDTF models:
+    // x = length/bbox.x, y = height/bbox.y, z = width/bbox.z.
+    wrapper.scale.set(
+      dims.length / size.x,
+      dims.height / size.y,
+      dims.width / size.z,
+    );
   }
 
   wrapper.add(meshRoot);
@@ -469,17 +436,15 @@ function wrapModelMeshInternal(
  * mapping (verified on Rivale Profile Base): x = length/bbox.x,
  * y = height/bbox.y, z = width/bbox.z.
  *
- * Custom / replaced uploads skip per-axis dimension fit. When GDTF L/W/H exist,
- * a uniform median scale lands mm CAD exports near nominal fixture size (preview
- * only — Orbit publish still uses `oneToOne` authored vertices). +90° X glTF
- * Y-up → GDTF Z-up conversion always applies. Iso camera near/far follow bbox.
+ * Custom replaced uploads use the same per-axis fit as GDTF meshes so the
+ * preview matches the green GDTF reference box regardless of file units.
  */
 function wrapModelMesh(
   meshRoot: THREE.Object3D,
   dims: ModelDims,
-  model?: FixtureModel,
+  _model?: FixtureModel,
 ): THREE.Group {
-  return wrapModelMeshInternal(meshRoot, dims, isCustomReplacedModel(model));
+  return wrapModelMeshInternal(meshRoot, dims);
 }
 
 /** Load a fixture model GLB from a same-origin URL. */
@@ -495,17 +460,16 @@ export async function loadFixtureModelGlb(url: string): Promise<THREE.Object3D |
 }
 
 /**
- * Part-local bounding box for a model GLB after wrap (+90° X and optional L/W/H fit).
+ * Part-local bounding box for a model GLB after wrap (+90° X and L/W/H fit).
  * Does not include mesh-offset translation.
  */
 export function computeModelPartLocalBounds(
   meshRoot: THREE.Object3D,
   model: FixtureModel | undefined,
-  oneToOne?: boolean,
+  _oneToOne?: boolean,
 ): THREE.Box3 {
   const dims = modelDims(model);
-  const useOneToOne = oneToOne ?? isCustomReplacedModel(model);
-  const wrapped = wrapModelMeshInternal(meshRoot.clone(true), dims, useOneToOne);
+  const wrapped = wrapModelMeshInternal(meshRoot.clone(true), dims);
   wrapped.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(wrapped);
   disposeAssembly(wrapped);

@@ -374,8 +374,8 @@ function onModelChange(ev: Event): void {
     <fieldset v-if="linkedModel" class="field-group">
       <legend>Model dimensions <span class="unit">mm</span></legend>
       <p v-if="isCustomMesh" class="muted small dims-hint">
-        Size of the uploaded mesh, measured on import — the mesh renders at this size.
-        Edit to rescale it (uniform, keeps proportions).
+        Target size of the GDTF slot (metres shown as mm). The uploaded mesh is
+        scaled to fill this box on each axis — edit to resize the fitted mesh.
       </p>
       <ParamSlider
         label="Length"
