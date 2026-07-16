@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -200,10 +201,19 @@ class LeafRecord:
     world_transform: Tuple[float, ...]  # 16 floats, row-major
 
 
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
 def sanitise_group_name(name: Optional[str], fallback: str) -> str:
     """OBJ group names cannot contain whitespace; we also strip ``/`` so
     nested paths can be reconstructed losslessly when the importer splits
     on ``/``.
+
+    UUID-shaped names (common on Meshy / glTF meshes) are prefixed so
+    Rhino's FileObj importer does not treat them as locked layer Guids
+    (``ModelComponent.set_Id failed. The component is likely locked``).
     """
     if name is None:
         return fallback
@@ -215,7 +225,11 @@ def sanitise_group_name(name: Optional[str], fallback: str) -> str:
         .replace("\r", "")
         .replace("\n", "")
     )
-    return cleaned or fallback
+    if not cleaned:
+        return fallback
+    if _UUID_RE.match(cleaned):
+        return f"mesh_{cleaned}"
+    return cleaned
 
 
 def _node_meshes(node: object, scene_meshes: List[object]) -> List[Tuple[int, object]]:

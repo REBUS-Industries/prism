@@ -522,31 +522,15 @@ public sealed class RhinoFileOpener
                 //       IgnoreObjObjects | ObjObjectsAsLayers |
                 //       ObjObjectsAsGroups | ObjObjectsAsObjects)
                 //
-                // The two enums above are the Rhino 8 interactive Import OBJ
-                // dialog's "Group / Object" → "...As" radios. The default
-                // interactive choice is "Layers" for both, which is what
-                // produces one Rhino layer per `g <name>` (and `o <name>`)
-                // directive in the OBJ file. Without this, every imported
-                // OBJ collapses onto the active default layer and the
-                // PRISM layer-selection UI is useless.
-                var opts = new FileObjReadOptions(BuildSeed())
-                {
-                    UseObjGroupsAs = FileObjReadOptions.UseObjGsAs.ObjGroupsAsLayers,
-                    UseObjObjectsAs = FileObjReadOptions.UseObjOsAs.ObjObjectsAsLayers,
-                    // Leave coordinate frame untouched (Python pipeline did
-                    // its own swap); leave textures enabled so .mtl
-                    // resolution remains possible in a follow-up task; keep
-                    // group order and 32-bit-texture splitting at defaults.
-                    IgnoreTextures = false,
-                    MapYtoZ = false,
-                    DisplayColorFromObjMaterial = true,
-                    ReverseGroupOrder = false,
-                    MorphTargetOnly = false,
-                    Split32BitTextures = false,
-                };
-
-                LogObjOptions(opts, diag);
-                return Invoke("Rhino.FileIO.FileObj.Read", () => FileObj.Read(path, doc, opts));
+                // Prefer groups/objects → layers (interactive Rhino default)
+                // so the PRISM layer-selection UI stays useful. Assimp
+                // preconvert (GLB/glTF → zip) often emits `g <uuid>` lines
+                // from Meshy / glTF mesh names; Rhino then tries to lock
+                // layer Ids to those Guids and FileObj.Read throws
+                // InvalidOperationException ("ModelComponent.set_Id failed.
+                // The component is likely locked"). Retry with progressively
+                // safer mapping modes before giving up.
+                return TryReadObjWithFallbacks(doc, path, BuildSeed, Invoke, diag);
             }
             case ".fbx":
             {
@@ -629,6 +613,91 @@ public sealed class RhinoFileOpener
     }
 
     static int TryCount(Func<int> fn) { try { return fn(); } catch { return -1; } }
+
+    /// <summary>
+    /// Try FileObj.Read with the preferred layers mapping, then safer
+    /// fallbacks when Rhino rejects Guid-like group names
+    /// (<c>ModelComponent.set_Id failed</c> — common after assimp
+    /// preconvert of Meshy / glTF meshes).
+    /// </summary>
+    static bool TryReadObjWithFallbacks(
+        RhinoDoc doc,
+        string path,
+        Func<FileReadOptions> buildSeed,
+        Func<string, Func<bool>, bool> invoke,
+        Action<string>? diag)
+    {
+        // (label, groupsAs, objectsAs)
+        var attempts = new (string Label, FileObjReadOptions.UseObjGsAs Groups, FileObjReadOptions.UseObjOsAs Objects)[]
+        {
+            ("groups→layers, objects→layers",
+                FileObjReadOptions.UseObjGsAs.ObjGroupsAsLayers,
+                FileObjReadOptions.UseObjOsAs.ObjObjectsAsLayers),
+            ("groups→layers, ignore objects",
+                FileObjReadOptions.UseObjGsAs.ObjGroupsAsLayers,
+                FileObjReadOptions.UseObjOsAs.IgnoreObjObjects),
+            ("groups→groups, objects→objects",
+                FileObjReadOptions.UseObjGsAs.ObjGroupsAsGroups,
+                FileObjReadOptions.UseObjOsAs.ObjObjectsAsObjects),
+            ("ignore groups, objects→objects",
+                FileObjReadOptions.UseObjGsAs.IgnoreObjGroups,
+                FileObjReadOptions.UseObjOsAs.ObjObjectsAsObjects),
+        };
+
+        for (int i = 0; i < attempts.Length; i++)
+        {
+            var attempt = attempts[i];
+            // Fresh options each attempt — Rhino may mutate the seed.
+            var opts = new FileObjReadOptions(buildSeed())
+            {
+                UseObjGroupsAs = attempt.Groups,
+                UseObjObjectsAs = attempt.Objects,
+                IgnoreTextures = false,
+                MapYtoZ = false,
+                DisplayColorFromObjMaterial = true,
+                ReverseGroupOrder = false,
+                MorphTargetOnly = false,
+                Split32BitTextures = false,
+            };
+
+            diag?.Invoke($"[OBJ-IMPORT] FileObj.Read attempt {i + 1}/{attempts.Length}: {attempt.Label}");
+            LogObjOptions(opts, diag);
+            var ok = invoke(
+                $"Rhino.FileIO.FileObj.Read[{attempt.Label}]",
+                () => FileObj.Read(path, doc, opts));
+            if (ok)
+            {
+                if (i > 0)
+                {
+                    diag?.Invoke(
+                        $"[OBJ-IMPORT] FileObj.Read succeeded on fallback attempt {i + 1} ({attempt.Label}) " +
+                        "after earlier options failed (often Guid-like `g` names from assimp/Meshy GLB)");
+                }
+                return true;
+            }
+
+            // Clear partial state so the next attempt starts clean. A failed
+            // FileObj.Read can leave locked/half-created layers that make the
+            // next attempt fail the same way.
+            try
+            {
+                doc.Objects.Clear();
+                while (doc.Layers.Count > 1)
+                {
+                    try { doc.Layers.Delete(doc.Layers.Count - 1, true); }
+                    catch { break; }
+                }
+            }
+            catch (Exception clearErr)
+            {
+                diag?.Invoke(
+                    $"[OBJ-IMPORT] post-failure doc clear threw {clearErr.GetType().Name}: {clearErr.Message}");
+            }
+        }
+
+        diag?.Invoke("[OBJ-IMPORT] FileObj.Read failed all mapping fallbacks");
+        return false;
+    }
 
     /// <summary>
     /// Reflect over every public read/write property on
