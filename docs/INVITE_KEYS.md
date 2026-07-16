@@ -62,8 +62,8 @@ Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions
 
 Admins may grant **any** connector function, including `receive`, `use_library`,
 `use_infile`, `create_project`, and `list_projects`. Grant panel surfaces
-independently — or use `receive` alone (still unlocks Library / In File for
-back-compat) without reinstalling the connector.
+independently — Library / In File are **not** implied by `receive`. Collaborators
+can **Refresh panel** to pick up grant changes without signing out.
 
 `orbitBlanketAccess` is always `false` for invite-key sessions.
 
@@ -73,13 +73,15 @@ back-compat) without reinstalling the connector.
 |------------|--------------|
 | `canSend` | `Allows("send")` |
 | `canReceive` | `Allows("receive")` |
-| `canUseLibrary` | `Allows("use_library")` **or** `Allows("receive")` |
-| `canUseInFile` | `Allows("use_infile")` **or** `Allows("receive")` |
+| `canUseLibrary` | `Allows("use_library")` |
+| `canUseInFile` | `Allows("use_infile")` |
 | `canOpenOrbitLinks` | `authMethod != "invite_key"` |
 
 ## Admin API (admin cookie)
 
-- `POST /api/access/invite-keys` — create (plaintext key in response, once)
+- `POST /api/access/invite-keys` — create (plaintext in response; sealed for later reveal)
 - `GET /api/access/invite-keys` — list (no plaintext)
+- `GET /api/access/invite-keys/:id/reveal` — return sealed plaintext + redeem URL
+- `POST /api/access/invite-keys/:id/rotate` — issue a new plaintext
 - `PATCH /api/access/invite-keys/:id` — update label / projects / functions
 - `POST /api/access/invite-keys/:id/revoke` — revoke key + sessions

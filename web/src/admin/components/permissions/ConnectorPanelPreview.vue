@@ -16,13 +16,9 @@ const set = computed(() => new Set(props.allowedFunctions));
 
 const canSend = computed(() => set.value.has('send'));
 const canReceive = computed(() => set.value.has('receive'));
-/** Explicit grant or receive (back-compat with older keys). */
-const canUseLibrary = computed(
-  () => set.value.has('use_library') || canReceive.value,
-);
-const canUseInFile = computed(
-  () => set.value.has('use_infile') || canReceive.value,
-);
+/** Independent of receive — must be granted explicitly. */
+const canUseLibrary = computed(() => set.value.has('use_library'));
+const canUseInFile = computed(() => set.value.has('use_infile'));
 const isSendOnly = computed(() => canSend.value && !canReceive.value);
 
 const visibleButtons = computed(() => {
@@ -35,7 +31,8 @@ const visibleButtons = computed(() => {
 });
 
 const emptyHint = computed(() => {
-  if (canReceive.value) return 'Use + Send or + Receive to get started.';
+  if (canSend.value && canReceive.value) return 'Use + Send or + Receive to get started.';
+  if (canReceive.value) return 'Use + Receive to get started.';
   if (canSend.value) return 'Use + Send to upload models.';
   if (visibleButtons.value.length) return 'Surfaces unlocked by granted functions.';
   return 'No panel actions for this function set.';
