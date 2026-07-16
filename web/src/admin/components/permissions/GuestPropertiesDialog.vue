@@ -21,6 +21,11 @@ const FUNCTION_LABELS: Partial<Record<ConnectorFunction, string>> = {
   use_infile: 'use_infile (In File tab)',
   receive: 'receive (+ Receive cards)',
   send: 'send (+ Send cards)',
+  list_projects: 'list_projects (project picker)',
+  list_models: 'list_models (model list)',
+  list_versions: 'list_versions (version list)',
+  create_model: 'create_model (new model)',
+  create_version: 'create_version (upload)',
 };
 
 export interface GuestPropertiesModel {
@@ -245,8 +250,9 @@ async function copy(text: string) {
             </label>
           </div>
           <p class="muted small">
-            Default is the send-only (Light) preset. Grant <code>receive</code>, <code>use_library</code>, and
-            <code>use_infile</code> independently — Library / In File are not implied by receive.
+            Default is the send-only (Light) preset, including <code>list_projects</code>.
+            Grant <code>receive</code>, <code>use_library</code>, and <code>use_infile</code> independently —
+            Library / In File are not implied by receive. Project creation is never available from the connector.
           </p>
         </div>
 
