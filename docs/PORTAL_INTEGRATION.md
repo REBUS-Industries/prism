@@ -724,6 +724,7 @@ Plan around them; do not file bugs.
 ## See also
 
 -   Library APIs (fixtures, models, materials): [`/docs/library-integration`](https://prism.rebus.industries/docs/library-integration)
+-   Meshy generate → Model Library (connectors & portals): [`/docs/library-integration#generate-with-meshy-connectors--portals`](https://prism.rebus.industries/docs/library-integration#generate-with-meshy-connectors--portals)
 -   Multi-viewer & session control: [`API_MULTIVIEW_SESSION_CONTROL.md`](API_MULTIVIEW_SESSION_CONTROL.md)
     — several browsers on one session, share links, view/control tiers, the
     single-controller lock, the signalling + control WebSocket channels, and
