@@ -19,10 +19,14 @@ const meta = computed(() => {
   if (props.data.guest) {
     return { icon: 'person_outline', accent: '#0d9488', kind: 'Guest' };
   }
+  if (props.data.workspaceUser) {
+    return { icon: 'corporate_fare', accent: '#6366f1', kind: 'Workspace' };
+  }
   return NODE_META[props.data.policyType] ?? NODE_META.role;
 });
 const accent = computed(() => {
   if (props.data.guestMeta?.revoked) return '#ef4444';
+  if (props.data.workspaceMeta?.status === 'suspended') return '#ef4444';
   if (props.data.stale) return '#ef4444';
   return meta.value.accent;
 });
@@ -32,11 +36,18 @@ const subtitle = computed(() => {
     const dirty = props.data.guestMeta?.dirty ? ' · unsaved' : '';
     return `${t}${dirty}`;
   }
+  if (props.data.workspaceUser) {
+    const email = props.data.workspaceMeta?.email ?? props.data.refValue ?? '';
+    const n = props.data.workspaceMeta?.projectCount ?? 0;
+    return n > 0 ? `${email} · ${n} project${n === 1 ? '' : 's'}` : email;
+  }
   return props.data.refValue?.trim() || meta.value.kind;
 });
 const kindLabel = computed(() => {
   if (props.data.guestMeta?.revoked) return 'Revoked';
   if (props.data.guestMeta?.dirty) return 'Draft';
+  if (props.data.workspaceMeta?.isPrismAdmin) return 'Admin';
+  if (props.data.workspaceMeta?.status === 'suspended') return 'Suspended';
   return meta.value.kind;
 });
 </script>
@@ -45,8 +56,9 @@ const kindLabel = computed(() => {
   <div
     class="policy-node node-drag-handle"
     :class="{
-      'policy-node--stale': data.stale || data.guestMeta?.revoked,
+      'policy-node--stale': data.stale || data.guestMeta?.revoked || data.workspaceMeta?.status === 'suspended',
       'policy-node--guest': data.guest,
+      'policy-node--workspace': data.workspaceUser,
     }"
     :style="{ '--accent': accent }"
   >

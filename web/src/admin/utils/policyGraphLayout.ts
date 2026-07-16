@@ -19,6 +19,17 @@ export interface GuestInviteNodeMeta {
   selectedModelIds?: string[];
 }
 
+/** Google Workspace / provisioned-user metadata on the Permissions graph. */
+export interface WorkspaceUserNodeMeta {
+  provisionedUserId: string;
+  email: string;
+  status: string;
+  source: 'manual' | 'workspace_sync';
+  isPrismAdmin: boolean;
+  /** Project edges currently stored on the provisioned user in Prism. */
+  projectCount: number;
+}
+
 export interface PolicyNodeData {
   policyType: PolicyNodeType;
   label: string;
@@ -32,6 +43,9 @@ export interface PolicyNodeData {
   /** True when this user node is a Connector Light guest invite key. */
   guest?: boolean;
   guestMeta?: GuestInviteNodeMeta;
+  /** True when this user node is a Google Workspace / provisioned user. */
+  workspaceUser?: boolean;
+  workspaceMeta?: WorkspaceUserNodeMeta;
 }
 
 export interface PolicyFlowNode {

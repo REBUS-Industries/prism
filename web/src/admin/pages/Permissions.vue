@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
- * Permissions — Connector Light guest access graph.
+ * Permissions — Connector Light guest access + Workspace users graph.
  *
- * Guests (invite keys) on the left, ORBIT projects on the right.
+ * Columns: Workspace users | Guests (invite keys) | ORBIT projects.
  * Draw edges guest → project to grant access. Right-click a guest for
  * functions / target / redemptions / expiry and a project checkbox tree.
+ * Workspace users are read-only here (edit project access on Users).
  *
  * Tool access (portal roles → PRISM tools) lives at /permissions/tools.
  */
@@ -23,15 +24,23 @@ import {
   accessApi,
   orbitApi,
   settingsApi,
+  workspaceApi,
   type ApiError,
   type ConnectorFunction,
   type InviteKeyRecord,
   type OrbitProject,
+  type ProvisionedUser,
 } from '../../shared/api';
-import type { GuestInviteNodeMeta, PolicyFlowEdge, PolicyFlowNode } from '../utils/policyGraphLayout';
+import type {
+  GuestInviteNodeMeta,
+  PolicyFlowEdge,
+  PolicyFlowNode,
+  WorkspaceUserNodeMeta,
+} from '../utils/policyGraphLayout';
 
-const GUEST_COLUMN_X = 80;
-const PROJECT_COLUMN_X = 520;
+const WORKSPACE_COLUMN_X = 80;
+const GUEST_COLUMN_X = 340;
+const PROJECT_COLUMN_X = 600;
 const ROW_Y = 72;
 const START_Y = 80;
 
@@ -46,6 +55,9 @@ const accessStatus = ref<string | null>(null);
 
 const orbitTarget = ref<'prod' | 'dev'>('prod');
 const orbitProjects = ref<OrbitProject[]>([]);
+const workspaceUsers = ref<ProvisionedUser[]>([]);
+const workspaceLinked = ref(false);
+const workspaceLoadError = ref<string | null>(null);
 const nodes = ref<PolicyFlowNode[]>([]);
 const edges = ref<PolicyFlowEdge[]>([]);
 const selectedNodeId = ref<string | null>(null);
@@ -62,8 +74,9 @@ const revealError = ref<string | null>(null);
 const needsRotate = ref(false);
 
 const columnLabels = [
-  { type: 'user' as const, label: 'Guests' },
-  { type: 'project' as const, label: 'Projects' },
+  { type: 'user' as const, label: 'Workspace', key: 'workspace' },
+  { type: 'user' as const, label: 'Guests', key: 'guests' },
+  { type: 'project' as const, label: 'Projects', key: 'projects' },
 ];
 
 const selectedNode = computed(() => {
@@ -76,6 +89,11 @@ const selectedNode = computed(() => {
 });
 
 const selectedIsGuest = computed(() => !!selectedNode.value?.data?.guest);
+const selectedIsWorkspace = computed(() => !!selectedNode.value?.data?.workspaceUser);
+
+const workspaceUsersWithProjects = computed(
+  () => workspaceUsers.value.filter((u) => u.projectPermissions.length > 0).length,
+);
 
 const selectedGuestFunctions = computed<ConnectorFunction[]>(() => {
   const fns = selectedNode.value?.data?.guestMeta?.allowedFunctions;
@@ -213,6 +231,10 @@ function guestNodeId(keyId: string): string {
   return `guest-${keyId}`;
 }
 
+function workspaceNodeId(userId: string): string {
+  return `workspace-${userId}`;
+}
+
 function projectIdsForGuest(nodeId: string): string[] {
   const ids: string[] = [];
   for (const e of edges.value) {
@@ -232,11 +254,7 @@ function buildProjectNames(ids: string[]): Record<string, string> {
   return names;
 }
 
-function layoutGuestY(index: number): number {
-  return START_Y + index * ROW_Y;
-}
-
-function layoutProjectY(index: number): number {
+function layoutRowY(index: number): number {
   return START_Y + index * ROW_Y;
 }
 
@@ -255,7 +273,48 @@ function guestMetaFromKey(key: InviteKeyRecord): GuestInviteNodeMeta {
   };
 }
 
-function rebuildGraph(keys: InviteKeyRecord[], projects: OrbitProject[], preservePositions = false) {
+function workspaceMetaFromUser(user: ProvisionedUser): WorkspaceUserNodeMeta {
+  return {
+    provisionedUserId: user.id,
+    email: user.email,
+    status: user.status,
+    source: user.source,
+    isPrismAdmin: user.isPrismAdmin,
+    projectCount: user.projectPermissions.length,
+  };
+}
+
+function ensureProjectNode(
+  nextNodes: PolicyFlowNode[],
+  posById: Map<string, { x: number; y: number }> | null,
+  projectId: string,
+  label?: string | null,
+): void {
+  const id = projectNodeId(projectId);
+  if (nextNodes.some((n) => n.id === id)) return;
+  const p = orbitProjects.value.find((x) => x.id === projectId);
+  nextNodes.push({
+    id,
+    type: 'policy',
+    position: posById?.get(id) ?? {
+      x: PROJECT_COLUMN_X,
+      y: layoutRowY(nextNodes.filter((n) => n.data.policyType === 'project').length),
+    },
+    data: {
+      policyType: 'project',
+      label: label?.trim() || p?.name?.trim() || projectId,
+      refValue: projectId,
+      noSource: true,
+    },
+  });
+}
+
+function rebuildGraph(
+  keys: InviteKeyRecord[],
+  projects: OrbitProject[],
+  users: ProvisionedUser[],
+  preservePositions = false,
+) {
   const posById = preservePositions
     ? new Map(nodes.value.map((n) => [n.id, { ...n.position }]))
     : null;
@@ -263,13 +322,38 @@ function rebuildGraph(keys: InviteKeyRecord[], projects: OrbitProject[], preserv
   const nextNodes: PolicyFlowNode[] = [];
   const nextEdges: PolicyFlowEdge[] = [];
 
+  // Workspace users (Google directory / provisioned) — left column, read-only.
+  const activeUsers = users
+    .slice()
+    .sort((a, b) => {
+      const an = (a.displayName || a.email).toLowerCase();
+      const bn = (b.displayName || b.email).toLowerCase();
+      return an.localeCompare(bn);
+    });
+  activeUsers.forEach((user, i) => {
+    const id = workspaceNodeId(user.id);
+    nextNodes.push({
+      id,
+      type: 'policy',
+      position: posById?.get(id) ?? { x: WORKSPACE_COLUMN_X, y: layoutRowY(i) },
+      data: {
+        policyType: 'user',
+        label: user.displayName?.trim() || user.email,
+        refValue: user.email,
+        workspaceUser: true,
+        noTarget: true,
+        workspaceMeta: workspaceMetaFromUser(user),
+      },
+    });
+  });
+
   const activeKeys = keys.filter((k) => !k.revokedAt);
   activeKeys.forEach((key, i) => {
     const id = guestNodeId(key.id);
     nextNodes.push({
       id,
       type: 'policy',
-      position: posById?.get(id) ?? { x: GUEST_COLUMN_X, y: layoutGuestY(i) },
+      position: posById?.get(id) ?? { x: GUEST_COLUMN_X, y: layoutRowY(i) },
       data: {
         policyType: 'user',
         label: key.label?.trim() || 'Guest',
@@ -287,7 +371,10 @@ function rebuildGraph(keys: InviteKeyRecord[], projects: OrbitProject[], preserv
     if (nextNodes.some((x) => x.id === n.id)) continue;
     nextNodes.push({
       ...n,
-      position: posById?.get(n.id) ?? n.position,
+      position: posById?.get(n.id) ?? {
+        ...n.position,
+        x: GUEST_COLUMN_X,
+      },
     });
   }
 
@@ -296,7 +383,7 @@ function rebuildGraph(keys: InviteKeyRecord[], projects: OrbitProject[], preserv
     nextNodes.push({
       id,
       type: 'policy',
-      position: posById?.get(id) ?? { x: PROJECT_COLUMN_X, y: layoutProjectY(i) },
+      position: posById?.get(id) ?? { x: PROJECT_COLUMN_X, y: layoutRowY(i) },
       data: {
         policyType: 'project',
         label: p.name?.trim() || p.id,
@@ -306,25 +393,15 @@ function rebuildGraph(keys: InviteKeyRecord[], projects: OrbitProject[], preserv
     });
   });
 
-  // Ensure projects referenced by keys exist even if missing from the ORBIT list.
+  // Ensure projects referenced by guests / workspace users exist even if missing from ORBIT list.
   for (const key of activeKeys) {
     for (const proj of key.projects) {
-      const id = projectNodeId(proj.orbitProjectId);
-      if (nextNodes.some((n) => n.id === id)) continue;
-      nextNodes.push({
-        id,
-        type: 'policy',
-        position: posById?.get(id) ?? {
-          x: PROJECT_COLUMN_X,
-          y: layoutProjectY(nextNodes.filter((n) => n.data.policyType === 'project').length),
-        },
-        data: {
-          policyType: 'project',
-          label: proj.projectName?.trim() || proj.orbitProjectId,
-          refValue: proj.orbitProjectId,
-          noSource: true,
-        },
-      });
+      ensureProjectNode(nextNodes, posById, proj.orbitProjectId, proj.projectName);
+    }
+  }
+  for (const user of activeUsers) {
+    for (const proj of user.projectPermissions) {
+      ensureProjectNode(nextNodes, posById, proj.orbitProjectId, proj.projectName);
     }
   }
 
@@ -338,6 +415,21 @@ function rebuildGraph(keys: InviteKeyRecord[], projects: OrbitProject[], preserv
         target,
         markerEnd: MarkerType.ArrowClosed,
         animated: true,
+      });
+    }
+  }
+
+  // Workspace → project edges from Prism-stored projectPermissions (not live portal).
+  for (const user of activeUsers) {
+    const source = workspaceNodeId(user.id);
+    for (const proj of user.projectPermissions) {
+      const target = projectNodeId(proj.orbitProjectId);
+      nextEdges.push({
+        id: `e-${source}-${target}`,
+        source,
+        target,
+        markerEnd: MarkerType.ArrowClosed,
+        animated: false,
       });
     }
   }
@@ -364,13 +456,26 @@ async function loadOrbitProjects() {
   }
 }
 
+async function loadWorkspaceUsers() {
+  workspaceLoadError.value = null;
+  try {
+    const data = await workspaceApi.get();
+    workspaceLinked.value = !!data.workspace && data.workspace.status !== 'disconnected';
+    workspaceUsers.value = data.users ?? [];
+  } catch (err) {
+    workspaceUsers.value = [];
+    workspaceLinked.value = false;
+    workspaceLoadError.value = (err as ApiError).message ?? 'Failed to load workspace users';
+  }
+}
+
 async function refresh(preservePositions = false) {
   loading.value = true;
   error.value = null;
   try {
-    await loadOrbitProjects();
+    await Promise.all([loadOrbitProjects(), loadWorkspaceUsers()]);
     const { keys } = await accessApi.listInviteKeys();
-    rebuildGraph(keys, orbitProjects.value, preservePositions);
+    rebuildGraph(keys, orbitProjects.value, workspaceUsers.value, preservePositions);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'Failed to load guest access';
     if ((err as ApiError).status === 404) {
@@ -403,7 +508,7 @@ async function onTargetChange() {
   await loadOrbitProjects();
   try {
     const { keys } = await accessApi.listInviteKeys();
-    rebuildGraph(keys, orbitProjects.value, true);
+    rebuildGraph(keys, orbitProjects.value, workspaceUsers.value, true);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'Failed to reload projects';
   }
@@ -434,7 +539,7 @@ function addGuest() {
     {
       id: draftId,
       type: 'policy',
-      position: { x: GUEST_COLUMN_X, y: layoutGuestY(guestCount) },
+      position: { x: GUEST_COLUMN_X, y: layoutRowY(guestCount) },
       data: {
         policyType: 'user',
         label: 'New guest',
@@ -476,7 +581,7 @@ function syncEdgesToProjects(guestId: string, projectIds: string[]) {
           type: 'policy',
           position: {
             x: PROJECT_COLUMN_X,
-            y: layoutProjectY(nodes.value.filter((n) => n.data.policyType === 'project').length),
+            y: layoutRowY(nodes.value.filter((n) => n.data.policyType === 'project').length),
           },
           data: {
             policyType: 'project',
@@ -503,8 +608,12 @@ function onConnect(conn: Connection) {
   const target = conn.target!;
   const src = nodes.value.find((n) => n.id === source);
   const tgt = nodes.value.find((n) => n.id === target);
+  if (src?.data.workspaceUser) {
+    error.value = 'Workspace project access is edited on Users — not by drawing edges here.';
+    return;
+  }
   if (!src?.data.guest || tgt?.data.policyType !== 'project') {
-    error.value = 'Connect a guest to a project (left → right).';
+    error.value = 'Connect a guest to a project (Guests → Projects).';
     return;
   }
   if (src.data.guestMeta?.revoked) {
@@ -532,8 +641,13 @@ function onConnect(conn: Connection) {
 
 function onEdgeDelete(edgeId: string) {
   const edge = edges.value.find((e) => e.id === edgeId);
-  edges.value = edges.value.filter((e) => e.id !== edgeId);
   if (!edge) return;
+  const src = nodes.value.find((n) => n.id === edge.source);
+  if (src?.data.workspaceUser) {
+    error.value = 'Workspace project edges are read-only. Edit access on Users.';
+    return;
+  }
+  edges.value = edges.value.filter((e) => e.id !== edgeId);
   for (const n of nodes.value) {
     if (n.id !== edge.source || !n.data.guestMeta) continue;
     n.data = {
@@ -731,8 +845,8 @@ onMounted(async () => {
       <div>
         <h1>Permissions</h1>
         <p class="muted">
-          Guest access for Connector Light — add guests, draw lines to ORBIT projects, right-click a guest for properties.
-          Portal role → PRISM tool grants live under
+          Workspace users (Google directory) and Connector Light guests → ORBIT projects.
+          Right-click a guest for invite properties. Portal role → PRISM tool grants live under
           <RouterLink :to="{ name: 'tool-access' }">Tool access</RouterLink>.
         </p>
       </div>
@@ -755,6 +869,35 @@ onMounted(async () => {
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="status" class="ok">{{ status }}</p>
+
+    <section class="sync-note">
+      <Icon name="info" :size="16" />
+      <div>
+        <strong>Portal project memberships are not bulk-synced into Prism yet.</strong>
+        <p class="muted">
+          Workspace nodes come from
+          <RouterLink :to="{ name: 'users' }">Users</RouterLink>
+          (Google directory sync). Edges shown are only Prism-stored
+          <code>projectPermissions</code>
+          (manual assignments on Users). Live portal
+          <code>GET /portal/users/:id/project-permissions</code>
+          is fetched at connector login only — there is no admin API yet to pull every user’s
+          portal project list into this graph.
+          <template v-if="workspaceLinked">
+            {{ workspaceUsers.length }} workspace user{{ workspaceUsers.length === 1 ? '' : 's' }} loaded;
+            {{ workspaceUsersWithProjects }} with Prism project edges.
+          </template>
+          <template v-else-if="workspaceLoadError">
+            Workspace load failed: {{ workspaceLoadError }}
+          </template>
+          <template v-else>
+            Link a Google Workspace on
+            <RouterLink :to="{ name: 'users' }">Users</RouterLink>
+            and sync the directory to populate the left column.
+          </template>
+        </p>
+      </div>
+    </section>
 
     <section class="access-mode">
       <div class="access-head">
@@ -779,14 +922,14 @@ onMounted(async () => {
       <p v-if="accessStatus" class="ok">{{ accessStatus }}</p>
     </section>
 
-    <div v-if="loading" class="muted">Loading guest access…</div>
+    <div v-if="loading" class="muted">Loading access graph…</div>
 
     <PolicyGraphBoard
       v-else
       v-model:nodes="nodes"
       v-model:edges="edges"
       v-model:selected-node-id="selectedNodeId"
-      legend-title="Guest access"
+      legend-title="Access graph"
       :column-labels="columnLabels"
       @connect="onConnect"
       @node-contextmenu="onNodeContextMenu"
@@ -794,8 +937,23 @@ onMounted(async () => {
     >
       <template #inspector>
         <aside class="side-help">
+          <div v-if="selectedIsWorkspace" class="guest-hint">
+            <h3>{{ selectedNode?.data?.label }}</h3>
+            <p class="muted">
+              Google Workspace / provisioned user
+              <code>{{ selectedNode?.data?.workspaceMeta?.email }}</code>.
+              Project edges here reflect Prism-stored assignments only — not a live portal membership pull.
+              Edit project access on
+              <RouterLink :to="{ name: 'users' }">Users</RouterLink>.
+            </p>
+            <p class="muted small">
+              Status: {{ selectedNode?.data?.workspaceMeta?.status }}
+              · source: {{ selectedNode?.data?.workspaceMeta?.source }}
+              · projects: {{ selectedNode?.data?.workspaceMeta?.projectCount ?? 0 }}
+            </p>
+          </div>
           <PolicyInspector
-            v-if="selectedNode && !selectedIsGuest"
+            v-else-if="selectedNode && !selectedIsGuest"
             :node="selectedNode"
             readonly
           />
@@ -892,6 +1050,19 @@ onMounted(async () => {
 .target-pick { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .error { color: var(--danger, #ef4444); margin: 0; }
 .ok { color: var(--success, #16a34a); font-size: 13px; margin: 0; }
+.sync-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid color-mix(in srgb, #f59e0b 45%, var(--border, #333));
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  font-size: 13px;
+}
+.sync-note strong { display: block; margin-bottom: 4px; }
+.sync-note p { margin: 0; }
+.sync-note code { font-size: 12px; }
 .access-mode { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: var(--surface, transparent); }
 .access-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .access-head h2 { margin: 0 0 2px; font-size: 15px; }

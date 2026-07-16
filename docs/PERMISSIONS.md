@@ -26,7 +26,14 @@ Use `orbit-cli auth login --server <prod|dev>` for full token capabilities (auto
 
 ## Admin login
 
-**Admin â†’ Permissions** (`/admin/#/permissions`) â€” guest access graph for collaborator invite keys (guest nodes â†’ ORBIT projects). Right-click a guest for functions (any connector function; Light/send-only is the default), target, redemptions, model access, and a project checkbox tree. **Connector edition = manifest ACL**, not a separate Lite binary.
+**Admin → Permissions** (`/admin/#/permissions`) — access graph with three columns:
+**Workspace users** (Google directory via Users sync), **Guests** (invite keys created in
+this editor), and **ORBIT projects**. Guest → project edges are editable (right-click a
+guest for functions, target, redemptions, model access, project tree). Workspace → project
+edges show Prism-stored `projectPermissions` only — **portal project memberships are not
+bulk-synced yet** (portal `GET /portal/users/:id/project-permissions` is used at connector
+login; there is no admin feed of every user’s portal projects). **Connector edition =
+manifest ACL**, not a separate Lite binary.
 
 **Admin â†’ Tool access** (`/admin/#/permissions/tools`) â€” read-only portal roles â†’ PRISM admin tools. Linked from the sidebar under Permissions.
 
