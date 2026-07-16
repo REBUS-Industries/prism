@@ -8,7 +8,7 @@
  *
  * Tool access (portal roles → PRISM tools) lives at /permissions/tools.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { MarkerType, type Connection } from '@vue-flow/core';
 import { RouterLink } from 'vue-router';
 import Icon from '../../shared/Icon.vue';
@@ -55,6 +55,11 @@ const dialogModel = ref<GuestPropertiesModel | null>(null);
 const dialogGuestNodeId = ref<string | null>(null);
 const mintedKey = ref<string | null>(null);
 const mintedRedeemUrl = ref<string | null>(null);
+const revealingKey = ref(false);
+const revealedKey = ref<string | null>(null);
+const revealedRedeemUrl = ref<string | null>(null);
+const revealError = ref<string | null>(null);
+const needsRotate = ref(false);
 
 const columnLabels = [
   { type: 'user' as const, label: 'Guests' },
@@ -76,6 +81,129 @@ const selectedGuestFunctions = computed<ConnectorFunction[]>(() => {
   const fns = selectedNode.value?.data?.guestMeta?.allowedFunctions;
   return Array.isArray(fns) ? [...fns] : [];
 });
+
+const selectedInviteKeyId = computed(
+  () => selectedNode.value?.data?.guestMeta?.inviteKeyId ?? null,
+);
+
+watch(selectedNodeId, () => {
+  clearRevealState();
+});
+
+function clearRevealState() {
+  revealedKey.value = null;
+  revealedRedeemUrl.value = null;
+  revealError.value = null;
+  needsRotate.value = false;
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    status.value = 'Copied to clipboard.';
+  } catch {
+    error.value = 'Could not copy to clipboard.';
+  }
+}
+
+function cachePlaintextOnGuest(inviteKeyId: string, key: string, redeemUrl: string) {
+  const nodeId = guestNodeId(inviteKeyId);
+  nodes.value = nodes.value.map((n) => {
+    if (n.id !== nodeId || !n.data.guestMeta) return n;
+    return {
+      ...n,
+      data: {
+        ...n.data,
+        guestMeta: {
+          ...n.data.guestMeta,
+          plaintextKey: key,
+          redeemUrl,
+        },
+      },
+    };
+  });
+  if (dialogModel.value?.meta.inviteKeyId === inviteKeyId) {
+    dialogModel.value = {
+      ...dialogModel.value,
+      meta: { ...dialogModel.value.meta, plaintextKey: key, redeemUrl },
+    };
+  }
+}
+
+function activeInviteKeyId(): string | null {
+  return dialogModel.value?.meta.inviteKeyId
+    ?? selectedInviteKeyId.value
+    ?? null;
+}
+
+function guestMetaForInviteId(id: string): GuestInviteNodeMeta | null {
+  const node = nodes.value.find((n) => n.id === guestNodeId(id));
+  return node?.data.guestMeta ?? null;
+}
+
+async function revealSelectedInviteKey() {
+  const id = activeInviteKeyId();
+  if (!id) return;
+  revealingKey.value = true;
+  revealError.value = null;
+  needsRotate.value = false;
+  error.value = null;
+  try {
+    const meta = guestMetaForInviteId(id);
+    const cached = meta?.plaintextKey;
+    const cachedUrl = meta?.redeemUrl;
+    if (cached) {
+      revealedKey.value = cached;
+      revealedRedeemUrl.value = cachedUrl ?? null;
+      mintedKey.value = cached;
+      mintedRedeemUrl.value = cachedUrl ?? null;
+      return;
+    }
+    const revealed = await accessApi.revealInviteKey(id);
+    revealedKey.value = revealed.key;
+    revealedRedeemUrl.value = revealed.redeemUrl;
+    mintedKey.value = revealed.key;
+    mintedRedeemUrl.value = revealed.redeemUrl;
+    cachePlaintextOnGuest(id, revealed.key, revealed.redeemUrl);
+    status.value = 'Invite key revealed.';
+  } catch (err) {
+    const msg = (err as ApiError).message ?? 'Failed to reveal invite key';
+    const statusCode = (err as ApiError).status;
+    if (statusCode === 409 || /not recoverable|rotate/i.test(msg)) {
+      needsRotate.value = true;
+      revealError.value = msg;
+      status.value = 'This key was created before reveal storage — rotate to issue a new plaintext.';
+    } else {
+      error.value = msg;
+      revealError.value = msg;
+    }
+  } finally {
+    revealingKey.value = false;
+  }
+}
+
+async function rotateSelectedInviteKey() {
+  const id = activeInviteKeyId();
+  if (!id) return;
+  if (!window.confirm('Rotate this invite key? The old key string will stop working.')) return;
+  revealingKey.value = true;
+  revealError.value = null;
+  error.value = null;
+  try {
+    const rotated = await accessApi.rotateInviteKey(id);
+    revealedKey.value = rotated.key;
+    revealedRedeemUrl.value = rotated.redeemUrl;
+    mintedKey.value = rotated.key;
+    mintedRedeemUrl.value = rotated.redeemUrl;
+    needsRotate.value = false;
+    cachePlaintextOnGuest(id, rotated.key, rotated.redeemUrl);
+    status.value = 'Invite key rotated — copy the new key.';
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'Failed to rotate invite key';
+  } finally {
+    revealingKey.value = false;
+  }
+}
 
 function projectNodeId(projectId: string): string {
   return `project-${projectId}`;
@@ -290,8 +418,8 @@ function openGuestDialog(nodeId: string) {
     projectIds: projectIdsForGuest(nodeId),
     meta: { ...node.data.guestMeta },
   };
-  mintedKey.value = node.data.guestMeta.plaintextKey ?? null;
-  mintedRedeemUrl.value = node.data.guestMeta.redeemUrl ?? null;
+  mintedKey.value = node.data.guestMeta.plaintextKey ?? revealedKey.value;
+  mintedRedeemUrl.value = node.data.guestMeta.redeemUrl ?? revealedRedeemUrl.value;
   dialogOpen.value = true;
 }
 
@@ -500,7 +628,7 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
         projectIds: model.projectIds,
         meta: createdMeta,
       };
-      status.value = 'Guest key created — copy the plaintext key now.';
+      status.value = 'Guest key created — copy the invite key (also available later via Show key).';
     } else {
       try {
         await accessApi.updateInviteKey(existingId, {
@@ -681,6 +809,43 @@ onMounted(async () => {
               compact
               :allowed-functions="selectedGuestFunctions"
             />
+            <div v-if="selectedInviteKeyId" class="key-box">
+              <div class="key-box__head">
+                <span class="field-label">Invite key</span>
+                <button
+                  type="button"
+                  class="small"
+                  :disabled="revealingKey"
+                  @click="revealSelectedInviteKey"
+                >
+                  {{ revealingKey ? 'Loading…' : revealedKey ? 'Refresh' : 'Show key' }}
+                </button>
+              </div>
+              <p v-if="revealError" class="muted small reveal-err">{{ revealError }}</p>
+              <div v-if="revealedKey" class="key-box__body">
+                <pre>{{ revealedKey }}</pre>
+                <div class="key-actions">
+                  <button type="button" class="small" @click="copyText(revealedKey)">Copy key</button>
+                  <button
+                    v-if="revealedRedeemUrl"
+                    type="button"
+                    class="small"
+                    @click="copyText(revealedRedeemUrl)"
+                  >
+                    Copy URL
+                  </button>
+                </div>
+              </div>
+              <button
+                v-if="needsRotate || revealedKey"
+                type="button"
+                class="small rotate-btn"
+                :disabled="revealingKey"
+                @click="rotateSelectedInviteKey"
+              >
+                {{ needsRotate ? 'Rotate & show new key' : 'Rotate key' }}
+              </button>
+            </div>
             <div class="btn-col">
               <button type="button" class="primary" @click="openGuestDialog(selectedNodeId!)">
                 <Icon name="tune" :size="16" /> Properties
@@ -709,9 +874,13 @@ onMounted(async () => {
       :saving="saving"
       :minted-key="mintedKey"
       :minted-redeem-url="mintedRedeemUrl"
+      :revealing="revealingKey"
       @close="closeDialog"
       @save="saveGuestFromDialog"
       @revoke="revokeGuestFromDialog"
+      @reveal-key="revealSelectedInviteKey"
+      @rotate-key="rotateSelectedInviteKey"
+      @copy-key="copyText"
     />
   </div>
 </template>
@@ -730,9 +899,10 @@ onMounted(async () => {
 .switch-row { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .hint { margin: 8px 0 0; font-size: 13px; }
 .side-help {
-  flex: 0 0 300px;
-  width: 300px;
+  width: 100%;
+  height: 100%;
   align-self: stretch;
+  min-height: 0;
 }
 .side-help :deep(.policy-inspector) {
   width: 100%;
@@ -749,6 +919,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: auto;
 }
 .guest-hint.empty {
   align-items: center;
@@ -758,6 +929,41 @@ onMounted(async () => {
 }
 .guest-hint h3 { margin: 0; font-size: 15px; }
 .guest-hint .muted { margin: 0; font-size: 13px; }
+.field-label { font-size: 12px; font-weight: 700; }
+.key-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg, #fff) 70%, transparent);
+}
+.key-box__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.key-box__body pre {
+  margin: 0;
+  font-size: 11px;
+  word-break: break-all;
+  white-space: pre-wrap;
+  max-height: 72px;
+  overflow: auto;
+}
+.key-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.reveal-err { color: var(--danger, #ef4444); }
+.rotate-btn { align-self: flex-start; }
 .btn-col { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
 .danger-btn { color: var(--danger, #ef4444); }
+button.small {
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--color-border, var(--border));
+  background: transparent;
+}
 </style>

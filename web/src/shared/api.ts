@@ -2719,9 +2719,16 @@ export interface InviteKeyRecord {
   createdAt: string;
   revokedAt?: string | null;
   lastRedeemedAt?: string | null;
-  /** Present only on create — plaintext key shown once. */
+  /** Plaintext key — present on create and on GET …/reveal (admin). */
   key?: string;
   redeemUrl?: string;
+}
+
+export interface RevealInviteKeyResponse {
+  id: string;
+  key: string;
+  redeemUrl: string;
+  recoverable: boolean;
 }
 
 export interface CreateInviteKeyResponse {
@@ -2764,6 +2771,10 @@ export const accessApi = {
     ),
   revokeInviteKey: (id: string) =>
     api.post<{ key: InviteKeyRecord }>(`/api/access/invite-keys/${encodeURIComponent(id)}/revoke`, {}),
+  revealInviteKey: (id: string) =>
+    api.get<RevealInviteKeyResponse>(`/api/access/invite-keys/${encodeURIComponent(id)}/reveal`),
+  rotateInviteKey: (id: string) =>
+    api.post<RevealInviteKeyResponse>(`/api/access/invite-keys/${encodeURIComponent(id)}/rotate`, {}),
   demoInviteKey: () =>
     api.get<{
       id: string;

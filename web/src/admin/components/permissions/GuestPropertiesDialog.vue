@@ -34,9 +34,10 @@ const props = defineProps<{
   model: GuestPropertiesModel | null;
   projects: OrbitProject[];
   saving?: boolean;
-  /** Plaintext key banner (shown after mint). */
+  /** Plaintext key banner (shown after mint / reveal). */
   mintedKey?: string | null;
   mintedRedeemUrl?: string | null;
+  revealing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -44,6 +45,8 @@ const emit = defineEmits<{
   save: [GuestPropertiesModel];
   revoke: [];
   'copy-key': [text: string];
+  'reveal-key': [];
+  'rotate-key': [];
 }>();
 
 const label = ref('');
@@ -140,7 +143,7 @@ async function copy(text: string) {
       </header>
 
       <div v-if="mintedKey" class="guest-dialog__minted">
-        <strong>Invite key — copy now; plaintext is shown only once.</strong>
+        <strong>Invite key</strong>
         <div class="minted-row">
           <pre>{{ mintedKey }}</pre>
           <button type="button" class="small" @click="copy(mintedKey)">Copy key</button>
@@ -148,6 +151,26 @@ async function copy(text: string) {
         <div v-if="mintedRedeemUrl" class="minted-row">
           <pre>{{ mintedRedeemUrl }}</pre>
           <button type="button" class="small" @click="copy(mintedRedeemUrl)">Copy URL</button>
+        </div>
+        <div class="minted-actions">
+          <button type="button" class="small" :disabled="revealing" @click="emit('reveal-key')">
+            {{ revealing ? 'Loading…' : 'Refresh key' }}
+          </button>
+          <button type="button" class="small" :disabled="revealing" @click="emit('rotate-key')">
+            Rotate key
+          </button>
+        </div>
+      </div>
+      <div v-else-if="model.meta.inviteKeyId" class="guest-dialog__minted guest-dialog__minted--muted">
+        <strong>Invite key</strong>
+        <p class="muted small">Plaintext can be revealed any time for this guest.</p>
+        <div class="minted-actions">
+          <button type="button" class="small" :disabled="revealing" @click="emit('reveal-key')">
+            {{ revealing ? 'Loading…' : 'Show key' }}
+          </button>
+          <button type="button" class="small" :disabled="revealing" @click="emit('rotate-key')">
+            Rotate key
+          </button>
         </div>
       </div>
 
@@ -324,6 +347,17 @@ async function copy(text: string) {
   font-size: 11px;
   word-break: break-all;
   white-space: pre-wrap;
+}
+.guest-dialog__minted--muted {
+  border-color: var(--color-border, var(--border));
+  background: color-mix(in srgb, var(--color-bg, #fff) 80%, transparent);
+}
+.guest-dialog__minted .muted { margin: 6px 0 0; }
+.minted-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
 .guest-dialog__body {
   padding: 14px 18px;
