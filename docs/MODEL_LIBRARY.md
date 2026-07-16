@@ -26,6 +26,13 @@ Transfer to library → download GLB via /api/meshy/download
     → POST /api/model-import  (same convert → Orbit pipeline as Import)
 ```
 
+Meshy GLBs go through **assimp preconvert → OBJ zip → Rhino** like other glTF
+uploads. Assimp prefixes UUID-shaped mesh group names so Rhino’s `FileObj.Read`
+does not hit `ModelComponent.set_Id failed` (common on Meshy meshes). Agent
+**v0.3.46+** also retries safer OBJ group/object mapping modes if the default
+layers mapping fails.
+
+
 ## Import flow (new)
 
 ```
