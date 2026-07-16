@@ -88,6 +88,9 @@ def formats() -> FormatsResponse:
     return FormatsResponse(extensions=sorted(SUPPORTED_EXTS))
 
 
+# NOTE: callers (prism-server maybePreconvert) retry briefly on connection
+# errors so deploys that recreate this container do not fail mid-upload.
+
 @app.post("/v1/preconvert", response_model=None)
 async def preconvert(
     file: UploadFile = File(..., description="The source 3D file to pre-convert."),

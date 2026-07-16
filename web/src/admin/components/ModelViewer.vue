@@ -189,6 +189,16 @@ function frameLoaded(): void {
     modelSize = box.getSize(new THREE.Vector3()).length() || 1;
     box.getCenter(modelCenter);
   }
+  // Keep the mesh outside the near clip plane. Meshy GLBs are typically
+  // metres; if sourceUnits is wrongly set to mm the scaled size can be
+  // << 0.01 and disappear with a fixed near plane.
+  if (camera) {
+    const near = Math.max(modelSize / 1000, 1e-4);
+    const far = Math.max(modelSize * 100, near * 1000, 50);
+    camera.near = near;
+    camera.far = far;
+    camera.updateProjectionMatrix();
+  }
   applyCameraPreset();
 }
 
@@ -225,8 +235,16 @@ async function loadContent(): Promise<void> {
   try {
     await loadGlb(props.url);
     if (token !== loadToken) return;
-  } catch {
-    /* keep whatever is currently shown */
+    // Force a resize after load — fill layouts can mount at 0×0 before
+    // the absolute parent finishes laying out.
+    requestAnimationFrame(() => {
+      lastCssW = 0;
+      lastCssH = 0;
+      resize();
+      frameLoaded();
+    });
+  } catch (err) {
+    console.warn('[ModelViewer] GLB load failed', props.url, err);
   }
 }
 

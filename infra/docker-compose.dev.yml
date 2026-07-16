@@ -12,6 +12,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      # Ensure the preconvert sidecar is on the compose network before
+      # prism-server accepts GLB uploads (avoids opaque undici "fetch failed").
+      prism-assimp:
+        condition: service_started
     # No host port â€” prism-router handles external traffic on :8765
     environment:
       NODE_ENV: production

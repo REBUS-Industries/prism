@@ -102,25 +102,8 @@ export async function maybePreconvert(input: MaybePreconvertInput): Promise<Prec
   const startedAt = Date.now();
 
   const fileBytes = await readFile(input.filePath);
-  const form = new FormData();
-  form.append(
-    'file',
-    new Blob([fileBytes], { type: 'application/octet-stream' }),
-    input.fileName,
-  );
-  if (input.options?.flattenHierarchy !== undefined) {
-    form.append('flatten_hierarchy', String(!!input.options.flattenHierarchy));
-  }
-  if (input.options?.targetUnit) {
-    form.append('target_unit', input.options.targetUnit);
-  }
-  form.append('return_mode', 'stream');
-
   const url = `${baseUrl}/v1/preconvert`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    body: form,
-  });
+  const resp = await postPreconvertWithRetry(url, fileBytes, input.fileName, input.options);
   if (!resp.ok) {
     const detail = await safeBodyText(resp);
     throw new Error(`prism-assimp ${resp.status} on ${url}: ${detail}`);
@@ -153,6 +136,70 @@ async function safeBodyText(resp: Response): Promise<string> {
   } catch {
     return resp.statusText || '<no body>';
   }
+}
+
+function formatFetchError(err: unknown, url: string): string {
+  if (!(err instanceof Error)) return `fetch failed talking to ${url}: ${String(err)}`;
+  const parts = [err.message || 'fetch failed'];
+  const cause = (err as Error & { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const code = (cause as Error & { code?: string }).code;
+    parts.push(code ? `${cause.message} (${code})` : cause.message);
+  } else if (cause != null) {
+    parts.push(String(cause));
+  }
+  return `fetch failed talking to ${url}: ${parts.join(' — ')}`;
+}
+
+function buildPreconvertForm(
+  fileBytes: Buffer,
+  fileName: string,
+  options?: PreconvertOptions,
+): FormData {
+  const form = new FormData();
+  // Copy into a Uint8Array so undici/Blob always gets an ArrayBufferView
+  // (some Node versions mishandle Buffer in Blob parts → opaque "fetch failed").
+  const bytes = new Uint8Array(fileBytes.byteLength);
+  bytes.set(fileBytes);
+  form.append(
+    'file',
+    new Blob([bytes], { type: 'application/octet-stream' }),
+    fileName,
+  );
+  if (options?.flattenHierarchy !== undefined) {
+    form.append('flatten_hierarchy', String(!!options.flattenHierarchy));
+  }
+  if (options?.targetUnit) {
+    form.append('target_unit', options.targetUnit);
+  }
+  form.append('return_mode', 'stream');
+  return form;
+}
+
+async function postPreconvertWithRetry(
+  url: string,
+  fileBytes: Buffer,
+  fileName: string,
+  options?: PreconvertOptions,
+  attempts = 3,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fetch(url, {
+        method: 'POST',
+        body: buildPreconvertForm(fileBytes, fileName, options),
+      });
+    } catch (err) {
+      lastErr = err;
+      // Sidecar may still be starting after a deploy (health: starting).
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, 750 * (i + 1)));
+        continue;
+      }
+    }
+  }
+  throw new Error(formatFetchError(lastErr, url));
 }
 
 function escapeRe(s: string): string {
