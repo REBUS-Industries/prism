@@ -246,7 +246,7 @@ async function copy(text: string) {
           </div>
           <p class="muted small">
             Default is the send-only (Light) preset. Grant <code>receive</code>, <code>use_library</code>, and
-            <code>use_infile</code> independently. For older keys, <code>receive</code> still unlocks Library / In File.
+            <code>use_infile</code> independently — Library / In File are not implied by receive.
           </p>
         </div>
 
