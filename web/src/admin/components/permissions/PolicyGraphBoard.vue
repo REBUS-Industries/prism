@@ -23,7 +23,9 @@ import PolicyNode from './PolicyNode.vue';
 import type { PolicyFlowEdge, PolicyFlowNode } from '../../utils/policyGraphLayout';
 import type { PolicyNodeType } from '../../../shared/api';
 
-const DEFAULT_COLUMN_LABELS: { type: PolicyNodeType; label: string }[] = [
+type ColumnLabel = { type: PolicyNodeType; label: string; key?: string };
+
+const DEFAULT_COLUMN_LABELS: ColumnLabel[] = [
   { type: 'role', label: 'Roles' },
   { type: 'user', label: 'Users' },
   { type: 'project', label: 'Projects' },
@@ -41,7 +43,7 @@ const props = withDefaults(defineProps<{
   selectedNodeId?: string | null;
   readonly?: boolean;
   legendTitle?: string;
-  columnLabels?: { type: PolicyNodeType; label: string }[];
+  columnLabels?: ColumnLabel[];
 }>(), {
   readonly: false,
   legendTitle: 'Policy graph',
@@ -192,7 +194,7 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
           </span>
           <span
             v-for="col in legendColumns"
-            :key="col.type"
+            :key="col.key ?? `${col.type}-${col.label}`"
             class="policy-board__legend-chip"
           >
             {{ col.label }}
