@@ -122,6 +122,9 @@ onMounted(() => {
     <button class="btn-link" :disabled="syncing || loading" @click="syncFromOrbit">
       <Icon name="sync" :size="16" />{{ syncing ? 'Syncing…' : 'Sync from Orbit' }}
     </button>
+    <RouterLink :to="{ name: 'model-create' }" class="btn-link">
+      <Icon name="auto_awesome" :size="16" />Create with Meshy
+    </RouterLink>
     <RouterLink :to="{ name: 'model-import' }" class="btn-link">
       <Icon name="upload_file" :size="16" />Import model
     </RouterLink>
@@ -147,7 +150,7 @@ onMounted(() => {
   <div v-if="error" class="error-box mt">{{ error }}</div>
   <p v-if="syncMessage" class="muted small mt sync-ok">{{ syncMessage }}</p>
 
-  <p v-if="isEmpty" class="muted mt">No models yet. Import a mesh or create a blank record to get started.</p>
+  <p v-if="isEmpty" class="muted mt">No models yet. Create with Meshy, import a mesh, or create a blank record to get started.</p>
 
   <div class="model-grid mt">
     <RouterLink

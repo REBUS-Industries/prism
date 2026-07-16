@@ -241,6 +241,41 @@ class ApiClient {
 
   get<T>(path: string)  { return this.req<T>(path, { method: 'GET' }); }
   delete<T>(path: string) { return this.req<T>(path, { method: 'DELETE' }); }
+
+  /** Binary GET (e.g. Meshy asset proxy). Does not force Accept: application/json. */
+  async getBlob(path: string): Promise<Blob> {
+    const startedAt = Date.now();
+    const method = 'GET';
+    const url = this.base + path;
+    let res: Response;
+    try {
+      res = await fetch(url, { credentials: 'include', method });
+    } catch (netErr) {
+      const message = netErr instanceof Error ? netErr.message : String(netErr);
+      apiLog.push({
+        id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+        method, url, status: 0, ok: false, errorMessage: message,
+      });
+      throw { status: 0, message, body: undefined } satisfies ApiError;
+    }
+    if (!res.ok) {
+      let body: unknown;
+      try { body = await res.json(); } catch { body = await res.text().catch(() => ''); }
+      const err: ApiError = { status: res.status, message: extractMessage(body) ?? res.statusText, body };
+      apiLog.push({
+        id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+        method, url, status: res.status, ok: false, errorMessage: err.message,
+      });
+      throw err;
+    }
+    const blob = await res.blob();
+    apiLog.push({
+      id: nextLogId++, startedAt, durationMs: Date.now() - startedAt,
+      method, url, status: res.status, ok: true,
+      responseBody: `<blob ${blob.size}B ${blob.type || '?'}>`,
+    });
+    return blob;
+  }
   put<T>(path: string, body: unknown) {
     return this.req<T>(path, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   }
@@ -2550,6 +2585,37 @@ export const modelsApi = {
     const qs = opts.prune ? '?prune=1' : '';
     return api.post<{ ok: boolean; summary: ModelOrbitSyncSummary }>(`/api/model-import/sync${qs}`, {});
   },
+};
+
+// ── Meshy.ai (Model Library create) ──────────────────────────────────────────
+// Credentials live in Admin → Settings → Meshy (`meshy_api_key`). All calls
+// go through prism-server `/api/meshy/*` so the browser never sees the key.
+
+export type MeshyTaskStatus = 'PENDING' | 'IN_PROGRESS' | 'SUCCEEDED' | 'FAILED' | 'CANCELED';
+
+export interface MeshyTask {
+  id: string;
+  status: MeshyTaskStatus;
+  progress?: number;
+  model_urls?: Partial<Record<'glb' | 'fbx' | 'obj' | 'usdz' | 'stl' | 'blend' | '3mf', string>>;
+  thumbnail_url?: string | null;
+  prompt?: string;
+  type?: string;
+  task_error?: { message?: string } | null;
+}
+
+export const meshyApi = {
+  status: () => api.get<{ configured: boolean }>('/api/meshy/status'),
+  test: () => api.get<{ ok: boolean; balance?: unknown; error?: string }>('/api/meshy/test'),
+  createTextTo3d: (body: Record<string, unknown>) =>
+    api.post<{ result: string }>('/api/meshy/text-to-3d', body),
+  getTextTo3d: (id: string) => api.get<MeshyTask>(`/api/meshy/text-to-3d/${encodeURIComponent(id)}`),
+  createImageTo3d: (body: Record<string, unknown>) =>
+    api.post<{ result: string }>('/api/meshy/image-to-3d', body),
+  getImageTo3d: (id: string) => api.get<MeshyTask>(`/api/meshy/image-to-3d/${encodeURIComponent(id)}`),
+  /** Download a signed Meshy asset URL via the server proxy (CORS-safe). */
+  download: (assetUrl: string) =>
+    api.getBlob(`/api/meshy/download?url=${encodeURIComponent(assetUrl)}`),
 };
 
 // ── Permissions (portal-brokered access + function policy graph) ─────────────

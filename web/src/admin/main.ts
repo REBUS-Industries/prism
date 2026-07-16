@@ -27,6 +27,7 @@ import FixtureDmxCharts from './pages/FixtureDmxCharts.vue';
 import FixtureImport from './pages/FixtureImport.vue';
 import FixtureMaterials from './pages/FixtureMaterials.vue';
 import Models from './pages/Models.vue';
+import ModelCreate from './pages/ModelCreate.vue';
 import ModelImport from './pages/ModelImport.vue';
 import ModelEditor from './pages/ModelEditor.vue';
 import Permissions from './pages/Permissions.vue';
@@ -59,8 +60,10 @@ const router = createRouter({
     { path: '/fixtures/:id/dmx',       component: FixtureDmxCharts, name: 'fixture-dmx-charts', props: true, meta: { tool: 'fixtures' as PrismTool } },
     { path: '/fixtures/:id',           component: FixtureEditor,    name: 'fixture-editor', props: true, meta: { tool: 'fixtures' as PrismTool } },
     // Model library (generic 3D assets) — prism-models-service.
+    // Static segments (`create`, `import`, `library`) must be registered before `:id`.
     { path: '/models',                 component: Models,           name: 'models', meta: { tool: 'models' as PrismTool } },
     { path: '/models/library',         component: Models,           name: 'model-library', meta: { tool: 'models' as PrismTool } },
+    { path: '/models/create',          component: ModelCreate,      name: 'model-create', meta: { tool: 'models' as PrismTool } },
     { path: '/models/import',          component: ModelImport,      name: 'model-import', meta: { tool: 'models' as PrismTool } },
     { path: '/models/:id',             component: ModelEditor,      name: 'model-editor', props: true, meta: { tool: 'models' as PrismTool } },
     { path: '/permissions',            component: Permissions,      name: 'permissions' },
