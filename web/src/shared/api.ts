@@ -2562,7 +2562,9 @@ export type ConnectorFunction =
   | 'list_versions'
   | 'create_project'
   | 'create_model'
-  | 'create_version';
+  | 'create_version'
+  | 'use_library'
+  | 'use_infile';
 
 /** Full connector function vocabulary (invite keys and portal manifests). */
 export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
@@ -2574,6 +2576,8 @@ export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'create_project',
   'create_model',
   'create_version',
+  'use_library',
+  'use_infile',
 ];
 
 export type PolicyNodeType = 'role' | 'user' | 'project' | 'function' | 'tool';
@@ -2615,6 +2619,8 @@ export const permissionsApi = {
     'create_project',
     'create_model',
     'create_version',
+    'use_library',
+    'use_infile',
   ],
   toolsList: (): PrismTool[] => ['convert', 'visualiser', 'fixtures', 'materials', 'models'],
   getPolicy: () => api.get<PermissionsPolicyResponse>('/api/permissions/policy'),
@@ -2661,7 +2667,8 @@ export interface EffectiveToolAccess {
 
 /**
  * Default invite-key function preset (send-only / "Light-like" UX).
- * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`.
+ * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`,
+ * `use_library`, and `use_infile`.
  */
 export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'send',

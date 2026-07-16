@@ -841,8 +841,8 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         // ============================================================
         ConnectorFunction: {
           type: 'string',
-          enum: ['send', 'receive', 'list_projects', 'list_models', 'list_versions', 'create_project', 'create_model', 'create_version'],
-          description: 'A connector operation the function-policy graph can grant or deny (per project).',
+          enum: ['send', 'receive', 'list_projects', 'list_models', 'list_versions', 'create_project', 'create_model', 'create_version', 'use_library', 'use_infile'],
+          description: 'A connector operation the function-policy graph can grant or deny (per project). `use_library` / `use_infile` gate the Library and In File panel surfaces.',
         },
         PortalProjectLevel: {
           type: 'string',

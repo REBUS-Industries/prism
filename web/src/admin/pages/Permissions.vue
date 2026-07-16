@@ -17,12 +17,14 @@ import PolicyInspector from '../components/permissions/PolicyInspector.vue';
 import GuestPropertiesDialog, {
   type GuestPropertiesModel,
 } from '../components/permissions/GuestPropertiesDialog.vue';
+import ConnectorPanelPreview from '../components/permissions/ConnectorPanelPreview.vue';
 import {
   LIGHT_CONNECTOR_FUNCTIONS,
   accessApi,
   orbitApi,
   settingsApi,
   type ApiError,
+  type ConnectorFunction,
   type InviteKeyRecord,
   type OrbitProject,
 } from '../../shared/api';
@@ -69,6 +71,11 @@ const selectedNode = computed(() => {
 });
 
 const selectedIsGuest = computed(() => !!selectedNode.value?.data?.guest);
+
+const selectedGuestFunctions = computed<ConnectorFunction[]>(() => {
+  const fns = selectedNode.value?.data?.guestMeta?.allowedFunctions;
+  return Array.isArray(fns) ? [...fns] : [];
+});
 
 function projectNodeId(projectId: string): string {
   return `project-${projectId}`;
@@ -670,6 +677,10 @@ onMounted(async () => {
               Right-click to edit functions, target, redemptions, expiry, and project access.
               Drag from this guest to a project to grant access; double-click an edge to remove it.
             </p>
+            <ConnectorPanelPreview
+              compact
+              :allowed-functions="selectedGuestFunctions"
+            />
             <div class="btn-col">
               <button type="button" class="primary" @click="openGuestDialog(selectedNodeId!)">
                 <Icon name="tune" :size="16" /> Properties
@@ -719,8 +730,8 @@ onMounted(async () => {
 .switch-row { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .hint { margin: 8px 0 0; font-size: 13px; }
 .side-help {
-  flex: 0 0 280px;
-  width: 280px;
+  flex: 0 0 300px;
+  width: 300px;
   align-self: stretch;
 }
 .side-help :deep(.policy-inspector) {

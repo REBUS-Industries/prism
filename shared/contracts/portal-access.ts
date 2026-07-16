@@ -14,7 +14,9 @@ export type ConnectorFunction =
   | 'list_versions'
   | 'create_project'
   | 'create_model'
-  | 'create_version';
+  | 'create_version'
+  | 'use_library'
+  | 'use_infile';
 
 export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'send',
@@ -25,6 +27,8 @@ export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'create_project',
   'create_model',
   'create_version',
+  'use_library',
+  'use_infile',
 ];
 
 export type PortalProjectLevel = 'viewer' | 'contributor' | 'owner' | 'admin';
@@ -105,8 +109,9 @@ export interface AccessSessionRequest {
 
 /**
  * Default invite-key function preset (send-only / "Light-like" UX).
- * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`
- * and `create_project`. Empty input falls back to this set.
+ * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`,
+ * `use_library`, `use_infile`, and `create_project`. Empty input falls back to
+ * this set.
  */
 export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'send',

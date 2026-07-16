@@ -240,6 +240,10 @@ services:
       ORBIT_DEV_SERVER_URL: "${ORBIT_DEV_SERVER_URL:-https://orbit-dev.rebus.industries}"
       ORBIT_ADMIN_TOKEN: "${ORBIT_ADMIN_TOKEN:-}"
       ORBIT_DEV_ADMIN_TOKEN: "${ORBIT_DEV_ADMIN_TOKEN:-${ORBIT_ADMIN_TOKEN:-}}"
+      # Dedicated PAT with tokens:write for apiTokenCreate (invite-key sessions).
+      # Falls back to ORBIT_ADMIN_TOKEN inside the service when unset.
+      ORBIT_MINT_TOKEN: "${ORBIT_MINT_TOKEN:-}"
+      ORBIT_DEV_MINT_TOKEN: "${ORBIT_DEV_MINT_TOKEN:-${ORBIT_MINT_TOKEN:-}}"
       ORBIT_AUTO_INVITE: "${ORBIT_AUTO_INVITE:-0}"
       PERMISSIONS_INTERNAL_KEY: "${PERMISSIONS_INTERNAL_KEY:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
