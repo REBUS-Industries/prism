@@ -3,7 +3,7 @@
  * Portal-style Vue Flow pin board for the permissions policy graph.
  * Matches the React Flow layout used in portal-app PeopleManagementClient.
  */
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref, useSlots } from 'vue';
 import {
   VueFlow,
   Panel,
@@ -30,6 +30,11 @@ const DEFAULT_COLUMN_LABELS: { type: PolicyNodeType; label: string }[] = [
   { type: 'function', label: 'Functions' },
 ];
 
+const INSPECTOR_WIDTH_KEY = 'prism.permissions.inspectorWidth';
+const INSPECTOR_MIN = 240;
+const INSPECTOR_MAX = 640;
+const INSPECTOR_DEFAULT = 300;
+
 const props = withDefaults(defineProps<{
   nodes: PolicyFlowNode[];
   edges: PolicyFlowEdge[];
@@ -51,9 +56,60 @@ const emit = defineEmits<{
   'edge-delete': [edgeId: string];
 }>();
 
+const slots = useSlots();
 const { fitView } = useVueFlow();
+const boardEl = ref<HTMLElement | null>(null);
+
+function readStoredWidth(): number {
+  try {
+    const raw = localStorage.getItem(INSPECTOR_WIDTH_KEY);
+    const n = raw ? Number(raw) : NaN;
+    if (Number.isFinite(n)) return Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, n));
+  } catch {
+    /* ignore */
+  }
+  return INSPECTOR_DEFAULT;
+}
+
+const inspectorWidth = ref(readStoredWidth());
+const resizing = ref(false);
+
+function clampInspectorWidth(px: number): number {
+  const boardW = boardEl.value?.clientWidth ?? 1200;
+  const maxForBoard = Math.max(INSPECTOR_MIN, Math.min(INSPECTOR_MAX, boardW - 320));
+  return Math.min(maxForBoard, Math.max(INSPECTOR_MIN, Math.round(px)));
+}
+
+function onResizePointerDown(evt: PointerEvent): void {
+  if (evt.button !== 0) return;
+  evt.preventDefault();
+  resizing.value = true;
+  const startX = evt.clientX;
+  const startW = inspectorWidth.value;
+  const target = evt.currentTarget as HTMLElement;
+  target.setPointerCapture(evt.pointerId);
+
+  function onMove(e: PointerEvent): void {
+    // Dragging left increases inspector width.
+    inspectorWidth.value = clampInspectorWidth(startW + (startX - e.clientX));
+  }
+  function onUp(e: PointerEvent): void {
+    resizing.value = false;
+    target.releasePointerCapture(e.pointerId);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    try {
+      localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorWidth.value));
+    } catch {
+      /* ignore */
+    }
+  }
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
 
 const legendColumns = computed(() => props.columnLabels ?? DEFAULT_COLUMN_LABELS);
+const hasInspector = computed(() => !!slots.inspector);
 
 function doFit(): void {
   requestAnimationFrame(() => {
@@ -100,7 +156,7 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
 </script>
 
 <template>
-  <div class="policy-board">
+  <div ref="boardEl" class="policy-board" :class="{ 'policy-board--resizing': resizing }">
     <div class="policy-board__canvas">
       <VueFlow
         :nodes="props.nodes"
@@ -148,16 +204,35 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
       </VueFlow>
     </div>
 
-    <slot name="inspector" />
+    <template v-if="hasInspector">
+      <div
+        class="policy-board__resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize inspector"
+        title="Drag to resize"
+        @pointerdown="onResizePointerDown"
+      />
+      <div class="policy-board__inspector" :style="{ width: `${inspectorWidth}px` }">
+        <slot name="inspector" />
+      </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .policy-board {
   display: flex;
-  gap: 12px;
+  gap: 0;
   flex: 1;
   min-height: 480px;
+}
+.policy-board--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.policy-board--resizing :deep(*) {
+  cursor: col-resize !important;
 }
 
 .policy-board__canvas {
@@ -168,6 +243,45 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
   border-radius: var(--radius-lg);
   background: var(--color-bg);
   overflow: hidden;
+}
+
+.policy-board__resizer {
+  flex: 0 0 8px;
+  margin: 0 2px;
+  border-radius: 4px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  touch-action: none;
+}
+.policy-board__resizer::after {
+  content: '';
+  position: absolute;
+  top: 12%;
+  bottom: 12%;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-border, #ccc);
+  opacity: 0.85;
+}
+.policy-board__resizer:hover::after,
+.policy-board--resizing .policy-board__resizer::after {
+  background: var(--orbit-primary, #f97316);
+  opacity: 1;
+}
+
+.policy-board__inspector {
+  flex: 0 0 auto;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+.policy-board__inspector > :deep(*) {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 
 .policy-board__canvas :deep(.vue-flow__node) {

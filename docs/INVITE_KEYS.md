@@ -79,7 +79,9 @@ back-compat) without reinstalling the connector.
 
 ## Admin API (admin cookie)
 
-- `POST /api/access/invite-keys` — create (plaintext key in response, once)
+- `POST /api/access/invite-keys` — create (plaintext in response; sealed for later reveal)
 - `GET /api/access/invite-keys` — list (no plaintext)
+- `GET /api/access/invite-keys/:id/reveal` — return sealed plaintext + redeem URL
+- `POST /api/access/invite-keys/:id/rotate` — issue a new plaintext
 - `PATCH /api/access/invite-keys/:id` — update label / projects / functions
 - `POST /api/access/invite-keys/:id/revoke` — revoke key + sessions
