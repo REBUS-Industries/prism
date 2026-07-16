@@ -279,13 +279,29 @@ async function pollImport(modelId: string): Promise<void> {
   });
 }
 
+/** glTF binary magic (`glTF`) — reject HTML/error bodies saved as .glb. */
+async function assertGlbBlob(blob: Blob): Promise<Blob> {
+  const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+  const magic = String.fromCharCode(head[0]!, head[1]!, head[2]!, head[3]!);
+  if (magic !== 'glTF') {
+    throw new Error(
+      `Meshy download was not a GLB (got magic "${magic || '????'}", ${blob.size} bytes). `
+      + 'The signed URL may have expired — regenerate, then transfer again.',
+    );
+  }
+  if (blob.size < 64) {
+    throw new Error(`Meshy GLB download is too small (${blob.size} bytes)`);
+  }
+  return blob;
+}
+
 async function transferToLibrary(): Promise<void> {
   if (!glbUrl.value) return;
   phase.value = 'transferring';
   error.value = null;
   progressLabel.value = 'Downloading GLB from Meshy…';
   try {
-    const blob = await meshyApi.download(glbUrl.value);
+    const blob = await assertGlbBlob(await meshyApi.download(glbUrl.value));
     const fileName = `${(name.value || 'meshy-model').replace(/[^\w.-]+/g, '_').slice(0, 80)}.glb`;
     const file = new File([blob], fileName, { type: 'model/gltf-binary' });
     progressLabel.value = 'Uploading to Model Library convert pipeline…';
@@ -296,12 +312,13 @@ async function transferToLibrary(): Promise<void> {
       sourceUnits: sourceUnits.value,
     });
     if (res.importStatus === 'converting' || res.jobId) {
+      progressLabel.value = 'Converting via PRISM pipeline (assimp → Rhino → Orbit)…';
       await pollImport(res.model.id);
     }
     void router.push({ name: 'model-editor', params: { id: res.model.id } });
   } catch (err) {
     phase.value = 'ready';
-    error.value = (err as ApiError).message ?? 'Transfer to library failed';
+    error.value = (err as ApiError).message ?? (err instanceof Error ? err.message : 'Transfer to library failed');
     progressLabel.value = null;
   } finally {
     stopPolling();
