@@ -39,6 +39,10 @@
         "fetchedAt": { "type": "string", "format": "date-time" }
       }
     },
+    "InviteModelAccess": {
+      "type": "string",
+      "enum": ["all", "selected", "authored"]
+    },
     "ConnectorManifest": {
       "type": "object",
       "required": ["schema", "userId", "email", "orbitTarget", "orbitServerUrl", "orbitToken", "expiresAt", "sessionId", "projects", "globalAllowedFunctions"],
@@ -52,6 +56,13 @@
         "orbitToken": { "type": "string" },
         "expiresAt": { "type": "string", "format": "date-time" },
         "sessionId": { "type": "string" },
+        "prismAccessToken": { "type": "string" },
+        "orbitBlanketAccess": { "type": "boolean" },
+        "authMethod": { "enum": ["portal", "invite_key"] },
+        "inviteKeyId": { "type": "string" },
+        "modelAccess": { "$ref": "#/definitions/InviteModelAccess" },
+        "selectedModelIds": { "type": "array", "items": { "type": "string" } },
+        "authoredProperty": { "const": "userId" },
         "projects": {
           "type": "array",
           "items": {
