@@ -369,6 +369,14 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         'and `/api/materials`. Narrative companion:',
         '[`/docs/library-integration`](' + BASE + '/docs/library-integration).',
         '',
+        '**Meshy generate → Model Library:** connectors and third-party portals can',
+        'call `/api/meshy/*` with an `X-API-Key` (`models:read` / `models:write`).',
+        'The Meshy API key lives in **Admin → Settings → Meshy** and never leaves',
+        'the PRISM server. After a task succeeds, download the GLB via',
+        '`GET /api/meshy/download` and `POST /api/model-import` (`models:import`)',
+        'to run the convert pipeline into the Orbit Model Library. Full flow:',
+        '[Generate with Meshy](' + BASE + '/docs/library-integration#generate-with-meshy-connectors--portals).',
+        '',
         '**List and detail JSON** for fixtures and models includes portal-card fields',
         'so you can render a library grid without N+1 detail fetches:',
         '',
@@ -421,7 +429,8 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Visualiser',         description: 'Start, poll, and stop Pixel Streaming sessions of ORBIT versions, plus multi-viewer share links. Portal-facing - `POST`/`DELETE` require the `visualiser:create_stream` scope. The live signalling + control WebSocket channels (`/ws/visualiser/{runId}/signalling` and `/ws/visualiser/{runId}/control`) and the multi-viewer model cannot be modelled in OpenAPI - see [API_MULTIVIEW_SESSION_CONTROL.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/API_MULTIVIEW_SESSION_CONTROL.md) and [PORTAL_INTEGRATION.md](https://github.com/REBUS-ORBIT/prism/blob/main/docs/PORTAL_INTEGRATION.md).' },
       { name: 'Project Attachments',description: 'Upload MVR/GDTF lighting files to an ORBIT project before starting a visualiser stream. Optional second-pass import via `import_mvr.py`.' },
       { name: 'Fixture library', description: 'GDTF/MVR fixture types — list, edit, import, and connector export. JSON list/detail rows include `previewUrl`, `orbitUrl`, and `versions[]` (each version has `downloadedAt` + `previewUrl`). Assembly, pan/tilt motion, and scene-graph rules: `/docs/fixture-assembly-and-motion`. ORBIT fixture groups & position presets metadata: `/docs/fixture-groups-positions-metadata`. Portal-facing; requires `fixtures:*` scopes on `X-API-Key`. Narrative: `/docs/library-integration`.' },
-      { name: 'Model library', description: 'Generic 3D model assets — list, edit, and async import via the convert pipeline. JSON list/detail rows include `previewUrl`, `orbitUrl`, and `versions[]` (each version has `createdAt` + `previewUrl`). Portal-facing; requires `models:*` scopes. Narrative: `/docs/library-integration`.' },
+      { name: 'Model library', description: 'Generic 3D model assets — list, edit, and async import via the convert pipeline. JSON list/detail rows include `previewUrl`, `orbitUrl`, and `versions[]` (each version has `createdAt` + `previewUrl`). Portal-facing; requires `models:*` scopes. Narrative: `/docs/library-integration`. Generate meshes with the **Meshy** tag, then import.' },
+      { name: 'Meshy', description: 'Server-proxied Meshy.ai text/image-to-3D for connectors and portals. Credentials: Admin → Settings → Meshy (`meshy_api_key`). Scopes: `models:read` (status/poll/download), `models:write` (create tasks). After SUCCEEDED, transfer into the library with `POST /api/model-import` (`models:import`). Narrative: `/docs/library-integration#generate-with-meshy-connectors--portals`.' },
       { name: 'Materials library', description: 'Shared PBR materials + texture slots. JSON list/detail responses include `previewUrl` for material thumbnails and texture rows; stream images via `GET /api/textures/{id}/preview`. Portal-facing; requires `materials:*` scopes. Narrative: `/docs/library-integration`.' },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
       { name: 'Access', description: [
@@ -484,7 +493,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             '`/docs/library-integration`):',
             '',
             '- `fixtures:read|write|delete|import` — `/api/fixtures/*`',
-            '- `models:read|write|delete|import` — `/api/models/*`, `/api/model-import`',
+            '- `models:read|write|delete|import` — `/api/models/*`, `/api/model-import`, `/api/meshy/*` (generate + download; import still uses `models:import`)',
             '- `materials:read|write|delete` — `/api/materials/*`, `/api/textures/*`',
             '',
             'Library routes enforce scopes on **every** method (including GET).',
@@ -1205,6 +1214,33 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           required: ['model'],
           properties: {
             model: { $ref: '#/components/schemas/ModelDetail' },
+          },
+        },
+        MeshyTask: {
+          type: 'object',
+          description: 'Meshy generation task (proxied). On SUCCEEDED, use model_urls.glb with GET /api/meshy/download.',
+          properties: {
+            id: { type: 'string' },
+            status: {
+              type: 'string',
+              enum: ['PENDING', 'IN_PROGRESS', 'SUCCEEDED', 'FAILED', 'CANCELED'],
+            },
+            progress: { type: 'number' },
+            model_urls: {
+              type: 'object',
+              additionalProperties: { type: 'string', format: 'uri' },
+              properties: {
+                glb: { type: 'string', format: 'uri' },
+                fbx: { type: 'string', format: 'uri' },
+              },
+            },
+            thumbnail_url: { type: 'string', format: 'uri', nullable: true },
+            prompt: { type: 'string' },
+            task_error: {
+              type: 'object',
+              nullable: true,
+              properties: { message: { type: 'string' } },
+            },
           },
         },
       },
@@ -2206,7 +2242,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         post: {
           tags: ['Model library'],
           summary: 'Import a model file',
-          description: 'Multipart upload; runs the async convert pipeline and creates an Orbit version. **Scope:** `models:import`.',
+          description: 'Multipart upload; runs the async convert pipeline and creates an Orbit version. Also used to **transfer a Meshy-generated GLB** into the library after `GET /api/meshy/download`. **Scope:** `models:import`.',
           security: [{ apiKey: [] }],
           requestBody: {
             required: true,
@@ -2218,6 +2254,8 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
                     file: { type: 'string', format: 'binary' },
                     name: { type: 'string' },
                     category: { type: 'string' },
+                    tags: { type: 'string', description: 'Comma-separated tags' },
+                    sourceUnits: { type: 'string', description: 'Mesh units (e.g. m, mm, cm)' },
                   },
                   required: ['file'],
                 },
@@ -2226,6 +2264,226 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           },
           responses: {
             '202': { description: 'Import accepted.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/meshy/status': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Meshy'],
+          summary: 'Meshy credential status',
+          description: 'Returns whether Admin → Settings → Meshy has an API key configured. Does not expose the key. **Scope:** `models:read`.',
+          security: [{ apiKey: [] }],
+          responses: {
+            '200': {
+              description: 'Status.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { configured: { type: 'boolean' } },
+                    required: ['configured'],
+                  },
+                },
+              },
+            },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/meshy/test': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Meshy'],
+          summary: 'Test Meshy API credentials',
+          description: 'Probes Meshy with the stored key (balance endpoint when available). **Scope:** `models:read`. Returns `412` if no key is configured.',
+          security: [{ apiKey: [] }],
+          responses: {
+            '200': { description: 'Key accepted.', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, balance: {} } } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '412': { description: 'Meshy API key not configured in Settings.' },
+          },
+        },
+      },
+
+      '/api/meshy/text-to-3d': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Meshy'],
+          summary: 'Create a Text-to-3D task',
+          description: [
+            'Proxies `POST https://api.meshy.ai/openapi/v2/text-to-3d`.',
+            'Use `mode: "preview"` with a `prompt`, then optionally `mode: "refine"` with `preview_task_id`.',
+            'Poll `GET /api/meshy/text-to-3d/{id}` until `status` is `SUCCEEDED`.',
+            '**Scope:** `models:write`. Upstream: https://docs.meshy.ai/en/api/text-to-3d',
+          ].join(' '),
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      required: ['mode', 'prompt'],
+                      properties: {
+                        mode: { type: 'string', enum: ['preview'] },
+                        prompt: { type: 'string', maxLength: 600 },
+                        should_remesh: { type: 'boolean' },
+                        ai_model: { type: 'string' },
+                      },
+                    },
+                    {
+                      type: 'object',
+                      required: ['mode', 'preview_task_id'],
+                      properties: {
+                        mode: { type: 'string', enum: ['refine'] },
+                        preview_task_id: { type: 'string' },
+                        enable_pbr: { type: 'boolean' },
+                        texture_prompt: { type: 'string', maxLength: 600 },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Task created.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { result: { type: 'string', description: 'Meshy task id' } },
+                    required: ['result'],
+                  },
+                },
+              },
+            },
+            '400': { description: 'Invalid body.' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '412': { description: 'Meshy API key not configured.' },
+          },
+        },
+      },
+
+      '/api/meshy/text-to-3d/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Meshy'],
+          summary: 'Get Text-to-3D task status',
+          description: 'Proxies Meshy task status. On `SUCCEEDED`, read `model_urls.glb` and download via `/api/meshy/download`. **Scope:** `models:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Meshy task object.', content: { 'application/json': { schema: { $ref: '#/components/schemas/MeshyTask' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/meshy/image-to-3d': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Meshy'],
+          summary: 'Create an Image-to-3D task',
+          description: [
+            'Proxies `POST https://api.meshy.ai/openapi/v1/image-to-3d`.',
+            '`image_url` may be a public HTTPS URL or a `data:image/…;base64,…` data URI.',
+            '**Scope:** `models:write`. Upstream: https://docs.meshy.ai/en/api/image-to-3d',
+          ].join(' '),
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['image_url'],
+                  properties: {
+                    image_url: { type: 'string' },
+                    should_texture: { type: 'boolean' },
+                    enable_pbr: { type: 'boolean' },
+                    ai_model: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Task created.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { result: { type: 'string' } },
+                    required: ['result'],
+                  },
+                },
+              },
+            },
+            '400': { description: 'Invalid body.' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '412': { description: 'Meshy API key not configured.' },
+          },
+        },
+      },
+
+      '/api/meshy/image-to-3d/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Meshy'],
+          summary: 'Get Image-to-3D task status',
+          description: '**Scope:** `models:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Meshy task object.', content: { 'application/json': { schema: { $ref: '#/components/schemas/MeshyTask' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/meshy/download': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Meshy'],
+          summary: 'Download a Meshy asset URL',
+          description: [
+            'Server-side proxy for signed Meshy asset URLs (`model_urls.glb`, etc.).',
+            'Allowlists `*.meshy.ai` hosts. Use this instead of fetching the signed URL',
+            'from the browser (CORS). Then `POST /api/model-import` with the bytes.',
+            '**Scope:** `models:read`.',
+          ].join(' '),
+          security: [{ apiKey: [] }],
+          parameters: [
+            {
+              in: 'query',
+              name: 'url',
+              required: true,
+              schema: { type: 'string', format: 'uri' },
+              description: 'Signed Meshy asset URL from `model_urls.*`',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Asset bytes.',
+              content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } },
+            },
+            '400': { description: 'Missing url or host not allowlisted.' },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
           },
