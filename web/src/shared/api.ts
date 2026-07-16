@@ -2564,6 +2564,18 @@ export type ConnectorFunction =
   | 'create_model'
   | 'create_version';
 
+/** Full connector function vocabulary (invite keys and portal manifests). */
+export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
+  'send',
+  'receive',
+  'list_projects',
+  'list_models',
+  'list_versions',
+  'create_project',
+  'create_model',
+  'create_version',
+];
+
 export type PolicyNodeType = 'role' | 'user' | 'project' | 'function' | 'tool';
 
 export interface PolicyNode {
@@ -2647,7 +2659,10 @@ export interface EffectiveToolAccess {
   tools: PrismTool[];
 }
 
-/** Default REBUS Connector Light function set for invite keys. */
+/**
+ * Default invite-key function preset (send-only / "Light-like" UX).
+ * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`.
+ */
 export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'send',
   'create_model',
@@ -2656,7 +2671,7 @@ export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'list_versions',
 ];
 
-/** Model visibility for Connector Light invite keys. */
+/** Model visibility for collaborator invite keys. */
 export type InviteModelAccess = 'all' | 'selected' | 'authored';
 
 export const INVITE_MODEL_ACCESS_MODES: InviteModelAccess[] = ['all', 'selected', 'authored'];

@@ -26,7 +26,7 @@ Use `orbit-cli auth login --server <prod|dev>` for full token capabilities (auto
 
 ## Admin login
 
-**Admin â†’ Permissions** (`/admin/#/permissions`) â€” guest access graph for Connector Light invite keys (guest nodes â†’ ORBIT projects). Right-click a guest for functions, target, redemptions, and a project checkbox tree.
+**Admin â†’ Permissions** (`/admin/#/permissions`) â€” guest access graph for collaborator invite keys (guest nodes â†’ ORBIT projects). Right-click a guest for functions (any connector function; Light/send-only is the default), target, redemptions, model access, and a project checkbox tree. **Connector edition = manifest ACL**, not a separate Lite binary.
 
 **Admin â†’ Tool access** (`/admin/#/permissions/tools`) â€” read-only portal roles â†’ PRISM admin tools. Linked from the sidebar under Permissions.
 
