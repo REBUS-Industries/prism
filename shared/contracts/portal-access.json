@@ -14,7 +14,9 @@
         "list_versions",
         "create_project",
         "create_model",
-        "create_version"
+        "create_version",
+        "use_library",
+        "use_infile"
       ]
     },
     "PortalProjectLevel": {

@@ -6,6 +6,7 @@ import { computed, ref, watch } from 'vue';
 import Icon from '../../../shared/Icon.vue';
 import ProjectAccessTree from './ProjectAccessTree.vue';
 import ModelAccessTree from './ModelAccessTree.vue';
+import ConnectorPanelPreview from './ConnectorPanelPreview.vue';
 import {
   CONNECTOR_FUNCTIONS,
   LIGHT_CONNECTOR_FUNCTIONS,
@@ -14,6 +15,13 @@ import {
   type OrbitProject,
 } from '../../../shared/api';
 import type { GuestInviteNodeMeta } from '../../utils/policyGraphLayout';
+
+const FUNCTION_LABELS: Partial<Record<ConnectorFunction, string>> = {
+  use_library: 'use_library (Library tab)',
+  use_infile: 'use_infile (In File tab)',
+  receive: 'receive (+ Receive cards)',
+  send: 'send (+ Send cards)',
+};
 
 export interface GuestPropertiesModel {
   label: string;
@@ -123,7 +131,7 @@ async function copy(text: string) {
           <h2 id="guest-dialog-title">{{ isNew ? 'New guest' : 'Guest properties' }}</h2>
           <p class="muted">
             Collaborator invite key — wire this guest to project nodes on the graph, or pick projects below.
-            Functions drive connector UI (send-only vs send+receive) in the single REBUS Connector binary.
+            Functions drive connector UI in the single REBUS Connector binary. Preview updates as you toggle grants.
           </p>
         </div>
         <button type="button" class="icon-btn" aria-label="Close" @click="emit('close')">
@@ -210,12 +218,18 @@ async function copy(text: string) {
           <div class="fn-grid">
             <label v-for="fn in functionOptions" :key="fn" class="fn-check">
               <input v-model="allowedFunctions" type="checkbox" :value="fn" />
-              {{ fn }}
+              {{ FUNCTION_LABELS[fn] ?? fn }}
             </label>
           </div>
           <p class="muted small">
-            Default is the send-only (Light) preset. Grant <code>receive</code> to unlock Receive / Library / In File in the connector.
+            Default is the send-only (Light) preset. Grant <code>receive</code>, <code>use_library</code>, and
+            <code>use_infile</code> independently. For older keys, <code>receive</code> still unlocks Library / In File.
           </p>
+        </div>
+
+        <div class="block">
+          <span class="field-label">Connector window preview</span>
+          <ConnectorPanelPreview :allowed-functions="allowedFunctions" />
         </div>
 
         <p v-if="model.meta.inviteKeyId" class="muted small">
@@ -262,8 +276,8 @@ async function copy(text: string) {
   background: color-mix(in srgb, #000 45%, transparent);
 }
 .guest-dialog {
-  width: min(640px, 100%);
-  max-height: min(90vh, 820px);
+  width: min(720px, 100%);
+  max-height: min(90vh, 900px);
   display: flex;
   flex-direction: column;
   background: var(--color-bg-elevated, var(--surface, #fff));

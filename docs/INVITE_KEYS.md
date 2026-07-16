@@ -60,9 +60,10 @@ When creating a key without choosing functions, the default is:
 
 Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions`
 
-Admins may grant **any** connector function, including `receive`, `create_project`,
-and `list_projects`. Granting `receive` unlocks Receive / Library / In File in the
-single connector binary without reinstall.
+Admins may grant **any** connector function, including `receive`, `use_library`,
+`use_infile`, `create_project`, and `list_projects`. Grant panel surfaces
+independently — or use `receive` alone (still unlocks Library / In File for
+back-compat) without reinstalling the connector.
 
 `orbitBlanketAccess` is always `false` for invite-key sessions.
 
@@ -71,7 +72,9 @@ single connector binary without reinstall.
 | Capability | Derived from |
 |------------|--------------|
 | `canSend` | `Allows("send")` |
-| `canReceive` / Library / In File | `Allows("receive")` |
+| `canReceive` | `Allows("receive")` |
+| `canUseLibrary` | `Allows("use_library")` **or** `Allows("receive")` |
+| `canUseInFile` | `Allows("use_infile")` **or** `Allows("receive")` |
 | `canOpenOrbitLinks` | `authMethod != "invite_key"` |
 
 ## Admin API (admin cookie)
