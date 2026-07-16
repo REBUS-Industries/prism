@@ -25,6 +25,14 @@ through unchanged. Lines preceding the first `## v` header (including the
 
 ---
 
+## v0.3.46 — Meshy transfer OBJ Guid-layer lock
+
+### Fixed
+
+- **assimp**: Prefix UUID-shaped OBJ `g`/`o` names so Rhino does not treat them as locked Guid layers.
+- **agent**: Retry safer OBJ group/object mapping modes when `ModelComponent.set_Id` fails on Guid-shaped layer names (Meshy → assimp OBJ zip).
+- **web**: Validate Meshy GLB magic (`glTF`) before model-import transfer.
+
 ## v0.3.45 — Agent updater + GitHub rate-limit resilience
 
 ### Fixed
