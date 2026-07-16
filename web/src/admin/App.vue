@@ -87,6 +87,7 @@ async function logout() {
         <RouterLink v-if="showTool('fixtures')" :to="{ name: 'fixture-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import GDTF</RouterLink>
         <RouterLink v-if="showTool('fixtures')" :to="{ name: 'fixture-materials' }" class="nav-sub"><Icon name="palette" :size="16" />Fixture materials</RouterLink>
         <RouterLink :to="{ name: 'models'       }" v-if="showTool('models')"><Icon name="deployed_code" :size="18" />Model Library</RouterLink>
+        <RouterLink v-if="showTool('models')" :to="{ name: 'model-create' }" class="nav-sub"><Icon name="auto_awesome" :size="16" />Create model</RouterLink>
         <RouterLink v-if="showTool('models')" :to="{ name: 'model-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import model</RouterLink>
         <RouterLink :to="{ name: 'permissions'  }"><Icon name="shield" :size="18" />Permissions</RouterLink>
         <RouterLink :to="{ name: 'tool-access'  }" class="nav-sub"><Icon name="build" :size="16" />Tool access</RouterLink>

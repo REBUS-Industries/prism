@@ -11,6 +11,8 @@ const ENV_FALLBACKS: Partial<Record<SettingKey | LegacySettingKey, string | unde
   orbit_server_url:     process.env.ORBIT_SERVER_URL,
   orbit_fixtures_project_id:      process.env.ORBIT_FIXTURES_PROJECT_ID ?? '0f2893eb28',
   orbit_model_library_project_id: process.env.ORBIT_MODEL_LIBRARY_PROJECT_ID ?? 'e86589cc1e',
+  meshy_api_key:        process.env.MESHY_API_KEY,
+  meshy_api_base_url:   process.env.MESHY_API_BASE_URL ?? 'https://api.meshy.ai',
   job_retention_hours:  process.env.JOB_RETENTION_HOURS ?? '720',
   maintenance_mode:     process.env.MAINTENANCE_MODE ?? '0',
   portal_adapter: process.env.PORTAL_ADAPTER ?? 'mock',
@@ -40,6 +42,9 @@ export type SettingKey =
   // matching env var). Defaults are the documented production projects.
   | 'orbit_fixtures_project_id'        // env: ORBIT_FIXTURES_PROJECT_ID (prism-fixtures-service)
   | 'orbit_model_library_project_id'   // env: ORBIT_MODEL_LIBRARY_PROJECT_ID (prism-models-service)
+  // Meshy.ai (Admin → Settings → Meshy; used by Model Library create flow)
+  | 'meshy_api_key'                    // env: MESHY_API_KEY
+  | 'meshy_api_base_url'               // env: MESHY_API_BASE_URL (default https://api.meshy.ai)
   | 'job_retention_hours'
   | 'maintenance_mode'
   // Optional override for the WSS endpoint baked into the per-node agent

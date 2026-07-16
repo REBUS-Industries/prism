@@ -13,6 +13,19 @@ Generic 3D model assets (props, scenery, equipment meshes) managed by **`prism-m
 - **Orbit project:** `ORBIT_MODEL_LIBRARY_PROJECT_ID` (default `e86589cc1e` — [Model Library Project](https://orbit.rebus.industries/projects/e86589cc1e)). Each import creates an Orbit model in that project; `definition.metadata.orbit` stores `{ projectId, modelId, versionId, resultUrl }`.
 - **Contracts:** `prism-models-service/src/contracts/models.ts`, mirrored on the web in `web/src/shared/api.ts` (+ `web/src/admin/utils/modelTypes.ts`).
 
+## Create with Meshy
+
+Admin UI: `#/models/create` (nav: **Create model**). Credentials: **Settings → Meshy** (`meshy_api_key`, optional `meshy_api_base_url`).
+
+```
+Admin UI  →  prism-server /api/meshy/*  (Bearer key stays server-side)
+    │         text-to-3d (preview [+ refine]) or image-to-3d
+    │         poll until SUCCEEDED → model_urls.glb
+    ▼
+Transfer to library → download GLB via /api/meshy/download
+    → POST /api/model-import  (same convert → Orbit pipeline as Import)
+```
+
 ## Import flow (new)
 
 ```

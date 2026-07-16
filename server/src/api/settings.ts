@@ -21,6 +21,7 @@ const SECRET_KEYS = new Set<SettingKey>([
   'google_oauth_client_secret',
   'google_service_account_json',
   'google_workspace_directory_refresh_token',
+  'meshy_api_key',
 ]);
 
 const plugin: FastifyPluginAsync = async (app) => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { orbitApi, settingsApi, type ApiError, type OrbitTestFail, type OrbitTestOk } from '../../shared/api';
+import { meshyApi, orbitApi, settingsApi, type ApiError, type OrbitTestFail, type OrbitTestOk } from '../../shared/api';
 import Modal from '../../shared/Modal.vue';
 import Icon from '../../shared/Icon.vue';
 import FixtureTypesManager from '../components/FixtureTypesManager.vue';
@@ -34,6 +34,11 @@ const gdtfShareFields: FieldDef[] = [
   { key: 'gdtf_share_password', label: 'GDTF-Share password', secret: true, placeholder: 'write-only — not echoed after save' },
 ];
 
+const meshyFields: FieldDef[] = [
+  { key: 'meshy_api_key', label: 'API key', secret: true, placeholder: 'msy_… (write-only — not echoed after save)' },
+  { key: 'meshy_api_base_url', label: 'API base URL', placeholder: 'https://api.meshy.ai' },
+];
+
 const workstationAgentFields: FieldDef[] = [
   {
     key: 'workstation_agent_ws_url',
@@ -50,7 +55,7 @@ const workstationAgentFields: FieldDef[] = [
 // Reactive state for each known key: current input + original DB value.
 // Pre-populate synchronously so the template can render before refresh()
 // returns — otherwise `values[f.key].value` blows up on first paint.
-const ALL_KEYS = [...orbitProdFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
+const ALL_KEYS = [...orbitProdFields, ...gdtfShareFields, ...meshyFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
 const values = reactive<Record<string, { value: string; original: string }>>(
   Object.fromEntries(ALL_KEYS.map((k) => [k, { value: '', original: '' }])),
 );
@@ -68,7 +73,7 @@ const fixtureTypesStore = useFixtureTypesStore();
 // ── Tile model ──────────────────────────────────────────────────────────
 // Each section is a tile; clicking either opens a modal (fields/custom) or
 // navigates to a named route (routeName).
-type TileKey = 'orbit-prod' | 'gdtf' | 'server' | 'workstation' | 'fixture-types'
+type TileKey = 'orbit-prod' | 'gdtf' | 'meshy' | 'server' | 'workstation' | 'fixture-types'
              | 'external-materials' | 'portal-identity' | 'portal-access'
              | 'users' | 'webhooks' | 'api-keys';
 interface TileDef {
@@ -78,7 +83,7 @@ interface TileDef {
   icon: string;
   description: string;
   fields?: FieldDef[];
-  testTarget?: 'prod' | 'dev';
+  testTarget?: 'prod' | 'dev' | 'meshy';
   custom?: 'fixture-types' | 'external-materials' | 'portal-identity' | 'portal-access';
   /** Navigate to this named route instead of opening a modal. */
   routeName?: string;
@@ -90,6 +95,7 @@ const route = useRoute();
 const tiles: TileDef[] = [
   { key: 'orbit-prod',     title: 'ORBIT',   icon: 'cloud',     description: 'ORBIT server URL, API token, and project IDs used across PRISM.', fields: orbitProdFields, testTarget: 'prod' },
   { key: 'gdtf',           title: 'GDTF-Share',            icon: 'lightbulb', description: 'Credentials for fixture library import from GDTF-Share.com.', fields: gdtfShareFields },
+  { key: 'meshy',          title: 'Meshy',                 icon: 'auto_awesome', description: 'Meshy.ai API key for text/image-to-3D model creation in the Model Library.', fields: meshyFields, testTarget: 'meshy' },
   { key: 'fixture-types',  title: 'Fixture Types',         icon: 'palette',   description: 'Manage fixture categories and the colours shown across the library.', custom: 'fixture-types' },
   { key: 'external-materials', title: 'External materials', icon: 'travel_explore', description: 'Fab, Poly Haven, and ambientCG search providers + Epic OAuth token.', custom: 'external-materials' },
   { key: 'portal-identity', title: 'Portal & Google Workspace', icon: 'account_circle', description: 'Portal OAuth, Google API credentials, workspace sync, and admin Google sign-in.', custom: 'portal-identity' },
@@ -111,10 +117,11 @@ type TestState =
   | { kind: 'fail'; reason: string };
 
 const testProd = reactive<TestState>({ kind: 'idle' });
+const testMeshy = reactive<TestState>({ kind: 'idle' });
 
 async function refresh() {
   const all = (await settingsApi.list()).settings;
-  for (const f of [...orbitProdFields, ...gdtfShareFields, ...otherFields, ...workstationAgentFields]) {
+  for (const f of [...orbitProdFields, ...gdtfShareFields, ...meshyFields, ...otherFields, ...workstationAgentFields]) {
     const v = all[f.key] ?? '';
     values[f.key] = { value: v, original: v };
   }
@@ -177,6 +184,10 @@ function setTestState(state: TestState) {
   Object.assign(testProd, state);
 }
 
+function setMeshyTestState(state: TestState) {
+  Object.assign(testMeshy, state);
+}
+
 async function runTest() {
   setTestState({ kind: 'busy' });
   // If unsaved changes exist, save them first so the test hits the values
@@ -197,8 +208,28 @@ async function runTest() {
   }
 }
 
+async function runMeshyTest() {
+  setMeshyTestState({ kind: 'busy' });
+  await saveAll(meshyFields);
+  try {
+    const r = await meshyApi.test();
+    if (r.ok) {
+      setMeshyTestState({
+        kind: 'ok',
+        user: { name: 'Meshy API', email: null },
+        server: { name: 'meshy.ai', version: 'ok' },
+      });
+    } else {
+      setMeshyTestState({ kind: 'fail', reason: r.error || 'Meshy test failed' });
+    }
+  } catch (err) {
+    setMeshyTestState({ kind: 'fail', reason: (err as ApiError).message ?? 'Meshy test failed' });
+  }
+}
+
 const activeTest = computed<TestState | null>(() => {
   if (!activeTile.value?.testTarget) return null;
+  if (activeTile.value.testTarget === 'meshy') return testMeshy;
   return testProd;
 });
 
@@ -230,6 +261,10 @@ function tileSummary(tile: TileDef): string {
     case 'gdtf':
       return values.gdtf_share_username.value
         ? `User: ${values.gdtf_share_username.value}`
+        : 'Not configured';
+    case 'meshy':
+      return values.meshy_api_key.value
+        ? `Key stored · ${(values.meshy_api_base_url.value || 'https://api.meshy.ai').replace(/^https?:\/\//, '')}`
         : 'Not configured';
     case 'server':
       return `Retention ${values.job_retention_hours.value || '720'}h · Maintenance ${values.maintenance_mode.value === '1' ? 'ON' : 'off'}`;
@@ -339,12 +374,12 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- ORBIT connection test -->
+      <!-- Connection test (ORBIT / Meshy) -->
       <div v-if="activeTile.testTarget && activeTest" class="test-block">
         <button
           class="primary"
           :disabled="activeTest.kind === 'busy'"
-          @click="runTest()"
+          @click="activeTile.testTarget === 'meshy' ? runMeshyTest() : runTest()"
         >
           {{ activeTest.kind === 'busy' ? 'Testing…' : 'Test connection' }}
         </button>
@@ -354,12 +389,28 @@ onMounted(() => {
           <span v-else class="pill fail">failed</span>
 
           <span v-if="activeTest.kind === 'ok'" class="muted test-detail">
-            as <strong>{{ activeTest.user.name }}</strong>
-            <span v-if="activeTest.user.email"> ({{ activeTest.user.email }})</span>
-            on {{ activeTest.server.name }} {{ activeTest.server.version }}
+            <template v-if="activeTile.testTarget === 'meshy'">
+              Meshy API key accepted
+            </template>
+            <template v-else>
+              as <strong>{{ activeTest.user.name }}</strong>
+              <span v-if="activeTest.user.email"> ({{ activeTest.user.email }})</span>
+              on {{ activeTest.server.name }} {{ activeTest.server.version }}
+            </template>
           </span>
           <span v-else-if="activeTest.kind === 'fail'" class="muted test-detail">{{ activeTest.reason }}</span>
         </div>
+      </div>
+
+      <div v-if="activeTile.key === 'meshy'" class="help-copy muted">
+        <p>
+          Used by
+          <RouterLink :to="{ name: 'model-create' }">Create model</RouterLink>
+          (Meshy text/image-to-3D). Create a key at
+          <a href="https://www.meshy.ai/" target="_blank" rel="noopener">meshy.ai</a>
+          → API settings. See
+          <a href="https://docs.meshy.ai/en/api/quick-start" target="_blank" rel="noopener">Meshy API quick start</a>.
+        </p>
       </div>
 
       <!-- Workstation agent explanatory copy -->
