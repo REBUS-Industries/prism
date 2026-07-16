@@ -2613,6 +2613,12 @@ export const meshyApi = {
   createImageTo3d: (body: Record<string, unknown>) =>
     api.post<{ result: string }>('/api/meshy/image-to-3d', body),
   getImageTo3d: (id: string) => api.get<MeshyTask>(`/api/meshy/image-to-3d/${encodeURIComponent(id)}`),
+  createRetexture: (body: Record<string, unknown>) =>
+    api.post<{ result: string }>('/api/meshy/retexture', body),
+  getRetexture: (id: string) => api.get<MeshyTask>(`/api/meshy/retexture/${encodeURIComponent(id)}`),
+  createRemesh: (body: Record<string, unknown>) =>
+    api.post<{ result: string }>('/api/meshy/remesh', body),
+  getRemesh: (id: string) => api.get<MeshyTask>(`/api/meshy/remesh/${encodeURIComponent(id)}`),
   /** Download a signed Meshy asset URL via the server proxy (CORS-safe). */
   download: (assetUrl: string) =>
     api.getBlob(`/api/meshy/download?url=${encodeURIComponent(assetUrl)}`),

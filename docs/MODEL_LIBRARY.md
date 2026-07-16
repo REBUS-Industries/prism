@@ -20,7 +20,9 @@ Admin UI: `#/models/create` (nav: **Create model**). Credentials: **Settings →
 ```
 Admin UI  →  prism-server /api/meshy/*  (Bearer key stays server-side)
     │         text-to-3d (preview [+ refine]) or image-to-3d
+    │         optional retexture / remesh on the succeeded task
     │         poll until SUCCEEDED → model_urls.glb
+    │         UI loads GLB into an interactive viewer (edit before import)
     ▼
 Transfer to library → download GLB via /api/meshy/download
     → POST /api/model-import  (same convert → Orbit pipeline as Import)

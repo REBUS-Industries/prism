@@ -2457,6 +2457,137 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         },
       },
 
+      '/api/meshy/retexture': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Meshy'],
+          summary: 'Create a Retexture task',
+          description: [
+            'Proxies `POST https://api.meshy.ai/openapi/v1/retexture`.',
+            'Pass `input_task_id` (preferred) or `model_url`, plus `text_style_prompt` or `image_style_url`.',
+            '**Scope:** `models:write`. Upstream: https://docs.meshy.ai/en/api/retexture',
+          ].join(' '),
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    input_task_id: { type: 'string' },
+                    model_url: { type: 'string' },
+                    text_style_prompt: { type: 'string', maxLength: 600 },
+                    image_style_url: { type: 'string' },
+                    enable_pbr: { type: 'boolean' },
+                    enable_original_uv: { type: 'boolean' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Task created.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { result: { type: 'string' } },
+                    required: ['result'],
+                  },
+                },
+              },
+            },
+            '400': { description: 'Invalid body.' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '412': { description: 'Meshy API key not configured.' },
+          },
+        },
+      },
+
+      '/api/meshy/retexture/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Meshy'],
+          summary: 'Get Retexture task status',
+          description: '**Scope:** `models:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Meshy task object.', content: { 'application/json': { schema: { $ref: '#/components/schemas/MeshyTask' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/meshy/remesh': {
+        servers: [{ url: API_BASE }],
+        post: {
+          tags: ['Meshy'],
+          summary: 'Create a Remesh task',
+          description: [
+            'Proxies `POST https://api.meshy.ai/openapi/v1/remesh`.',
+            'Pass `input_task_id` (preferred) or `model_url`, optional `topology` / `target_polycount`.',
+            '**Scope:** `models:write`. Upstream: https://docs.meshy.ai/en/api/remesh',
+          ].join(' '),
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    input_task_id: { type: 'string' },
+                    model_url: { type: 'string' },
+                    topology: { type: 'string', enum: ['quad', 'triangle'] },
+                    target_polycount: { type: 'integer' },
+                    target_formats: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Task created.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { result: { type: 'string' } },
+                    required: ['result'],
+                  },
+                },
+              },
+            },
+            '400': { description: 'Invalid body.' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '412': { description: 'Meshy API key not configured.' },
+          },
+        },
+      },
+
+      '/api/meshy/remesh/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['Meshy'],
+          summary: 'Get Remesh task status',
+          description: '**Scope:** `models:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Meshy task object.', content: { 'application/json': { schema: { $ref: '#/components/schemas/MeshyTask' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
       '/api/meshy/download': {
         servers: [{ url: API_BASE }],
         get: {
