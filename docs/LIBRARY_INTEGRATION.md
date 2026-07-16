@@ -56,17 +56,21 @@ needs (read-only browse vs full edit).
 | Scope | Fixture library | Model library | Material library |
 |-------|-----------------|---------------|------------------|
 | `{lib}:read` | List, detail, preview GLB, connector export | List, detail, preview GLB | List, detail, texture preview, material ZIP export |
-| `{lib}:write` | Create, edit definition, categories, IES | Create, edit metadata | Create, edit, slot assign, duplicate, branch |
+| `{lib}:write` | Create, edit definition, categories, IES | Create, edit metadata; **Meshy generate** (`/api/meshy/*` create) | Create, edit, slot assign, duplicate, branch |
 | `{lib}:delete` | Soft-delete fixture types | Soft-delete models | Soft-delete materials / textures |
-| `{lib}:import` | GDTF / GDTF-Share / MVR import | `/api/model-import` upload | `/api/materials/import` ZIP |
+| `{lib}:import` | GDTF / GDTF-Share / MVR import | `/api/model-import` upload (incl. Meshy transfer) | `/api/materials/import` ZIP |
 
 Where `{lib}` is `fixtures`, `models`, or `materials`.
+
+Meshy status / poll / download also need `models:read`. See
+[Generate with Meshy](#generate-with-meshy-connectors--portals).
 
 **Examples**
 
 - Portal browse-only widget: `fixtures:read`, `models:read`, `materials:read`
 - Portal editor (view + edit): add `fixtures:write`, `models:write`, `materials:write`
 - Portal with import wizards: also `fixtures:import`, `models:import`
+- Portal / connector **Meshy → library**: `models:read`, `models:write`, `models:import`
 
 Keys without an explicit scope set behave as legacy full-access keys (avoid
 for portal integrations).
@@ -277,9 +281,129 @@ curl -sS -X DELETE -H "X-API-Key: $PRISM_KEY" \
 
 Import runs the same convert pipeline as `/convert/` — poll the returned
 `jobId` via `GET /v1/jobs/{jobId}` if you need to block until preview GLB is
-ready, or poll `GET /api/models/{id}` until `importStatus` is `ready`.
+ready, or poll `GET /api/models/{id}` until `importStatus` is `complete`
+(or `hasPreview` is true).
 
 Architecture reference: [`docs/MODEL_LIBRARY.md`](MODEL_LIBRARY.md)
+
+### Generate with Meshy (connectors & portals)
+
+PRISM can generate meshes via [Meshy.ai](https://docs.meshy.ai/en/api/quick-start)
+and land them in the **Model Library** (convert pipeline → Orbit Model Library
+project). This is the same path as **Admin → Model Library → Create with Meshy**
+(`#/models/create`).
+
+**Who holds the Meshy credentials?** PRISM does — not your connector or portal.
+
+1. An admin pastes the Meshy API key in **Admin → Settings → Meshy**
+   (`meshy_api_key`; optional `meshy_api_base_url`, default `https://api.meshy.ai`).
+2. Your **ORBIT connector** or **third-party portal** calls PRISM’s proxied
+   `/api/meshy/*` routes with a normal `X-API-Key`. The Meshy Bearer token never
+   leaves the PRISM server (same pattern as ORBIT / Fab proxies).
+3. When generation succeeds, download the GLB through PRISM and
+   `POST /api/model-import` to publish into the library.
+
+```
+Your connector / portal
+        │  X-API-Key (models:read|write|import)
+        ▼
+PRISM /api/meshy/*  ──Bearer meshy_api_key──►  api.meshy.ai
+        │
+        │  model_urls.glb (signed)
+        ▼
+GET /api/meshy/download?url=…  →  GLB bytes
+        │
+        ▼
+POST /api/model-import  →  convert pipeline → Orbit Model Library
+        │
+        ▼
+GET /api/models/{id} until importStatus=complete / hasPreview
+```
+
+**Scopes**
+
+| Step | Scope |
+|------|--------|
+| `GET /api/meshy/status`, poll task, download GLB | `models:read` |
+| `POST /api/meshy/text-to-3d`, `POST /api/meshy/image-to-3d` | `models:write` |
+| `POST /api/model-import` (transfer into library) | `models:import` |
+
+**Prerequisite:** Settings → Meshy must be configured. Otherwise create/test
+return `412` with a “Set the Meshy API key…” message.
+
+#### End-to-end example (text → library)
+
+```bash
+export PRISM_KEY=prism_xyz
+export PRISM=https://prism.rebus.industries
+
+# 0. Confirm Meshy is configured on this PRISM
+curl -sS -H "X-API-Key: $PRISM_KEY" "$PRISM/api/meshy/status"
+# → { "configured": true }
+
+# 1. Create a Text-to-3D preview task
+TASK=$(curl -sS -X POST -H "X-API-Key: $PRISM_KEY" -H "Content-Type: application/json" \
+  -d '{"mode":"preview","prompt":"a stage clamp for a lighting pipe, dark steel","should_remesh":true}' \
+  "$PRISM/api/meshy/text-to-3d" | jq -r .result)
+
+# 2. Poll until SUCCEEDED (or FAILED)
+while true; do
+  STATUS=$(curl -sS -H "X-API-Key: $PRISM_KEY" "$PRISM/api/meshy/text-to-3d/$TASK")
+  echo "$STATUS" | jq '{status,progress}'
+  echo "$STATUS" | jq -e '.status=="SUCCEEDED" or .status=="FAILED"' >/dev/null && break
+  sleep 5
+done
+
+# 3. Optional: refine (texture) from the preview task id
+REFINE=$(curl -sS -X POST -H "X-API-Key: $PRISM_KEY" -H "Content-Type: application/json" \
+  -d "{\"mode\":\"refine\",\"preview_task_id\":\"$TASK\",\"enable_pbr\":true}" \
+  "$PRISM/api/meshy/text-to-3d" | jq -r .result)
+# …poll /api/meshy/text-to-3d/$REFINE the same way…
+
+# 4. Download GLB via PRISM proxy (CORS-safe; allowlists Meshy asset hosts)
+GLB_URL=$(curl -sS -H "X-API-Key: $PRISM_KEY" "$PRISM/api/meshy/text-to-3d/$REFINE" | jq -r .model_urls.glb)
+curl -sS -H "X-API-Key: $PRISM_KEY" -o meshy-model.glb \
+  "$PRISM/api/meshy/download?url=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$GLB_URL")"
+
+# 5. Transfer into the Model Library (same as file import)
+IMPORT=$(curl -sS -X POST -H "X-API-Key: $PRISM_KEY" \
+  -F "file=@meshy-model.glb" \
+  -F "name=Stage clamp" \
+  -F "category=clamp" \
+  -F "tags=meshy,generated" \
+  "$PRISM/api/model-import")
+MODEL_ID=$(echo "$IMPORT" | jq -r '.modelId // .model.id')
+
+# 6. Wait for convert → Orbit
+while true; do
+  M=$(curl -sS -H "X-API-Key: $PRISM_KEY" "$PRISM/api/models/$MODEL_ID")
+  echo "$M" | jq '{importStatus,hasPreview,orbitUrl}'
+  echo "$M" | jq -e '.hasPreview==true or .importStatus=="complete" or .importStatus=="failed"' >/dev/null && break
+  sleep 3
+done
+```
+
+#### Image-to-3D
+
+`POST /api/meshy/image-to-3d` accepts Meshy’s body shape. Pass either a public
+`image_url` or a `data:image/jpeg;base64,…` / `data:image/png;base64,…` data URI
+(same as the admin UI). Poll `GET /api/meshy/image-to-3d/{id}`, then download +
+`/api/model-import` as above.
+
+#### Connector vs third-party portal
+
+| Caller | Auth | Typical use |
+|--------|------|-------------|
+| **ORBIT connector** | `X-API-Key` with `models:*` (minted in Admin → API keys) | In-app “Generate with Meshy” that writes into the shared Prism Model Library project |
+| **Third-party portal** | Same `X-API-Key` pattern | Portal UX that generates assets and lists them via `GET /api/models` / `previewUrl` |
+| **Admin SPA** | Session cookie | `#/models/create` — same backend routes |
+
+Do **not** put the Meshy API key in connector config or portal env. Store it
+only in PRISM Settings so rotation and audit stay centralised. If Meshy is
+unconfigured, show operators a link to Settings → Meshy (or fail with `412`).
+
+OpenAPI tag: **Meshy** on [`/docs`](https://prism.rebus.industries/docs).
+Upstream Meshy reference: [Meshy API quick start](https://docs.meshy.ai/en/api/quick-start).
 
 ---
 
@@ -428,9 +552,11 @@ headless or cross-origin portals, use the REST API with scoped API keys
 
 ## See also
 
-- OpenAPI spec: [`https://prism.rebus.industries/docs`](https://prism.rebus.industries/docs)
+- OpenAPI spec: [`https://prism.rebus.industries/docs`](https://prism.rebus.industries/docs) (**Meshy** tag)
+- Generate with Meshy: [above](#generate-with-meshy-connectors--portals)
 - Fixture assembly & motion: [`/docs/fixture-assembly-and-motion`](https://prism.rebus.industries/docs/fixture-assembly-and-motion)
 - Fixture groups & position presets: [`/docs/fixture-groups-positions-metadata`](https://prism.rebus.industries/docs/fixture-groups-positions-metadata)
 - Visualiser portal guide: [`/docs/portal-integration`](https://prism.rebus.industries/docs/portal-integration)
 - Permissions / tool grants: [`docs/PERMISSIONS.md`](PERMISSIONS.md)
 - Portal contract (identity): [`docs/PORTAL_CONTRACT.md`](PORTAL_CONTRACT.md)
+- Model library architecture: [`docs/MODEL_LIBRARY.md`](MODEL_LIBRARY.md)
