@@ -1,14 +1,11 @@
 /**
  * Portal access + connector permissions contracts.
- *
- * Canonical TypeScript source; mirrors `portal-access.json`.
- * Used by prism-permissions-service, PRISM admin UI, and connectors.
+ * Keep in sync with `REBUS-Industries/prism-permissions-service` →
+ * `src/contracts/portal-access.ts` (live invite-key / manifest API).
  */
-
 export const PORTAL_ACCESS_SCHEMA = 'rebus/portal-access/v1' as const;
 export const CONNECTOR_MANIFEST_SCHEMA = 'rebus/connector-manifest/v1' as const;
 
-/** Connector operations that may be gated per project. */
 export type ConnectorFunction =
   | 'send'
   | 'receive'
@@ -30,22 +27,15 @@ export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'create_version',
 ];
 
+export type PortalProjectLevel = 'viewer' | 'contributor' | 'owner' | 'admin';
+
 /** PRISM admin tools gated by role-based grants. */
 export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models';
 
-export const PRISM_TOOLS: PrismTool[] = [
-  'convert',
-  'visualiser',
-  'fixtures',
-  'materials',
-  'models',
-];
+export const PRISM_TOOLS: PrismTool[] = ['convert', 'visualiser', 'fixtures', 'materials', 'models'];
 
 /** Portal system role (from portal-app UserProfile.role). */
 export type PortalSystemRole = 'superAdmin' | 'admin' | 'staff' | 'viewer';
-
-/** Portal project access level (from REBUS portal API). */
-export type PortalProjectLevel = 'viewer' | 'contributor' | 'owner' | 'admin';
 
 export interface PortalUser {
   userId: string;
@@ -53,8 +43,8 @@ export interface PortalUser {
   googleSub?: string | null;
   displayName?: string | null;
   /**
-   * The user's primary role id (portal `GET /portal/me.roleId`). This is the
-   * canonical key matched against PortalRole.id and tool-grant keys.
+   * The user's primary role id (portal `GET /portal/me.roleId`). Canonical key
+   * matched against PortalRole.id and tool-grant keys.
    */
   roleId?: string | null;
   /** All role ids the user holds (portal `GET /portal/me.roleIds`). */
@@ -66,8 +56,8 @@ export interface PortalUser {
 }
 
 /**
- * A role defined in the portal. This is the live source of truth for the set
- * of role ids; PRISM mirrors it so deleted/renamed portal roles never linger.
+ * A role defined in the portal. The live source of truth for role ids; PRISM
+ * mirrors it so deleted/renamed portal roles never linger as stale grants.
  */
 export interface PortalRole {
   /** Canonical role id matched against PortalUser.role / customRoleId and tool-grant keys. */
@@ -99,25 +89,134 @@ export interface PortalProjectPermissionsResponse {
   fetchedAt: string;
 }
 
-/** POST /api/access/session — connector exchanges portal auth code. */
+/**
+ * Exchange a portal OAuth code **or** a collaborator invite key for a
+ * ConnectorManifest. Exactly one of `portalAuthCode` / `inviteKey` is required.
+ * Codes of the form `invite:<key>` (from GET /api/access/invite-login) are
+ * treated as invite keys.
+ */
 export interface AccessSessionRequest {
-  /** OAuth-style code from portal callback (mock accepts `mock:` prefix). */
-  portalAuthCode: string;
-  /** ORBIT target for token minting. */
+  portalAuthCode?: string;
+  /** Collaborator login key (plaintext). Prefer this over encoding in portalAuthCode. */
+  inviteKey?: string;
   orbitTarget?: 'prod' | 'dev';
-  /** Optional redirect URI used in portal OAuth (must match registration). */
   redirectUri?: string;
+}
+
+/**
+ * Default invite-key function preset (send-only / "Light-like" UX).
+ * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`
+ * and `create_project`. Empty input falls back to this set.
+ */
+export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
+  'send',
+  'create_model',
+  'create_version',
+  'list_models',
+  'list_versions',
+];
+
+/**
+ * @deprecated Invite keys may now grant any connector function. Kept as an
+ * empty list for back-compat imports; do not add denials here.
+ */
+export const INVITE_KEY_DENIED_FUNCTIONS: ConnectorFunction[] = [];
+
+export type InviteKeyAuthMethod = 'portal' | 'invite_key';
+
+/**
+ * How a guest invite key may list/open models within its granted projects.
+ * - `all` — every model in the granted projects
+ * - `selected` — only `selectedModelIds`
+ * - `authored` — only models whose Orbit property `userId` matches the
+ *   invite session identity (`manifest.userId` = `invite:<keyId>`), i.e.
+ *   models the guest uploaded with that author id baked in
+ */
+export type InviteModelAccess = 'all' | 'selected' | 'authored';
+
+export const INVITE_MODEL_ACCESS_MODES: InviteModelAccess[] = ['all', 'selected', 'authored'];
+
+/** Orbit model property used for authored-only filtering. */
+export const INVITE_AUTHORED_MODEL_PROPERTY = 'userId' as const;
+
+export interface InviteKeyProject {
+  orbitProjectId: string;
+  projectName?: string | null;
+}
+
+export interface CreateInviteKeyRequest {
+  orbitProjectIds: string[];
+  /** Defaults to LIGHT_CONNECTOR_FUNCTIONS. May include any ConnectorFunction. */
+  allowedFunctions?: ConnectorFunction[];
+  orbitTarget?: 'prod' | 'dev';
+  expiresAt?: string | null;
+  label?: string | null;
+  /** Null/omit = unlimited. */
+  maxRedemptions?: number | null;
+  /** Optional display names keyed by project id (or parallel list via projects). */
+  projectNames?: Record<string, string> | null;
+  /** Defaults to `all`. */
+  modelAccess?: InviteModelAccess;
+  /** Required when modelAccess is `selected`. */
+  selectedModelIds?: string[] | null;
+}
+
+export interface InviteKeyRecord {
+  id: string;
+  label?: string | null;
+  orbitTarget: 'prod' | 'dev';
+  projects: InviteKeyProject[];
+  allowedFunctions: ConnectorFunction[];
+  modelAccess: InviteModelAccess;
+  selectedModelIds: string[];
+  expiresAt?: string | null;
+  maxRedemptions?: number | null;
+  redemptionCount: number;
+  createdBy: string;
+  createdAt: string;
+  revokedAt?: string | null;
+  lastRedeemedAt?: string | null;
+  /** Present only on create — plaintext key shown once. */
+  key?: string;
+  /** Present only on create. */
+  redeemUrl?: string;
+}
+
+export interface CreateInviteKeyResponse {
+  id: string;
+  key: string;
+  redeemUrl: string;
+  expiresAt?: string | null;
+  projects: InviteKeyProject[];
+  allowedFunctions: ConnectorFunction[];
+  label?: string | null;
+  maxRedemptions?: number | null;
+  modelAccess: InviteModelAccess;
+  selectedModelIds: string[];
+}
+
+export interface UpdateInviteKeyRequest {
+  label?: string | null;
+  orbitProjectIds?: string[];
+  projectNames?: Record<string, string> | null;
+  allowedFunctions?: ConnectorFunction[];
+  expiresAt?: string | null;
+  maxRedemptions?: number | null;
+  modelAccess?: InviteModelAccess;
+  selectedModelIds?: string[] | null;
+}
+
+export interface ListInviteKeysResponse {
+  keys: InviteKeyRecord[];
 }
 
 export interface ConnectorManifestProject {
   orbitProjectId: string;
   projectName?: string | null;
   level: PortalProjectLevel;
-  /** Allowed connector functions for this project (effective = portal ∩ policy graph). */
   allowedFunctions: ConnectorFunction[];
 }
 
-/** Returned to connectors after portal-brokered login. */
 export interface ConnectorManifest {
   schema: typeof CONNECTOR_MANIFEST_SCHEMA;
   userId: string;
@@ -125,36 +224,41 @@ export interface ConnectorManifest {
   displayName?: string | null;
   orbitTarget: 'prod' | 'dev';
   orbitServerUrl: string;
-  /** Scoped ORBIT bearer token — use for all ORBIT API calls. */
   orbitToken: string;
-  /** PRISM portal session bearer for Library/API until ORBIT projects are assigned. */
-  prismAccessToken?: string;
-  /**
-   * MVP: true for all portal users — connector treats this as full Send/Receive/List/Create
-   * on every ORBIT project. Phase 2: set ORBIT_BLANKET_ACCESS=0 and assign projects in PRISM Users.
-   */
-  orbitBlanketAccess?: boolean;
-  /** Token expiry (ISO); connector should re-auth before this. */
   expiresAt: string;
-  /** Session id for manifest refresh via GET /api/access/manifest. */
   sessionId: string;
+  prismAccessToken: string;
+  orbitBlanketAccess: boolean;
   projects: ConnectorManifestProject[];
-  /** Global defaults when project-specific list is empty. */
   globalAllowedFunctions: ConnectorFunction[];
+  /** How this session was authenticated. Omit/portal for Google/portal OAuth. */
+  authMethod?: InviteKeyAuthMethod;
+  /** Present when authMethod is invite_key — for audit / connector attribution. */
+  inviteKeyId?: string;
+  /**
+   * Invite-key model visibility within granted projects.
+   * Connector filters list_models / open using this (Orbit token is still project-scoped).
+   */
+  modelAccess?: InviteModelAccess;
+  /** When modelAccess is `selected`. */
+  selectedModelIds?: string[];
+  /**
+   * Orbit model property name for authored-only filter (`userId`).
+   * Compare model[authoredProperty] / properties[authoredProperty] to `userId`.
+   */
+  authoredProperty?: typeof INVITE_AUTHORED_MODEL_PROPERTY;
 }
 
 export interface AccessSessionResponse {
   manifest: ConnectorManifest;
 }
 
-/** Node graph policy (admin permissions editor). */
 export type PolicyNodeType = 'role' | 'user' | 'project' | 'function' | 'tool';
 
 export interface PolicyNode {
   id: string;
   type: PolicyNodeType;
   label: string;
-  /** role name, user email, orbit project id, or function id */
   ref?: string | null;
   position: { x: number; y: number };
   data?: Record<string, unknown>;
@@ -164,7 +268,6 @@ export interface PolicyEdge {
   id: string;
   source: string;
   target: string;
-  /** When set, edge grants the target function to source principal for project ref on target node. */
   grant?: boolean;
 }
 
@@ -179,7 +282,6 @@ export interface PermissionsPolicyResponse {
   defaultFunctions: ConnectorFunction[];
 }
 
-/** Role/user -> PRISM tool grants (layout-free; edited from PRISM admin or portal). */
 export interface ToolGrants {
   roles: Record<string, PrismTool[]>;
   users?: Record<string, PrismTool[]>;
@@ -190,7 +292,6 @@ export interface ToolGrantsResponse {
   updatedAt?: string;
 }
 
-/** Effective PRISM tool access for the signed-in admin user. */
 export interface EffectiveToolAccess {
   email: string;
   roles: string[];
@@ -209,7 +310,6 @@ export interface ToolAuthorizeResponse {
   tool: PrismTool;
 }
 
-/** Service-side portal integration (implemented in prism-permissions-service). */
 export interface PortalAdapterConfig {
   baseUrl: string;
   apiKey?: string;
@@ -220,11 +320,8 @@ export interface PortalAdapter {
   exchangeAuthCode(code: string, redirectUri?: string): Promise<string>;
   getMe(portalToken: string): Promise<PortalUser>;
   getProjectPermissions(portalToken: string, userId: string): Promise<PortalProjectPermissionsResponse>;
-  /** List the portal's current roles (service-to-portal call; no user token). */
   listRoles(): Promise<PortalRolesResponse>;
 }
-
-// ── Google Workspace linking + pre-provisioned users ─────────────────────────
 
 export type GoogleWorkspaceStatus = 'disconnected' | 'linked' | 'syncing';
 
@@ -233,7 +330,6 @@ export interface GoogleWorkspaceLink {
   domain: string;
   displayName?: string | null;
   status: GoogleWorkspaceStatus;
-  /** mock | google_admin_sdk */
   adapter: string;
   linkedAt?: string | null;
   lastSyncAt?: string | null;
@@ -250,13 +346,9 @@ export interface ProvisionedUser {
   googleSub?: string | null;
   status: ProvisionedUserStatus;
   source: ProvisionedUserSource;
-  /** Grant PRISM admin SPA access on Google sign-in. */
   isPrismAdmin: boolean;
-  /** Optional bind to local admin_users.username (defaults to PORTAL_ADMIN_USERNAME). */
   prismAdminUsername?: string | null;
-  /** Pre-defined ORBIT project access (applied before first login). */
   projectPermissions: PortalProjectPermission[];
-  /** Role refs matched against function-policy graph role nodes. */
   roleRefs: string[];
   lastLoginAt?: string | null;
   createdAt: string;

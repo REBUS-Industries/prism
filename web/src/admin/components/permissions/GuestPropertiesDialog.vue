@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * Right-click / inspector dialog for Connector Light guest invite keys.
+ * Right-click / inspector dialog for collaborator guest invite keys.
  */
 import { computed, ref, watch } from 'vue';
 import Icon from '../../../shared/Icon.vue';
 import ProjectAccessTree from './ProjectAccessTree.vue';
 import ModelAccessTree from './ModelAccessTree.vue';
 import {
+  CONNECTOR_FUNCTIONS,
   LIGHT_CONNECTOR_FUNCTIONS,
   type ConnectorFunction,
   type InviteModelAccess,
@@ -47,7 +48,8 @@ const modelAccess = ref<InviteModelAccess>('all');
 const selectedModelIds = ref<string[]>([]);
 
 const isNew = computed(() => !props.model?.meta.inviteKeyId);
-const functionOptions = LIGHT_CONNECTOR_FUNCTIONS;
+/** Full function set; Light preset is the default selection for new keys. */
+const functionOptions = CONNECTOR_FUNCTIONS;
 const canSave = computed(() => {
   if (!projectIds.value.length || !allowedFunctions.value.length) return false;
   if (modelAccess.value === 'selected' && !selectedModelIds.value.length) return false;
@@ -120,7 +122,8 @@ async function copy(text: string) {
         <div>
           <h2 id="guest-dialog-title">{{ isNew ? 'New guest' : 'Guest properties' }}</h2>
           <p class="muted">
-            Connector Light invite key — wire this guest to project nodes on the graph, or pick projects below.
+            Collaborator invite key — wire this guest to project nodes on the graph, or pick projects below.
+            Functions drive connector UI (send-only vs send+receive) in the single REBUS Connector binary.
           </p>
         </div>
         <button type="button" class="icon-btn" aria-label="Close" @click="emit('close')">
@@ -210,7 +213,9 @@ async function copy(text: string) {
               {{ fn }}
             </label>
           </div>
-          <p class="muted small">Light keys cannot grant <code>receive</code> or <code>create_project</code>.</p>
+          <p class="muted small">
+            Default is the send-only (Light) preset. Grant <code>receive</code> to unlock Receive / Library / In File in the connector.
+          </p>
         </div>
 
         <p v-if="model.meta.inviteKeyId" class="muted small">
