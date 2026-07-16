@@ -58,12 +58,13 @@ The connector must filter `list_models` by mode and bake `userId = manifest.user
 
 When creating a key without choosing functions, the default is:
 
-Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions`
+Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions`, `list_projects`
 
-Admins may grant **any** connector function, including `receive`, `use_library`,
-`use_infile`, `create_project`, and `list_projects`. Grant panel surfaces
-independently — Library / In File are **not** implied by `receive`. Collaborators
-can **Refresh panel** to pick up grant changes without signing out.
+Admins may grant any grantable connector function, including `receive`,
+`use_library`, `use_infile`, and `list_projects`. `create_project` is never
+grantable — the REBUS Connector hard-denies project creation. Library / In File
+require explicit grants (not implied by `receive`). Collaborators can
+**Refresh panel** to pick up grant changes without signing out.
 
 `orbitBlanketAccess` is always `false` for invite-key sessions.
 
@@ -73,6 +74,7 @@ can **Refresh panel** to pick up grant changes without signing out.
 |------------|--------------|
 | `canSend` | `Allows("send")` |
 | `canReceive` | `Allows("receive")` |
+| `canListProjects` | `Allows("list_projects")` |
 | `canUseLibrary` | `Allows("use_library")` |
 | `canUseInFile` | `Allows("use_infile")` |
 | `canOpenOrbitLinks` | `authMethod != "invite_key"` |

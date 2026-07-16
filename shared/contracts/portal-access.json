@@ -12,7 +12,6 @@
         "list_projects",
         "list_models",
         "list_versions",
-        "create_project",
         "create_model",
         "create_version",
         "use_library",

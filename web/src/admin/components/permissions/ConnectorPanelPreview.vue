@@ -16,6 +16,7 @@ const set = computed(() => new Set(props.allowedFunctions));
 
 const canSend = computed(() => set.value.has('send'));
 const canReceive = computed(() => set.value.has('receive'));
+const canListProjects = computed(() => set.value.has('list_projects'));
 /** Independent of receive — must be granted explicitly. */
 const canUseLibrary = computed(() => set.value.has('use_library'));
 const canUseInFile = computed(() => set.value.has('use_infile'));
@@ -80,6 +81,9 @@ const emptyHint = computed(() => {
 
       <div class="connector-preview__body">
         <p>{{ emptyHint }}</p>
+        <p class="connector-preview__meta">
+          {{ canListProjects ? 'Project picker enabled' : 'Project picker hidden (no list_projects)' }}
+        </p>
       </div>
     </div>
     <p class="connector-preview__caption">
@@ -214,6 +218,8 @@ const emptyHint = computed(() => {
   text-align: center;
   min-height: 56px;
   display: flex;
+  flex-direction: column;
+  gap: 6px;
   align-items: center;
   justify-content: center;
 }
@@ -222,6 +228,10 @@ const emptyHint = computed(() => {
   font-size: 11px;
   color: #8b93a2;
   line-height: 1.4;
+}
+.connector-preview__meta {
+  font-size: 10px !important;
+  color: #6b7280 !important;
 }
 .connector-preview__caption {
   margin: 0;

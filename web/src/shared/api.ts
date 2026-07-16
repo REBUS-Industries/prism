@@ -2560,20 +2560,20 @@ export type ConnectorFunction =
   | 'list_projects'
   | 'list_models'
   | 'list_versions'
+  /** @deprecated Never grantable — connector hard-denies project creation. */
   | 'create_project'
   | 'create_model'
   | 'create_version'
   | 'use_library'
   | 'use_infile';
 
-/** Full connector function vocabulary (invite keys and portal manifests). */
+/** Grantable connector functions (excludes create_project). */
 export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'send',
   'receive',
   'list_projects',
   'list_models',
   'list_versions',
-  'create_project',
   'create_model',
   'create_version',
   'use_library',
@@ -2610,18 +2610,7 @@ export interface PermissionsPolicyResponse {
 }
 
 export const permissionsApi = {
-  functionsList: (): ConnectorFunction[] => [
-    'send',
-    'receive',
-    'list_projects',
-    'list_models',
-    'list_versions',
-    'create_project',
-    'create_model',
-    'create_version',
-    'use_library',
-    'use_infile',
-  ],
+  functionsList: (): ConnectorFunction[] => [...CONNECTOR_FUNCTIONS],
   toolsList: (): PrismTool[] => ['convert', 'visualiser', 'fixtures', 'materials', 'models'],
   getPolicy: () => api.get<PermissionsPolicyResponse>('/api/permissions/policy'),
   savePolicy: (body: { graph: FunctionPolicyGraph; defaultFunctions?: ConnectorFunction[] }) =>
@@ -2668,7 +2657,8 @@ export interface EffectiveToolAccess {
 /**
  * Default invite-key function preset (send-only / "Light-like" UX).
  * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`,
- * `use_library`, and `use_infile`.
+ * `use_library`, and `use_infile`. `list_projects` is included so guests can
+ * see assigned projects. `create_project` is never grantable.
  */
 export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'send',
@@ -2676,6 +2666,7 @@ export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'create_version',
   'list_models',
   'list_versions',
+  'list_projects',
 ];
 
 /** Model visibility for collaborator invite keys. */

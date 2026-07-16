@@ -27,6 +27,7 @@ export function normalizeInviteFunctions(raw?: ConnectorFunction[] | null): Conn
   const source = raw?.length ? raw : LIGHT_CONNECTOR_FUNCTIONS;
   const out: ConnectorFunction[] = [];
   for (const fn of source) {
+    if (fn === 'create_project') continue; // never grantable — connector hard-denies
     if (!ALLOWED_SET.has(fn)) {
       throw new AccessError(`Unknown connector function: ${fn}`, 400);
     }
