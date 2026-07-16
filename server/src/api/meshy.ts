@@ -8,9 +8,13 @@ import { z } from 'zod';
 import { requireAuth, requireScope } from '../auth/middleware.js';
 import {
   createImageTo3dTask,
+  createRemeshTask,
+  createRetextureTask,
   createTextTo3dTask,
   downloadMeshyAsset,
   getImageTo3dTask,
+  getRemeshTask,
+  getRetextureTask,
   getTextTo3dTask,
   isMeshyConfigured,
   MeshyClientError,
@@ -55,6 +59,37 @@ const imageCreateBody = z.object({
   model_type: z.string().optional(),
   texture_prompt: z.string().max(600).optional(),
 }).passthrough();
+
+const retextureBody = z.object({
+  input_task_id: z.string().min(1).optional(),
+  model_url: z.string().min(1).optional(),
+  text_style_prompt: z.string().max(600).optional(),
+  image_style_url: z.string().min(1).optional(),
+  enable_pbr: z.boolean().optional(),
+  enable_original_uv: z.boolean().optional(),
+  ai_model: z.string().optional(),
+  hd_texture: z.boolean().optional(),
+  remove_lighting: z.boolean().optional(),
+  target_formats: z.array(z.string()).optional(),
+}).passthrough().refine(
+  (b) => !!(b.input_task_id || b.model_url),
+  { message: 'input_task_id or model_url is required' },
+).refine(
+  (b) => !!(b.text_style_prompt || b.image_style_url),
+  { message: 'text_style_prompt or image_style_url is required' },
+);
+
+const remeshBody = z.object({
+  input_task_id: z.string().min(1).optional(),
+  model_url: z.string().min(1).optional(),
+  topology: z.enum(['quad', 'triangle']).optional(),
+  target_polycount: z.number().int().positive().optional(),
+  target_formats: z.array(z.string()).optional(),
+  decimation_mode: z.number().int().optional(),
+}).passthrough().refine(
+  (b) => !!(b.input_task_id || b.model_url),
+  { message: 'input_task_id or model_url is required' },
+);
 
 const plugin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireAuth);
@@ -122,6 +157,56 @@ const plugin: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     try {
       return await getImageTo3dTask(req.params.id);
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // POST /api/meshy/retexture
+  app.post('/retexture', { preHandler: [requireScope('models:write')] }, async (req, reply) => {
+    const body = retextureBody.safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'invalid body', detail: body.error.flatten() });
+    }
+    try {
+      const created = await createRetextureTask(body.data as Record<string, unknown>);
+      return reply.code(201).send(created);
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // GET /api/meshy/retexture/:id
+  app.get<{ Params: { id: string } }>('/retexture/:id', {
+    preHandler: [requireScope('models:read')],
+  }, async (req, reply) => {
+    try {
+      return await getRetextureTask(req.params.id);
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // POST /api/meshy/remesh
+  app.post('/remesh', { preHandler: [requireScope('models:write')] }, async (req, reply) => {
+    const body = remeshBody.safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'invalid body', detail: body.error.flatten() });
+    }
+    try {
+      const created = await createRemeshTask(body.data as Record<string, unknown>);
+      return reply.code(201).send(created);
+    } catch (err) {
+      return errorReply(reply, err);
+    }
+  });
+
+  // GET /api/meshy/remesh/:id
+  app.get<{ Params: { id: string } }>('/remesh/:id', {
+    preHandler: [requireScope('models:read')],
+  }, async (req, reply) => {
+    try {
+      return await getRemeshTask(req.params.id);
     } catch (err) {
       return errorReply(reply, err);
     }

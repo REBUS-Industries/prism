@@ -141,6 +141,28 @@ export async function getImageTo3dTask(id: string): Promise<MeshyTask> {
   return meshyJson<MeshyTask>(`/openapi/v1/image-to-3d/${encodeURIComponent(id)}`);
 }
 
+export async function createRetextureTask(body: Record<string, unknown>): Promise<{ result: string }> {
+  return meshyJson<{ result: string }>('/openapi/v1/retexture', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getRetextureTask(id: string): Promise<MeshyTask> {
+  return meshyJson<MeshyTask>(`/openapi/v1/retexture/${encodeURIComponent(id)}`);
+}
+
+export async function createRemeshTask(body: Record<string, unknown>): Promise<{ result: string }> {
+  return meshyJson<{ result: string }>('/openapi/v1/remesh', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getRemeshTask(id: string): Promise<MeshyTask> {
+  return meshyJson<MeshyTask>(`/openapi/v1/remesh/${encodeURIComponent(id)}`);
+}
+
 /** Allowlist hostnames for Meshy asset downloads (signed URLs). */
 export function isAllowedMeshyAssetUrl(raw: string): boolean {
   try {

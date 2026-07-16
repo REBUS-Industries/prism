@@ -325,7 +325,7 @@ GET /api/models/{id} until importStatus=complete / hasPreview
 | Step | Scope |
 |------|--------|
 | `GET /api/meshy/status`, poll task, download GLB | `models:read` |
-| `POST /api/meshy/text-to-3d`, `POST /api/meshy/image-to-3d` | `models:write` |
+| `POST /api/meshy/text-to-3d`, `image-to-3d`, `retexture`, `remesh` | `models:write` |
 | `POST /api/model-import` (transfer into library) | `models:import` |
 
 **Prerequisite:** Settings → Meshy must be configured. Otherwise create/test
