@@ -75,7 +75,11 @@ Persist via existing `PUT /api/settings/:key` (shared `prism` settings table). F
 
 ### Deployment on VM 212 + LAN file server
 
-Today compose only uses Docker named volumes (`prism-data`). File Library needs a **bind mount** to the LAN share:
+**Canonical ops:** mount parent share `\\fs.ad.rebus.industries\REBUS` → `/mnt/fileserver/rebus`, bind into `prism-server`, persist with systemd. See [`docs/handoffs/FILE_LIBRARY_STORAGE.md`](../../docs/handoffs/FILE_LIBRARY_STORAGE.md) and workflow `mount-file-library`.
+
+Per-project folders are **relative paths** under that parent (Settings folder picker — planned).
+
+File Library needs a **bind mount** to the LAN share:
 
 ```yaml
 # infra/docker-compose.dev.yml (sketch)

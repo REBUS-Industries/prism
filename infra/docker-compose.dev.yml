@@ -41,11 +41,17 @@ services:
       VISUALISER_IDLE_TIMEOUT_MS: "${VISUALISER_IDLE_TIMEOUT_MS:-600000}"
       PRISM_GITHUB_TOKEN: "${PRISM_GITHUB_TOKEN:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+      # File Library — parent LAN share (see infra/scripts/mount-file-library-share.sh).
+      # Host must CIFS-mount FILE_LIBRARY_HOST_PATH before recreate, or Docker
+      # will create an empty directory and hide the share.
+      FILE_LIBRARY_ROOT: "${FILE_LIBRARY_ROOT:-/mnt/fileserver/rebus}"
       # WEB_DIST_DIR intentionally omitted: webStatic.ts skips gracefully
       # when the dir is absent, deferring all SPA serving to prism-web.
     volumes:
       - prism-uploads:/var/lib/prism/uploads
       - prism-data:/data/prism
+      # Parent REBUS share for File Library (folder picker + per-project paths).
+      - ${FILE_LIBRARY_HOST_PATH:-/mnt/fileserver/rebus}:${FILE_LIBRARY_ROOT:-/mnt/fileserver/rebus}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8765/health"]
       interval: 30s
