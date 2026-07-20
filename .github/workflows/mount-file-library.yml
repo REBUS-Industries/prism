@@ -1,0 +1,78 @@
+name: mount-file-library
+
+# Mount \\fs.ad.rebus.industries\REBUS on VM 212, persist on boot (systemd),
+# bind into prism-server, and set FILE_LIBRARY_* in /opt/prism/.env.
+#
+# Manual:
+#   gh workflow run mount-file-library --repo REBUS-Industries/prism --ref <branch>
+#
+# Secrets (repo or org) — required unless /etc/prism/smb-rebus.credentials
+# already exists on VM 212:
+#   FILESERVER_SMB_USERNAME
+#   FILESERVER_SMB_PASSWORD
+#   FILESERVER_SMB_DOMAIN   (optional, e.g. AD)
+
+on:
+  workflow_dispatch:
+    inputs:
+      recreate_server:
+        description: 'Recreate prism-server after mount (apply bind mount)'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  mount:
+    runs-on: [self-hosted, prism-deploy]
+    permissions:
+      contents: read
+    concurrency:
+      group: prism-deploy-vm212
+      cancel-in-progress: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mount REBUS share on VM 212 + bind prism-server
+        env:
+          DEPLOY_HOST: prism-dev
+          FILESERVER_SMB_USERNAME: ${{ secrets.FILESERVER_SMB_USERNAME }}
+          FILESERVER_SMB_PASSWORD: ${{ secrets.FILESERVER_SMB_PASSWORD }}
+          FILESERVER_SMB_DOMAIN: ${{ secrets.FILESERVER_SMB_DOMAIN }}
+          RECREATE: ${{ github.event.inputs.recreate_server }}
+        run: |
+          set -euo pipefail
+          echo "Syncing compose + mount script to VM 212 (${DEPLOY_HOST})"
+          ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" hostname
+
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/docker-compose.dev.yml \
+            "${DEPLOY_HOST}:/opt/prism/docker-compose.dev.yml"
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            infra/scripts/mount-file-library-share.sh \
+            "${DEPLOY_HOST}:/tmp/mount-file-library-share.sh"
+
+          SKIP_RECREATE=0
+          if [[ "${RECREATE}" == "false" ]]; then
+            SKIP_RECREATE=1
+          fi
+
+          # Base64-encode secrets so the remote heredoc cannot mangle special chars.
+          USER_B64="$(printf '%s' "${FILESERVER_SMB_USERNAME:-}" | base64 -w0)"
+          PASS_B64="$(printf '%s' "${FILESERVER_SMB_PASSWORD:-}" | base64 -w0)"
+          DOMAIN_B64="$(printf '%s' "${FILESERVER_SMB_DOMAIN:-}" | base64 -w0)"
+
+          ssh -o BatchMode=yes -o ConnectTimeout=10 "${DEPLOY_HOST}" bash -s <<REMOTE
+          set -euo pipefail
+          install -m 755 /tmp/mount-file-library-share.sh /opt/prism/mount-file-library-share.sh
+          export FILESERVER_SMB_USERNAME="\$(printf '%s' '${USER_B64}' | base64 -d)"
+          export FILESERVER_SMB_PASSWORD="\$(printf '%s' '${PASS_B64}' | base64 -d)"
+          export FILESERVER_SMB_DOMAIN="\$(printf '%s' '${DOMAIN_B64}' | base64 -d)"
+          export FILE_LIBRARY_SMB_SHARE="//fs.ad.rebus.industries/REBUS"
+          export FILE_LIBRARY_HOST_PATH="/mnt/fileserver/rebus"
+          export FILE_LIBRARY_ROOT="/mnt/fileserver/rebus"
+          export PRISM_COMPOSE_DIR="/opt/prism"
+          export FILE_LIBRARY_SKIP_RECREATE="${SKIP_RECREATE}"
+          # Script uses sudo only for mount/systemd/credentials; docker runs as deploy user.
+          bash /opt/prism/mount-file-library-share.sh
+          REMOTE
