@@ -646,30 +646,39 @@ function syncEdgesToProjects(guestId: string, projectIds: string[]) {
 }
 
 function onConnect(conn: Connection) {
-  const source = conn.source!;
-  const target = conn.target!;
-  const src = nodes.value.find((n) => n.id === source);
-  const tgt = nodes.value.find((n) => n.id === target);
-  if (src?.data.workspaceUser) {
+  const a = nodes.value.find((n) => n.id === conn.source);
+  const b = nodes.value.find((n) => n.id === conn.target);
+  if (a?.data.workspaceUser || b?.data.workspaceUser) {
     error.value = 'Workspace project access is edited on Users — not by drawing edges here.';
     return;
   }
-  if (!src?.data.guest || tgt?.data.policyType !== 'project') {
-    error.value = 'Connect a guest to a project (Guests → Projects).';
+  // Guests sit to the right of projects; allow drag in either direction.
+  let guestId: string | null = null;
+  let projectId: string | null = null;
+  if (a?.data.guest && b?.data.policyType === 'project') {
+    guestId = a.id;
+    projectId = b.id;
+  } else if (b?.data.guest && a?.data.policyType === 'project') {
+    guestId = b.id;
+    projectId = a.id;
+  }
+  if (!guestId || !projectId) {
+    error.value = 'Connect a guest to a project (Guests ↔ Projects).';
     return;
   }
-  if (src.data.guestMeta?.revoked) {
+  const guest = nodes.value.find((n) => n.id === guestId);
+  if (guest?.data.guestMeta?.revoked) {
     error.value = 'Revoked guests cannot gain projects.';
     return;
   }
-  const id = `e-${source}-${target}`;
+  const id = `e-${guestId}-${projectId}`;
   if (edges.value.some((e) => e.id === id)) return;
   edges.value = [
     ...edges.value,
     {
       id,
-      source,
-      target,
+      source: guestId,
+      target: projectId,
       sourceHandle: 'out',
       targetHandle: 'in-right',
       markerEnd: MarkerType.ArrowClosed,
@@ -678,7 +687,7 @@ function onConnect(conn: Connection) {
   ];
   // Mark dirty and open properties so they can save.
   for (const n of nodes.value) {
-    if (n.id !== source || !n.data.guestMeta) continue;
+    if (n.id !== guestId || !n.data.guestMeta) continue;
     n.data = {
       ...n.data,
       guestMeta: { ...n.data.guestMeta, dirty: true },
