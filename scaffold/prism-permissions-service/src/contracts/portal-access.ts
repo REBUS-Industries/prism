@@ -13,7 +13,8 @@ export type ConnectorFunction =
   | 'create_model'
   | 'create_version'
   | 'use_library'
-  | 'use_infile';
+  | 'use_infile'
+  | 'use_file_library';
 
 /** Grantable connector functions (excludes create_project). */
 export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
@@ -26,6 +27,7 @@ export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'create_version',
   'use_library',
   'use_infile',
+  'use_file_library',
 ];
 
 export type PortalProjectLevel = 'viewer' | 'contributor' | 'owner' | 'admin';

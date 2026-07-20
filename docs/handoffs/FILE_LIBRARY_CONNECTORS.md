@@ -132,6 +132,7 @@ Do **not** block the connector UI on permissions-service if a dedicated Prism AP
 
 ## Acceptance criteria
 
+- [x] Connector function `use_file_library` + Upload File button (gated) in shared panel
 - [ ] Rhino: Send file uploads `.3dm`; admin `#/files` shows new/updated document with uploader + timestamp; re-send same name → version N+1
 - [ ] Vectorworks: same for `.vwx`
 - [ ] Preflight fails clearly when library root not writable

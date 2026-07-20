@@ -37,6 +37,7 @@ const FUNCTION_SCOPES: Record<ConnectorFunction, string[]> = {
   create_version: ['streams:write', 'objects:write'],
   use_library: ['streams:read', 'objects:read'],
   use_infile: ['streams:read', 'objects:read'],
+  use_file_library: [],
 };
 
 export function functionsToScopes(functions: ConnectorFunction[]): string[] {
