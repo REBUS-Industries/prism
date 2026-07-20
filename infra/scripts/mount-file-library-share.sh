@@ -58,8 +58,9 @@ run_compose() {
 ensure_cifs_utils() {
   log "ensuring cifs-utils / keyutils / libkeyutils1 / smbclient"
   need_sudo apt-get update -qq
+  # smbclient is its own package (not provided by samba-common-bin alone).
   need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    cifs-utils keyutils libkeyutils1 samba-common-bin
+    cifs-utils keyutils libkeyutils1 smbclient samba-common-bin
   if ! lsmod | grep -q '^cifs\>'; then
     log "loading cifs kernel module"
     need_sudo modprobe cifs || die "modprobe cifs failed — check dmesg (kernel may lack cifs)"
