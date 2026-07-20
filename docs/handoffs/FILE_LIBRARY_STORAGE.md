@@ -85,8 +85,10 @@ Admin → Settings → File Library lists Orbit projects and opens a drill-down 
 1. `GET /api/files/browse?path=` — directories only under `file_library_root`  
 2. Rejects `..`, absolute paths, and anything outside the resolved root  
 3. `PUT /api/files/project-folders/:projectId` stores the relative path  
-4. Uploads with that `projectId` write under `{root}/{relativePath}/{documentId}/v{n}/…`  
-5. Missing folder → `400` with `code: project_folder_required` (no fallback path)
+4. Uploads with that `projectId` write under `{root}/{relativePath}/{filenameStem}/{filename}`  
+   (e.g. `…/PRISM FILES/Test File/Test File.3dm`). Prior versions are kept under `{stem}/v{n}/`.  
+5. Deletes move on-disk bytes into `{root}/{relativePath}/archive/…` (not hard-deleted).  
+6. Missing folder → `400` with `code: project_folder_required` (no fallback path)
 
 ---
 

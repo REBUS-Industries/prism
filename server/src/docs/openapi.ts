@@ -3070,7 +3070,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         delete: {
           tags: ['File library'],
           summary: 'Soft-delete document (all versions)',
-          description: '**Scope:** `files:delete`.',
+          description: 'Soft-deletes the document and versions in the database, and moves on-disk files into `{projectFolder}/archive/`. **Scope:** `files:delete`.',
           security: [{ apiKey: [] }],
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
@@ -3124,7 +3124,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         delete: {
           tags: ['File library'],
           summary: 'Soft-delete one version',
-          description: 'Removes version bytes from disk and updates the document tip. Soft-deletes the document when no versions remain. **Scope:** `files:delete`.',
+          description: 'Moves version bytes into `{projectFolder}/archive/` and updates the document tip. Soft-deletes the document when no versions remain. **Scope:** `files:delete`.',
           security: [{ apiKey: [] }],
           parameters: [
             { in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } },
