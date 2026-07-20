@@ -54,12 +54,25 @@ run_compose() {
 }
 
 ensure_cifs_utils() {
-  if mount.cifs -V >/dev/null 2>&1; then
-    return 0
+  local need_apt=0
+  if ! mount.cifs -V >/dev/null 2>&1; then
+    need_apt=1
   fi
-  log "installing cifs-utils"
-  need_sudo apt-get update -qq
-  need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cifs-utils
+  # mount error(79) "Can not access a needed shared library" is almost always
+  # missing keyutils (request-key) and/or the cifs kernel module.
+  if ! dpkg -s keyutils >/dev/null 2>&1 && ! command -v request-key >/dev/null 2>&1; then
+    need_apt=1
+  fi
+  if [[ "$need_apt" -eq 1 ]]; then
+    log "installing cifs-utils + keyutils"
+    need_sudo apt-get update -qq
+    need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cifs-utils keyutils
+  fi
+  if ! lsmod | grep -q '^cifs\>'; then
+    log "loading cifs kernel module"
+    need_sudo modprobe cifs || die "modprobe cifs failed — check dmesg (kernel may lack cifs)"
+  fi
+  lsmod | grep -q '^cifs\>' || die "cifs module not loaded"
 }
 
 ensure_dns_tools() {
@@ -100,11 +113,14 @@ resolve_share_host() {
 
 ensure_hosts_entry() {
   local ip="$1"
+  # Keep only a bare IPv4 (defend against polluted capture / multiline).
+  ip="$(printf '%s' "$ip" | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')"
+  [[ -n "$ip" ]] || die "ensure_hosts_entry: invalid IPv4"
   local marker="# prism-file-library"
   local line="${ip} ${SHARE_HOST} ${marker}"
   if grep -qE "[[:space:]]${SHARE_HOST}([[:space:]]|\$)" /etc/hosts 2>/dev/null; then
     log "updating /etc/hosts entry for $SHARE_HOST -> $ip"
-    need_sudo sed -i -E "s|^[0-9.]+[[:space:]]+${SHARE_HOST}([[:space:]].*)?$|${line}|" /etc/hosts
+    need_sudo sed -i -E "s|^.*[[:space:]]${SHARE_HOST}([[:space:]].*)?$|${line}|" /etc/hosts
   else
     log "adding /etc/hosts entry for $SHARE_HOST -> $ip"
     echo "$line" | need_sudo tee -a /etc/hosts >/dev/null
@@ -171,9 +187,19 @@ mount_now() {
       die "$MOUNT_POINT is non-empty and not a mount — refuse to overlay (move aside first)"
     fi
   fi
+  local opts="credentials=${CRED_FILE},uid=1000,gid=1000,file_mode=0664,dir_mode=0775,iocharset=utf8,noperm,serverino,_netdev"
+  # Prefer SMB3; fall back if the server negotiates poorly.
   log "mounting $SHARE -> $MOUNT_POINT"
-  need_sudo mount -t cifs "$SHARE" "$MOUNT_POINT" \
-    -o "credentials=${CRED_FILE},uid=1000,gid=1000,file_mode=0664,dir_mode=0775,iocharset=utf8,noperm,serverino,_netdev"
+  if ! need_sudo mount -t cifs "$SHARE" "$MOUNT_POINT" -o "${opts},vers=3.0"; then
+    log "WARN: vers=3.0 failed — retrying with vers=3.1.1 then default"
+    need_sudo mount -t cifs "$SHARE" "$MOUNT_POINT" -o "${opts},vers=3.1.1" \
+      || need_sudo mount -t cifs "$SHARE" "$MOUNT_POINT" -o "${opts}" \
+      || {
+        log "dmesg (last 30 lines):"
+        dmesg 2>/dev/null | tail -30 >&2 || true
+        die "mount failed (see error above + dmesg). Often missing: apt install keyutils && modprobe cifs"
+      }
+  fi
   mountpoint -q "$MOUNT_POINT" || die "mount failed"
   log "mount ok"
 }
