@@ -13,7 +13,6 @@ import Icon from '../../shared/Icon.vue';
 import ModelViewer from '../components/ModelViewer.vue';
 import { loadModelCategories } from '../utils/modelCategories';
 import {
-  DEFAULT_MODEL_SOURCE_UNITS,
   MODEL_LENGTH_UNITS,
   type ModelLengthUnit,
 } from '../utils/modelUnits';
@@ -70,10 +69,12 @@ const remeshPolycount = ref(30000);
 const name = ref('');
 const category = ref('');
 const tags = ref('meshy');
-const sourceUnits = ref<ModelLengthUnit>(DEFAULT_MODEL_SOURCE_UNITS);
+/** Meshy GLBs are authored in metres — mm would shrink the viewer mesh into the near clip plane. */
+const sourceUnits = ref<ModelLengthUnit>('m');
 const categoryOptions = ref<ModelCategoryOption[]>([]);
 
 const viewerUrl = ref<string | null>(null);
+const viewerError = ref<string | null>(null);
 const viewerLoading = ref(false);
 const activity = ref<ActivityItem[]>([]);
 const activityListEl = ref<HTMLElement | null>(null);
@@ -152,6 +153,7 @@ function resetResult(keepActivity = false): void {
   progressLabel.value = null;
   revokeViewerUrl();
   viewerLoading.value = false;
+  viewerError.value = null;
   if (!keepActivity) activity.value = [];
   if (phase.value !== 'transferring') phase.value = 'idle';
 }
@@ -277,16 +279,19 @@ async function assertGlbBlob(blob: Blob): Promise<Blob> {
 async function loadViewerFromGlb(url: string): Promise<void> {
   const token = ++viewerLoadToken;
   viewerLoading.value = true;
+  viewerError.value = null;
   logActivity('Loading GLB into viewer…', 'progress');
   try {
     const blob = await assertGlbBlob(await meshyApi.download(url));
     if (token !== viewerLoadToken) return;
     revokeViewerUrl();
-    viewerUrl.value = URL.createObjectURL(blob);
-    logActivity('3D preview updated', 'success');
+    // Hint MIME so three.js GLTFLoader treats the blob as binary glTF.
+    viewerUrl.value = URL.createObjectURL(new Blob([blob], { type: 'model/gltf-binary' }));
+    logActivity(`3D preview updated (${Math.round(blob.size / 1024)} KB, units=${sourceUnits.value})`, 'success');
   } catch (err) {
     if (token !== viewerLoadToken) return;
     const msg = (err as ApiError).message ?? (err instanceof Error ? err.message : 'Failed to load GLB');
+    viewerError.value = msg;
     logActivity(msg, 'error');
   } finally {
     if (token === viewerLoadToken) viewerLoading.value = false;
@@ -690,6 +695,35 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <section class="panel activity-panel">
+          <div class="activity-head">
+            <h3 class="section-label">Activity</h3>
+            <span v-if="progressLabel" class="muted small activity-status">{{ progressLabel }}</span>
+          </div>
+          <div v-if="busy || progressPct > 0" class="progress-bar-wrap">
+            <div class="progress-bar" :style="{ width: `${Math.min(100, Math.max(busy ? 8 : 0, progressPct))}%` }" />
+            <span class="progress-caption">{{ progressPct }}%</span>
+          </div>
+          <div ref="activityListEl" class="activity-list" aria-live="polite">
+            <div
+              v-for="item in activity"
+              :key="item.id"
+              class="activity-item"
+              :class="item.tone"
+            >
+              <Icon
+                :name="item.tone === 'error' ? 'error'
+                  : item.tone === 'success' ? 'check_circle'
+                    : item.tone === 'progress' ? 'hourglass_empty'
+                      : 'info'"
+                :size="14"
+              />
+              <span>{{ item.text }}</span>
+            </div>
+            <p v-if="!activity.length" class="muted small">Steps will appear here as Meshy works.</p>
+          </div>
+        </section>
+
         <section v-if="sourceTaskId" class="panel edit-panel">
           <h3 class="section-label">Edit mesh</h3>
           <p class="muted small edit-hint">
@@ -745,52 +779,28 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <section class="panel activity-panel">
-          <h3 class="section-label">Activity</h3>
-          <div ref="activityListEl" class="activity-list" aria-live="polite">
-            <div
-              v-for="item in activity"
-              :key="item.id"
-              class="activity-item"
-              :class="item.tone"
+        <div class="sidebar-footer">
+          <div v-if="canTransfer" class="transfer-block">
+            <button
+              class="primary transfer-btn"
+              :disabled="phase === 'transferring'"
+              @click="transferToLibrary"
             >
-              <Icon
-                :name="item.tone === 'error' ? 'error'
-                  : item.tone === 'success' ? 'check_circle'
-                    : item.tone === 'progress' ? 'hourglass_empty'
-                      : 'info'"
-                :size="14"
-              />
-              <span>{{ item.text }}</span>
-            </div>
-            <p v-if="!activity.length" class="muted small">Steps will appear here as Meshy works.</p>
+              <Icon name="download" :size="16" />
+              {{ phase === 'transferring' ? 'Transferring…' : 'Transfer to Model Library' }}
+            </button>
+            <p class="muted small transfer-hint">
+              Downloads the GLB, runs the PRISM convert pipeline, and publishes into the Orbit Model Library project.
+            </p>
           </div>
-          <div v-if="progressLabel && busy" class="progress-bar-wrap">
-            <div class="progress-bar" :style="{ width: `${Math.min(100, Math.max(4, progressPct))}%` }" />
-            <span class="progress-caption">{{ progressLabel }} · {{ progressPct }}%</span>
-          </div>
-        </section>
-
-        <div v-if="canTransfer" class="transfer-block">
-          <button
-            class="primary transfer-btn"
-            :disabled="phase === 'transferring'"
-            @click="transferToLibrary"
-          >
-            <Icon name="download" :size="16" />
-            {{ phase === 'transferring' ? 'Transferring…' : 'Transfer to Model Library' }}
-          </button>
-          <p class="muted small transfer-hint">
-            Downloads the GLB, runs the PRISM convert pipeline, and publishes into the Orbit Model Library project.
-          </p>
+          <div v-if="error" class="error-box">{{ error }}</div>
         </div>
-
-        <div v-if="error" class="error-box">{{ error }}</div>
       </aside>
 
       <main class="viewer-pane">
         <div v-if="viewerUrl" class="viewer-stage">
           <ModelViewer
+            :key="viewerUrl"
             :url="viewerUrl"
             :source-units="sourceUnits"
             :editable="false"
@@ -802,10 +812,15 @@ onUnmounted(() => {
             <Icon name="hourglass_empty" :size="18" />
             Loading mesh…
           </div>
+          <div v-else-if="viewerError" class="viewer-overlay viewer-overlay--error">
+            <Icon name="error" :size="18" />
+            {{ viewerError }}
+          </div>
           <div class="viewer-badge">
             <span class="pill" :class="{ online: !!glbUrl && !busy }">
               {{ task?.status ?? 'VIEWING' }}
             </span>
+            <span class="pill units-pill">{{ sourceUnits }}</span>
             <span v-if="taskId" class="muted small task-id">{{ taskId }}</span>
           </div>
         </div>
@@ -823,6 +838,7 @@ onUnmounted(() => {
               </div>
               <span class="muted small">{{ progressLabel || 'Working…' }}</span>
             </div>
+            <p v-if="viewerError" class="error-box">{{ viewerError }}</p>
           </div>
         </div>
       </main>
@@ -867,6 +883,17 @@ onUnmounted(() => {
   padding-right: 4px;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  bottom: 0;
+  padding-top: 8px;
+  background: linear-gradient(to bottom, transparent, var(--color-bg, #111) 28%);
+}
+
 .viewer-pane {
   min-width: 0;
   min-height: 480px;
@@ -887,6 +914,16 @@ onUnmounted(() => {
 
 .viewer-stage {
   display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+}
+
+.viewer-stage :deep(.model-viewer) {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
 }
 
 .viewer-overlay {
@@ -901,6 +938,19 @@ onUnmounted(() => {
   font-size: 13px;
   pointer-events: none;
   z-index: 2;
+  padding: 16px;
+  text-align: center;
+}
+
+.viewer-overlay--error {
+  background: color-mix(in srgb, #ffb4b4 45%, #fff);
+  color: #7a1f1f;
+}
+
+.units-pill {
+  text-transform: uppercase;
+  font-size: 11px;
+  background: color-mix(in srgb, #fff 80%, transparent);
 }
 
 .viewer-badge {
@@ -1098,13 +1148,36 @@ textarea {
   white-space: nowrap;
 }
 
+.activity-panel {
+  flex: 1 1 auto;
+  min-height: 160px;
+}
+
+.activity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.activity-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
 .activity-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 180px;
+  min-height: 120px;
+  max-height: min(280px, 32vh);
   overflow: auto;
-  padding-right: 2px;
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-bg, #111) 70%, #000);
+  border: 1px solid color-mix(in srgb, var(--color-border, #2a2a32) 80%, transparent);
 }
 
 .activity-item {
