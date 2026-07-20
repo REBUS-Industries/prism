@@ -1,17 +1,19 @@
 <script setup lang="ts">
 /**
  * Portal-style Vue Flow pin board for the permissions policy graph.
- * Matches the React Flow layout used in portal-app PeopleManagementClient.
+ * Supports pan / lasso-select modes, multi-select, and group drag.
  */
-import { computed, onMounted, ref, useSlots } from 'vue';
+import { computed, onMounted, ref, useSlots, watch } from 'vue';
 import {
   VueFlow,
   Panel,
   MarkerType,
+  SelectionMode,
   useVueFlow,
   type Connection,
   type EdgeMouseEvent,
   type NodeMouseEvent,
+  type GraphNode,
 } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -40,13 +42,17 @@ const INSPECTOR_DEFAULT = 300;
 const props = withDefaults(defineProps<{
   nodes: PolicyFlowNode[];
   edges: PolicyFlowEdge[];
+  /** Primary / last-selected node (backward compatible). */
   selectedNodeId?: string | null;
+  /** Full multi-selection (lasso / ctrl-click). */
+  selectedNodeIds?: string[];
   readonly?: boolean;
   legendTitle?: string;
   columnLabels?: ColumnLabel[];
 }>(), {
   readonly: false,
   legendTitle: 'Policy graph',
+  selectedNodeIds: () => [],
 });
 
 const emit = defineEmits<{
@@ -54,13 +60,15 @@ const emit = defineEmits<{
   'update:edges': [PolicyFlowEdge[]];
   connect: [Connection];
   'update:selectedNodeId': [string | null];
+  'update:selectedNodeIds': [string[]];
   'node-contextmenu': [payload: { nodeId: string; event: MouseEvent }];
   'edge-delete': [edgeId: string];
 }>();
 
 const slots = useSlots();
-const { fitView } = useVueFlow();
+const { fitView, getSelectedNodes } = useVueFlow();
 const boardEl = ref<HTMLElement | null>(null);
+const interactionMode = ref<'pan' | 'select'>('pan');
 
 function readStoredWidth(): number {
   try {
@@ -92,7 +100,6 @@ function onResizePointerDown(evt: PointerEvent): void {
   target.setPointerCapture(evt.pointerId);
 
   function onMove(e: PointerEvent): void {
-    // Dragging left increases inspector width.
     inspectorWidth.value = clampInspectorWidth(startW + (startX - e.clientX));
   }
   function onUp(e: PointerEvent): void {
@@ -135,8 +142,24 @@ function onConnect(conn: Connection): void {
   emit('connect', conn);
 }
 
+function emitSelection(ids: string[]): void {
+  emit('update:selectedNodeIds', ids);
+  emit('update:selectedNodeId', ids.length ? ids[ids.length - 1]! : null);
+}
+
+function onSelectionChange(payload: { nodes: GraphNode[] }): void {
+  emitSelection(payload.nodes.map((n) => n.id));
+}
+
 function onNodeClick(evt: NodeMouseEvent): void {
-  emit('update:selectedNodeId', evt.node.id);
+  // Ctrl/Meta/Shift multi-select is handled by Vue Flow; selection-change emits.
+  // Plain click still fires selection-change with a single node.
+  const native = evt.event;
+  if (native instanceof MouseEvent && (native.metaKey || native.ctrlKey || native.shiftKey)) {
+    return;
+  }
+  // Ensure single-click selects even if selection-change is delayed.
+  emitSelection([evt.node.id]);
 }
 
 function onNodeContextMenu(evt: NodeMouseEvent): void {
@@ -148,17 +171,59 @@ function onNodeContextMenu(evt: NodeMouseEvent): void {
 }
 
 function onPaneClick(): void {
-  emit('update:selectedNodeId', null);
+  emitSelection([]);
 }
 
 function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
   if (props.readonly) return;
   emit('edge-delete', evt.edge.id);
 }
+
+/** Apply parent-driven selection onto node.selected flags for Vue Flow. */
+watch(
+  () => [
+    (props.selectedNodeIds ?? []).join('\0'),
+    props.selectedNodeId ?? '',
+  ] as const,
+  () => {
+    const want = new Set(
+      props.selectedNodeIds?.length
+        ? props.selectedNodeIds
+        : (props.selectedNodeId ? [props.selectedNodeId] : []),
+    );
+    let dirty = false;
+    const next = props.nodes.map((n) => {
+      const selected = want.has(n.id);
+      if (!!n.selected === selected) return n;
+      dirty = true;
+      return { ...n, selected };
+    });
+    if (dirty) emit('update:nodes', next);
+  },
+);
+
+/** Keep parent in sync if Vue Flow selection drifts (e.g. group drag). */
+function syncSelectionFromFlow(): void {
+  try {
+    const ids = getSelectedNodes.value.map((n) => n.id);
+    const current = props.selectedNodeIds ?? [];
+    if (ids.length === current.length && ids.every((id, i) => id === current[i])) return;
+    emitSelection(ids);
+  } catch {
+    /* flow not ready */
+  }
+}
 </script>
 
 <template>
-  <div ref="boardEl" class="policy-board" :class="{ 'policy-board--resizing': resizing }">
+  <div
+    ref="boardEl"
+    class="policy-board"
+    :class="{
+      'policy-board--resizing': resizing,
+      'policy-board--select': interactionMode === 'select',
+    }"
+  >
     <div class="policy-board__canvas">
       <VueFlow
         :nodes="props.nodes"
@@ -168,6 +233,9 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
         :nodes-connectable="!props.readonly"
         :edges-updatable="!props.readonly"
         :elements-selectable="true"
+        :pan-on-drag="interactionMode === 'pan'"
+        :selection-key-code="interactionMode === 'select' ? true : 'Shift'"
+        :selection-mode="SelectionMode.Partial"
         :zoom-on-double-click="false"
         :min-zoom="0.25"
         :max-zoom="1.5"
@@ -180,6 +248,8 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
         @edge-double-click="onEdgeDoubleClick"
         @pane-click="onPaneClick"
         @nodes-initialized="onNodesInitialized"
+        @selection-change="onSelectionChange"
+        @node-drag-stop="syncSelectionFromFlow"
       >
         <template #node-policy="nodeProps">
           <PolicyNode :data="nodeProps.data as PolicyFlowNode['data']" />
@@ -198,6 +268,30 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
             class="policy-board__legend-chip"
           >
             {{ col.label }}
+          </span>
+          <span class="policy-board__mode-toggle" role="group" aria-label="Canvas interaction">
+            <button
+              type="button"
+              class="policy-board__mode-btn"
+              :class="{ active: interactionMode === 'pan' }"
+              :aria-pressed="interactionMode === 'pan'"
+              title="Pan — drag the canvas to move"
+              aria-label="Pan mode"
+              @click="interactionMode = 'pan'"
+            >
+              <Icon name="pan_tool" :size="15" />
+            </button>
+            <button
+              type="button"
+              class="policy-board__mode-btn"
+              :class="{ active: interactionMode === 'select' }"
+              :aria-pressed="interactionMode === 'select'"
+              title="Select — drag to lasso nodes (Shift+drag also works in pan mode)"
+              aria-label="Select mode"
+              @click="interactionMode = 'select'"
+            >
+              <Icon name="arrow_selector_tool" :size="15" />
+            </button>
           </span>
           <button type="button" class="policy-board__fit" title="Re-fit view" @click="doFit">
             <Icon name="fit_screen" :size="15" />
@@ -245,6 +339,10 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
   border-radius: var(--radius-lg);
   background: var(--color-bg);
   overflow: hidden;
+}
+
+.policy-board--select :deep(.vue-flow__pane) {
+  cursor: crosshair;
 }
 
 .policy-board__resizer {
@@ -295,6 +393,16 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--orbit-primary) 45%, transparent);
 }
 
+.policy-board__canvas :deep(.vue-flow__selection) {
+  background: color-mix(in srgb, var(--orbit-primary) 12%, transparent);
+  border: 1px solid var(--orbit-primary);
+}
+
+.policy-board__canvas :deep(.vue-flow__nodesselection-rect) {
+  background: color-mix(in srgb, var(--orbit-primary) 8%, transparent);
+  border: 1px dashed var(--orbit-primary);
+}
+
 .policy-board__legend {
   display: flex;
   align-items: center;
@@ -327,6 +435,44 @@ function onEdgeDoubleClick(evt: EdgeMouseEvent): void {
   border: 1px solid var(--color-border);
   border-radius: 999px;
   padding: 2px 8px;
+}
+
+.policy-board__mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.policy-board__mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+  min-height: 0;
+}
+.policy-board__mode-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+.policy-board__mode-btn.active,
+.policy-board__mode-btn.active:hover {
+  background: var(--orbit-primary);
+  border-color: var(--orbit-primary);
+  color: #fff;
 }
 
 .policy-board__fit {

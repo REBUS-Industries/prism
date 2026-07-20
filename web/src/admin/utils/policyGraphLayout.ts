@@ -63,6 +63,8 @@ export interface PolicyFlowNode {
   type: 'policy';
   position: { x: number; y: number };
   data: PolicyNodeData;
+  /** Vue Flow selection flag (lasso / multi-select). */
+  selected?: boolean;
 }
 
 export interface PolicyFlowEdge {
@@ -91,6 +93,16 @@ export const POLICY_COLUMN_X: Record<PolicyNodeType, number> = {
   function: 740,
   tool: 520,
 };
+
+/**
+ * Access graph (Permissions) column X — wider than POLICY_COLUMN_X so workspace
+ * → project → guest edges have room to read. Nodes are ~220px wide.
+ */
+export const ACCESS_COLUMN_X = {
+  workspace: 80,
+  project: 520,
+  guest: 960,
+} as const;
 
 export function policyColumnPosition(type: PolicyNodeType, indexInColumn: number): { x: number; y: number } {
   return {
