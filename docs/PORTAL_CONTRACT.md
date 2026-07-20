@@ -102,3 +102,5 @@ Portal email is matched to ORBIT user email. Set `ORBIT_AUTO_INVITE=1` to send s
 - OAuth client registration for connector localhost callback
 - Service-to-portal auth model (user token vs service key for project-permissions)
 - Production portal base URL + SLA for permission cache TTL
+- **Bulk sync of project memberships** (for connector project access) — see handoff
+  [`docs/handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md`](handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md)

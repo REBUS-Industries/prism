@@ -35,6 +35,9 @@ bulk-synced yet** (portal `GET /portal/users/:id/project-permissions` is used at
 login; there is no admin feed of every user’s portal projects). **Connector edition =
 manifest ACL**, not a separate Lite binary.
 
+**Portal agent handoff (project membership sync for connector access):**
+[`docs/handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md`](handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md).
+
 **Admin â†’ Tool access** (`/admin/#/permissions/tools`) â€” read-only portal roles â†’ PRISM admin tools. Linked from the sidebar under Permissions.
 
 **Admin â†’ Users** (`/admin/#/users`) â€” link Google Workspace, sync directory users, and
