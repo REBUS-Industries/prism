@@ -28,9 +28,11 @@ CONTAINER_ROOT="${FILE_LIBRARY_ROOT:-/mnt/fileserver/rebus}"
 AD_DNS_SERVERS="${FILE_LIBRARY_AD_DNS:-10.0.10.151 10.0.10.152}"
 SHARE_HOST="$(printf '%s' "$SHARE" | sed -E 's|^//([^/]+)/.*|\1|')"
 
-# Logs must go to stderr — stdout is used for captured return values.
-log() { echo "[file-library-mount] $*" >&2; }
-die() { echo "[file-library-mount] ERROR: $*" >&2; exit 1; }
+log() { echo "[file-library-share] $*" >&2; }
+die() { echo "[file-library-share] ERROR: $*" >&2; exit 1; }
+
+# Set by resolve_share_host — never pass IPs through $(…) capture.
+SHARE_IP=""
 
 need_sudo() {
   if [[ "$(id -u)" -eq 0 ]]; then
