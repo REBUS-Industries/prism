@@ -49,14 +49,17 @@ Auth: `X-API-Key` with scopes **`files:read`** + **`files:write`** (mint in Admi
 | `uploadedBy` | strongly recommended | OS / Rhino / VW user display name (shown in admin UI) |
 | `sourceApp` | recommended | `rhino` or `vectorworks` |
 | `name` | optional | Defaults to multipart filename |
-| `projectId` | optional | Free-string Orbit project id |
+| `projectId` | **required** | Orbit project id — must have a File Library folder set in Admin → Settings → File Library |
 | `tags` | optional | Comma-separated |
+
+Missing / unconfigured `projectId` → `400` with `code: project_folder_required` (file is **not** written).
 
 ### Example
 
 ```bash
 curl -sS -X POST -H "X-API-Key: $PRISM_KEY" \
   -F "file=@./Auditorium.3dm" \
+  -F "projectId=$ORBIT_PROJECT_ID" \
   -F "uploadedBy=jsmith" \
   -F "sourceApp=rhino" \
   https://prism.rebus.industries/api/files

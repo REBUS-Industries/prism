@@ -576,7 +576,7 @@ curl -sS -X POST -H "X-API-Key: $PRISM_KEY" \
   -F "file=@./Auditorium.3dm" \
   -F "uploadedBy=jsmith" \
   -F "sourceApp=rhino" \
-  -F "projectId=optional-orbit-project-id" \
+  -F "projectId=$ORBIT_PROJECT_ID" \
   https://prism.rebus.industries/api/files
 ```
 

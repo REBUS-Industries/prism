@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { filesApi, type ApiError, type FileLibraryStatus } from '../../shared/api';
+import {
+  filesApi,
+  orbitApi,
+  type ApiError,
+  type FileLibraryProjectFolder,
+  type FileLibraryStatus,
+  type OrbitProject,
+} from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
 const router = useRouter();
@@ -14,13 +21,42 @@ const selectedFile = ref<File | null>(null);
 const tags = ref('');
 const projectId = ref('');
 const status = ref<FileLibraryStatus | null>(null);
+const projects = ref<OrbitProject[]>([]);
+const folders = ref<FileLibraryProjectFolder[]>([]);
+const loadingMeta = ref(true);
 const DEFAULT_ACCEPT = '.3dm,.vwx,.dwg,.rvt,.skp,.fbx,.obj,.zip,.3ds,.dae';
 
-async function loadStatus(): Promise<void> {
+const folderByProject = computed(() => {
+  const m = new Map<string, FileLibraryProjectFolder>();
+  for (const f of folders.value) m.set(f.projectId, f);
+  return m;
+});
+
+const selectedFolder = computed(() =>
+  projectId.value ? folderByProject.value.get(projectId.value) ?? null : null,
+);
+
+const canUpload = computed(() =>
+  !!selectedFile.value && !!projectId.value && !!selectedFolder.value && !uploading.value,
+);
+
+async function loadMeta(): Promise<void> {
+  loadingMeta.value = true;
   try {
-    status.value = await filesApi.status();
-  } catch {
-    status.value = null;
+    const [st, folderRes, projRes] = await Promise.all([
+      filesApi.status().catch(() => null),
+      filesApi.listProjectFolders(),
+      orbitApi.projects('prod', 500),
+    ]);
+    status.value = st;
+    folders.value = folderRes.folders;
+    projects.value = [...projRes.items].sort((a, b) =>
+      (a.name || a.id).localeCompare(b.name || b.id, undefined, { sensitivity: 'base' }),
+    );
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'failed to load projects';
+  } finally {
+    loadingMeta.value = false;
   }
 }
 
@@ -55,6 +91,14 @@ function onDrop(ev: DragEvent): void {
 
 async function runUpload(): Promise<void> {
   if (!selectedFile.value) return;
+  if (!projectId.value.trim()) {
+    error.value = 'Select an Orbit project';
+    return;
+  }
+  if (!selectedFolder.value) {
+    error.value = 'No File Library folder configured for this project — set one in Settings → File Library';
+    return;
+  }
   uploading.value = true;
   error.value = null;
   progress.value = 'Uploading…';
@@ -62,20 +106,26 @@ async function runUpload(): Promise<void> {
     const res = await filesApi.upload(selectedFile.value, {
       name: selectedFile.value.name,
       tags: tags.value.trim() || undefined,
-      projectId: projectId.value.trim() || undefined,
+      projectId: projectId.value.trim(),
       sourceApp: 'admin',
     });
     progress.value = `Stored as version ${res.version.versionNumber}`;
     void router.push({ name: 'file-detail', params: { id: res.document.id } });
   } catch (err) {
-    error.value = (err as ApiError).message ?? 'upload failed';
+    const apiErr = err as ApiError;
+    const code = (apiErr.body as { code?: string } | undefined)?.code;
+    if (code === 'project_folder_required') {
+      error.value = 'No File Library folder configured for this project — set one in Settings → File Library';
+    } else {
+      error.value = apiErr.message ?? 'upload failed';
+    }
   } finally {
     uploading.value = false;
     progress.value = null;
   }
 }
 
-onMounted(() => void loadStatus());
+onMounted(() => void loadMeta());
 </script>
 
 <template>
@@ -91,7 +141,7 @@ onMounted(() => void loadStatus());
       <h2>Send a native CAD / DCC file</h2>
       <p class="muted small">
         Same filename as an existing document creates a <strong>new version</strong> (nothing is overwritten).
-        Connectors should use the same <code>POST /api/files</code> endpoint.
+        Files are stored under the project folder configured in Settings → File Library.
       </p>
       <p v-if="status" class="muted small">
         Allowed: {{ status.allowedExts.join(', ') }}
@@ -120,12 +170,24 @@ onMounted(() => void loadStatus());
 
     <div class="form-grid mt">
       <label class="field">
-        <span class="field-label">Tags <span class="optional">(optional)</span></span>
-        <input v-model="tags" placeholder="e.g. auditorium, schematic" />
+        <span class="field-label">Orbit project</span>
+        <select v-model="projectId" :disabled="loadingMeta || uploading">
+          <option value="" disabled>{{ loadingMeta ? 'Loading…' : 'Select a project…' }}</option>
+          <option v-for="p in projects" :key="p.id" :value="p.id">
+            {{ p.name || p.id }}{{ folderByProject.has(p.id) ? '' : ' (no folder)' }}
+          </option>
+        </select>
+        <span v-if="projectId && selectedFolder" class="muted small path-hint">
+          Folder: <code>{{ selectedFolder.relativePath }}</code>
+        </span>
+        <span v-else-if="projectId && !selectedFolder" class="warn small">
+          No folder configured —
+          <RouterLink :to="{ name: 'settings', query: { open: 'file-library' } }">open File Library settings</RouterLink>
+        </span>
       </label>
       <label class="field">
-        <span class="field-label">Project id <span class="optional">(optional)</span></span>
-        <input v-model="projectId" placeholder="Orbit project id" />
+        <span class="field-label">Tags <span class="optional">(optional)</span></span>
+        <input v-model="tags" placeholder="e.g. auditorium, schematic" />
       </label>
     </div>
 
@@ -133,7 +195,7 @@ onMounted(() => void loadStatus());
     <p v-if="progress" class="muted small mt">{{ progress }}</p>
 
     <div class="actions mt">
-      <button class="primary" :disabled="!selectedFile || uploading" @click="runUpload">
+      <button class="primary" :disabled="!canUpload" @click="runUpload">
         <Icon name="cloud_upload" :size="16" />{{ uploading ? 'Uploading…' : 'Upload' }}
       </button>
     </div>
@@ -167,6 +229,8 @@ onMounted(() => void loadStatus());
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: 12px; opacity: 0.75; }
 .optional { opacity: 0.6; }
+.path-hint code { font-size: 11px; word-break: break-all; }
+.warn { color: var(--color-warning, #c9a227); }
 .actions { display: flex; justify-content: flex-end; }
 @media (max-width: 640px) {
   .form-grid { grid-template-columns: 1fr; }

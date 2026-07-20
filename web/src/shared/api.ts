@@ -2631,10 +2631,47 @@ export interface FileLibraryStatus {
   usingSettingsPath: boolean;
   maxBytes: number;
   allowedExts: string[];
+  /** Number of Orbit projects with a configured relative folder. */
+  projectFolderCount?: number;
+}
+
+export interface FileBrowseEntry {
+  name: string;
+  path: string;
+}
+
+export interface FileBrowseResult {
+  root: string;
+  path: string;
+  parentPath: string | null;
+  directories: FileBrowseEntry[];
+}
+
+export interface FileLibraryProjectFolder {
+  projectId: string;
+  projectName: string | null;
+  relativePath: string;
+  updatedAt: string;
 }
 
 export const filesApi = {
   status: () => api.get<FileLibraryStatus>('/api/files/status'),
+  browse: (path = '') => {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+    return api.get<FileBrowseResult>(`/api/files/browse${qs}`);
+  },
+  listProjectFolders: () =>
+    api.get<{ folders: FileLibraryProjectFolder[] }>('/api/files/project-folders'),
+  setProjectFolder: (
+    projectId: string,
+    body: { relativePath: string; projectName?: string | null },
+  ) =>
+    api.put<{ folder: FileLibraryProjectFolder }>(
+      `/api/files/project-folders/${encodeURIComponent(projectId)}`,
+      body,
+    ),
+  clearProjectFolder: (projectId: string) =>
+    api.delete<void>(`/api/files/project-folders/${encodeURIComponent(projectId)}`),
   list: (params: {
     q?: string;
     ext?: string;
@@ -2658,16 +2695,17 @@ export const filesApi = {
     file: File,
     options: {
       name?: string;
-      projectId?: string;
+      /** Required — Orbit project must have a File Library folder configured. */
+      projectId: string;
       tags?: string;
       uploadedBy?: string;
       sourceApp?: string;
-    } = {},
+    },
   ) => {
     const fd = new FormData();
     fd.append('file', file);
     if (options.name) fd.append('name', options.name);
-    if (options.projectId) fd.append('projectId', options.projectId);
+    fd.append('projectId', options.projectId);
     if (options.tags) fd.append('tags', options.tags);
     if (options.uploadedBy) fd.append('uploadedBy', options.uploadedBy);
     if (options.sourceApp) fd.append('sourceApp', options.sourceApp);
