@@ -30,9 +30,9 @@ Use `orbit-cli auth login --server <prod|dev>` for full token capabilities (auto
 **Workspace users** (Google directory via Users sync), **Guests** (invite keys created in
 this editor), and **ORBIT projects**. Guest → project edges are editable (right-click a
 guest for functions, target, redemptions, model access, project tree). Workspace → project
-edges show Prism-stored `projectPermissions` only — **portal project memberships are not
-bulk-synced yet** (portal `GET /portal/users/:id/project-permissions` is used at connector
-login; there is no admin feed of every user’s portal projects). **Connector edition =
+edges show Prism-stored `projectPermissions`, refreshed from the portal on connector login
+and via Admin → Permissions → **Sync portal projects** (`GET /portal/project-permissions`).
+Turn off `workspace_grant_all_projects` for scoped connector access. **Connector edition =
 manifest ACL**, not a separate Lite binary.
 
 **Portal agent handoff (project membership sync for connector access):**

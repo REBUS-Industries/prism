@@ -1,7 +1,7 @@
 # Handoff: Portal → Prism project membership sync
 
 **Audience:** portal agent / portal app team  
-**Status:** Contract defined; login-time single-user fetch exists; **bulk sync of portal project memberships into Prism is missing**  
+**Status:** Portal feed implemented (portal agent). Prism ingest live — login prefers portal memberships, persists onto provisioned users, and Admin → Permissions has **Sync portal projects** (`GET /portal/project-permissions`). Scoped connector access still requires **`workspace_grant_all_projects=0`**.  
 **Goal:** Keep Prism (and connectors) in sync with the ORBIT projects each portal user is added to, so connector project access can be scoped without manual Users-page edits.
 
 **Do not implement this inside `orbit-connectors`.** Portal owns membership; Prism brokers connector sessions.

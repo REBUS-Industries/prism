@@ -100,7 +100,6 @@ Portal email is matched to ORBIT user email. Set `ORBIT_AUTO_INVITE=1` to send s
 - Ensure `GET /portal/me` returns `roleId` (and `roleIds`), with ids that match `GET /portal/roles`.
 - When a role is deleted/renamed in the portal, also send a full-replace `PUT /api/permissions/tool-grants` so its tool grants are cleared (PRISM stores grants keyed by role id).
 - OAuth client registration for connector localhost callback
-- Service-to-portal auth model (user token vs service key for project-permissions)
 - Production portal base URL + SLA for permission cache TTL
-- **Bulk sync of project memberships** (for connector project access) — see handoff
-  [`docs/handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md`](handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md)
+- Confirm staging payloads for `GET /portal/project-permissions` (Prism ingest is live —
+  see [`docs/handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md`](handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md))
