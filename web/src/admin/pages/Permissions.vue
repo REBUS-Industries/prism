@@ -2,7 +2,7 @@
 /**
  * Permissions — Connector Light guest access + Workspace users graph.
  *
- * Columns: Workspace users | Guests (invite keys) | ORBIT projects.
+ * Columns: Workspace users | ORBIT projects | Guests (invite keys).
  * Draw edges guest → project to grant access. Right-click a guest for
  * functions / target / redemptions / expiry and a project checkbox tree.
  * Workspace project edges come from portal sync (login + Sync portal projects);
@@ -40,8 +40,8 @@ import type {
 } from '../utils/policyGraphLayout';
 
 const WORKSPACE_COLUMN_X = 80;
-const GUEST_COLUMN_X = 340;
-const PROJECT_COLUMN_X = 600;
+const PROJECT_COLUMN_X = 340;
+const GUEST_COLUMN_X = 600;
 const ROW_Y = 72;
 const START_Y = 80;
 
@@ -77,8 +77,8 @@ const needsRotate = ref(false);
 
 const columnLabels = [
   { type: 'user' as const, label: 'Workspace', key: 'workspace' },
-  { type: 'user' as const, label: 'Guests', key: 'guests' },
   { type: 'project' as const, label: 'Projects', key: 'projects' },
+  { type: 'user' as const, label: 'Guests', key: 'guests' },
 ];
 
 const selectedNode = computed(() => {
@@ -307,6 +307,7 @@ function ensureProjectNode(
       label: label?.trim() || p?.name?.trim() || projectId,
       refValue: projectId,
       noSource: true,
+      targetRight: true,
     },
   });
 }
@@ -362,6 +363,7 @@ function rebuildGraph(
         refValue: key.id,
         guest: true,
         noTarget: true,
+        sourceSide: 'left',
         guestMeta: guestMetaFromKey(key),
       },
     });
@@ -377,6 +379,11 @@ function rebuildGraph(
         ...n.position,
         x: GUEST_COLUMN_X,
       },
+      data: {
+        ...n.data,
+        noTarget: true,
+        sourceSide: 'left',
+      },
     });
   }
 
@@ -391,6 +398,7 @@ function rebuildGraph(
         label: p.name?.trim() || p.id,
         refValue: p.id,
         noSource: true,
+        targetRight: true,
       },
     });
   });
@@ -415,6 +423,8 @@ function rebuildGraph(
         id: `e-${source}-${target}`,
         source,
         target,
+        sourceHandle: 'out',
+        targetHandle: 'in-right',
         markerEnd: MarkerType.ArrowClosed,
         animated: true,
       });
@@ -430,6 +440,8 @@ function rebuildGraph(
         id: `e-${source}-${target}`,
         source,
         target,
+        sourceHandle: 'out',
+        targetHandle: 'in-left',
         markerEnd: MarkerType.ArrowClosed,
         animated: false,
       });
@@ -572,6 +584,7 @@ function addGuest() {
         refValue: '',
         guest: true,
         noTarget: true,
+        sourceSide: 'left',
         guestMeta: {
           inviteKeyId: null,
           orbitTarget: orbitTarget.value,
@@ -614,6 +627,7 @@ function syncEdgesToProjects(guestId: string, projectIds: string[]) {
             label: p?.name?.trim() || pid,
             refValue: pid,
             noSource: true,
+            targetRight: true,
           },
         },
       ];
@@ -622,6 +636,8 @@ function syncEdgesToProjects(guestId: string, projectIds: string[]) {
       id: `e-${guestId}-${target}`,
       source: guestId,
       target,
+      sourceHandle: 'out',
+      targetHandle: 'in-right',
       markerEnd: MarkerType.ArrowClosed,
       animated: true,
     });
@@ -630,31 +646,48 @@ function syncEdgesToProjects(guestId: string, projectIds: string[]) {
 }
 
 function onConnect(conn: Connection) {
-  const source = conn.source!;
-  const target = conn.target!;
-  const src = nodes.value.find((n) => n.id === source);
-  const tgt = nodes.value.find((n) => n.id === target);
-  if (src?.data.workspaceUser) {
+  const a = nodes.value.find((n) => n.id === conn.source);
+  const b = nodes.value.find((n) => n.id === conn.target);
+  if (a?.data.workspaceUser || b?.data.workspaceUser) {
     error.value = 'Workspace project access is edited on Users — not by drawing edges here.';
     return;
   }
-  if (!src?.data.guest || tgt?.data.policyType !== 'project') {
-    error.value = 'Connect a guest to a project (Guests → Projects).';
+  // Guests sit to the right of projects; allow drag in either direction.
+  let guestId: string | null = null;
+  let projectId: string | null = null;
+  if (a?.data.guest && b?.data.policyType === 'project') {
+    guestId = a.id;
+    projectId = b.id;
+  } else if (b?.data.guest && a?.data.policyType === 'project') {
+    guestId = b.id;
+    projectId = a.id;
+  }
+  if (!guestId || !projectId) {
+    error.value = 'Connect a guest to a project (Guests ↔ Projects).';
     return;
   }
-  if (src.data.guestMeta?.revoked) {
+  const guest = nodes.value.find((n) => n.id === guestId);
+  if (guest?.data.guestMeta?.revoked) {
     error.value = 'Revoked guests cannot gain projects.';
     return;
   }
-  const id = `e-${source}-${target}`;
+  const id = `e-${guestId}-${projectId}`;
   if (edges.value.some((e) => e.id === id)) return;
   edges.value = [
     ...edges.value,
-    { id, source, target, markerEnd: MarkerType.ArrowClosed, animated: true },
+    {
+      id,
+      source: guestId,
+      target: projectId,
+      sourceHandle: 'out',
+      targetHandle: 'in-right',
+      markerEnd: MarkerType.ArrowClosed,
+      animated: true,
+    },
   ];
   // Mark dirty and open properties so they can save.
   for (const n of nodes.value) {
-    if (n.id !== source || !n.data.guestMeta) continue;
+    if (n.id !== guestId || !n.data.guestMeta) continue;
     n.data = {
       ...n.data,
       guestMeta: { ...n.data.guestMeta, dirty: true },

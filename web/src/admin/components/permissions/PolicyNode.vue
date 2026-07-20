@@ -62,8 +62,24 @@ const kindLabel = computed(() => {
     }"
     :style="{ '--accent': accent }"
   >
-    <Handle v-if="!data.noTarget" type="target" :position="Position.Left" />
-    <Handle v-if="!data.noSource" type="source" :position="Position.Right" />
+    <Handle
+      v-if="!data.noTarget"
+      id="in-left"
+      type="target"
+      :position="Position.Left"
+    />
+    <Handle
+      v-if="data.targetRight"
+      id="in-right"
+      type="target"
+      :position="Position.Right"
+    />
+    <Handle
+      v-if="!data.noSource"
+      id="out"
+      type="source"
+      :position="data.sourceSide === 'left' ? Position.Left : Position.Right"
+    />
 
     <span class="policy-node__icon">
       <Icon :name="meta.icon" :size="16" />
