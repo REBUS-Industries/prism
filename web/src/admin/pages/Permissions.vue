@@ -5,7 +5,8 @@
  * Columns: Workspace users | Guests (invite keys) | ORBIT projects.
  * Draw edges guest → project to grant access. Right-click a guest for
  * functions / target / redemptions / expiry and a project checkbox tree.
- * Workspace users are read-only here (edit project access on Users).
+ * Workspace project edges come from portal sync (login + Sync portal projects);
+ * manual edits remain on Users when needed.
  *
  * Tool access (portal roles → PRISM tools) lives at /permissions/tools.
  */
@@ -52,6 +53,7 @@ const status = ref<string | null>(null);
 const grantAllProjects = ref(true);
 const savingAccess = ref(false);
 const accessStatus = ref<string | null>(null);
+const syncingPortalProjects = ref(false);
 
 const orbitTarget = ref<'prod' | 'dev'>('prod');
 const orbitProjects = ref<OrbitProject[]>([]);
@@ -419,7 +421,7 @@ function rebuildGraph(
     }
   }
 
-  // Workspace → project edges from Prism-stored projectPermissions (not live portal).
+  // Workspace → project edges from Prism-stored projectPermissions (portal-synced).
   for (const user of activeUsers) {
     const source = workspaceNodeId(user.id);
     for (const proj of user.projectPermissions) {
@@ -487,6 +489,30 @@ async function refresh(preservePositions = false) {
   }
 }
 
+async function syncPortalProjects() {
+  syncingPortalProjects.value = true;
+  error.value = null;
+  status.value = null;
+  try {
+    const res = await workspaceApi.syncPortalProjects();
+    if (!res.supported) {
+      error.value =
+        'Portal bulk project-permissions feed is unavailable (404/501). Login-time sync still updates users when they sign into a connector.';
+      return;
+    }
+    status.value =
+      `Portal projects synced — ${res.updated} updated, ${res.unchanged} unchanged` +
+      (res.unmatched ? `, ${res.unmatched} portal user(s) not in Prism directory` : '') +
+      (res.cleared ? `, ${res.cleared} cleared` : '');
+    await refresh(true);
+    setTimeout(() => (status.value = null), 5000);
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'Portal project sync failed';
+  } finally {
+    syncingPortalProjects.value = false;
+  }
+}
+
 async function saveAccessMode() {
   savingAccess.value = true;
   accessStatus.value = null;
@@ -495,7 +521,7 @@ async function saveAccessMode() {
     await settingsApi.set('workspace_grant_all_projects', grantAllProjects.value ? '1' : '0');
     accessStatus.value = grantAllProjects.value
       ? 'Blanket access on — every signed-in user can use all projects'
-      : 'Blanket access off — users only get projects assigned on Users';
+      : 'Blanket access off — users get portal memberships (plus login/bulk sync into Users)';
     setTimeout(() => (accessStatus.value = null), 3000);
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to save access mode';
@@ -861,6 +887,15 @@ onMounted(async () => {
         <button type="button" :disabled="loading" @click="refresh(true)">
           <Icon name="refresh" :size="16" /> Refresh
         </button>
+        <button
+          type="button"
+          :disabled="loading || syncingPortalProjects"
+          title="Pull portal project memberships into provisioned users"
+          @click="syncPortalProjects"
+        >
+          <Icon name="sync" :size="16" />
+          {{ syncingPortalProjects ? 'Syncing portal…' : 'Sync portal projects' }}
+        </button>
         <button type="button" class="primary" :disabled="loading" @click="addGuest">
           <Icon name="person_add" :size="16" /> Add guest
         </button>
@@ -873,19 +908,18 @@ onMounted(async () => {
     <section class="sync-note">
       <Icon name="info" :size="16" />
       <div>
-        <strong>Portal project memberships are not bulk-synced into Prism yet.</strong>
+        <strong>Portal project memberships drive connector access when blanket is off.</strong>
         <p class="muted">
           Workspace nodes come from
           <RouterLink :to="{ name: 'users' }">Users</RouterLink>
-          (Google directory sync). Edges shown are only Prism-stored
-          <code>projectPermissions</code>
-          (manual assignments on Users). Live portal
-          <code>GET /portal/users/:id/project-permissions</code>
-          is fetched at connector login only — there is no admin API yet to pull every user’s
-          portal project list into this graph.
+          (Google directory). Project edges are Prism-stored
+          <code>projectPermissions</code>, refreshed from the portal on connector login and via
+          <strong>Sync portal projects</strong> (bulk
+          <code>GET /portal/project-permissions</code>).
+          Turn off blanket access below so connectors use those scoped lists.
           <template v-if="workspaceLinked">
             {{ workspaceUsers.length }} workspace user{{ workspaceUsers.length === 1 ? '' : 's' }} loaded;
-            {{ workspaceUsersWithProjects }} with Prism project edges.
+            {{ workspaceUsersWithProjects }} with project edges.
           </template>
           <template v-else-if="workspaceLoadError">
             Workspace load failed: {{ workspaceLoadError }}

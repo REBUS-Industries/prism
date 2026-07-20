@@ -3043,12 +3043,22 @@ export interface WorkspaceSyncResult {
   unchanged: number;
 }
 
+export interface PortalProjectPermissionsSyncResult {
+  supported: boolean;
+  updated: number;
+  unchanged: number;
+  unmatched: number;
+  cleared: number;
+}
+
 export const workspaceApi = {
   get: () => api.get<WorkspaceOverviewResponse>('/api/permissions/workspace'),
   link: (domain: string, displayName?: string) =>
     api.post<{ workspace: GoogleWorkspaceLink }>('/api/permissions/workspace/link', { domain, displayName }),
   unlink: () => api.post<{ ok: true }>('/api/permissions/workspace/unlink', {}),
   sync: () => api.post<WorkspaceSyncResult>('/api/permissions/workspace/sync', {}),
+  syncPortalProjects: () =>
+    api.post<PortalProjectPermissionsSyncResult>('/api/permissions/workspace/sync-portal-projects', {}),
   createUser: (body: {
     email: string;
     displayName?: string;
