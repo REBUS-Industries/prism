@@ -47,3 +47,11 @@ CLI: `orbit-cli auth login --server dev` (OAuth â€” full access, not portal
 
 - ORBIT `apiTokenCreate` may need orbit-server patch â€” service falls back to admin token unless `ORBIT_MINT_FALLBACK=0`.
 - Live portal OAuth URLs not final â€” swap mock-login for real portal authorize URL when ready.
+
+## Portal agent — project membership sync
+
+Give the **portal** seat this brief (do not implement portal APIs in Prism):
+
+**[`docs/handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md`](../../docs/handoffs/PORTAL_PROJECT_MEMBERSHIP_SYNC.md)**
+
+Portal owns per-user ORBIT project memberships + a bulk/service feed. Prism permissions seat then ingests into provisioned users / SoT, turns off `workspace_grant_all_projects` for scoped connector access, and updates the Permissions graph.
