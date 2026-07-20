@@ -28,7 +28,8 @@ CONTAINER_ROOT="${FILE_LIBRARY_ROOT:-/mnt/fileserver/rebus}"
 AD_DNS_SERVERS="${FILE_LIBRARY_AD_DNS:-10.0.10.151 10.0.10.152}"
 SHARE_HOST="$(printf '%s' "$SHARE" | sed -E 's|^//([^/]+)/.*|\1|')"
 
-log() { echo "[file-library-mount] $*"; }
+# Logs must go to stderr — stdout is used for captured return values.
+log() { echo "[file-library-mount] $*" >&2; }
 die() { echo "[file-library-mount] ERROR: $*" >&2; exit 1; }
 
 need_sudo() {
