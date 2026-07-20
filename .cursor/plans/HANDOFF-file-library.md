@@ -104,39 +104,67 @@ If the setting is empty, fall back to `${DATA_DIR}/files/` on the existing `pris
 
 ```
 {file_library_root}/
-  {yyyy}/
-    {mm}/
-      {fileId}/
-        original.{ext}          # bytes as uploaded
-        meta.json               # optional sidecar (hash, original name)
+  {documentId}/
+    v{n}/
+      original.{ext}            # one immutable blob per upload
 ```
 
-DB holds the canonical metadata; disk is content-addressable-ish by `fileId` (UUID). Never trust client paths.
+Each upload creates a **new version**; same filename never overwrites prior bytes. DB is authoritative for grouping/version numbers.
 
 ---
 
-## 4. Data model (sketch)
+## 4. Data model (sketch) — filename versions
 
-**`file_objects`** (in `prism_files`):
+Uploads with the **same filename** (case-insensitive, basename only) stack as versions under one library document. Re-sending `Auditorium.3dm` from Rhino does **not** replace the previous file; it adds version N+1.
+
+**Grouping key (v1):** `normalize(original_filename)` → lowercased basename  
+Optional later: also scope by `project_id` so two projects can both have `model.3dm` without colliding.
+
+### `file_documents` (logical file / name group)
 
 | Column | Notes |
 |--------|--------|
 | `id` | UUID |
-| `name` | Display name (default = original filename) |
-| `original_filename` | As uploaded |
+| `name` | Display name (usually the original filename) |
+| `normalized_name` | Unique key for version stacking (`auditorium.3dm`) |
 | `extension` | `.3dm`, `.vwx`, … |
+| `project_id` | Optional Orbit/portal project id |
+| `tags` | `text[]` |
+| `latest_version_id` | FK → current tip version |
+| `version_count` | Denormalised count of non-deleted versions |
+| `created_at` / `updated_at` / `deleted_at` | Soft-delete whole document |
+
+### `file_versions` (each upload)
+
+| Column | Notes |
+|--------|--------|
+| `id` | UUID |
+| `document_id` | FK → `file_documents` |
+| `version_number` | Monotonic per document (1, 2, 3, …) |
+| `original_filename` | As uploaded (preserve client casing) |
 | `content_type` | MIME if known |
 | `size_bytes` | |
 | `content_hash` | SHA-256 of body |
 | `storage_path` | Relative to `file_library_root` |
 | `source` | `connector` \| `admin` \| `api` |
-| `source_app` | `rhino` \| `vectorworks` \| … (connector-supplied) |
-| `project_id` | Optional Orbit/portal project id (string, not FK) |
-| `tags` | `text[]` |
-| `created_by_api_key_id` / `created_by_admin_id` | Provenance |
-| `created_at` / `updated_at` / `deleted_at` | Soft delete |
+| `source_app` | `rhino` \| `vectorworks` \| … |
+| **`uploaded_by_label`** | Human-readable who uploaded — see below |
+| `created_by_api_key_id` | FK/id of API key when connector/API upload |
+| `created_by_admin_id` | Admin user id when uploaded from Prism UI |
+| `created_at` | Upload timestamp (UTC, shown localised in UI) |
+| `deleted_at` | Soft-delete this version only |
 
-No Orbit model/version linkage required for v1. Optional later: “linked Orbit model id” metadata only.
+**`uploaded_by_label` resolution (store at write time):**
+
+| Upload path | Label to store / show |
+|-------------|------------------------|
+| Admin session | Admin username (e.g. `admin`) |
+| API key | Key **name** if set, else truncated key id (`api:…`) |
+| Connector (same API key) | Prefer connector-supplied `uploadedBy` (e.g. OS/Rhino user) when present; else API key name |
+
+Connectors should send optional form fields: `uploadedBy` (display string), `sourceApp`.
+
+No Orbit model/version linkage required for v1.
 
 ---
 
@@ -146,25 +174,66 @@ Base: `/api/files` · Auth: admin session **or** `X-API-Key` with scopes below.
 
 | Method | Path | Scope | Behaviour |
 |--------|------|-------|-----------|
-| `GET` | `/api/files` | `files:read` | List (`q`, `ext`, `projectId`, `cursor`, `limit`) |
-| `GET` | `/api/files/:id` | `files:read` | Metadata |
-| `GET` | `/api/files/:id/download` | `files:read` | Stream bytes (`Content-Disposition: attachment`) |
-| `POST` | `/api/files` | `files:write` | Multipart: `file` + optional `name`, `projectId`, `tags`, `sourceApp` |
-| `PATCH` | `/api/files/:id` | `files:write` | Rename / tags |
-| `DELETE` | `/api/files/:id` | `files:delete` | Soft-delete (+ optional async disk purge) |
-| `GET` | `/api/files/status` | `files:read` | `{ configured, root, writable, freeBytes? }` for connector preflight |
+| `GET` | `/api/files` | `files:read` | List **documents** (`q`, `ext`, `projectId`, `cursor`) — each row includes latest version summary + `versionCount` |
+| `GET` | `/api/files/:documentId` | `files:read` | Document + **all versions** (newest first): uploader, `createdAt`, size, sourceApp |
+| `GET` | `/api/files/:documentId/versions/:versionId/download` | `files:read` | Stream that version’s bytes |
+| `GET` | `/api/files/:documentId/download` | `files:read` | Convenience: download **latest** version |
+| `POST` | `/api/files` | `files:write` | Multipart upload — find-or-create document by normalised filename, append version |
+| `PATCH` | `/api/files/:documentId` | `files:write` | Rename display name / tags (does not rename version stack key unless explicit) |
+| `DELETE` | `/api/files/:documentId` | `files:delete` | Soft-delete document (+ versions) |
+| `DELETE` | `/api/files/:documentId/versions/:versionId` | `files:delete` | Soft-delete one version |
+| `GET` | `/api/files/status` | `files:read` | `{ configured, root, writable, freeBytes? }` |
+
+**Upload behaviour:** same filename → new `file_versions` row with `version_number = max+1`; response includes document id, version number, uploader, timestamp.
 
 **Upload response (connector-friendly):**
 
 ```json
 {
-  "file": {
+  "document": {
+    "id": "…",
+    "name": "Auditorium.3dm",
+    "versionCount": 3
+  },
+  "version": {
+    "id": "…",
+    "versionNumber": 3,
+    "sizeBytes": 12345678,
+    "uploadedBy": "jsmith (Rhino)",
+    "sourceApp": "rhino",
+    "createdAt": "2026-07-20T09:45:00.000Z",
+    "downloadUrl": "/api/files/{documentId}/versions/{versionId}/download"
+  }
+}
+```
+
+**Document detail (admin):**
+
+```json
+{
+  "document": {
     "id": "…",
     "name": "Auditorium.3dm",
     "extension": ".3dm",
-    "sizeBytes": 12345678,
-    "downloadUrl": "/api/files/{id}/download",
-    "createdAt": "…"
+    "versionCount": 3,
+    "versions": [
+      {
+        "id": "…",
+        "versionNumber": 3,
+        "uploadedBy": "jsmith (Rhino)",
+        "sourceApp": "rhino",
+        "sizeBytes": 12345678,
+        "createdAt": "2026-07-20T09:45:00.000Z"
+      },
+      {
+        "id": "…",
+        "versionNumber": 2,
+        "uploadedBy": "admin",
+        "sourceApp": null,
+        "sizeBytes": 12000000,
+        "createdAt": "2026-07-19T14:02:11.000Z"
+      }
+    ]
   }
 }
 ```
@@ -177,9 +246,11 @@ OpenAPI tag **File library** on prism-server’s docs gateway (same pattern as M
 
 | Route | Purpose |
 |-------|---------|
-| `#/files` | Grid/table: name, ext, size, source app, project, date; search + filter |
-| `#/files/:id` | Detail: metadata, download, delete, tags |
-| Optional `#/files/upload` | Manual admin upload (parity with connectors) |
+| `#/files` | Table of **documents** (one row per filename): name, ext, latest size, **latest uploaded by**, **latest date/time**, version count badge, source app |
+| `#/files/:id` | Document detail: expandable / table of **all versions** — version #, **uploaded by**, **date & time**, size, source app, download / delete version |
+| Optional `#/files/upload` | Manual admin upload (parity with connectors); stacks as a new version when filename matches |
+
+**List UX:** clicking a row opens the version history. Show relative time + absolute timestamp (e.g. `20 Jul 2026, 09:45`). Never hide older uploads when the name matches.
 
 **Nav:** new top-level **Files** under `showTool('files')` in `web/src/admin/App.vue` (announce — shared file).
 
@@ -194,11 +265,12 @@ New capability distinct from Orbit send:
 | Piece | Proposal |
 |-------|----------|
 | Permission / function | Prefer new `use_file_library` **or** reuse `use_library` with a Prism endpoint discriminator — **recommend new function** so invite keys can grant Orbit libraries without file archive access |
-| UI | Toolbar / menu: **Send file to Prism File Library** (after Save, or Save+Send) |
-| Rhino | Write current doc to temp `.3dm` → `POST /api/files` |
-| Vectorworks | Export/save `.vwx` → same POST |
+| UI | Toolbar / menu: **Send file to Prism File Library** (after Save, or Save+Send); toast should show version number (`Uploaded v3`) |
+| Rhino | Write current doc to temp `.3dm` → `POST /api/files` with `uploadedBy` (Rhino/Windows user) + `sourceApp=rhino` |
+| Vectorworks | Export/save `.vwx` → same POST with `uploadedBy` + `sourceApp=vectorworks` |
 | Config | Connector settings: Prism base URL + API key (existing pattern) |
 | Preflight | `GET /api/files/status` — fail fast if root not writable |
+| Versioning | Same filename always appends a version — connectors must not assume overwrite |
 
 Document in `docs/LIBRARY_INTEGRATION.md` (new **File library** section) and connectors handoff.
 
@@ -234,8 +306,8 @@ Document in `docs/LIBRARY_INTEGRATION.md` (new **File library** section) and con
 ### Phase A — Skeleton (Prism)
 1. Scaffold `prism-files-service` + compose + nginx + `files-image` workflow  
 2. Settings keys + Settings tile + `files:*` scopes + `PrismTool 'files'`  
-3. CRUD + upload/download against default `${DATA_DIR}/files`  
-4. Admin `#/files` list/detail/upload  
+3. Document + **version** tables; upload stacks by normalised filename  
+4. Admin `#/files` list (latest + version count) + detail (**all versions** with uploader + date/time) + upload  
 
 ### Phase B — LAN root
 1. Compose bind-mount + `FILE_LIBRARY_HOST_PATH`  
@@ -282,6 +354,8 @@ Do **not** edit fixture/model/materials owned files.
    → Recommendation: **soft-delete DB + keep bytes N days** (configurable).
 4. **Project association:** free-string Orbit project id from connector, or Prism-side project picker only?  
    → Recommendation: **optional string from connector** in v1.
+5. **Version grouping scope:** global by filename, or `(project_id, filename)`?  
+   → Recommendation: **global by normalised filename** in v1; add project scope if collisions hurt.
 
 ---
 
@@ -289,6 +363,8 @@ Do **not** edit fixture/model/materials owned files.
 
 - Rhino user clicks **Send file** → `.3dm` appears under `#/files` within seconds  
 - Vectorworks same for `.vwx`  
+- Re-uploading the **same filename** lists as a new version (v1, v2, …); older versions remain downloadable  
+- Each version shows **who uploaded it** and **date/time**  
 - Files land on the **LAN file-server folder**, not the Docker named volume, when Settings root is configured  
 - Orbit publish still works independently; File Library failure must not block Orbit send  
 - API key without `files:write` cannot upload  
