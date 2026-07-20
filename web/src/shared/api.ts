@@ -2777,7 +2777,9 @@ export type ConnectorFunction =
   | 'create_model'
   | 'create_version'
   | 'use_library'
-  | 'use_infile';
+  | 'use_infile'
+  /** Upload native CAD to Prism File Library (not Orbit send). */
+  | 'use_file_library';
 
 /** Grantable connector functions (excludes create_project). */
 export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
@@ -2790,6 +2792,7 @@ export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'create_version',
   'use_library',
   'use_infile',
+  'use_file_library',
 ];
 
 export type PolicyNodeType = 'role' | 'user' | 'project' | 'function' | 'tool';
@@ -2869,8 +2872,8 @@ export interface EffectiveToolAccess {
 /**
  * Default invite-key function preset (send-only / "Light-like" UX).
  * Admins may grant any {@link CONNECTOR_FUNCTIONS} value, including `receive`,
- * `use_library`, and `use_infile`. `list_projects` is included so guests can
- * see assigned projects. `create_project` is never grantable.
+ * `use_library`, `use_infile`, and `use_file_library`. `list_projects` is included
+ * so guests can see assigned projects. `create_project` is never grantable.
  */
 export const LIGHT_CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
   'send',
