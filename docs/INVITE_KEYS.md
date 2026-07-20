@@ -61,7 +61,8 @@ When creating a key without choosing functions, the default is:
 Allowed: `send`, `create_model`, `create_version`, `list_models`, `list_versions`, `list_projects`
 
 Admins may grant any grantable connector function, including `receive`,
-`use_library`, `use_infile`, and `list_projects`. `create_project` is never
+`use_library`, `use_infile`, `use_file_library`, and `list_projects`.
+`create_project` is never
 grantable — the REBUS Connector hard-denies project creation. Library / In File
 require explicit grants (not implied by `receive`). Collaborators can
 **Refresh panel** to pick up grant changes without signing out.
@@ -77,6 +78,7 @@ require explicit grants (not implied by `receive`). Collaborators can
 | `canListProjects` | `Allows("list_projects")` |
 | `canUseLibrary` | `Allows("use_library")` |
 | `canUseInFile` | `Allows("use_infile")` |
+| `canUseFileLibrary` | `Allows("use_file_library")` |
 | `canOpenOrbitLinks` | `authMethod != "invite_key"` |
 
 ## Admin API (admin cookie)

@@ -19,6 +19,7 @@ import type { GuestInviteNodeMeta } from '../../utils/policyGraphLayout';
 const FUNCTION_LABELS: Partial<Record<ConnectorFunction, string>> = {
   use_library: 'use_library (Library tab)',
   use_infile: 'use_infile (In File tab)',
+  use_file_library: 'use_file_library (Upload File)',
   receive: 'receive (+ Receive cards)',
   send: 'send (+ Send cards)',
   list_projects: 'list_projects (project picker)',
@@ -251,8 +252,9 @@ async function copy(text: string) {
           </div>
           <p class="muted small">
             Default is the send-only (Light) preset, including <code>list_projects</code>.
-            Grant <code>receive</code>, <code>use_library</code>, and <code>use_infile</code> independently —
-            Library / In File are not implied by receive. Project creation is never available from the connector.
+            Grant <code>receive</code>, <code>use_library</code>, <code>use_infile</code>, and
+            <code>use_file_library</code> independently — Library / In File / Upload File are not
+            implied by receive. Project creation is never available from the connector.
           </p>
         </div>
 

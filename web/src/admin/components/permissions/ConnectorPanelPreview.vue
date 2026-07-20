@@ -20,12 +20,14 @@ const canListProjects = computed(() => set.value.has('list_projects'));
 /** Independent of receive — must be granted explicitly. */
 const canUseLibrary = computed(() => set.value.has('use_library'));
 const canUseInFile = computed(() => set.value.has('use_infile'));
+const canUseFileLibrary = computed(() => set.value.has('use_file_library'));
 const isSendOnly = computed(() => canSend.value && !canReceive.value);
 
 const visibleButtons = computed(() => {
   const buttons: { id: string; label: string; kind: 'send' | 'recv' | 'neutral' | 'library' }[] = [];
   if (canSend.value) buttons.push({ id: 'send', label: '+ Send', kind: 'send' });
   if (canReceive.value) buttons.push({ id: 'recv', label: '+ Receive', kind: 'recv' });
+  if (canUseFileLibrary.value) buttons.push({ id: 'upload-file', label: 'Upload File', kind: 'neutral' });
   if (canUseInFile.value) buttons.push({ id: 'infile', label: 'In File', kind: 'neutral' });
   if (canUseLibrary.value) buttons.push({ id: 'library', label: 'Library', kind: 'library' });
   return buttons;
