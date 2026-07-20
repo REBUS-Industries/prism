@@ -13,7 +13,7 @@ Three concurrent workstreams, two repos, three developer seats (human + Cursor a
 | **Model library** | `REBUS-Industries/prism` + `prism-models-service` | `feat/model-library` | `HANDOFF-model-library.md` | Dedicated agent seat |
 | **Permissions** | `REBUS-Industries/prism` + `prism-permissions-service` | `feat/permissions` | `HANDOFF-permissions.md` | Permissions agent seat |
 | **Connectors** | `REBUS-Industries/orbit-connectors` | feature branches off `main` | `orbit-connectors/.cursor/plans/HANDOFF-connectors.md` | Third seat (or async) |
-| **File library** *(planned)* | `prism` + `prism-files-service` | `feat/file-library` | `HANDOFF-file-library.md` | TBD |
+| **File library** *(MVP in prism-server)* | `REBUS-Industries/prism` (+ later `prism-files-service`) | feature PRs → `feat/file-library` | `HANDOFF-file-library.md` · connector: `docs/handoffs/FILE_LIBRARY_CONNECTORS.md` | File-library / connector seats |
 
 Fixture builder + materials editor + model library share one repo but use separate branches and own mostly non-overlapping files. Connectors are a completely separate repo with no cross-repo conflict risk.
 

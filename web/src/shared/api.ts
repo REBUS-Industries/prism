@@ -2590,6 +2590,105 @@ export const modelsApi = {
   },
 };
 
+// ── File library (native CAD / DCC source archives) ───────────────────────────
+// Separate from Orbit convert / Model Library. Same filename stacks as
+// immutable versions. Served by prism-server `/api/files/*` (MVP).
+
+export interface FileVersionSummary {
+  id: string;
+  versionNumber: number;
+  originalFilename: string;
+  contentType: string;
+  sizeBytes: number;
+  contentHash?: string | null;
+  source: string;
+  sourceApp?: string | null;
+  uploadedBy: string;
+  createdAt: string;
+  downloadUrl: string;
+}
+
+export interface FileDocumentListItem {
+  id: string;
+  name: string;
+  extension: string;
+  projectId?: string | null;
+  tags: string[];
+  versionCount: number;
+  latestVersion: FileVersionSummary | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FileDocumentDetail extends FileDocumentListItem {
+  versions: FileVersionSummary[];
+}
+
+export interface FileLibraryStatus {
+  configured: boolean;
+  root: string;
+  writable: boolean;
+  usingSettingsPath: boolean;
+  maxBytes: number;
+  allowedExts: string[];
+}
+
+export const filesApi = {
+  status: () => api.get<FileLibraryStatus>('/api/files/status'),
+  list: (params: {
+    q?: string;
+    ext?: string;
+    projectId?: string;
+    limit?: number;
+    cursor?: string | null;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.ext) qs.set('ext', params.ext);
+    if (params.projectId) qs.set('projectId', params.projectId);
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.cursor) qs.set('cursor', params.cursor);
+    const tail = qs.toString();
+    return api.get<{ documents: FileDocumentListItem[]; nextCursor: string | null }>(
+      `/api/files${tail ? `?${tail}` : ''}`,
+    );
+  },
+  get: (id: string) => api.get<{ document: FileDocumentDetail }>(`/api/files/${id}`),
+  upload: (
+    file: File,
+    options: {
+      name?: string;
+      projectId?: string;
+      tags?: string;
+      uploadedBy?: string;
+      sourceApp?: string;
+    } = {},
+  ) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (options.name) fd.append('name', options.name);
+    if (options.projectId) fd.append('projectId', options.projectId);
+    if (options.tags) fd.append('tags', options.tags);
+    if (options.uploadedBy) fd.append('uploadedBy', options.uploadedBy);
+    if (options.sourceApp) fd.append('sourceApp', options.sourceApp);
+    return api.postForm<{ document: FileDocumentListItem; version: FileVersionSummary }>(
+      '/api/files',
+      fd,
+    );
+  },
+  update: (
+    id: string,
+    body: { name?: string; tags?: string[]; projectId?: string | null },
+  ) => api.patch<{ document: FileDocumentListItem }>(`/api/files/${id}`, body),
+  remove: (id: string) => api.delete<void>(`/api/files/${id}`),
+  removeVersion: (documentId: string, versionId: string) =>
+    api.delete<void>(`/api/files/${documentId}/versions/${versionId}`),
+  downloadUrl: (documentId: string, versionId?: string) =>
+    versionId
+      ? `/api/files/${documentId}/versions/${versionId}/download`
+      : `/api/files/${documentId}/download`,
+};
+
 // ── Meshy.ai (Model Library create) ──────────────────────────────────────────
 // Credentials live in Admin → Settings → Meshy (`meshy_api_key`). All calls
 // go through prism-server `/api/meshy/*` so the browser never sees the key.
@@ -2686,7 +2785,7 @@ export interface PermissionsPolicyResponse {
 
 export const permissionsApi = {
   functionsList: (): ConnectorFunction[] => [...CONNECTOR_FUNCTIONS],
-  toolsList: (): PrismTool[] => ['convert', 'visualiser', 'fixtures', 'materials', 'models'],
+  toolsList: (): PrismTool[] => ['convert', 'visualiser', 'fixtures', 'materials', 'models', 'files'],
   getPolicy: () => api.get<PermissionsPolicyResponse>('/api/permissions/policy'),
   savePolicy: (body: { graph: FunctionPolicyGraph; defaultFunctions?: ConnectorFunction[] }) =>
     api.put<PermissionsPolicyResponse>('/api/permissions/policy', body as Record<string, unknown>),
@@ -2696,7 +2795,7 @@ export const permissionsApi = {
   getPortalRoles: () => api.get<PortalRolesResponse>('/api/permissions/portal-roles'),
 };
 
-export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models';
+export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models' | 'files';
 
 export interface ToolGrants {
   roles: Record<string, PrismTool[]>;

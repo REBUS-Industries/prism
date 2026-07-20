@@ -156,6 +156,9 @@ async function buildApp() {
   await app.register(import('./api/materialGroups.js'), { prefix: '/api/material-groups' });
   await app.register(import('./api/externalMaterials.js'), { prefix: '/api/external-materials' });
   await app.register(import('./api/fab.js'),           { prefix: '/api/fab' });
+  // File library — native CAD/DCC source archives (versioned by filename).
+  // MVP lives on prism-server; may later extract to prism-files-service.
+  await app.register(import('./api/files.js'),         { prefix: '/api/files' });
   await app.register(import('./api/internal.js'),      { prefix: '/internal' });
   await app.register(import('./v1/routes.js'),         { prefix: '/v1' });
 

@@ -53,6 +53,10 @@ const KNOWN_SCOPES = [
   'models:write',
   'models:delete',
   'models:import',
+  // File library — native CAD/DCC source archives (routes on prism-server /api/files).
+  'files:read',
+  'files:write',
+  'files:delete',
   // Permissions service — portal-brokered access + policy graph admin.
   'access:read',
   'access:admin',

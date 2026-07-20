@@ -89,6 +89,8 @@ async function logout() {
         <RouterLink :to="{ name: 'models'       }" v-if="showTool('models')"><Icon name="deployed_code" :size="18" />Model Library</RouterLink>
         <RouterLink v-if="showTool('models')" :to="{ name: 'model-create' }" class="nav-sub"><Icon name="auto_awesome" :size="16" />Create model</RouterLink>
         <RouterLink v-if="showTool('models')" :to="{ name: 'model-import' }" class="nav-sub"><Icon name="upload_file" :size="16" />Import model</RouterLink>
+        <RouterLink :to="{ name: 'files'        }" v-if="showTool('files')"><Icon name="folder" :size="18" />File Library</RouterLink>
+        <RouterLink v-if="showTool('files')" :to="{ name: 'file-upload' }" class="nav-sub"><Icon name="upload_file" :size="16" />Upload file</RouterLink>
         <RouterLink :to="{ name: 'permissions'  }"><Icon name="shield" :size="18" />Permissions</RouterLink>
         <RouterLink :to="{ name: 'tool-access'  }" class="nav-sub"><Icon name="build" :size="16" />Tool access</RouterLink>
         <RouterLink :to="{ name: 'settings'     }"><Icon name="settings" :size="18" />Settings</RouterLink>

@@ -1,23 +1,24 @@
 # PRISM libraries — Portal integration guide
 
 **Audience:** third-party portal developers embedding or synchronising PRISM's
-fixture, model, and material libraries.
+fixture, model, material, and file libraries.
 **Companion:** machine-readable contract at
 [`https://prism.rebus.industries/docs`](https://prism.rebus.industries/docs)
-(Redoc-rendered OpenAPI 3.1 — **Fixture library**, **Model library**, and
-**Materials library** tags).
+(Redoc-rendered OpenAPI 3.1 — **Fixture library**, **Model library**,
+**Materials library**, and **File library** tags).
 
 ---
 
 ## Overview
 
-PRISM hosts three editable asset libraries behind the admin UI:
+PRISM hosts editable asset libraries behind the admin UI:
 
 | Admin UI | Base path | Service |
 |----------|-----------|---------|
 | [Fixture library](https://prism.rebus.industries/admin/#/fixtures/library) | `/api/fixtures/*` | `prism-fixtures-service` |
 | [Model library](https://prism.rebus.industries/admin/#/models) | `/api/models/*`, `/api/model-import` | `prism-models-service` |
 | [Material library](https://prism.rebus.industries/admin/#/materials) | `/api/materials/*`, `/api/textures/*` | `prism-materials` |
+| [File library](https://prism.rebus.industries/admin/#/files) | `/api/files/*` | `prism-server` (MVP; may extract to `prism-files-service`) |
 
 Your portal integrates via **REST + `X-API-Key`**, not via the admin SPA
 routes (`/admin/#/…`). The admin pages are a reference for what the APIs
@@ -53,24 +54,25 @@ needs (read-only browse vs full edit).
 
 ### Scope matrix
 
-| Scope | Fixture library | Model library | Material library |
-|-------|-----------------|---------------|------------------|
-| `{lib}:read` | List, detail, preview GLB, connector export | List, detail, preview GLB | List, detail, texture preview, material ZIP export |
-| `{lib}:write` | Create, edit definition, categories, IES | Create, edit metadata; **Meshy generate** (`/api/meshy/*` create) | Create, edit, slot assign, duplicate, branch |
-| `{lib}:delete` | Soft-delete fixture types | Soft-delete models | Soft-delete materials / textures |
-| `{lib}:import` | GDTF / GDTF-Share / MVR import | `/api/model-import` upload (incl. Meshy transfer) | `/api/materials/import` ZIP |
+| Scope | Fixture library | Model library | Material library | File library |
+|-------|-----------------|---------------|------------------|--------------|
+| `{lib}:read` | List, detail, preview GLB, connector export | List, detail, preview GLB | List, detail, texture preview, material ZIP export | List, detail, download |
+| `{lib}:write` | Create, edit definition, categories, IES | Create, edit metadata; **Meshy generate** (`/api/meshy/*` create) | Create, edit, slot assign, duplicate, branch | Upload (new doc or version), metadata PATCH |
+| `{lib}:delete` | Soft-delete fixture types | Soft-delete models | Soft-delete materials / textures | Soft-delete document or version |
+| `{lib}:import` | GDTF / GDTF-Share / MVR import | `/api/model-import` upload (incl. Meshy transfer) | `/api/materials/import` ZIP | — (use `files:write` upload) |
 
-Where `{lib}` is `fixtures`, `models`, or `materials`.
+Where `{lib}` is `fixtures`, `models`, `materials`, or `files`.
 
 Meshy status / poll / download also need `models:read`. See
 [Generate with Meshy](#generate-with-meshy-connectors--portals).
 
 **Examples**
 
-- Portal browse-only widget: `fixtures:read`, `models:read`, `materials:read`
-- Portal editor (view + edit): add `fixtures:write`, `models:write`, `materials:write`
+- Portal browse-only widget: `fixtures:read`, `models:read`, `materials:read`, `files:read`
+- Portal editor (view + edit): add `fixtures:write`, `models:write`, `materials:write`, `files:write`
 - Portal with import wizards: also `fixtures:import`, `models:import`
 - Portal / connector **Meshy → library**: `models:read`, `models:write`, `models:import`
+- Connector **Send to File Library**: `files:read`, `files:write`
 
 Keys without an explicit scope set behave as legacy full-access keys (avoid
 for portal integrations).
@@ -81,7 +83,7 @@ for the PRISM admin SPA and internal tooling, not third-party portals.
 ### Portal role grants (UI access)
 
 Separately from API keys, **Admin → Tool access** maps portal roles to PRISM
-tools (`fixtures`, `models`, `materials`). That gates which admin nav items
+tools (`fixtures`, `models`, `materials`, `files`). That gates which admin nav items
 portal-authenticated users see. Programmatic library access always uses
 **API keys** with the scopes above.
 
@@ -524,6 +526,88 @@ See also external provider browse/import: [`docs/EXTERNAL_MATERIALS.md`](EXTERNA
 
 ---
 
+## File library
+
+**Admin mirror:** `/admin/#/files` — Prism-owned archive of **native CAD / DCC
+source files** (`.3dm`, `.vwx`, …). This is **not** Orbit convert / Model Library
+and **not** visualiser project-attachments (MVR/GDTF).
+
+**Versioning:** uploads with the same basename (case-insensitive) stack as
+immutable versions under one document. Re-sending `Auditorium.3dm` creates
+`vN+1`; prior bytes are kept. Each version records **uploaded by** and
+**date/time**.
+
+**Storage:** Admin → Settings → **File Library** (`file_library_root`), or
+`${DATA_DIR}/files` when unset. Prefer a LAN fileserver bind-mount in production.
+
+**Connector handoff:** [`docs/handoffs/FILE_LIBRARY_CONNECTORS.md`](handoffs/FILE_LIBRARY_CONNECTORS.md)
+
+### Read
+
+```bash
+export PRISM_KEY=prism_xyz
+
+# Storage status (call before upload)
+curl -sS -H "X-API-Key: $PRISM_KEY" \
+  https://prism.rebus.industries/api/files/status
+
+# List documents (one row per filename; includes latestVersion.uploadedBy + createdAt)
+curl -sS -H "X-API-Key: $PRISM_KEY" \
+  "https://prism.rebus.industries/api/files?q=Auditorium&limit=50"
+
+# Document + full version history
+curl -sS -H "X-API-Key: $PRISM_KEY" \
+  "https://prism.rebus.industries/api/files/{id}"
+
+# Download latest / specific version
+curl -sS -H "X-API-Key: $PRISM_KEY" -OJ \
+  "https://prism.rebus.industries/api/files/{id}/download"
+curl -sS -H "X-API-Key: $PRISM_KEY" -OJ \
+  "https://prism.rebus.industries/api/files/{id}/versions/{versionId}/download"
+```
+
+**Scope:** `files:read`
+
+### Write (connector upload)
+
+```bash
+# Rhino / Vectorworks — Send to File Library
+curl -sS -X POST -H "X-API-Key: $PRISM_KEY" \
+  -F "file=@./Auditorium.3dm" \
+  -F "uploadedBy=jsmith" \
+  -F "sourceApp=rhino" \
+  -F "projectId=optional-orbit-project-id" \
+  https://prism.rebus.industries/api/files
+```
+
+Response includes `document` + `version` (`versionNumber`, `uploadedBy`,
+`createdAt`, `downloadUrl`). Toast the version number (`Uploaded v3`).
+
+```bash
+# Metadata only
+curl -sS -X PATCH -H "X-API-Key: $PRISM_KEY" -H "Content-Type: application/json" \
+  -d '{"tags":["schematic"],"projectId":"abc123"}' \
+  "https://prism.rebus.industries/api/files/{id}"
+```
+
+**Scopes:** `files:write`
+
+### Delete
+
+```bash
+curl -sS -X DELETE -H "X-API-Key: $PRISM_KEY" \
+  "https://prism.rebus.industries/api/files/{id}"
+
+curl -sS -X DELETE -H "X-API-Key: $PRISM_KEY" \
+  "https://prism.rebus.industries/api/files/{id}/versions/{versionId}"
+```
+
+**Scope:** `files:delete`
+
+OpenAPI tag: **File library** on [`/docs`](https://prism.rebus.industries/docs).
+
+---
+
 ## Error responses
 
 | Status | Meaning |
@@ -543,6 +627,7 @@ authenticated users who already hold a PRISM admin session:
 - Fixtures: `https://prism.rebus.industries/admin/#/fixtures/library`
 - Models: `https://prism.rebus.industries/admin/#/models`
 - Materials: `https://prism.rebus.industries/admin/#/materials`
+- Files: `https://prism.rebus.industries/admin/#/files`
 
 That path depends on shared cookie auth and portal role → tool grants. For
 headless or cross-origin portals, use the REST API with scoped API keys
