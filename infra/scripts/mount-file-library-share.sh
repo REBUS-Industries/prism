@@ -42,6 +42,15 @@ need_sudo() {
   fi
 }
 
+# Env assignments like DEBIAN_FRONTEND=… must use env(1) — `"$@"` cannot parse them as root.
+apt_install() {
+  need_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
+}
+
+apt_update() {
+  need_sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+}
+
 # docker compose must run as the deploy user (member of docker group), not root.
 run_compose() {
   if [[ "$(id -u)" -eq 0 ]]; then
@@ -57,10 +66,9 @@ run_compose() {
 
 ensure_cifs_utils() {
   log "ensuring cifs-utils / keyutils / libkeyutils1 / smbclient"
-  need_sudo apt-get update -qq
+  apt_update
   # smbclient is its own package (not provided by samba-common-bin alone).
-  need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    cifs-utils keyutils libkeyutils1 smbclient samba-common-bin
+  apt_install cifs-utils keyutils libkeyutils1 smbclient samba-common-bin
   if ! lsmod | grep -q '^cifs\>'; then
     log "loading cifs kernel module"
     need_sudo modprobe cifs || die "modprobe cifs failed — check dmesg (kernel may lack cifs)"
@@ -84,8 +92,8 @@ ensure_dns_tools() {
     return 0
   fi
   log "installing dnsutils (dig)"
-  need_sudo apt-get update -qq
-  need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dnsutils
+  apt_update
+  apt_install dnsutils
 }
 
 # Resolve SHARE_HOST via AD DNS; sets global SHARE_IP.
@@ -191,8 +199,18 @@ probe_smb_share() {
 
 mount_now() {
   need_sudo mkdir -p "$MOUNT_POINT"
+
+  # Mount by IP — avoids DNS/SPN surprises. Share name from SHARE path.
+  local share_name
+  share_name="$(printf '%s' "$SHARE" | sed -E 's|^//[^/]+/||')"
+  [[ -n "$share_name" ]] || share_name="REBUS"
+  local target="//${SHARE_IP}/${share_name}"
+  [[ "$SHARE_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || target="$SHARE"
+  # Prefer IP target in systemd unit going forward.
+  SHARE="$target"
+
   if is_mounted; then
-    log "already mounted: $MOUNT_POINT"
+    log "already mounted: $MOUNT_POINT (ok)"
     return 0
   fi
   # Docker may have created an empty bind-source dir — mount over that.
@@ -203,17 +221,10 @@ mount_now() {
     fi
   fi
 
-  # Mount by IP — avoids DNS/SPN surprises. Share name from SHARE path.
-  local share_name
-  share_name="$(printf '%s' "$SHARE" | sed -E 's|^//[^/]+/||')"
-  [[ -n "$share_name" ]] || share_name="REBUS"
-  local target="//${SHARE_IP}/${share_name}"
-  [[ "$SHARE_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || target="$SHARE"
-
   probe_smb_share
 
   local base="credentials=${CRED_FILE},uid=1000,gid=1000,file_mode=0664,dir_mode=0775,iocharset=utf8,noperm,_netdev"
-  local attempt opts
+  local opts
   # Ordered fallbacks: SMB3 crypto → SMB2.1 → NTLMSSP explicit → no serverino
   local attempts=(
     "${base},vers=3.0,sec=ntlmssp"
@@ -228,9 +239,12 @@ mount_now() {
     log "mounting $target -> $MOUNT_POINT ($opts)"
     if need_sudo mount -t cifs "$target" "$MOUNT_POINT" -o "$opts"; then
       mountpoint -q "$MOUNT_POINT" || die "mount reported ok but mountpoint check failed"
-      # Keep SHARE pointing at hostname path for systemd documentation; unit uses IP target.
-      SHARE="$target"
       log "mount ok"
+      return 0
+    fi
+    # error(16) EBUSY — another attempt (or a race) already mounted it.
+    if is_mounted; then
+      log "mount busy but mountpoint is active — treating as success"
       return 0
     fi
   done
