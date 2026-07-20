@@ -38,6 +38,16 @@ export interface PolicyNodeData {
   noTarget?: boolean;
   /** Hide right source handle (e.g. tool column leaves). */
   noSource?: boolean;
+  /**
+   * Side for the source handle. Defaults to right (left-to-right graphs).
+   * Guests on the right of Projects use `left` so wires face the middle column.
+   */
+  sourceSide?: 'left' | 'right';
+  /**
+   * Show an extra target handle on the right (projects receiving edges from a
+   * column to their right, e.g. Guests).
+   */
+  targetRight?: boolean;
   /** Role has grants but is no longer in the portal's live role list. */
   stale?: boolean;
   /** True when this user node is a Connector Light guest invite key. */
@@ -59,6 +69,8 @@ export interface PolicyFlowEdge {
   id: string;
   source: string;
   target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
   markerEnd?: string;
   animated?: boolean;
 }
