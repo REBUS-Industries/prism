@@ -497,15 +497,18 @@ async function syncPortalProjects() {
     const res = await workspaceApi.syncPortalProjects();
     if (!res.supported) {
       error.value =
-        'Portal bulk project-permissions feed is unavailable (404/501). Login-time sync still updates users when they sign into a connector.';
+        'Portal project sync unavailable. Need either GET /portal/project-permissions (bulk) or service-key access to GET /portal/users/:id/project-permissions for users who have logged into a connector. Login-time sync still updates those users when they sign in.';
       return;
     }
+    const via = res.mode === 'per-user' ? ' (per-user fallback)' : '';
     status.value =
-      `Portal projects synced — ${res.updated} updated, ${res.unchanged} unchanged` +
+      `Portal projects synced${via} — ${res.updated} updated, ${res.unchanged} unchanged` +
       (res.unmatched ? `, ${res.unmatched} portal user(s) not in Prism directory` : '') +
-      (res.cleared ? `, ${res.cleared} cleared` : '');
+      (res.cleared ? `, ${res.cleared} cleared` : '') +
+      (res.failed ? `, ${res.failed} fetch failed` : '') +
+      (res.skipped ? `, ${res.skipped} skipped` : '');
     await refresh(true);
-    setTimeout(() => (status.value = null), 5000);
+    setTimeout(() => (status.value = null), 6000);
   } catch (err) {
     error.value = (err as ApiError).message ?? 'Portal project sync failed';
   } finally {
@@ -914,8 +917,8 @@ onMounted(async () => {
           <RouterLink :to="{ name: 'users' }">Users</RouterLink>
           (Google directory). Project edges are Prism-stored
           <code>projectPermissions</code>, refreshed from the portal on connector login and via
-          <strong>Sync portal projects</strong> (bulk
-          <code>GET /portal/project-permissions</code>).
+          <strong>Sync portal projects</strong>
+          (bulk feed, or per-user fetch for users who have signed into a connector).
           Turn off blanket access below so connectors use those scoped lists.
           <template v-if="workspaceLinked">
             {{ workspaceUsers.length }} workspace user{{ workspaceUsers.length === 1 ? '' : 's' }} loaded;

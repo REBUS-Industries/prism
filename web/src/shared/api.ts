@@ -3045,10 +3045,13 @@ export interface WorkspaceSyncResult {
 
 export interface PortalProjectPermissionsSyncResult {
   supported: boolean;
+  mode: 'bulk' | 'per-user' | 'unavailable';
   updated: number;
   unchanged: number;
   unmatched: number;
   cleared: number;
+  skipped?: number;
+  failed?: number;
 }
 
 export const workspaceApi = {
