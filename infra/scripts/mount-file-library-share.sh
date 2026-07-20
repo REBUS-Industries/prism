@@ -56,25 +56,26 @@ run_compose() {
 }
 
 ensure_cifs_utils() {
-  local need_apt=0
-  if ! mount.cifs -V >/dev/null 2>&1; then
-    need_apt=1
-  fi
-  # mount error(79) "Can not access a needed shared library" is almost always
-  # missing keyutils (request-key) and/or the cifs kernel module.
-  if ! dpkg -s keyutils >/dev/null 2>&1 && ! command -v request-key >/dev/null 2>&1; then
-    need_apt=1
-  fi
-  if [[ "$need_apt" -eq 1 ]]; then
-    log "installing cifs-utils + keyutils"
-    need_sudo apt-get update -qq
-    need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cifs-utils keyutils
-  fi
+  log "ensuring cifs-utils / keyutils / libkeyutils1 / smbclient"
+  need_sudo apt-get update -qq
+  need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    cifs-utils keyutils libkeyutils1 samba-common-bin
   if ! lsmod | grep -q '^cifs\>'; then
     log "loading cifs kernel module"
     need_sudo modprobe cifs || die "modprobe cifs failed — check dmesg (kernel may lack cifs)"
   fi
   lsmod | grep -q '^cifs\>' || die "cifs module not loaded"
+  # error(79) ELIBACC with cifs already loaded → missing kernel crypto algs for SMB3.
+  local mod
+  for mod in hmac md4 md5 sha256 sha512 cmac aes ecb cbc des_generic gcm ccm aead; do
+    need_sudo modprobe "$mod" 2>/dev/null || true
+  done
+  if command -v ldd >/dev/null 2>&1 && [[ -x /sbin/mount.cifs ]]; then
+    if ldd /sbin/mount.cifs 2>/dev/null | grep -q 'not found'; then
+      log "WARN: mount.cifs missing shared libs:"
+      ldd /sbin/mount.cifs >&2 || true
+    fi
+  fi
 }
 
 ensure_dns_tools() {
@@ -86,15 +87,17 @@ ensure_dns_tools() {
   need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dnsutils
 }
 
-# Resolve SHARE_HOST via AD DNS and pin it in /etc/hosts so mount + boot
-# work even when systemd-resolved returns NXDOMAIN for ad.rebus.industries.
+# Resolve SHARE_HOST via AD DNS; sets global SHARE_IP.
 resolve_share_host() {
   local ip="" dns
+  SHARE_IP=""
   if getent hosts "$SHARE_HOST" >/dev/null 2>&1; then
-    ip="$(getent hosts "$SHARE_HOST" | awk '{print $1; exit}')"
-    log "SHARE_HOST $SHARE_HOST already resolves to $ip"
-    echo "$ip"
-    return 0
+    ip="$(getent hosts "$SHARE_HOST" | awk '/^[0-9]+\./ {print $1; exit}')"
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      log "SHARE_HOST $SHARE_HOST already resolves to $ip"
+      SHARE_IP="$ip"
+      return 0
+    fi
   fi
   ensure_dns_tools
   for dns in $AD_DNS_SERVERS; do
@@ -104,9 +107,9 @@ resolve_share_host() {
     else
       ip="$(host -t A "$SHARE_HOST" "$dns" 2>/dev/null | awk '/has address/ {print $4; exit}')"
     fi
-    if [[ -n "$ip" ]]; then
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       log "resolved $SHARE_HOST -> $ip (via $dns)"
-      echo "$ip"
+      SHARE_IP="$ip"
       return 0
     fi
   done
@@ -114,19 +117,13 @@ resolve_share_host() {
 }
 
 ensure_hosts_entry() {
-  local ip="$1"
-  # Keep only a bare IPv4 (defend against polluted capture / multiline).
-  ip="$(printf '%s' "$ip" | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')"
-  [[ -n "$ip" ]] || die "ensure_hosts_entry: invalid IPv4"
+  [[ "$SHARE_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "SHARE_IP unset/invalid"
   local marker="# prism-file-library"
-  local line="${ip} ${SHARE_HOST} ${marker}"
-  if grep -qE "[[:space:]]${SHARE_HOST}([[:space:]]|\$)" /etc/hosts 2>/dev/null; then
-    log "updating /etc/hosts entry for $SHARE_HOST -> $ip"
-    need_sudo sed -i -E "s|^.*[[:space:]]${SHARE_HOST}([[:space:]].*)?$|${line}|" /etc/hosts
-  else
-    log "adding /etc/hosts entry for $SHARE_HOST -> $ip"
-    echo "$line" | need_sudo tee -a /etc/hosts >/dev/null
-  fi
+  local line="${SHARE_IP} ${SHARE_HOST} ${marker}"
+  log "pinning /etc/hosts: $line"
+  # Drop any prior lines for this hostname, then append one clean mapping.
+  need_sudo sed -i -E "/[[:space:]]${SHARE_HOST}([[:space:]]|\$)/d" /etc/hosts
+  echo "$line" | need_sudo tee -a /etc/hosts >/dev/null
   getent hosts "$SHARE_HOST" >/dev/null || die "/etc/hosts entry for $SHARE_HOST did not take effect"
 }
 
@@ -176,6 +173,21 @@ is_mounted() {
     || mountpoint -q "$MOUNT_POINT" 2>/dev/null
 }
 
+probe_smb_share() {
+  [[ -n "$SHARE_IP" ]] || return 0
+  if ! command -v smbclient >/dev/null 2>&1; then
+    return 0
+  fi
+  log "probing SMB with smbclient //${SHARE_IP}/REBUS"
+  if smbclient "//${SHARE_IP}/REBUS" -A "$CRED_FILE" -c 'ls' >/tmp/prism-smbclient.out 2>/tmp/prism-smbclient.err; then
+    log "smbclient OK"
+    head -5 /tmp/prism-smbclient.out >&2 || true
+  else
+    log "WARN: smbclient failed (share name / credentials / firewall?):"
+    cat /tmp/prism-smbclient.err >&2 || true
+  fi
+}
+
 mount_now() {
   need_sudo mkdir -p "$MOUNT_POINT"
   if is_mounted; then
@@ -189,21 +201,45 @@ mount_now() {
       die "$MOUNT_POINT is non-empty and not a mount — refuse to overlay (move aside first)"
     fi
   fi
-  local opts="credentials=${CRED_FILE},uid=1000,gid=1000,file_mode=0664,dir_mode=0775,iocharset=utf8,noperm,serverino,_netdev"
-  # Prefer SMB3; fall back if the server negotiates poorly.
-  log "mounting $SHARE -> $MOUNT_POINT"
-  if ! need_sudo mount -t cifs "$SHARE" "$MOUNT_POINT" -o "${opts},vers=3.0"; then
-    log "WARN: vers=3.0 failed — retrying with vers=3.1.1 then default"
-    need_sudo mount -t cifs "$SHARE" "$MOUNT_POINT" -o "${opts},vers=3.1.1" \
-      || need_sudo mount -t cifs "$SHARE" "$MOUNT_POINT" -o "${opts}" \
-      || {
-        log "dmesg (last 30 lines):"
-        dmesg 2>/dev/null | tail -30 >&2 || true
-        die "mount failed (see error above + dmesg). Often missing: apt install keyutils && modprobe cifs"
-      }
-  fi
-  mountpoint -q "$MOUNT_POINT" || die "mount failed"
-  log "mount ok"
+
+  # Mount by IP — avoids DNS/SPN surprises. Share name from SHARE path.
+  local share_name
+  share_name="$(printf '%s' "$SHARE" | sed -E 's|^//[^/]+/||')"
+  [[ -n "$share_name" ]] || share_name="REBUS"
+  local target="//${SHARE_IP}/${share_name}"
+  [[ "$SHARE_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || target="$SHARE"
+
+  probe_smb_share
+
+  local base="credentials=${CRED_FILE},uid=1000,gid=1000,file_mode=0664,dir_mode=0775,iocharset=utf8,noperm,_netdev"
+  local attempt opts
+  # Ordered fallbacks: SMB3 crypto → SMB2.1 → NTLMSSP explicit → no serverino
+  local attempts=(
+    "${base},vers=3.0,sec=ntlmssp"
+    "${base},vers=3.1.1,sec=ntlmssp"
+    "${base},vers=2.1,sec=ntlmssp"
+    "${base},vers=3.0,sec=ntlmssp,noserverino"
+    "${base},vers=2.0,sec=ntlmssp"
+    "${base},vers=1.0,sec=ntlm"
+  )
+
+  for opts in "${attempts[@]}"; do
+    log "mounting $target -> $MOUNT_POINT ($opts)"
+    if need_sudo mount -t cifs "$target" "$MOUNT_POINT" -o "$opts"; then
+      mountpoint -q "$MOUNT_POINT" || die "mount reported ok but mountpoint check failed"
+      # Keep SHARE pointing at hostname path for systemd documentation; unit uses IP target.
+      SHARE="$target"
+      log "mount ok"
+      return 0
+    fi
+  done
+
+  log "all mount attempts failed — diagnostics:"
+  log "dmesg (last 40):"
+  dmesg 2>/dev/null | tail -40 >&2 || true
+  log "ldd /sbin/mount.cifs:"
+  ldd /sbin/mount.cifs >&2 2>/dev/null || true
+  die "mount failed with error(79) or similar. Paste dmesg + smbclient output."
 }
 
 install_systemd_mount() {
@@ -308,9 +344,8 @@ verify() {
 main() {
   ensure_cifs_utils
   write_credentials_if_provided
-  local share_ip
-  share_ip="$(resolve_share_host)"
-  ensure_hosts_entry "$share_ip"
+  resolve_share_host
+  ensure_hosts_entry
   configure_resolved_ad_dns
   mount_now
   install_systemd_mount
