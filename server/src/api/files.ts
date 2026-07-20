@@ -3,12 +3,25 @@
  *
  * Separate from Orbit convert / Model Library. Same filename stacks as
  * immutable versions under a **per-project folder** on the LAN share.
+ * On-disk layout: `{root}/{projectRel}/{stem}/{filename}` (tip), with prior
+ * versions under `{stem}/v{n}/`. Deletes move bytes to `{projectRel}/archive/`.
  * Storage root from Settings `file_library_root` or `${DATA_DIR}/files`.
  * Uploads require `projectId` with a configured relative folder.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, constants, mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  constants,
+  copyFile,
+  mkdir,
+  readdir,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { and, asc, desc, eq, ilike, inArray, isNull } from 'drizzle-orm';
@@ -23,6 +36,8 @@ const DEFAULT_ROOT = resolve(DATA_DIR, 'files');
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
 const DEFAULT_EXTS = ['.3dm', '.vwx', '.dwg', '.rvt', '.skp', '.fbx', '.obj', '.zip', '.3ds', '.dae'];
 const MAX_NOTES_CHARS = 8000;
+/** Reserved folder name under each project File Library root for soft-deleted bytes. */
+const ARCHIVE_DIR_NAME = 'archive';
 
 async function resolveLibraryRoot(): Promise<string> {
   const fromSettings = (await getSetting('file_library_root'))?.trim();
@@ -53,9 +68,33 @@ function normalizeFilename(name: string): string {
   return basename(name).trim().toLowerCase();
 }
 
+/** ASCII-safe name for Content-Disposition headers. */
 function sanitiseFilename(input: string): string {
   const base = basename(input).replace(/[\\/]+/g, '_');
   return base.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 200) || 'file';
+}
+
+/**
+ * On-disk filename that preserves spaces and common punctuation
+ * (e.g. `Test File.3dm`), while stripping path separators and Windows-illegal chars.
+ */
+function sanitiseDiskName(input: string): string {
+  let base = basename(input).replace(/[\\/]+/g, '_').replace(/\0/g, '');
+  base = base.replace(/[<>:"|?*\u0000-\u001f]+/g, '_').trim();
+  // Windows disallows trailing dots/spaces in final path segment.
+  base = base.replace(/[. ]+$/g, '').slice(0, 200);
+  return base || 'file';
+}
+
+/** Document folder under the project File Library root — stem of the filename. */
+function documentFolderName(filename: string): string {
+  const disk = sanitiseDiskName(filename);
+  let stem = basename(disk, extname(disk)).trim() || 'file';
+  stem = stem.slice(0, 200);
+  if (stem.toLowerCase() === ARCHIVE_DIR_NAME) {
+    stem = `${stem}_file`;
+  }
+  return stem || 'file';
 }
 
 function assertUnderRoot(root: string, candidate: string): string {
@@ -88,6 +127,231 @@ async function getProjectFolder(projectId: string) {
     .where(eq(fileLibraryProjectFolders.projectId, projectId))
     .limit(1);
   return rows[0] ?? null;
+}
+
+function notesSidecarPath(storagePath: string): string {
+  const stem = basename(storagePath, extname(storagePath)) || 'notes';
+  return join(dirname(storagePath), `${stem}.txt`);
+}
+
+async function resolveProjectRelForDoc(
+  doc: typeof fileDocuments.$inferSelect,
+): Promise<string | null> {
+  if (!doc.projectId) return null;
+  const folder = await getProjectFolder(doc.projectId);
+  if (!folder?.relativePath) return null;
+  try {
+    return normaliseRelativePath(folder.relativePath) || null;
+  } catch {
+    return null;
+  }
+}
+
+function projectAbs(root: string, projectRel: string | null): string {
+  if (!projectRel) return root;
+  return assertUnderRoot(root, join(root, ...projectRel.split('/')));
+}
+
+async function moveFile(src: string, dest: string): Promise<void> {
+  await mkdir(dirname(dest), { recursive: true });
+  try {
+    await rename(src, dest);
+  } catch {
+    // Cross-device / SMB rename can fail — copy then remove.
+    await copyFile(src, dest);
+    await unlink(src);
+  }
+}
+
+/**
+ * Move a version's on-disk bytes (and optional notes sidecar) into
+ * `{projectRoot}/archive/{stem}/v{n}/…`. Updates `storagePath` in DB.
+ */
+async function archiveVersionFiles(opts: {
+  root: string;
+  projectRel: string | null;
+  version: typeof fileVersions.$inferSelect;
+  documentName: string;
+}): Promise<string | null> {
+  const { root, projectRel, version, documentName } = opts;
+  const src = version.storagePath;
+  if (!src) return null;
+
+  let srcExists = true;
+  try {
+    await access(src, constants.F_OK);
+  } catch {
+    srcExists = false;
+  }
+  if (!srcExists) return null;
+
+  // Skip if already under an archive folder.
+  const normalisedSrc = src.replace(/\\/g, '/').toLowerCase();
+  if (normalisedSrc.includes(`/${ARCHIVE_DIR_NAME}/`)) {
+    return src;
+  }
+
+  const stem = documentFolderName(documentName || version.originalFilename);
+  const diskName = sanitiseDiskName(basename(src) || version.originalFilename);
+  const projectRoot = projectAbs(root, projectRel);
+  const archiveDir = assertUnderRoot(
+    root,
+    join(projectRoot, ARCHIVE_DIR_NAME, stem, `v${version.versionNumber}`),
+  );
+  let finalDest = assertUnderRoot(root, join(archiveDir, diskName));
+  if (finalDest !== src) {
+    try {
+      await access(finalDest);
+      const stamped = `${basename(diskName, extname(diskName))}_${Date.now()}${extname(diskName)}`;
+      finalDest = assertUnderRoot(root, join(archiveDir, stamped));
+    } catch {
+      /* destination free */
+    }
+  }
+
+  await moveFile(src, finalDest);
+
+  const sidecarSrc = notesSidecarPath(src);
+  try {
+    await access(sidecarSrc, constants.F_OK);
+    const sidecarDest = assertUnderRoot(root, notesSidecarPath(finalDest));
+    await moveFile(sidecarSrc, sidecarDest);
+  } catch {
+    /* no sidecar */
+  }
+
+  await db.update(fileVersions)
+    .set({ storagePath: finalDest })
+    .where(eq(fileVersions.id, version.id));
+
+  // Best-effort cleanup of empty version / document folders.
+  try {
+    const verDir = dirname(src);
+    const entries = await readdir(verDir);
+    if (entries.length === 0) await rm(verDir, { recursive: false }).catch(() => undefined);
+    const docDir = dirname(verDir);
+    // Only remove if it looks like a document folder (not project root / archive).
+    if (basename(docDir).toLowerCase() !== ARCHIVE_DIR_NAME) {
+      const left = await readdir(docDir);
+      if (left.length === 0) await rm(docDir, { recursive: false }).catch(() => undefined);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return finalDest;
+}
+
+/**
+ * Move the current tip file aside under `{stem}/v{n}/` before writing a new
+ * tip at `{stem}/{filename}`. Keeps prior versions browsable until delete.
+ */
+/**
+ * Move the whole live document folder `{stem}/` into
+ * `{projectRoot}/archive/{stem}/` (timestamp suffix on collision).
+ * Rewrites `storagePath` for any versions that lived under that folder.
+ */
+async function archiveDocumentFolder(opts: {
+  root: string;
+  projectRel: string | null;
+  documentName: string;
+  versions: Array<typeof fileVersions.$inferSelect>;
+}): Promise<boolean> {
+  const { root, projectRel, documentName, versions } = opts;
+  if (!projectRel) return false;
+  const stem = documentFolderName(documentName);
+  const projectRoot = projectAbs(root, projectRel);
+  const liveDir = assertUnderRoot(root, join(projectRoot, stem));
+  try {
+    await access(liveDir, constants.F_OK);
+  } catch {
+    return false;
+  }
+  const st = await stat(liveDir);
+  if (!st.isDirectory()) return false;
+
+  let dest = assertUnderRoot(root, join(projectRoot, ARCHIVE_DIR_NAME, stem));
+  try {
+    await access(dest);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    dest = assertUnderRoot(root, join(projectRoot, ARCHIVE_DIR_NAME, `${stem}_${stamp}`));
+  } catch {
+    /* free */
+  }
+
+  await mkdir(dirname(dest), { recursive: true });
+  try {
+    await rename(liveDir, dest);
+  } catch {
+    // Fallback: archive each known version file individually.
+    return false;
+  }
+
+  const livePrefix = liveDir.endsWith(sep) ? liveDir : liveDir + sep;
+  for (const version of versions) {
+    const src = version.storagePath;
+    if (!src) continue;
+    const resolved = resolve(src);
+    if (resolved === liveDir || resolved.startsWith(livePrefix)) {
+      const relative = resolved.slice(liveDir.length).replace(/^[/\\]+/, '');
+      const next = assertUnderRoot(
+        root,
+        relative ? join(dest, ...relative.split(/[/\\]+/)) : dest,
+      );
+      await db.update(fileVersions)
+        .set({ storagePath: next })
+        .where(eq(fileVersions.id, version.id));
+    }
+  }
+  return true;
+}
+
+async function retireTipVersion(opts: {
+  root: string;
+  projectRel: string;
+  version: typeof fileVersions.$inferSelect;
+  documentName: string;
+}): Promise<void> {
+  const { root, projectRel, version, documentName } = opts;
+  const src = version.storagePath;
+  if (!src) return;
+  try {
+    await access(src, constants.F_OK);
+  } catch {
+    return;
+  }
+
+  const stem = documentFolderName(documentName || version.originalFilename);
+  const diskName = sanitiseDiskName(basename(src) || version.originalFilename);
+  const liveTipDir = assertUnderRoot(root, join(root, ...projectRel.split('/'), stem));
+  const liveTipPath = assertUnderRoot(root, join(liveTipDir, diskName));
+
+  // Only retire when the tip still sits at the human-browsable path.
+  if (resolve(src) !== resolve(liveTipPath)) return;
+
+  const histDir = assertUnderRoot(root, join(liveTipDir, `v${version.versionNumber}`));
+  let dest = assertUnderRoot(root, join(histDir, diskName));
+  try {
+    await access(dest);
+    dest = assertUnderRoot(
+      root,
+      join(histDir, `${basename(diskName, extname(diskName))}_${Date.now()}${extname(diskName)}`),
+    );
+  } catch {
+    /* free */
+  }
+
+  await moveFile(src, dest);
+  const sidecarSrc = notesSidecarPath(src);
+  try {
+    await access(sidecarSrc, constants.F_OK);
+    await moveFile(sidecarSrc, assertUnderRoot(root, notesSidecarPath(dest)));
+  } catch {
+    /* no sidecar */
+  }
+  await db.update(fileVersions)
+    .set({ storagePath: dest })
+    .where(eq(fileVersions.id, version.id));
 }
 
 function fieldString(fields: Record<string, unknown>, key: string): string | undefined {
@@ -126,11 +390,6 @@ async function resolveUploaderLabel(req: FastifyRequest, uploadedBy?: string): P
     };
   }
   return { label: 'unknown', apiKeyId: null, adminId: null, source: 'api' };
-}
-
-function notesSidecarPath(storagePath: string): string {
-  const stem = basename(storagePath, extname(storagePath)) || 'notes';
-  return join(dirname(storagePath), `${stem}.txt`);
 }
 
 function toVersionPublic(row: typeof fileVersions.$inferSelect) {
@@ -221,7 +480,11 @@ const plugin: FastifyPluginAsync = async (app) => {
     }
     const entries = await readdir(abs, { withFileTypes: true });
     const directories = entries
-      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .filter((e) => (
+        e.isDirectory()
+        && !e.name.startsWith('.')
+        && e.name.toLowerCase() !== ARCHIVE_DIR_NAME
+      ))
       .map((e) => e.name)
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
       .map((name) => ({
@@ -525,11 +788,30 @@ const plugin: FastifyPluginAsync = async (app) => {
 
     const nextVersion = (doc.versionCount || 0) + 1;
     const versionId = randomUUID();
-    // {root}/{projectRel}/{documentId}/v{n}/{filename}
-    const relDir = join(...projectRel.split('/'), doc.id, `v${nextVersion}`);
-    const absDir = assertUnderRoot(root, join(root, relDir));
+    const stem = documentFolderName(originalFilename);
+    const diskName = sanitiseDiskName(originalFilename);
+
+    // Keep a human-browsable tip at `{stem}/{filename}` (e.g. Test File/Test File.3dm).
+    // Prior tip versions move to `{stem}/v{n}/` under the same document folder.
+    if (doc.latestVersionId) {
+      const prevRows = await db.select().from(fileVersions).where(and(
+        eq(fileVersions.id, doc.latestVersionId),
+        isNull(fileVersions.deletedAt),
+      )).limit(1);
+      const prev = prevRows[0];
+      if (prev) {
+        await retireTipVersion({
+          root,
+          projectRel,
+          version: prev,
+          documentName: doc.name || originalFilename,
+        });
+      }
+    }
+
+    // {root}/{projectRel}/{stem}/{filename}
+    const absDir = assertUnderRoot(root, join(root, ...projectRel.split('/'), stem));
     await mkdir(absDir, { recursive: true });
-    const diskName = sanitiseFilename(originalFilename);
     const absPath = assertUnderRoot(root, join(absDir, diskName));
     await writeFile(absPath, body);
     if (notes) {
@@ -607,7 +889,62 @@ const plugin: FastifyPluginAsync = async (app) => {
     const id = z.string().uuid().safeParse(req.params.id);
     if (!id.success) return reply.code(400).send({ error: 'invalid id' });
     const docs = await db.select().from(fileDocuments).where(and(eq(fileDocuments.id, id.data), isNull(fileDocuments.deletedAt))).limit(1);
-    if (!docs[0]) return reply.code(404).send({ error: 'not found' });
+    const doc = docs[0];
+    if (!doc) return reply.code(404).send({ error: 'not found' });
+
+    const root = await resolveLibraryRoot();
+    const projectRel = await resolveProjectRelForDoc(doc);
+    const versions = await db.select().from(fileVersions).where(and(
+      eq(fileVersions.documentId, id.data),
+      isNull(fileVersions.deletedAt),
+    ));
+    let folderArchived = false;
+    try {
+      folderArchived = await archiveDocumentFolder({
+        root,
+        projectRel,
+        documentName: doc.name,
+        versions,
+      });
+    } catch {
+      folderArchived = false;
+    }
+    // Legacy UUID paths (or rename failure): archive each version file.
+    if (!folderArchived) {
+      for (const version of versions) {
+        try {
+          await archiveVersionFiles({
+            root,
+            projectRel,
+            version,
+            documentName: doc.name,
+          });
+        } catch {
+          /* best effort — still soft-delete */
+        }
+      }
+    } else {
+      // Any versions still outside the moved folder (e.g. old UUID layout).
+      const refreshed = await db.select().from(fileVersions).where(and(
+        eq(fileVersions.documentId, id.data),
+        isNull(fileVersions.deletedAt),
+      ));
+      for (const version of refreshed) {
+        const path = version.storagePath?.replace(/\\/g, '/').toLowerCase() ?? '';
+        if (path.includes(`/${ARCHIVE_DIR_NAME}/`)) continue;
+        try {
+          await archiveVersionFiles({
+            root,
+            projectRel,
+            version,
+            documentName: doc.name,
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+
     const now = new Date();
     await db.update(fileDocuments).set({ deletedAt: now, updatedAt: now }).where(eq(fileDocuments.id, id.data));
     await db.update(fileVersions).set({ deletedAt: now }).where(and(eq(fileVersions.documentId, id.data), isNull(fileVersions.deletedAt)));
@@ -620,6 +957,13 @@ const plugin: FastifyPluginAsync = async (app) => {
     const docId = z.string().uuid().safeParse(req.params.id);
     const verId = z.string().uuid().safeParse(req.params.versionId);
     if (!docId.success || !verId.success) return reply.code(400).send({ error: 'invalid id' });
+    const docs = await db.select().from(fileDocuments).where(and(
+      eq(fileDocuments.id, docId.data),
+      isNull(fileDocuments.deletedAt),
+    )).limit(1);
+    const doc = docs[0];
+    if (!doc) return reply.code(404).send({ error: 'not found' });
+
     const rows = await db.select().from(fileVersions).where(and(
       eq(fileVersions.id, verId.data),
       eq(fileVersions.documentId, docId.data),
@@ -627,9 +971,20 @@ const plugin: FastifyPluginAsync = async (app) => {
     )).limit(1);
     const row = rows[0];
     if (!row) return reply.code(404).send({ error: 'not found' });
+
+    const root = await resolveLibraryRoot();
+    const projectRel = await resolveProjectRelForDoc(doc);
+    try {
+      await archiveVersionFiles({
+        root,
+        projectRel,
+        version: row,
+        documentName: doc.name,
+      });
+    } catch {
+      /* best effort */
+    }
     await db.update(fileVersions).set({ deletedAt: new Date() }).where(eq(fileVersions.id, row.id));
-    try { await unlink(row.storagePath); } catch { /* already gone */ }
-    try { await unlink(notesSidecarPath(row.storagePath)); } catch { /* optional sidecar */ }
 
     const remaining = await db
       .select()

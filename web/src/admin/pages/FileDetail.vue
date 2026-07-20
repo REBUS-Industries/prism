@@ -53,7 +53,7 @@ async function reload(): Promise<void> {
 }
 
 async function deleteVersion(versionId: string): Promise<void> {
-  if (!confirm('Delete this version? The file bytes will be removed from disk.')) return;
+  if (!confirm('Delete this version? Files will be moved to the project archive folder on the fileserver.')) return;
   busy.value = true;
   error.value = null;
   try {
@@ -70,7 +70,7 @@ async function deleteVersion(versionId: string): Promise<void> {
 }
 
 async function deleteDocument(): Promise<void> {
-  if (!confirm('Soft-delete this document and all of its versions?')) return;
+  if (!confirm('Delete this document and all versions? Files will be moved to the project archive folder on the fileserver.')) return;
   busy.value = true;
   error.value = null;
   try {
