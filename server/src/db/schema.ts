@@ -522,6 +522,7 @@ export const fileVersions = pgTable('file_versions', {
   source:               varchar('source', { length: 32 }).notNull().default('api'),
   sourceApp:            varchar('source_app', { length: 64 }),
   uploadedByLabel:      varchar('uploaded_by_label', { length: 256 }).notNull(),
+  notes:                text('notes'),
   createdByApiKeyId:    uuid('created_by_api_key_id').references((): any => apiKeys.id, { onDelete: 'set null' }),
   createdByAdminId:     uuid('created_by_admin_id').references((): any => adminUsers.id, { onDelete: 'set null' }),
   createdAt:            timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

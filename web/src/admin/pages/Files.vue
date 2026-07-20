@@ -127,6 +127,7 @@ onMounted(() => {
           <th>Uploaded by</th>
           <th>Date / time</th>
           <th>Source</th>
+          <th>Notes</th>
         </tr>
       </thead>
       <tbody>
@@ -142,6 +143,9 @@ onMounted(() => {
           <td>{{ d.latestVersion?.uploadedBy ?? '—' }}</td>
           <td :title="d.latestVersion?.createdAt">{{ formatWhen(d.latestVersion?.createdAt) }}</td>
           <td class="muted">{{ d.latestVersion?.sourceApp || d.latestVersion?.source || '—' }}</td>
+          <td class="notes-cell" :title="d.latestVersion?.notes || undefined">
+            {{ d.latestVersion?.notes || '—' }}
+          </td>
         </tr>
       </tbody>
     </table>
@@ -174,6 +178,13 @@ onMounted(() => {
   border-radius: 999px;
   background: var(--surface-3, #24242c);
   font-size: 12px;
+}
+.notes-cell {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-muted, #9a9aa3);
 }
 .center { text-align: center; }
 </style>

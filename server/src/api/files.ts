@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { access, constants, mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { and, asc, desc, eq, ilike, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
@@ -22,6 +22,7 @@ const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/pr
 const DEFAULT_ROOT = resolve(DATA_DIR, 'files');
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
 const DEFAULT_EXTS = ['.3dm', '.vwx', '.dwg', '.rvt', '.skp', '.fbx', '.obj', '.zip', '.3ds', '.dae'];
+const MAX_NOTES_CHARS = 8000;
 
 async function resolveLibraryRoot(): Promise<string> {
   const fromSettings = (await getSetting('file_library_root'))?.trim();
@@ -127,6 +128,11 @@ async function resolveUploaderLabel(req: FastifyRequest, uploadedBy?: string): P
   return { label: 'unknown', apiKeyId: null, adminId: null, source: 'api' };
 }
 
+function notesSidecarPath(storagePath: string): string {
+  const stem = basename(storagePath, extname(storagePath)) || 'notes';
+  return join(dirname(storagePath), `${stem}.txt`);
+}
+
 function toVersionPublic(row: typeof fileVersions.$inferSelect) {
   return {
     id: row.id,
@@ -138,6 +144,7 @@ function toVersionPublic(row: typeof fileVersions.$inferSelect) {
     source: row.source,
     sourceApp: row.sourceApp,
     uploadedBy: row.uploadedByLabel,
+    notes: row.notes ?? null,
     createdAt: row.createdAt.toISOString(),
     downloadUrl: `/api/files/${row.documentId}/versions/${row.id}/download`,
   };
@@ -486,6 +493,8 @@ const plugin: FastifyPluginAsync = async (app) => {
 
     const sourceApp = fieldString(fields, 'sourceApp') ?? null;
     const uploadedBy = fieldString(fields, 'uploadedBy');
+    const notesRaw = fieldString(fields, 'notes');
+    const notes = notesRaw ? notesRaw.slice(0, MAX_NOTES_CHARS) : null;
     const tagsRaw = fieldString(fields, 'tags');
     const tags = tagsRaw
       ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean).slice(0, 32)
@@ -523,6 +532,10 @@ const plugin: FastifyPluginAsync = async (app) => {
     const diskName = sanitiseFilename(originalFilename);
     const absPath = assertUnderRoot(root, join(absDir, diskName));
     await writeFile(absPath, body);
+    if (notes) {
+      const notesPath = assertUnderRoot(root, notesSidecarPath(absPath));
+      await writeFile(notesPath, notes, 'utf8');
+    }
 
     const versionRows = await db.insert(fileVersions).values({
       id: versionId,
@@ -536,6 +549,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       source: uploader.source,
       sourceApp,
       uploadedByLabel: uploader.label,
+      notes,
       createdByApiKeyId: uploader.apiKeyId,
       createdByAdminId: uploader.adminId,
     }).returning();
@@ -615,6 +629,7 @@ const plugin: FastifyPluginAsync = async (app) => {
     if (!row) return reply.code(404).send({ error: 'not found' });
     await db.update(fileVersions).set({ deletedAt: new Date() }).where(eq(fileVersions.id, row.id));
     try { await unlink(row.storagePath); } catch { /* already gone */ }
+    try { await unlink(notesSidecarPath(row.storagePath)); } catch { /* optional sidecar */ }
 
     const remaining = await db
       .select()

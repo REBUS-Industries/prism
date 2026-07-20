@@ -134,6 +134,7 @@ watch(() => props.id, () => void reload());
             <th>Date / time</th>
             <th>Size</th>
             <th>Source</th>
+            <th>Notes</th>
             <th></th>
           </tr>
         </thead>
@@ -144,6 +145,7 @@ watch(() => props.id, () => void reload());
             <td :title="v.createdAt">{{ formatWhen(v.createdAt) }}</td>
             <td>{{ formatBytes(v.sizeBytes) }}</td>
             <td class="muted">{{ v.sourceApp || v.source }}</td>
+            <td class="notes-cell" :title="v.notes || undefined">{{ v.notes || '—' }}</td>
             <td class="actions">
               <a class="btn-link" :href="v.downloadUrl" target="_blank" rel="noopener">
                 <Icon name="download" :size="14" />Download
@@ -187,5 +189,14 @@ watch(() => props.id, () => void reload());
   font-size: 12px;
 }
 .actions { display: flex; gap: 8px; justify-content: flex-end; white-space: nowrap; }
+.notes-cell {
+  max-width: 280px;
+  white-space: pre-wrap;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  color: var(--color-text-muted, #9a9aa3);
+}
 .danger-text { color: var(--color-danger, #e35d6a); }
 </style>

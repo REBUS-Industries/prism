@@ -2604,6 +2604,7 @@ export interface FileVersionSummary {
   source: string;
   sourceApp?: string | null;
   uploadedBy: string;
+  notes?: string | null;
   createdAt: string;
   downloadUrl: string;
 }
@@ -2697,18 +2698,22 @@ export const filesApi = {
       name?: string;
       /** Required — Orbit project must have a File Library folder configured. */
       projectId: string;
+      notes?: string;
       tags?: string;
       uploadedBy?: string;
       sourceApp?: string;
     },
   ) => {
     const fd = new FormData();
-    fd.append('file', file);
+    // Text fields before `file` — Fastify multipart only exposes fields that
+    // appear before the file part when using req.file().
     if (options.name) fd.append('name', options.name);
     fd.append('projectId', options.projectId);
+    if (options.notes) fd.append('notes', options.notes);
     if (options.tags) fd.append('tags', options.tags);
     if (options.uploadedBy) fd.append('uploadedBy', options.uploadedBy);
     if (options.sourceApp) fd.append('sourceApp', options.sourceApp);
+    fd.append('file', file);
     return api.postForm<{ document: FileDocumentListItem; version: FileVersionSummary }>(
       '/api/files',
       fd,

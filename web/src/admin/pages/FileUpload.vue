@@ -19,6 +19,7 @@ const error = ref<string | null>(null);
 const progress = ref<string | null>(null);
 const selectedFile = ref<File | null>(null);
 const tags = ref('');
+const notes = ref('');
 const projectId = ref('');
 const status = ref<FileLibraryStatus | null>(null);
 const projects = ref<OrbitProject[]>([]);
@@ -106,6 +107,7 @@ async function runUpload(): Promise<void> {
     const res = await filesApi.upload(selectedFile.value, {
       name: selectedFile.value.name,
       tags: tags.value.trim() || undefined,
+      notes: notes.value.trim() || undefined,
       projectId: projectId.value.trim(),
       sourceApp: 'admin',
     });
@@ -189,6 +191,10 @@ onMounted(() => void loadMeta());
         <span class="field-label">Tags <span class="optional">(optional)</span></span>
         <input v-model="tags" placeholder="e.g. auditorium, schematic" />
       </label>
+      <label class="field field-span">
+        <span class="field-label">Version notes <span class="optional">(optional)</span></span>
+        <textarea v-model="notes" rows="3" placeholder="What changed in this version?" />
+      </label>
     </div>
 
     <div v-if="error" class="error-box mt">{{ error }}</div>
@@ -227,6 +233,8 @@ onMounted(() => void loadMeta());
   gap: 12px;
 }
 .field { display: flex; flex-direction: column; gap: 4px; }
+.field-span { grid-column: 1 / -1; }
+.field textarea { resize: vertical; min-height: 72px; }
 .field-label { font-size: 12px; opacity: 0.75; }
 .optional { opacity: 0.6; }
 .path-hint code { font-size: 11px; word-break: break-all; }
