@@ -24,6 +24,9 @@ CRED_FILE="${FILE_LIBRARY_SMB_CRED_FILE:-/etc/prism/smb-rebus.credentials}"
 UNIT_NAME="mnt-fileserver-rebus.mount"
 COMPOSE_DIR="${PRISM_COMPOSE_DIR:-/opt/prism}"
 CONTAINER_ROOT="${FILE_LIBRARY_ROOT:-/mnt/fileserver/rebus}"
+# AD DNS — prism-prod's default resolver does not know ad.rebus.industries (NXDOMAIN).
+AD_DNS_SERVERS="${FILE_LIBRARY_AD_DNS:-10.0.10.151 10.0.10.152}"
+SHARE_HOST="$(printf '%s' "$SHARE" | sed -E 's|^//([^/]+)/.*|\1|')"
 
 log() { echo "[file-library-mount] $*"; }
 die() { echo "[file-library-mount] ERROR: $*" >&2; exit 1; }
@@ -56,6 +59,75 @@ ensure_cifs_utils() {
   log "installing cifs-utils"
   need_sudo apt-get update -qq
   need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cifs-utils
+}
+
+ensure_dns_tools() {
+  if command -v dig >/dev/null 2>&1 || command -v host >/dev/null 2>&1; then
+    return 0
+  fi
+  log "installing dnsutils (dig)"
+  need_sudo apt-get update -qq
+  need_sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dnsutils
+}
+
+# Resolve SHARE_HOST via AD DNS and pin it in /etc/hosts so mount + boot
+# work even when systemd-resolved returns NXDOMAIN for ad.rebus.industries.
+resolve_share_host() {
+  local ip="" dns
+  if getent hosts "$SHARE_HOST" >/dev/null 2>&1; then
+    ip="$(getent hosts "$SHARE_HOST" | awk '{print $1; exit}')"
+    log "SHARE_HOST $SHARE_HOST already resolves to $ip"
+    echo "$ip"
+    return 0
+  fi
+  ensure_dns_tools
+  for dns in $AD_DNS_SERVERS; do
+    log "resolving $SHARE_HOST via AD DNS $dns"
+    if command -v dig >/dev/null 2>&1; then
+      ip="$(dig +short "$SHARE_HOST" "@$dns" A | awk '/^[0-9.]+$/ {print; exit}')"
+    else
+      ip="$(host -t A "$SHARE_HOST" "$dns" 2>/dev/null | awk '/has address/ {print $4; exit}')"
+    fi
+    if [[ -n "$ip" ]]; then
+      log "resolved $SHARE_HOST -> $ip (via $dns)"
+      echo "$ip"
+      return 0
+    fi
+  done
+  die "could not resolve $SHARE_HOST via AD DNS ($AD_DNS_SERVERS). Check name or DNS IPs."
+}
+
+ensure_hosts_entry() {
+  local ip="$1"
+  local marker="# prism-file-library"
+  local line="${ip} ${SHARE_HOST} ${marker}"
+  if grep -qE "[[:space:]]${SHARE_HOST}([[:space:]]|\$)" /etc/hosts 2>/dev/null; then
+    log "updating /etc/hosts entry for $SHARE_HOST -> $ip"
+    need_sudo sed -i -E "s|^[0-9.]+[[:space:]]+${SHARE_HOST}([[:space:]].*)?$|${line}|" /etc/hosts
+  else
+    log "adding /etc/hosts entry for $SHARE_HOST -> $ip"
+    echo "$line" | need_sudo tee -a /etc/hosts >/dev/null
+  fi
+  getent hosts "$SHARE_HOST" >/dev/null || die "/etc/hosts entry for $SHARE_HOST did not take effect"
+}
+
+# Route ad.rebus.industries queries to AD DNS via systemd-resolved (best-effort).
+configure_resolved_ad_dns() {
+  local drop_in_dir="/etc/systemd/resolved.conf.d"
+  local drop_in="${drop_in_dir}/ad-rebus.conf"
+  if ! command -v resolvectl >/dev/null 2>&1 && ! systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then
+    log "systemd-resolved not present — skip AD DNS routing drop-in"
+    return 0
+  fi
+  log "configuring systemd-resolved AD DNS for ad.rebus.industries ($AD_DNS_SERVERS)"
+  need_sudo mkdir -p "$drop_in_dir"
+  need_sudo tee "$drop_in" >/dev/null <<EOF
+# Managed by prism mount-file-library-share.sh — AD DNS for fileserver
+[Resolve]
+DNS=${AD_DNS_SERVERS}
+Domains=~ad.rebus.industries
+EOF
+  need_sudo systemctl restart systemd-resolved || log "WARN: could not restart systemd-resolved"
 }
 
 write_credentials_if_provided() {
@@ -207,6 +279,10 @@ verify() {
 main() {
   ensure_cifs_utils
   write_credentials_if_provided
+  local share_ip
+  share_ip="$(resolve_share_host)"
+  ensure_hosts_entry "$share_ip"
+  configure_resolved_ad_dns
   mount_now
   install_systemd_mount
   update_prism_env

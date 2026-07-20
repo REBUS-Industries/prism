@@ -35,6 +35,13 @@ Never paste the UNC or the long client path into the global setting.
 
 ## Mount on VM 212 (ops)
 
+### DNS note (VM 212)
+
+`fs.ad.rebus.industries` is an **AD** name. Prism-prod’s default resolver often
+returns NXDOMAIN. The mount script resolves via AD DNS **`10.0.10.151` /
+`10.0.10.152`**, pins `/etc/hosts`, and adds a systemd-resolved drop-in for
+`~ad.rebus.industries`.
+
 ### One-shot (preferred)
 
 ```bash

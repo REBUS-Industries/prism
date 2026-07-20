@@ -71,8 +71,10 @@ jobs:
           export FILE_LIBRARY_SMB_SHARE="//fs.ad.rebus.industries/REBUS"
           export FILE_LIBRARY_HOST_PATH="/mnt/fileserver/rebus"
           export FILE_LIBRARY_ROOT="/mnt/fileserver/rebus"
+          export FILE_LIBRARY_AD_DNS="10.0.10.151 10.0.10.152"
           export PRISM_COMPOSE_DIR="/opt/prism"
           export FILE_LIBRARY_SKIP_RECREATE="${SKIP_RECREATE}"
           # Script uses sudo only for mount/systemd/credentials; docker runs as deploy user.
+          # Resolves fs.ad.rebus.industries via AD DNS (default resolver often NXDOMAIN).
           bash /opt/prism/mount-file-library-share.sh
           REMOTE
