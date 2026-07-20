@@ -38,10 +38,11 @@ import type {
   PolicyFlowNode,
   WorkspaceUserNodeMeta,
 } from '../utils/policyGraphLayout';
+import { ACCESS_COLUMN_X } from '../utils/policyGraphLayout';
 
-const WORKSPACE_COLUMN_X = 80;
-const PROJECT_COLUMN_X = 340;
-const GUEST_COLUMN_X = 600;
+const WORKSPACE_COLUMN_X = ACCESS_COLUMN_X.workspace;
+const PROJECT_COLUMN_X = ACCESS_COLUMN_X.project;
+const GUEST_COLUMN_X = ACCESS_COLUMN_X.guest;
 const ROW_Y = 72;
 const START_Y = 80;
 
@@ -63,6 +64,9 @@ const workspaceLoadError = ref<string | null>(null);
 const nodes = ref<PolicyFlowNode[]>([]);
 const edges = ref<PolicyFlowEdge[]>([]);
 const selectedNodeId = ref<string | null>(null);
+const selectedNodeIds = ref<string[]>([]);
+/** When set, GuestPropertiesDialog applies shared fields to every id. */
+const batchGuestNodeIds = ref<string[] | null>(null);
 
 const dialogOpen = ref(false);
 const dialogModel = ref<GuestPropertiesModel | null>(null);
@@ -81,6 +85,12 @@ const columnLabels = [
   { type: 'user' as const, label: 'Guests', key: 'guests' },
 ];
 
+const selectedNodes = computed(() => {
+  const want = new Set(selectedNodeIds.value);
+  if (!want.size && selectedNodeId.value) want.add(selectedNodeId.value);
+  return nodes.value.filter((n) => want.has(n.id));
+});
+
 const selectedNode = computed(() => {
   const id = selectedNodeId.value;
   if (!id) return null;
@@ -92,6 +102,11 @@ const selectedNode = computed(() => {
 
 const selectedIsGuest = computed(() => !!selectedNode.value?.data?.guest);
 const selectedIsWorkspace = computed(() => !!selectedNode.value?.data?.workspaceUser);
+const selectedGuests = computed(() => selectedNodes.value.filter((n) => n.data.guest));
+const multiSelected = computed(() => selectedNodes.value.length > 1);
+const multiGuestOnly = computed(
+  () => multiSelected.value && selectedGuests.value.length === selectedNodes.value.length,
+);
 
 const workspaceUsersWithProjects = computed(
   () => workspaceUsers.value.filter((u) => u.projectPermissions.length > 0).length,
@@ -108,6 +123,13 @@ const selectedInviteKeyId = computed(
 
 watch(selectedNodeId, () => {
   clearRevealState();
+});
+
+watch(selectedNodeIds, (ids) => {
+  if (!ids.length) selectedNodeId.value = null;
+  else if (!ids.includes(selectedNodeId.value ?? '')) {
+    selectedNodeId.value = ids[ids.length - 1] ?? null;
+  }
 });
 
 function clearRevealState() {
@@ -555,6 +577,7 @@ async function onTargetChange() {
 function openGuestDialog(nodeId: string) {
   const node = nodes.value.find((n) => n.id === nodeId);
   if (!node?.data.guest || !node.data.guestMeta) return;
+  batchGuestNodeIds.value = null;
   dialogGuestNodeId.value = nodeId;
   dialogModel.value = {
     label: node.data.label,
@@ -563,6 +586,30 @@ function openGuestDialog(nodeId: string) {
   };
   mintedKey.value = node.data.guestMeta.plaintextKey ?? revealedKey.value;
   mintedRedeemUrl.value = node.data.guestMeta.redeemUrl ?? revealedRedeemUrl.value;
+  dialogOpen.value = true;
+}
+
+/** Open properties dialog seeded from the first guest; Save applies to all. */
+function openBatchGuestDialog() {
+  const guests = selectedGuests.value;
+  if (guests.length < 2) return;
+  const seed = guests[0]!;
+  if (!seed.data.guestMeta) return;
+  batchGuestNodeIds.value = guests.map((g) => g.id);
+  dialogGuestNodeId.value = seed.id;
+  // Intersection of project ids so we don't accidentally grant extra projects.
+  let sharedProjects = projectIdsForGuest(seed.id);
+  for (const g of guests.slice(1)) {
+    const ids = new Set(projectIdsForGuest(g.id));
+    sharedProjects = sharedProjects.filter((id) => ids.has(id));
+  }
+  dialogModel.value = {
+    label: `${guests.length} guests`,
+    projectIds: sharedProjects,
+    meta: { ...seed.data.guestMeta, inviteKeyId: seed.data.guestMeta.inviteKeyId },
+  };
+  mintedKey.value = null;
+  mintedRedeemUrl.value = null;
   dialogOpen.value = true;
 }
 
@@ -599,6 +646,7 @@ function addGuest() {
       },
     },
   ];
+  selectedNodeIds.value = [draftId];
   selectedNodeId.value = draftId;
   openGuestDialog(draftId);
 }
@@ -728,9 +776,101 @@ function closeDialog() {
   dialogOpen.value = false;
   dialogModel.value = null;
   dialogGuestNodeId.value = null;
+  batchGuestNodeIds.value = null;
+}
+
+async function applyGuestUpdateToNode(
+  nodeId: string,
+  model: GuestPropertiesModel,
+  opts: { updateLabel: boolean },
+): Promise<void> {
+  const node = nodes.value.find((n) => n.id === nodeId);
+  if (!node?.data.guestMeta) return;
+  const existingId = node.data.guestMeta.inviteKeyId;
+  const projectNames = buildProjectNames(model.projectIds);
+
+  if (!existingId) {
+    // Draft — local only until created individually.
+    node.data = {
+      ...node.data,
+      label: opts.updateLabel ? model.label : node.data.label,
+      guestMeta: {
+        ...node.data.guestMeta,
+        orbitTarget: model.meta.orbitTarget,
+        allowedFunctions: [...model.meta.allowedFunctions],
+        maxRedemptions: model.meta.maxRedemptions ?? null,
+        expiresAt: model.meta.expiresAt ?? null,
+        modelAccess: model.meta.modelAccess ?? 'all',
+        selectedModelIds:
+          (model.meta.modelAccess ?? 'all') === 'selected'
+            ? [...(model.meta.selectedModelIds ?? [])]
+            : [],
+        dirty: true,
+      },
+    };
+    syncEdgesToProjects(nodeId, model.projectIds);
+    return;
+  }
+
+  await accessApi.updateInviteKey(existingId, {
+    label: opts.updateLabel ? model.label : node.data.label,
+    orbitProjectIds: model.projectIds,
+    projectNames,
+    allowedFunctions: model.meta.allowedFunctions,
+    maxRedemptions: model.meta.maxRedemptions ?? null,
+    expiresAt: model.meta.expiresAt ?? null,
+    modelAccess: model.meta.modelAccess ?? 'all',
+    selectedModelIds:
+      (model.meta.modelAccess ?? 'all') === 'selected'
+        ? [...(model.meta.selectedModelIds ?? [])]
+        : [],
+  });
+  node.data = {
+    ...node.data,
+    label: opts.updateLabel ? model.label : node.data.label,
+    guestMeta: {
+      ...node.data.guestMeta,
+      orbitTarget: model.meta.orbitTarget,
+      allowedFunctions: [...model.meta.allowedFunctions],
+      maxRedemptions: model.meta.maxRedemptions ?? null,
+      expiresAt: model.meta.expiresAt ?? null,
+      modelAccess: model.meta.modelAccess ?? 'all',
+      selectedModelIds:
+        (model.meta.modelAccess ?? 'all') === 'selected'
+          ? [...(model.meta.selectedModelIds ?? [])]
+          : [],
+      dirty: false,
+    },
+  };
+  syncEdgesToProjects(nodeId, model.projectIds);
 }
 
 async function saveGuestFromDialog(model: GuestPropertiesModel) {
+  const batchIds = batchGuestNodeIds.value;
+  if (batchIds?.length) {
+    saving.value = true;
+    error.value = null;
+    try {
+      for (const id of batchIds) {
+        await applyGuestUpdateToNode(id, model, { updateLabel: false });
+      }
+      closeDialog();
+      status.value = `Updated ${batchIds.length} guests.`;
+      setTimeout(() => (status.value = null), 4000);
+    } catch (err) {
+      const apiErr = err as ApiError;
+      if (apiErr.status === 404 || apiErr.status === 405) {
+        error.value =
+          'Updating guests requires permissions-service PATCH /api/access/invite-keys/:id. Apply the scaffold patch and redeploy, or revoke and create a new key.';
+      } else {
+        error.value = err instanceof Error ? err.message : apiErr.message ?? 'Batch save failed';
+      }
+    } finally {
+      saving.value = false;
+    }
+    return;
+  }
+
   const nodeId = dialogGuestNodeId.value;
   if (!nodeId) return;
   saving.value = true;
@@ -795,6 +935,7 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
       });
       syncEdgesToProjects(newId, model.projectIds);
       dialogGuestNodeId.value = newId;
+      selectedNodeIds.value = [newId];
       selectedNodeId.value = newId;
       dialogModel.value = {
         label: created.label?.trim() || model.label,
@@ -804,19 +945,7 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
       status.value = 'Guest key created — copy the invite key (also available later via Show key).';
     } else {
       try {
-        await accessApi.updateInviteKey(existingId, {
-          label: model.label,
-          orbitProjectIds: model.projectIds,
-          projectNames,
-          allowedFunctions: model.meta.allowedFunctions,
-          maxRedemptions: model.meta.maxRedemptions ?? null,
-          expiresAt: model.meta.expiresAt ?? null,
-          modelAccess: model.meta.modelAccess ?? 'all',
-          selectedModelIds:
-            (model.meta.modelAccess ?? 'all') === 'selected'
-              ? [...(model.meta.selectedModelIds ?? [])]
-              : [],
-        });
+        await applyGuestUpdateToNode(nodeId, model, { updateLabel: true });
       } catch (err) {
         const apiErr = err as ApiError;
         if (apiErr.status === 404 || apiErr.status === 405) {
@@ -826,16 +955,6 @@ async function saveGuestFromDialog(model: GuestPropertiesModel) {
         }
         throw err;
       }
-      for (const n of nodes.value) {
-        if (n.id !== nodeId) continue;
-        n.data = {
-          ...n.data,
-          label: model.label,
-          guestMeta: { ...model.meta, dirty: false },
-        };
-        break;
-      }
-      syncEdgesToProjects(nodeId, model.projectIds);
       closeDialog();
       status.value = 'Guest updated.';
     }
@@ -868,23 +987,43 @@ async function revokeGuestFromDialog() {
   }
 }
 
-function deleteSelectedGuest() {
-  const node = selectedNode.value;
-  if (!node?.data?.guest) return;
-  if (node.data.guestMeta?.inviteKeyId) {
-    dialogGuestNodeId.value = node.id;
-    dialogModel.value = {
-      label: node.data.label,
-      projectIds: projectIdsForGuest(node.id),
-      meta: { ...node.data.guestMeta! },
-    };
-    void revokeGuestFromDialog();
-    return;
+async function deleteSelectedGuests() {
+  const guests = multiGuestOnly.value ? selectedGuests.value : selectedGuests.value.slice(0, 1);
+  if (!guests.length) return;
+  const saved = guests.filter((g) => g.data.guestMeta?.inviteKeyId);
+  const drafts = guests.filter((g) => !g.data.guestMeta?.inviteKeyId);
+  if (saved.length) {
+    const label = saved.length === 1
+      ? `"${saved[0]!.data.label}"`
+      : `${saved.length} guests`;
+    if (!confirm(`Revoke ${label}? This ends Connector Light sessions using these keys.`)) return;
   }
-  // Unsaved draft — just remove.
-  nodes.value = nodes.value.filter((n) => n.id !== node.id);
-  edges.value = edges.value.filter((e) => e.source !== node.id && e.target !== node.id);
-  selectedNodeId.value = null;
+  saving.value = true;
+  error.value = null;
+  try {
+    for (const g of saved) {
+      const keyId = g.data.guestMeta!.inviteKeyId!;
+      await accessApi.revokeInviteKey(keyId);
+    }
+    const remove = new Set([...saved, ...drafts].map((g) => g.id));
+    nodes.value = nodes.value.filter((n) => !remove.has(n.id));
+    edges.value = edges.value.filter((e) => !remove.has(e.source) && !remove.has(e.target));
+    selectedNodeIds.value = [];
+    selectedNodeId.value = null;
+    closeDialog();
+    status.value = saved.length
+      ? `Revoked ${saved.length} guest key${saved.length === 1 ? '' : 's'}.`
+      : 'Removed draft guests.';
+    setTimeout(() => (status.value = null), 3000);
+  } catch (err) {
+    error.value = (err as ApiError).message ?? 'Revoke failed';
+  } finally {
+    saving.value = false;
+  }
+}
+
+function deleteSelectedGuest() {
+  void deleteSelectedGuests();
 }
 
 onMounted(async () => {
@@ -905,6 +1044,7 @@ onMounted(async () => {
         <h1>Permissions</h1>
         <p class="muted">
           Workspace users (Google directory) and Connector Light guests → ORBIT projects.
+          Use Select mode or Shift+drag to lasso nodes, then drag to reposition or batch-edit guests.
           Right-click a guest for invite properties. Portal role → PRISM tool grants live under
           <RouterLink :to="{ name: 'tool-access' }">Tool access</RouterLink>.
         </p>
@@ -996,6 +1136,7 @@ onMounted(async () => {
       v-model:nodes="nodes"
       v-model:edges="edges"
       v-model:selected-node-id="selectedNodeId"
+      v-model:selected-node-ids="selectedNodeIds"
       legend-title="Access graph"
       :column-labels="columnLabels"
       @connect="onConnect"
@@ -1004,7 +1145,44 @@ onMounted(async () => {
     >
       <template #inspector>
         <aside class="side-help">
-          <div v-if="selectedIsWorkspace" class="guest-hint">
+          <div v-if="multiSelected" class="guest-hint">
+            <h3>{{ selectedNodes.length }} nodes selected</h3>
+            <p class="muted">
+              Drag any selected node (or the selection box) to reposition the group.
+              Use Select mode or Shift+drag to lasso; Ctrl/⌘-click to add/remove.
+            </p>
+            <ul class="sel-list">
+              <li v-for="n in selectedNodes.slice(0, 12)" :key="n.id">
+                {{ n.data.label }}
+                <span class="muted small">
+                  · {{ n.data.guest ? 'guest' : n.data.workspaceUser ? 'workspace' : n.data.policyType }}
+                </span>
+              </li>
+              <li v-if="selectedNodes.length > 12" class="muted small">
+                …and {{ selectedNodes.length - 12 }} more
+              </li>
+            </ul>
+            <template v-if="multiGuestOnly">
+              <p class="muted small">
+                All selected nodes are guests — batch-edit shared projects, functions, and limits.
+                Individual names and invite keys are unchanged.
+              </p>
+              <div class="btn-col">
+                <button type="button" class="primary" @click="openBatchGuestDialog">
+                  <Icon name="tune" :size="16" /> Batch edit {{ selectedGuests.length }} guests
+                </button>
+                <button type="button" class="danger-btn" :disabled="saving" @click="deleteSelectedGuest">
+                  <Icon name="delete" :size="16" />
+                  Revoke / remove selected
+                </button>
+              </div>
+            </template>
+            <p v-else class="muted small">
+              Batch edit applies only when every selected node is a guest.
+              Clear the selection or lasso guests only.
+            </p>
+          </div>
+          <div v-else-if="selectedIsWorkspace" class="guest-hint">
             <h3>{{ selectedNode?.data?.label }}</h3>
             <p class="muted">
               Google Workspace / provisioned user
@@ -1084,8 +1262,8 @@ onMounted(async () => {
           <div v-else class="guest-hint empty">
             <Icon name="ads_click" :size="22" />
             <p class="muted">
-              Select a guest or project. Add a guest, then draw lines to projects.
-              Right-click a guest for the properties dialog.
+              Select a guest or project. Use Select mode (or Shift+drag) to lasso multiple nodes,
+              then drag to reposition or batch-edit guests.
             </p>
           </div>
         </aside>
@@ -1100,6 +1278,7 @@ onMounted(async () => {
       :minted-key="mintedKey"
       :minted-redeem-url="mintedRedeemUrl"
       :revealing="revealingKey"
+      :batch-count="batchGuestNodeIds?.length ?? 0"
       @close="closeDialog"
       @save="saveGuestFromDialog"
       @revoke="revokeGuestFromDialog"
@@ -1167,6 +1346,16 @@ onMounted(async () => {
 }
 .guest-hint h3 { margin: 0; font-size: 15px; }
 .guest-hint .muted { margin: 0; font-size: 13px; }
+.sel-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow: auto;
+}
 .field-label { font-size: 12px; font-weight: 700; }
 .key-box {
   display: flex;

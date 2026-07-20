@@ -44,6 +44,8 @@ const props = defineProps<{
   mintedKey?: string | null;
   mintedRedeemUrl?: string | null;
   revealing?: boolean;
+  /** When > 1, dialog applies shared fields to that many guests (no per-guest name/key). */
+  batchCount?: number;
 }>();
 
 const emit = defineEmits<{
@@ -64,7 +66,8 @@ const expiresAt = ref('');
 const modelAccess = ref<InviteModelAccess>('all');
 const selectedModelIds = ref<string[]>([]);
 
-const isNew = computed(() => !props.model?.meta.inviteKeyId);
+const isBatch = computed(() => (props.batchCount ?? 0) > 1);
+const isNew = computed(() => !isBatch.value && !props.model?.meta.inviteKeyId);
 /** Full function set; Light preset is the default selection for new keys. */
 const functionOptions = CONNECTOR_FUNCTIONS;
 const canSave = computed(() => {
@@ -137,10 +140,24 @@ async function copy(text: string) {
     <div class="guest-dialog" role="dialog" aria-modal="true" aria-labelledby="guest-dialog-title">
       <header class="guest-dialog__head">
         <div>
-          <h2 id="guest-dialog-title">{{ isNew ? 'New guest' : 'Guest properties' }}</h2>
+          <h2 id="guest-dialog-title">
+            {{
+              isBatch
+                ? `Batch edit ${batchCount} guests`
+                : isNew
+                  ? 'New guest'
+                  : 'Guest properties'
+            }}
+          </h2>
           <p class="muted">
-            Collaborator invite key — wire this guest to project nodes on the graph, or pick projects below.
-            Functions drive connector UI in the single REBUS Connector binary. Preview updates as you toggle grants.
+            <template v-if="isBatch">
+              Shared settings replace projects, functions, model access, redemptions, and expiry on every
+              selected guest. Individual names and invite keys are left unchanged.
+            </template>
+            <template v-else>
+              Collaborator invite key — wire this guest to project nodes on the graph, or pick projects below.
+              Functions drive connector UI in the single REBUS Connector binary. Preview updates as you toggle grants.
+            </template>
           </p>
         </div>
         <button type="button" class="icon-btn" aria-label="Close" @click="emit('close')">
@@ -148,7 +165,7 @@ async function copy(text: string) {
         </button>
       </header>
 
-      <div v-if="mintedKey" class="guest-dialog__minted">
+      <div v-if="!isBatch && mintedKey" class="guest-dialog__minted">
         <strong>Invite key</strong>
         <div class="minted-row">
           <pre>{{ mintedKey }}</pre>
@@ -167,7 +184,7 @@ async function copy(text: string) {
           </button>
         </div>
       </div>
-      <div v-else-if="model.meta.inviteKeyId" class="guest-dialog__minted guest-dialog__minted--muted">
+      <div v-else-if="!isBatch && model.meta.inviteKeyId" class="guest-dialog__minted guest-dialog__minted--muted">
         <strong>Invite key</strong>
         <p class="muted small">Plaintext can be revealed any time for this guest.</p>
         <div class="minted-actions">
@@ -182,7 +199,7 @@ async function copy(text: string) {
 
       <div class="guest-dialog__body">
         <div class="form-grid">
-          <label>
+          <label v-if="!isBatch">
             Guest name
             <input v-model="label" placeholder="Acme collaborator" autocomplete="off" />
           </label>
@@ -263,7 +280,7 @@ async function copy(text: string) {
           <ConnectorPanelPreview :allowed-functions="allowedFunctions" />
         </div>
 
-        <p v-if="model.meta.inviteKeyId" class="muted small">
+        <p v-if="!isBatch && model.meta.inviteKeyId" class="muted small">
           Redemptions: {{ model.meta.redemptionCount ?? 0 }}
           <span v-if="model.meta.maxRedemptions != null">/ {{ model.meta.maxRedemptions }}</span>
           · id {{ model.meta.inviteKeyId.slice(0, 8) }}…
@@ -272,7 +289,7 @@ async function copy(text: string) {
 
       <footer class="guest-dialog__foot">
         <button
-          v-if="!isNew"
+          v-if="!isNew && !isBatch"
           type="button"
           class="danger-btn"
           :disabled="saving"
@@ -288,7 +305,15 @@ async function copy(text: string) {
           :disabled="saving || !canSave"
           @click="onSave"
         >
-          {{ saving ? 'Saving…' : isNew ? 'Create key' : 'Save' }}
+          {{
+            saving
+              ? 'Saving…'
+              : isBatch
+                ? `Apply to ${batchCount}`
+                : isNew
+                  ? 'Create key'
+                  : 'Save'
+          }}
         </button>
       </footer>
     </div>
