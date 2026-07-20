@@ -531,6 +531,17 @@ export const fileVersions = pgTable('file_versions', {
   uniqueVersion: index('file_versions_document_version_idx').on(t.documentId, t.versionNumber),
 }));
 
+/** Per Orbit project relative folder under `file_library_root` (required for uploads). */
+export const fileLibraryProjectFolders = pgTable('file_library_project_folders', {
+  projectId:    text('project_id').primaryKey(),
+  projectName:  varchar('project_name', { length: 512 }),
+  relativePath: text('relative_path').notNull(),
+  createdAt:    timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  byPath: index('file_library_project_folders_path_idx').on(t.relativePath),
+}));
+
 // ---------------------------------------------------------------------------
 // Exported type helpers
 // ---------------------------------------------------------------------------
@@ -564,3 +575,5 @@ export type FileDocument       = typeof fileDocuments.$inferSelect;
 export type NewFileDocument    = typeof fileDocuments.$inferInsert;
 export type FileVersion        = typeof fileVersions.$inferSelect;
 export type NewFileVersion     = typeof fileVersions.$inferInsert;
+export type FileLibraryProjectFolder    = typeof fileLibraryProjectFolders.$inferSelect;
+export type NewFileLibraryProjectFolder = typeof fileLibraryProjectFolders.$inferInsert;

@@ -432,7 +432,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Model library', description: 'Generic 3D model assets — list, edit, and async import via the convert pipeline. JSON list/detail rows include `previewUrl`, `orbitUrl`, and `versions[]` (each version has `createdAt` + `previewUrl`). Portal-facing; requires `models:*` scopes. Narrative: `/docs/library-integration`. Generate meshes with the **Meshy** tag, then import.' },
       { name: 'Meshy', description: 'Server-proxied Meshy.ai text/image-to-3D for connectors and portals. Credentials: Admin → Settings → Meshy (`meshy_api_key`). Scopes: `models:read` (status/poll/download), `models:write` (create tasks). After SUCCEEDED, transfer into the library with `POST /api/model-import` (`models:import`). Narrative: `/docs/library-integration#generate-with-meshy-connectors--portals`.' },
       { name: 'Materials library', description: 'Shared PBR materials + texture slots. JSON list/detail responses include `previewUrl` for material thumbnails and texture rows; stream images via `GET /api/textures/{id}/preview`. Portal-facing; requires `materials:*` scopes. Narrative: `/docs/library-integration`.' },
-      { name: 'File library', description: 'Native CAD/DCC source archives (.3dm, .vwx, …) — **not** Orbit geometry. Same filename stacks as immutable versions with `uploadedBy` + `createdAt`. Storage root from Settings `file_library_root`. Portal/connector-facing; requires `files:*` scopes. Narrative: `/docs/library-integration#file-library`. Connector handoff: `docs/handoffs/FILE_LIBRARY_CONNECTORS.md`.' },
+      { name: 'File library', description: 'Native CAD/DCC source archives (.3dm, .vwx, …) — **not** Orbit geometry. Same filename stacks as immutable versions with `uploadedBy` + `createdAt`. Storage root from Settings `file_library_root`; each Orbit project needs a relative folder under that root (Admin → Settings → File Library). Uploads require `projectId` with a configured folder. Portal/connector-facing; requires `files:*` scopes. Narrative: `/docs/library-integration#file-library`. Connector handoff: `docs/handoffs/FILE_LIBRARY_CONNECTORS.md`.' },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
       { name: 'Access', description: [
         'Portal-brokered identity + connector authorisation, served by the',
@@ -2861,6 +2861,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
                       usingSettingsPath: { type: 'boolean' },
                       maxBytes: { type: 'integer' },
                       allowedExts: { type: 'array', items: { type: 'string' } },
+                      projectFolderCount: { type: 'integer' },
                     },
                   },
                 },
@@ -2872,12 +2873,95 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         },
       },
 
+      '/api/files/browse': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['File library'],
+          summary: 'Browse directories under the library root',
+          description: 'Directory listing for the Admin folder picker. Paths are relative to `file_library_root`; `..` and absolute escapes are rejected. **Scope:** `files:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'path', schema: { type: 'string' }, description: 'Relative directory under the share root (empty = root)' },
+          ],
+          responses: {
+            '200': { description: 'Directory listing.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '400': { description: 'Invalid path.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { $ref: '#/components/responses/NotFound' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/files/project-folders': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['File library'],
+          summary: 'List per-project folder mappings',
+          description: 'Orbit project id → relative path under the share root. Uploads for a project fail until a folder is set. **Scope:** `files:read`.',
+          security: [{ apiKey: [] }],
+          responses: {
+            '200': { description: 'Folder mappings.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/files/project-folders/{projectId}': {
+        servers: [{ url: API_BASE }],
+        put: {
+          tags: ['File library'],
+          summary: 'Set the File Library folder for an Orbit project',
+          description: 'Relative path must exist under `file_library_root` and must not be the share root itself. **Scope:** `files:write`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'path', name: 'projectId', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['relativePath'],
+                  properties: {
+                    relativePath: { type: 'string', example: '01 CLIENTS - EXTERNAL/LN26_LIVE NATION/…/PRISM FILES' },
+                    projectName: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Saved mapping.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '400': { description: 'Invalid or missing path.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+        delete: {
+          tags: ['File library'],
+          summary: 'Clear the File Library folder for an Orbit project',
+          description: 'Subsequent uploads for that `projectId` return `400` with `code: project_folder_required`. **Scope:** `files:write`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'path', name: 'projectId', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '204': { description: 'Cleared.' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
       '/api/files': {
         servers: [{ url: API_BASE }],
         get: {
           tags: ['File library'],
           summary: 'List file documents',
-          description: 'One row per normalised filename. Each row includes `latestVersion` with `uploadedBy` + `createdAt`. **Scope:** `files:read`.',
+          description: 'One row per normalised filename within a project. Each row includes `latestVersion` with `uploadedBy` + `createdAt`. **Scope:** `files:read`.',
           security: [{ apiKey: [] }],
           parameters: [
             { in: 'query', name: 'q', schema: { type: 'string' }, description: 'Filename search' },
@@ -2896,10 +2980,13 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           tags: ['File library'],
           summary: 'Upload a file (new document or new version)',
           description: [
-            'Multipart upload. Same basename (case-insensitive) appends an immutable version.',
+            'Multipart upload. Same basename (case-insensitive) within a `projectId` appends an immutable version.',
             '',
-            '**Form fields:** `file` (required), optional `name`, `projectId`, `tags` (comma list),',
-            '`uploadedBy` (display label — prefer OS/Rhino user), `sourceApp` (`rhino` / `vectorworks` / `admin`).',
+            '**Form fields:** `file` (required), `projectId` (required — Orbit project with a configured File Library folder),',
+            'optional `name`, `tags` (comma list), `uploadedBy` (display label — prefer OS/Rhino user),',
+            '`sourceApp` (`rhino` / `vectorworks` / `admin`).',
+            '',
+            'Returns `400` with `code: project_folder_required` when the project has no folder mapping.',
             '',
             '**Scope:** `files:write`.',
           ].join('\n'),
@@ -2910,7 +2997,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
               'multipart/form-data': {
                 schema: {
                   type: 'object',
-                  required: ['file'],
+                  required: ['file', 'projectId'],
                   properties: {
                     file: { type: 'string', format: 'binary' },
                     name: { type: 'string' },
@@ -2925,7 +3012,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           },
           responses: {
             '201': { description: 'Created document + version.', content: { 'application/json': { schema: { type: 'object' } } } },
-            '400': { description: 'Extension not allowed / empty file.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '400': { description: 'Missing project/folder, extension not allowed, or empty file.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '413': { description: 'File exceeds max size.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },

@@ -8,6 +8,7 @@ import FixtureTypesManager from '../components/FixtureTypesManager.vue';
 import ExternalMaterialsSettings from '../components/ExternalMaterialsSettings.vue';
 import PortalIdentitySettings from '../components/PortalIdentitySettings.vue';
 import PortalAccessSettings from '../components/PortalAccessSettings.vue';
+import FileLibrarySettings from '../components/FileLibrarySettings.vue';
 import { useFixtureTypesStore } from '../stores/fixtureTypes';
 
 interface FieldDef {
@@ -110,7 +111,7 @@ interface TileDef {
   description: string;
   fields?: FieldDef[];
   testTarget?: 'prod' | 'dev' | 'meshy';
-  custom?: 'fixture-types' | 'external-materials' | 'portal-identity' | 'portal-access';
+  custom?: 'fixture-types' | 'external-materials' | 'portal-identity' | 'portal-access' | 'file-library';
   /** Navigate to this named route instead of opening a modal. */
   routeName?: string;
 }
@@ -128,7 +129,7 @@ const tiles: TileDef[] = [
   { key: 'portal-access', title: 'Portal access key', icon: 'vpn_key', description: 'Service API key PRISM uses to read the live role list & permissions from the portal.', custom: 'portal-access' },
   { key: 'server',         title: 'Server',                icon: 'dns',       description: 'Job retention window and maintenance mode.', fields: otherFields },
   { key: 'workstation',    title: 'Workstation agent',     icon: 'lan',       description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
-  { key: 'file-library',   title: 'File Library',          icon: 'folder',    description: 'Storage root for native CAD/DCC uploads (.3dm, .vwx, …). Bind-mount a LAN share in compose for prod.', fields: fileLibraryFields },
+  { key: 'file-library',   title: 'File Library',          icon: 'folder',    description: 'Share root + per-project folders for native CAD/DCC uploads (.3dm, .vwx, …).', custom: 'file-library' },
   { key: 'users',          title: 'Users',                 icon: 'group',     description: 'Manage admin accounts and access.', routeName: 'users' },
   { key: 'webhooks',       title: 'Webhooks',              icon: 'webhook',   description: 'Configure outbound webhook endpoints for job events.', routeName: 'webhooks' },
   { key: 'api-keys',       title: 'API Keys',              icon: 'key',       description: 'Issue and revoke API keys for programmatic access.', routeName: 'keys' },
@@ -306,6 +307,8 @@ function tileSummary(tile: TileDef): string {
       return values.workstation_dns_suffix.value
         ? `DNS ${values.workstation_dns_suffix.value}`
         : 'Auto (derive from host)';
+    case 'file-library':
+      return values.file_library_root.value || 'Not configured';
     case 'fixture-types':
       return `${fixtureTypesStore.labels.length} type${fixtureTypesStore.labels.length === 1 ? '' : 's'}`;
     case 'external-materials':
@@ -328,6 +331,8 @@ function tileSummary(tile: TileDef): string {
 onMounted(() => {
   if (route.query.open === 'portal-identity' || route.query.directory_oauth || route.query.directory_oauth_error) {
     activeKey.value = 'portal-identity';
+  } else if (route.query.open === 'file-library') {
+    activeKey.value = 'file-library';
   }
   void refresh();
   void fixtureTypesStore.ensureLoaded();
@@ -365,9 +370,9 @@ onMounted(() => {
     v-if="activeTile"
     :title="activeTile.title"
     :subtitle="activeTile.description"
-    :max-width="activeTile.custom === 'fixture-types' ? 600 : activeTile.custom === 'external-materials' ? 960 : activeTile.custom === 'portal-identity' ? 920 : 560"
-    :min-width="activeTile.custom === 'external-materials' || activeTile.custom === 'portal-identity' ? 720 : 0"
-    :viewport-width="activeTile.custom === 'external-materials' || activeTile.custom === 'portal-identity' ? 94 : undefined"
+    :max-width="activeTile.custom === 'fixture-types' ? 600 : activeTile.custom === 'external-materials' ? 960 : activeTile.custom === 'portal-identity' || activeTile.custom === 'file-library' ? 920 : 560"
+    :min-width="activeTile.custom === 'external-materials' || activeTile.custom === 'portal-identity' || activeTile.custom === 'file-library' ? 720 : 0"
+    :viewport-width="activeTile.custom === 'external-materials' || activeTile.custom === 'portal-identity' || activeTile.custom === 'file-library' ? 94 : undefined"
     @close="closeTile"
   >
     <!-- Fixture Types manager -->
@@ -381,6 +386,9 @@ onMounted(() => {
 
     <!-- Portal service API key (role/permission feed) -->
     <PortalAccessSettings v-else-if="activeTile.custom === 'portal-access'" />
+
+    <!-- File Library storage + per-project folder picker -->
+    <FileLibrarySettings v-else-if="activeTile.custom === 'file-library'" />
 
     <!-- Standard key/value field sections -->
     <template v-else>
@@ -477,6 +485,9 @@ onMounted(() => {
       <button @click="closeTile">Close</button>
     </template>
     <template v-else-if="activeTile.custom === 'portal-access'" #footer>
+      <button @click="closeTile">Close</button>
+    </template>
+    <template v-else-if="activeTile.custom === 'file-library'" #footer>
       <button @click="closeTile">Close</button>
     </template>
     <template v-else #footer>

@@ -2,19 +2,20 @@
  * /api/files — File Library (native CAD / DCC source archives).
  *
  * Separate from Orbit convert / Model Library. Same filename stacks as
- * immutable versions. Storage root from Settings `file_library_root` or
- * `${DATA_DIR}/files`.
+ * immutable versions under a **per-project folder** on the LAN share.
+ * Storage root from Settings `file_library_root` or `${DATA_DIR}/files`.
+ * Uploads require `projectId` with a configured relative folder.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, constants, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { access, constants, mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
-import { and, desc, eq, ilike, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireAuth, requireScope, requireTool } from '../auth/middleware.js';
 import { db } from '../db/client.js';
-import { fileDocuments, fileVersions } from '../db/schema.js';
+import { fileDocuments, fileLibraryProjectFolders, fileVersions } from '../db/schema.js';
 import { getSetting } from '../db/settings.js';
 
 const DATA_DIR = process.env.PRISM_DATA_DIR ?? process.env.DATA_DIR ?? '/data/prism';
@@ -63,6 +64,29 @@ function assertUnderRoot(root: string, candidate: string): string {
     throw new Error('storage path escapes library root');
   }
   return resolved;
+}
+
+/** Normalise a relative folder path (POSIX, no leading slash, no `..`). */
+function normaliseRelativePath(input: string): string {
+  const raw = input.replace(/\\/g, '/').trim();
+  if (!raw || raw === '.') return '';
+  const parts = raw.split('/').filter((p) => p && p !== '.');
+  if (parts.some((p) => p === '..')) {
+    throw new Error('relative path must not contain ..');
+  }
+  if (parts.some((p) => p.includes('\0'))) {
+    throw new Error('invalid path segment');
+  }
+  return parts.join('/');
+}
+
+async function getProjectFolder(projectId: string) {
+  const rows = await db
+    .select()
+    .from(fileLibraryProjectFolders)
+    .where(eq(fileLibraryProjectFolders.projectId, projectId))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 function fieldString(fields: Record<string, unknown>, key: string): string | undefined {
@@ -151,6 +175,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       writable = false;
     }
     const fromSettings = !!(await getSetting('file_library_root'))?.trim();
+    const folderCount = (await db.select().from(fileLibraryProjectFolders)).length;
     return {
       configured: true,
       root,
@@ -158,7 +183,141 @@ const plugin: FastifyPluginAsync = async (app) => {
       usingSettingsPath: fromSettings,
       maxBytes: await resolveMaxBytes(),
       allowedExts: [...(await resolveAllowedExts())],
+      projectFolderCount: folderCount,
     };
+  });
+
+  // ── Browse directories under library root (folder picker) ──────────────
+  app.get('/browse', { preHandler: [requireScope('files:read')] }, async (req, reply) => {
+    const q = req.query as { path?: string };
+    let rel = '';
+    try {
+      rel = normaliseRelativePath(q.path ?? '');
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    const root = await resolveLibraryRoot();
+    let abs: string;
+    try {
+      abs = assertUnderRoot(root, rel ? join(root, ...rel.split('/')) : root);
+    } catch {
+      return reply.code(400).send({ error: 'path escapes library root' });
+    }
+    try {
+      await access(abs, constants.R_OK);
+    } catch {
+      return reply.code(404).send({ error: 'path not found', path: rel || '/' });
+    }
+    const st = await stat(abs);
+    if (!st.isDirectory()) {
+      return reply.code(400).send({ error: 'path is not a directory' });
+    }
+    const entries = await readdir(abs, { withFileTypes: true });
+    const directories = entries
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .map((name) => ({
+        name,
+        path: rel ? `${rel}/${name}` : name,
+      }));
+    const parentPath = rel.includes('/')
+      ? rel.split('/').slice(0, -1).join('/')
+      : (rel ? '' : null);
+    return {
+      root,
+      path: rel,
+      parentPath,
+      directories,
+    };
+  });
+
+  // ── Per-project folder mappings ─────────────────────────────────────
+  app.get('/project-folders', { preHandler: [requireScope('files:read')] }, async () => {
+    const rows = await db
+      .select()
+      .from(fileLibraryProjectFolders)
+      .orderBy(asc(fileLibraryProjectFolders.projectName), asc(fileLibraryProjectFolders.projectId));
+    return {
+      folders: rows.map((r) => ({
+        projectId: r.projectId,
+        projectName: r.projectName,
+        relativePath: r.relativePath,
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    };
+  });
+
+  app.put<{ Params: { projectId: string } }>('/project-folders/:projectId', {
+    preHandler: [requireScope('files:write')],
+  }, async (req, reply) => {
+    const projectId = decodeURIComponent(req.params.projectId).trim();
+    if (!projectId || projectId.length > 128) {
+      return reply.code(400).send({ error: 'invalid projectId' });
+    }
+    const body = z.object({
+      relativePath: z.string().min(1).max(2048),
+      projectName: z.string().max(512).nullable().optional(),
+    }).safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'invalid body', detail: body.error.flatten() });
+    }
+    let rel: string;
+    try {
+      rel = normaliseRelativePath(body.data.relativePath);
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    if (!rel) {
+      return reply.code(400).send({ error: 'relativePath required (select a project folder under the share root)' });
+    }
+    const root = await resolveLibraryRoot();
+    let abs: string;
+    try {
+      abs = assertUnderRoot(root, join(root, ...rel.split('/')));
+    } catch {
+      return reply.code(400).send({ error: 'path escapes library root' });
+    }
+    try {
+      const st = await stat(abs);
+      if (!st.isDirectory()) return reply.code(400).send({ error: 'relativePath is not a directory' });
+    } catch {
+      return reply.code(400).send({ error: 'relativePath does not exist on the share', path: rel });
+    }
+
+    const now = new Date();
+    const existing = await getProjectFolder(projectId);
+    const row = existing
+      ? (await db.update(fileLibraryProjectFolders).set({
+          relativePath: rel,
+          projectName: body.data.projectName ?? existing.projectName,
+          updatedAt: now,
+        }).where(eq(fileLibraryProjectFolders.projectId, projectId)).returning())[0]!
+      : (await db.insert(fileLibraryProjectFolders).values({
+          projectId,
+          relativePath: rel,
+          projectName: body.data.projectName ?? null,
+          createdAt: now,
+          updatedAt: now,
+        }).returning())[0]!;
+
+    return {
+      folder: {
+        projectId: row.projectId,
+        projectName: row.projectName,
+        relativePath: row.relativePath,
+        updatedAt: row.updatedAt.toISOString(),
+      },
+    };
+  });
+
+  app.delete<{ Params: { projectId: string } }>('/project-folders/:projectId', {
+    preHandler: [requireScope('files:write')],
+  }, async (req, reply) => {
+    const projectId = decodeURIComponent(req.params.projectId).trim();
+    if (!projectId) return reply.code(400).send({ error: 'invalid projectId' });
+    await db.delete(fileLibraryProjectFolders).where(eq(fileLibraryProjectFolders.projectId, projectId));
+    return reply.code(204).send();
   });
 
   app.get('/', { preHandler: [requireScope('files:read')] }, async (req) => {
@@ -298,6 +457,33 @@ const plugin: FastifyPluginAsync = async (app) => {
     }
 
     const projectId = fieldString(fields, 'projectId') ?? null;
+    if (!projectId) {
+      return reply.code(400).send({
+        error: 'projectId required — assign a File Library folder for the Orbit project in Admin → Settings → File Library',
+      });
+    }
+    const projectFolder = await getProjectFolder(projectId);
+    if (!projectFolder?.relativePath) {
+      return reply.code(400).send({
+        error: `no File Library folder configured for project ${projectId}`,
+        code: 'project_folder_required',
+        projectId,
+      });
+    }
+    let projectRel: string;
+    try {
+      projectRel = normaliseRelativePath(projectFolder.relativePath);
+    } catch (err) {
+      return reply.code(500).send({ error: `invalid stored project folder: ${(err as Error).message}` });
+    }
+    if (!projectRel) {
+      return reply.code(400).send({
+        error: `no File Library folder configured for project ${projectId}`,
+        code: 'project_folder_required',
+        projectId,
+      });
+    }
+
     const sourceApp = fieldString(fields, 'sourceApp') ?? null;
     const uploadedBy = fieldString(fields, 'uploadedBy');
     const tagsRaw = fieldString(fields, 'tags');
@@ -309,9 +495,10 @@ const plugin: FastifyPluginAsync = async (app) => {
     const contentHash = createHash('sha256').update(body).digest('hex');
     const contentType = data.mimetype || 'application/octet-stream';
 
-    // Find or create document by normalised filename.
+    // Find or create document by (projectId, normalised filename).
     let docs = await db.select().from(fileDocuments).where(and(
       eq(fileDocuments.normalizedName, normalized),
+      eq(fileDocuments.projectId, projectId),
       isNull(fileDocuments.deletedAt),
     )).limit(1);
     let doc = docs[0];
@@ -329,7 +516,8 @@ const plugin: FastifyPluginAsync = async (app) => {
 
     const nextVersion = (doc.versionCount || 0) + 1;
     const versionId = randomUUID();
-    const relDir = join(doc.id, `v${nextVersion}`);
+    // {root}/{projectRel}/{documentId}/v{n}/{filename}
+    const relDir = join(...projectRel.split('/'), doc.id, `v${nextVersion}`);
     const absDir = assertUnderRoot(root, join(root, relDir));
     await mkdir(absDir, { recursive: true });
     const diskName = sanitiseFilename(originalFilename);
