@@ -206,6 +206,9 @@ services:
       # Model import â†’ PRISM convert pipeline + Orbit Model Library project.
       ORBIT_MODEL_LIBRARY_PROJECT_ID: "${ORBIT_MODEL_LIBRARY_PROJECT_ID:-e86589cc1e}"
       ORBIT_MODEL_LIBRARY_TARGET: "${ORBIT_MODEL_LIBRARY_TARGET:-prod}"
+      # Soft-delete Prism library rows when their Orbit model disappears
+      # (background poller). Manual Sync from Orbit always passes ?prune=1.
+      ORBIT_SYNC_PRUNE: "${ORBIT_SYNC_PRUNE:-1}"
       PRISM_SERVER_URL: "http://prism-server:8765"
       PRISM_SERVICE_API_KEY: "${PRISM_SERVICE_API_KEY:-}"
       CONVERT_UPLOAD_DIR: "/var/lib/prism/uploads"

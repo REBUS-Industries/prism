@@ -85,6 +85,18 @@ Scopes registered in `server/src/api/keys.ts`; enforced in `prism-models-service
 | `PRISM_SERVICE_API_KEY` | X-API-Key for `/v1/convert/async` and GLB output download |
 | `CONVERT_UPLOAD_DIR` | Shared upload dir (`/var/lib/prism/uploads`) when `prism-uploads` volume is mounted |
 | `MODEL_IMPORT_LEGACY_ASSIMP` | Set `1` to disable convert/Orbit path (dev fallback) |
+| `ORBIT_SYNC_INTERVAL_MS` | Orbit→library poll interval (default `300000`; `0` disables) |
+| `ORBIT_SYNC_PRUNE` | `1` (default on VM 212) soft-deletes library rows whose Orbit model was removed |
+
+### Orbit sync / deletions
+
+`POST /api/model-import/sync?prune=1` (admin **Sync from Orbit**) reconciles the Orbit Model Library project into Prism:
+
+- Creates/links rows for Orbit models that are missing from the library
+- Soft-deletes library rows whose Orbit `modelId` no longer exists in that project (connector mirrors **and** Prism/Meshy imports)
+- Does **not** remove blank drafts or local-only rows with no Orbit ref
+
+Without `?prune=1` (and when `ORBIT_SYNC_PRUNE` is off), sync is additive only — Orbit deletions would not appear in the Prism library.
 
 Orbit URL/token come from admin Settings (`orbit_server_url`, `orbit_token`) via prism-shared — same as `/convert/`.
 
