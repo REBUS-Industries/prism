@@ -81,7 +81,9 @@ async function syncFromOrbit(): Promise<void> {
   syncMessage.value = null;
   error.value = null;
   try {
-    const res = await modelsApi.syncFromOrbit();
+    // prune=1 soft-deletes library rows whose Orbit model was removed from the
+    // Model Library project (connector mirrors and Prism/Meshy imports).
+    const res = await modelsApi.syncFromOrbit({ prune: true });
     const s = res.summary;
     if (!s.ran) {
       syncMessage.value = s.busy
@@ -93,8 +95,8 @@ async function syncFromOrbit(): Promise<void> {
       `${s.created} created`,
       `${s.linked} linked`,
       `${s.skipped} unchanged`,
+      `${s.pruned} removed (deleted in Orbit)`,
     ];
-    if (s.pruned) parts.push(`${s.pruned} pruned`);
     if (s.thumbnails) parts.push(`${s.thumbnails} thumbnails refreshed`);
     syncMessage.value = `Synced ${s.total} Orbit models (${parts.join(', ')}).`;
     await load(true);
@@ -119,7 +121,12 @@ onMounted(() => {
 <template>
   <div class="h-row">
     <h1 class="flex-1">Model Library</h1>
-    <button class="btn-link" :disabled="syncing || loading" @click="syncFromOrbit">
+    <button
+      class="btn-link"
+      :disabled="syncing || loading"
+      title="Pull Orbit Model Library into Prism and remove rows whose Orbit model was deleted"
+      @click="syncFromOrbit"
+    >
       <Icon name="sync" :size="16" />{{ syncing ? 'Syncing…' : 'Sync from Orbit' }}
     </button>
     <RouterLink :to="{ name: 'model-create' }" class="btn-link">

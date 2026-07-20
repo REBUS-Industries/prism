@@ -1,0 +1,139 @@
+From bd140f8f4328b54715d70d7ab5129ad01f0edd3a Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 20 Jul 2026 08:55:43 +0000
+Subject: [PATCH] fix: prune Orbit-deleted models from Prism library
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When sync runs with prune, soft-delete any library row linked to an Orbit
+model that no longer exists in the Model Library project — not only
+orbit-connector mirrors. Prism/Meshy imports are included; blank drafts
+without an Orbit ref are left alone.
+---
+ README.md                    |  4 ++--
+ src/api/model-import.ts      |  2 +-
+ src/import/orbitConfig.ts    |  7 ++++---
+ src/import/orbitSync.test.ts |  8 ++++++--
+ src/import/orbitSync.ts      | 10 ++++------
+ 5 files changed, 17 insertions(+), 14 deletions(-)
+
+diff --git a/README.md b/README.md
+index 8994d41..59c5dcc 100644
+--- a/README.md
++++ b/README.md
+@@ -18,7 +18,7 @@ The Orbit connector publishes models straight into the Model Library Orbit proje
+ - **Create** a draft library row (`origin: import`, `metadata.importSource: orbit-connector`) for any Orbit model with no matching row.
+ - **Link** an existing row (matched by name) by attaching its Orbit ref.
+ - **Skip** models already linked.
+-- **Prune** (only when `ORBIT_SYNC_PRUNE=1`) soft-deletes connector-created rows whose Orbit model has disappeared. Prism-uploaded and manual rows are never pruned.
++- **Prune** (when `ORBIT_SYNC_PRUNE=1`, or `?prune=1` on the manual sync) soft-deletes any library row linked to an Orbit model in this project once that Orbit model disappears (connector mirrors **and** Prism/Meshy imports). Rows with no Orbit ref (blank drafts, local-only) are never pruned.
+ 
+ Synced models preview through the web admin's embedded Orbit viewer (it reads `definition.metadata.orbit`); a local GLB is not required. Each sync also pulls Orbit's per-model preview PNG (server-side, using Orbit credentials) and caches it as `model_media` (`THUMBNAIL`); library cards load `GET /api/models/:id/thumbnail` instead of spinning up a live viewer per card.
+ 
+@@ -41,7 +41,7 @@ Triggers:
+ | `ORBIT_MODEL_LIBRARY_PROJECT_ID` | Orbit Model Library project id (push target + sync source). Fallback only — the shared `orbit_model_library_project_id` setting (Prism admin UI) takes precedence when set |
+ | `ORBIT_MODEL_LIBRARY_TARGET` | `prod` (default) or `dev` Orbit instance |
+ | `ORBIT_SYNC_INTERVAL_MS` | Orbit→library poll interval; default `300000`, `0` disables |
+-| `ORBIT_SYNC_PRUNE` | `1` to soft-delete connector rows whose Orbit model is gone (strict 1:1); default off |
++| `ORBIT_SYNC_PRUNE` | `1` to soft-delete Orbit-linked rows whose Orbit model is gone (strict 1:1); default off |
+ 
+ ## Scripts
+ 
+diff --git a/src/api/model-import.ts b/src/api/model-import.ts
+index e41d50a..15a0881 100644
+--- a/src/api/model-import.ts
++++ b/src/api/model-import.ts
+@@ -128,7 +128,7 @@ const plugin: FastifyPluginAsync = async (app: FastifyInstance) => {
+ 
+   // Manual Orbit -> library reconciliation: pull models the connector published
+   // straight into the Orbit Model Library project. `?prune=1` enforces a strict
+-  // 1:1 mirror (soft-deletes connector rows whose Orbit model is gone).
++  // 1:1 mirror (soft-deletes any Orbit-linked library row whose model is gone).
+   app.post('/sync', { preHandler: [requireAuth, requireScope('models:import')] }, async (req, reply) => {
+     const q = req.query as { prune?: string };
+     const pruneOverride = q.prune == null
+diff --git a/src/import/orbitConfig.ts b/src/import/orbitConfig.ts
+index 5eea551..103b471 100644
+--- a/src/import/orbitConfig.ts
++++ b/src/import/orbitConfig.ts
+@@ -24,9 +24,10 @@ export interface OrbitSyncConfig {
+   /** Poll interval in ms; `0` disables the background poller. */
+   intervalMs: number;
+   /**
+-   * When true, soft-delete library rows that were created by this sync
+-   * (`metadata.importSource === 'orbit-connector'`) once their Orbit model
+-   * disappears — i.e. enforce a strict 1:1 mirror. Off by default (additive).
++   * When true, soft-delete library rows linked to an Orbit model in the Model
++   * Library project once that Orbit model disappears — i.e. enforce a strict
++   * 1:1 mirror (connector syncs and Prism/Meshy imports). Off by default
++   * (additive); the admin “Sync from Orbit” button passes `?prune=1`.
+    */
+   prune: boolean;
+ }
+diff --git a/src/import/orbitSync.test.ts b/src/import/orbitSync.test.ts
+index 45a310c..e867a8c 100644
+--- a/src/import/orbitSync.test.ts
++++ b/src/import/orbitSync.test.ts
+@@ -103,13 +103,14 @@ function row(
+   assert.equal(deletedByName.link.length, 0);
+ }
+ 
+-// --- prune only targets connector rows whose Orbit model disappeared ------
++// --- prune targets any Orbit-linked row whose model disappeared -----------
+ {
+   const items = [orbitItem('o-keep', 'Keeper')];
+   const rows = [
+     row('r-keep', 'Keeper', { orbitModelId: 'o-keep', importSource: ORBIT_CONNECTOR_SOURCE }),
+     row('r-gone', 'Gone Connector', { orbitModelId: 'o-gone', importSource: ORBIT_CONNECTOR_SOURCE }),
+     row('r-prism', 'Gone Prism Upload', { orbitModelId: 'o-prism-gone' }),
++    row('r-local', 'Local Only Draft'),
+     row('r-gone-deleted', 'Already Removed', {
+       orbitModelId: 'o-also-gone',
+       importSource: ORBIT_CONNECTOR_SOURCE,
+@@ -121,7 +122,10 @@ function row(
+   assert.deepEqual(additive.prune, []);
+ 
+   const strict = planOrbitSync(items, rows, projectId, { prune: true });
+-  assert.deepEqual(strict.prune, ['r-gone']);
++  assert.deepEqual(new Set(strict.prune), new Set(['r-gone', 'r-prism']));
++  assert.ok(!strict.prune.includes('r-local'));
++  assert.ok(!strict.prune.includes('r-gone-deleted'));
++  assert.ok(!strict.prune.includes('r-keep'));
+ }
+ 
+ // --- a single row is never linked to two Orbit models in one run ----------
+diff --git a/src/import/orbitSync.ts b/src/import/orbitSync.ts
+index 9aaaaae..d5c44e3 100644
+--- a/src/import/orbitSync.ts
++++ b/src/import/orbitSync.ts
+@@ -77,11 +77,6 @@ export interface SyncSummary {
+   error?: string;
+ }
+ 
+-function readImportSource(def: ModelDefinition | null | undefined): string | null {
+-  const src = def?.metadata?.importSource;
+-  return typeof src === 'string' ? src : null;
+-}
+-
+ /** Human-facing name for a synced model (Speckle display name, then branch name). */
+ export function orbitModelDisplayName(item: OrbitModelSummary): string {
+   const name = (item.displayName ?? item.name ?? '').trim();
+@@ -159,10 +154,13 @@ export function planOrbitSync(
+   }
+ 
+   if (opts.prune) {
++    // Soft-delete any non-deleted library row whose Orbit modelId for this
++    // project is gone — connector mirrors *and* Prism/Meshy imports that were
++    // published into the Model Library project. Rows with no Orbit ref are
++    // never pruned (blank drafts, local-only legacy imports).
+     const orbitIds = new Set(orbitItems.map((i) => i.id));
+     for (const row of existingRows) {
+       if (row.deletedAt) continue;
+-      if (readImportSource(row.definition) !== ORBIT_CONNECTOR_SOURCE) continue;
+       const orbitId = readStoredOrbitModelId(row.definition, projectId);
+       if (orbitId && !orbitIds.has(orbitId)) plan.prune.push(row.id);
+     }
+-- 
+2.43.0
+

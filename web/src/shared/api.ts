@@ -2580,7 +2580,10 @@ export const modelsApi = {
       importStatus?: ModelImportStatus | null;
     }>('/api/model-import', fd);
   },
-  /** Pull connector-published models from the Orbit Model Library project into PRISM. */
+  /**
+   * Pull Orbit Model Library models into PRISM.
+   * Pass `prune: true` to soft-delete library rows whose Orbit model was removed.
+   */
   syncFromOrbit: (opts: { prune?: boolean } = {}) => {
     const qs = opts.prune ? '?prune=1' : '';
     return api.post<{ ok: boolean; summary: ModelOrbitSyncSummary }>(`/api/model-import/sync${qs}`, {});
