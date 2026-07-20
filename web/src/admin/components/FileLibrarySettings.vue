@@ -62,12 +62,20 @@ const browseLoading = ref(false);
 const browsePath = ref('');
 const savingFolder = ref(false);
 
-const dirtyFields = computed(() => fields.filter((f) => values[f.key].value !== values[f.key].original));
+/** Settings API + number inputs can surface non-strings; always normalise. */
+function asSettingString(v: unknown): string {
+  if (v == null) return '';
+  return String(v);
+}
+
+const dirtyFields = computed(() =>
+  fields.filter((f) => asSettingString(values[f.key].value) !== asSettingString(values[f.key].original)),
+);
 
 async function refreshSettings(): Promise<void> {
   const all = (await settingsApi.list()).settings;
   for (const f of fields) {
-    const v = all[f.key] ?? '';
+    const v = asSettingString(all[f.key] ?? '');
     values[f.key] = { value: v, original: v };
   }
 }
@@ -108,9 +116,10 @@ async function saveField(key: string): Promise<void> {
   savingKey[key] = true;
   error.value = null;
   try {
-    await settingsApi.set(key, values[key].value.trim());
-    values[key].original = values[key].value.trim();
-    values[key].value = values[key].original;
+    const next = asSettingString(values[key].value).trim();
+    await settingsApi.set(key, next);
+    values[key].original = next;
+    values[key].value = next;
     statusMsg.value = `Saved ${key}`;
     setTimeout(() => { statusMsg.value = null; }, 1500);
     if (key === 'file_library_root') await refreshStatus();
@@ -238,11 +247,12 @@ onUnmounted(() => window.removeEventListener('keydown', onPickerKey, true));
               :id="`fl-${f.key}`"
               :type="f.type === 'number' ? 'number' : 'text'"
               :placeholder="f.placeholder ?? ''"
-              v-model="values[f.key].value"
+              :value="values[f.key].value"
+              @input="values[f.key].value = String(($event.target as HTMLInputElement).value)"
             />
             <button
               class="primary"
-              :disabled="savingKey[f.key] || values[f.key].value === values[f.key].original"
+              :disabled="savingKey[f.key] || asSettingString(values[f.key].value) === asSettingString(values[f.key].original)"
               @click="saveField(f.key)"
             >
               Save
