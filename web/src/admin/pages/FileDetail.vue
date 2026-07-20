@@ -53,7 +53,7 @@ async function reload(): Promise<void> {
 }
 
 async function deleteVersion(versionId: string): Promise<void> {
-  if (!confirm('Delete this version? Files will be moved to the project archive folder on the fileserver.')) return;
+  if (!confirm('Delete this version? Files will be moved to 999_ARCHIVE on the fileserver.')) return;
   busy.value = true;
   error.value = null;
   try {
@@ -70,7 +70,7 @@ async function deleteVersion(versionId: string): Promise<void> {
 }
 
 async function deleteDocument(): Promise<void> {
-  if (!confirm('Delete this document and all versions? Files will be moved to the project archive folder on the fileserver.')) return;
+  if (!confirm('Delete this document and all versions? Files will be moved to 999_ARCHIVE on the fileserver.')) return;
   busy.value = true;
   error.value = null;
   try {
