@@ -4,7 +4,7 @@
  * Separate from Orbit convert / Model Library. Same filename stacks as
  * immutable versions under a **per-project folder** on the LAN share.
  * On-disk layout: `{root}/{projectRel}/{stem}/{filename}` (tip), with prior
- * versions under `{stem}/v{n}/`. Deletes move bytes to `{projectRel}/archive/`.
+ * versions under `{stem}/v{n}/`. Deletes move bytes to `{projectRel}/999_ARCHIVE/`.
  * Storage root from Settings `file_library_root` or `${DATA_DIR}/files`.
  * Uploads require `projectId` with a configured relative folder.
  */
@@ -37,7 +37,8 @@ const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
 const DEFAULT_EXTS = ['.3dm', '.vwx', '.dwg', '.rvt', '.skp', '.fbx', '.obj', '.zip', '.3ds', '.dae'];
 const MAX_NOTES_CHARS = 8000;
 /** Reserved folder name under each project File Library root for soft-deleted bytes. */
-const ARCHIVE_DIR_NAME = 'archive';
+const ARCHIVE_DIR_NAME = '999_ARCHIVE';
+const ARCHIVE_DIR_NAME_LC = ARCHIVE_DIR_NAME.toLowerCase();
 
 async function resolveLibraryRoot(): Promise<string> {
   const fromSettings = (await getSetting('file_library_root'))?.trim();
@@ -91,7 +92,7 @@ function documentFolderName(filename: string): string {
   const disk = sanitiseDiskName(filename);
   let stem = basename(disk, extname(disk)).trim() || 'file';
   stem = stem.slice(0, 200);
-  if (stem.toLowerCase() === ARCHIVE_DIR_NAME) {
+  if (stem.toLowerCase() === ARCHIVE_DIR_NAME_LC) {
     stem = `${stem}_file`;
   }
   return stem || 'file';
@@ -165,7 +166,7 @@ async function moveFile(src: string, dest: string): Promise<void> {
 
 /**
  * Move a version's on-disk bytes (and optional notes sidecar) into
- * `{projectRoot}/archive/{stem}/v{n}/…`. Updates `storagePath` in DB.
+ * `{projectRoot}/999_ARCHIVE/{stem}/v{n}/…`. Updates `storagePath` in DB.
  */
 async function archiveVersionFiles(opts: {
   root: string;
@@ -187,7 +188,7 @@ async function archiveVersionFiles(opts: {
 
   // Skip if already under an archive folder.
   const normalisedSrc = src.replace(/\\/g, '/').toLowerCase();
-  if (normalisedSrc.includes(`/${ARCHIVE_DIR_NAME}/`)) {
+  if (normalisedSrc.includes(`/${ARCHIVE_DIR_NAME_LC}/`)) {
     return src;
   }
 
@@ -231,7 +232,7 @@ async function archiveVersionFiles(opts: {
     if (entries.length === 0) await rm(verDir, { recursive: false }).catch(() => undefined);
     const docDir = dirname(verDir);
     // Only remove if it looks like a document folder (not project root / archive).
-    if (basename(docDir).toLowerCase() !== ARCHIVE_DIR_NAME) {
+    if (basename(docDir).toLowerCase() !== ARCHIVE_DIR_NAME_LC) {
       const left = await readdir(docDir);
       if (left.length === 0) await rm(docDir, { recursive: false }).catch(() => undefined);
     }
@@ -248,7 +249,7 @@ async function archiveVersionFiles(opts: {
  */
 /**
  * Move the whole live document folder `{stem}/` into
- * `{projectRoot}/archive/{stem}/` (timestamp suffix on collision).
+ * `{projectRoot}/999_ARCHIVE/{stem}/` (timestamp suffix on collision).
  * Rewrites `storagePath` for any versions that lived under that folder.
  */
 async function archiveDocumentFolder(opts: {
@@ -483,7 +484,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       .filter((e) => (
         e.isDirectory()
         && !e.name.startsWith('.')
-        && e.name.toLowerCase() !== ARCHIVE_DIR_NAME
+        && e.name.toLowerCase() !== ARCHIVE_DIR_NAME_LC
       ))
       .map((e) => e.name)
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
@@ -931,7 +932,7 @@ const plugin: FastifyPluginAsync = async (app) => {
       ));
       for (const version of refreshed) {
         const path = version.storagePath?.replace(/\\/g, '/').toLowerCase() ?? '';
-        if (path.includes(`/${ARCHIVE_DIR_NAME}/`)) continue;
+        if (path.includes(`/${ARCHIVE_DIR_NAME_LC}/`)) continue;
         try {
           await archiveVersionFiles({
             root,
