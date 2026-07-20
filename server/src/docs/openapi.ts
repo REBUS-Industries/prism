@@ -418,7 +418,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
     },
     servers: [
       { url: SERVER_URL, description: 'Production - /v1 conversion + receive surface' },
-      { url: API_BASE,   description: 'Production root - /api/visualiser/* portal surface, project attachments, and library APIs (/api/fixtures, /api/models, /api/materials)' },
+      { url: API_BASE,   description: 'Production root - /api/visualiser/* portal surface, project attachments, and library APIs (/api/fixtures, /api/models, /api/materials, /api/files)' },
     ],
 
     tags: [
@@ -432,6 +432,7 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Model library', description: 'Generic 3D model assets — list, edit, and async import via the convert pipeline. JSON list/detail rows include `previewUrl`, `orbitUrl`, and `versions[]` (each version has `createdAt` + `previewUrl`). Portal-facing; requires `models:*` scopes. Narrative: `/docs/library-integration`. Generate meshes with the **Meshy** tag, then import.' },
       { name: 'Meshy', description: 'Server-proxied Meshy.ai text/image-to-3D for connectors and portals. Credentials: Admin → Settings → Meshy (`meshy_api_key`). Scopes: `models:read` (status/poll/download), `models:write` (create tasks). After SUCCEEDED, transfer into the library with `POST /api/model-import` (`models:import`). Narrative: `/docs/library-integration#generate-with-meshy-connectors--portals`.' },
       { name: 'Materials library', description: 'Shared PBR materials + texture slots. JSON list/detail responses include `previewUrl` for material thumbnails and texture rows; stream images via `GET /api/textures/{id}/preview`. Portal-facing; requires `materials:*` scopes. Narrative: `/docs/library-integration`.' },
+      { name: 'File library', description: 'Native CAD/DCC source archives (.3dm, .vwx, …) — **not** Orbit geometry. Same filename stacks as immutable versions with `uploadedBy` + `createdAt`. Storage root from Settings `file_library_root`. Portal/connector-facing; requires `files:*` scopes. Narrative: `/docs/library-integration#file-library`. Connector handoff: `docs/handoffs/FILE_LIBRARY_CONNECTORS.md`.' },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
       { name: 'Access', description: [
         'Portal-brokered identity + connector authorisation, served by the',
@@ -489,12 +490,13 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             '  `POST /api/projects/{projectId}/attachments` and',
             '  `DELETE /api/projects/{projectId}/attachments/{id}`.',
             '',
-            '**Library scopes** (fixtures / models / materials — see',
+            '**Library scopes** (fixtures / models / materials / files — see',
             '`/docs/library-integration`):',
             '',
             '- `fixtures:read|write|delete|import` — `/api/fixtures/*`',
             '- `models:read|write|delete|import` — `/api/models/*`, `/api/model-import`, `/api/meshy/*` (generate + download; import still uses `models:import`)',
             '- `materials:read|write|delete` — `/api/materials/*`, `/api/textures/*`',
+            '- `files:read|write|delete` — `/api/files/*` (native CAD/DCC source archive)',
             '',
             'Library routes enforce scopes on **every** method (including GET).',
             'Visualiser read-only GETs accept any valid key; library GETs require',
@@ -2827,6 +2829,218 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
             '200': { description: 'Texture metadata.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      // ================================================================
+      // File library — native CAD/DCC source archives (prism-server MVP)
+      // ================================================================
+
+      '/api/files/status': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['File library'],
+          summary: 'File library storage status',
+          description: 'Resolved storage root, writability, max bytes, and allowed extensions. Connectors should call this before upload. **Scope:** `files:read`.',
+          security: [{ apiKey: [] }],
+          responses: {
+            '200': {
+              description: 'Status.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      configured: { type: 'boolean' },
+                      root: { type: 'string' },
+                      writable: { type: 'boolean' },
+                      usingSettingsPath: { type: 'boolean' },
+                      maxBytes: { type: 'integer' },
+                      allowedExts: { type: 'array', items: { type: 'string' } },
+                    },
+                  },
+                },
+              },
+            },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/files': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['File library'],
+          summary: 'List file documents',
+          description: 'One row per normalised filename. Each row includes `latestVersion` with `uploadedBy` + `createdAt`. **Scope:** `files:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'q', schema: { type: 'string' }, description: 'Filename search' },
+            { in: 'query', name: 'ext', schema: { type: 'string' }, description: 'Extension filter, e.g. `.3dm`' },
+            { in: 'query', name: 'projectId', schema: { type: 'string' } },
+            { in: 'query', name: 'limit', schema: { type: 'integer', default: 50 } },
+            { in: 'query', name: 'cursor', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Document list.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+        post: {
+          tags: ['File library'],
+          summary: 'Upload a file (new document or new version)',
+          description: [
+            'Multipart upload. Same basename (case-insensitive) appends an immutable version.',
+            '',
+            '**Form fields:** `file` (required), optional `name`, `projectId`, `tags` (comma list),',
+            '`uploadedBy` (display label — prefer OS/Rhino user), `sourceApp` (`rhino` / `vectorworks` / `admin`).',
+            '',
+            '**Scope:** `files:write`.',
+          ].join('\n'),
+          security: [{ apiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  required: ['file'],
+                  properties: {
+                    file: { type: 'string', format: 'binary' },
+                    name: { type: 'string' },
+                    projectId: { type: 'string' },
+                    tags: { type: 'string' },
+                    uploadedBy: { type: 'string' },
+                    sourceApp: { type: 'string', example: 'rhino' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': { description: 'Created document + version.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '400': { description: 'Extension not allowed / empty file.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '413': { description: 'File exceeds max size.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+          },
+        },
+      },
+
+      '/api/files/{id}': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['File library'],
+          summary: 'Get document + all versions',
+          description: 'Full version history (newest first) with `uploadedBy` and `createdAt` on each version. **Scope:** `files:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'Document detail.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        patch: {
+          tags: ['File library'],
+          summary: 'Update document metadata',
+          description: '**Scope:** `files:write`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    tags: { type: 'array', items: { type: 'string' } },
+                    projectId: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Updated document.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+        delete: {
+          tags: ['File library'],
+          summary: 'Soft-delete document (all versions)',
+          description: '**Scope:** `files:delete`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '204': { description: 'Deleted.' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/files/{id}/download': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['File library'],
+          summary: 'Download latest version',
+          description: '**Scope:** `files:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': { description: 'File body.', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/files/{id}/versions/{versionId}/download': {
+        servers: [{ url: API_BASE }],
+        get: {
+          tags: ['File library'],
+          summary: 'Download a specific version',
+          description: '**Scope:** `files:read`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } },
+            { in: 'path', name: 'versionId', required: true, schema: { type: 'string', format: 'uuid' } },
+          ],
+          responses: {
+            '200': { description: 'File body.', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+
+      '/api/files/{id}/versions/{versionId}': {
+        servers: [{ url: API_BASE }],
+        delete: {
+          tags: ['File library'],
+          summary: 'Soft-delete one version',
+          description: 'Removes version bytes from disk and updates the document tip. Soft-deletes the document when no versions remain. **Scope:** `files:delete`.',
+          security: [{ apiKey: [] }],
+          parameters: [
+            { in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } },
+            { in: 'path', name: 'versionId', required: true, schema: { type: 'string', format: 'uuid' } },
+          ],
+          responses: {
+            '204': { description: 'Deleted.' },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },

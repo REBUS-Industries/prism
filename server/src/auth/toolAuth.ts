@@ -4,7 +4,7 @@
  */
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
-export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models';
+export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models' | 'files';
 
 export function requireTool(tool: PrismTool) {
   return async function toolGuard(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -21,6 +21,7 @@ export function requireTool(tool: PrismTool) {
         fixtures: 'fixtures:read',
         materials: 'materials:read',
         models: 'models:read',
+        files: 'files:read',
       };
       const scope = scopeMap[tool];
       if (principal.scopes.includes(scope)) return;

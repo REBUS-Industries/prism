@@ -37,6 +37,7 @@ const toolLabels: Record<PrismTool, string> = {
   fixtures: 'Fixture Library',
   materials: 'Material Library',
   models: 'Model Library',
+  files: 'File Library',
 };
 
 const toolColumnLabels = [

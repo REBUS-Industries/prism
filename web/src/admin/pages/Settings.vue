@@ -52,10 +52,36 @@ const workstationAgentFields: FieldDef[] = [
   },
 ];
 
+const fileLibraryFields: FieldDef[] = [
+  {
+    key: 'file_library_root',
+    label: 'Storage root (in-container path)',
+    placeholder: '/mnt/fileserver/prism-files (blank = DATA_DIR/files)',
+  },
+  {
+    key: 'file_library_max_bytes',
+    label: 'Max upload size (bytes)',
+    type: 'number',
+    placeholder: '2147483648',
+  },
+  {
+    key: 'file_library_allowed_exts',
+    label: 'Allowed extensions',
+    placeholder: '.3dm,.vwx,.dwg,.rvt,.skp,.fbx,.obj,.zip',
+  },
+];
+
 // Reactive state for each known key: current input + original DB value.
 // Pre-populate synchronously so the template can render before refresh()
 // returns — otherwise `values[f.key].value` blows up on first paint.
-const ALL_KEYS = [...orbitProdFields, ...gdtfShareFields, ...meshyFields, ...otherFields, ...workstationAgentFields].map((f) => f.key);
+const ALL_KEYS = [
+  ...orbitProdFields,
+  ...gdtfShareFields,
+  ...meshyFields,
+  ...otherFields,
+  ...workstationAgentFields,
+  ...fileLibraryFields,
+].map((f) => f.key);
 const values = reactive<Record<string, { value: string; original: string }>>(
   Object.fromEntries(ALL_KEYS.map((k) => [k, { value: '', original: '' }])),
 );
@@ -73,7 +99,7 @@ const fixtureTypesStore = useFixtureTypesStore();
 // ── Tile model ──────────────────────────────────────────────────────────
 // Each section is a tile; clicking either opens a modal (fields/custom) or
 // navigates to a named route (routeName).
-type TileKey = 'orbit-prod' | 'gdtf' | 'meshy' | 'server' | 'workstation' | 'fixture-types'
+type TileKey = 'orbit-prod' | 'gdtf' | 'meshy' | 'server' | 'workstation' | 'file-library' | 'fixture-types'
              | 'external-materials' | 'portal-identity' | 'portal-access'
              | 'users' | 'webhooks' | 'api-keys';
 interface TileDef {
@@ -102,6 +128,7 @@ const tiles: TileDef[] = [
   { key: 'portal-access', title: 'Portal access key', icon: 'vpn_key', description: 'Service API key PRISM uses to read the live role list & permissions from the portal.', custom: 'portal-access' },
   { key: 'server',         title: 'Server',                icon: 'dns',       description: 'Job retention window and maintenance mode.', fields: otherFields },
   { key: 'workstation',    title: 'Workstation agent',     icon: 'lan',       description: 'Agent WS endpoint override + DNS suffix for Web UI links.', fields: workstationAgentFields },
+  { key: 'file-library',   title: 'File Library',          icon: 'folder',    description: 'Storage root for native CAD/DCC uploads (.3dm, .vwx, …). Bind-mount a LAN share in compose for prod.', fields: fileLibraryFields },
   { key: 'users',          title: 'Users',                 icon: 'group',     description: 'Manage admin accounts and access.', routeName: 'users' },
   { key: 'webhooks',       title: 'Webhooks',              icon: 'webhook',   description: 'Configure outbound webhook endpoints for job events.', routeName: 'webhooks' },
   { key: 'api-keys',       title: 'API Keys',              icon: 'key',       description: 'Issue and revoke API keys for programmatic access.', routeName: 'keys' },
@@ -121,7 +148,14 @@ const testMeshy = reactive<TestState>({ kind: 'idle' });
 
 async function refresh() {
   const all = (await settingsApi.list()).settings;
-  for (const f of [...orbitProdFields, ...gdtfShareFields, ...meshyFields, ...otherFields, ...workstationAgentFields]) {
+  for (const f of [
+    ...orbitProdFields,
+    ...gdtfShareFields,
+    ...meshyFields,
+    ...otherFields,
+    ...workstationAgentFields,
+    ...fileLibraryFields,
+  ]) {
     const v = all[f.key] ?? '';
     values[f.key] = { value: v, original: v };
   }

@@ -24,3 +24,11 @@ PRISM multi-agent overview ([HANDOFF-overview.md](./HANDOFF-overview.md)) lists 
 ## Coordination with PRISM
 
 Only needed when a connector change requires a new ORBIT server API, PRISM visualiser behaviour, or a new SDK type. In those cases coordinate with the relevant PRISM or orbit-server dev before merging.
+
+### File Library (“Send file to Prism”)
+
+Prism MVP API + admin UI is in progress. Connector implementation brief:
+
+**[`docs/handoffs/FILE_LIBRARY_CONNECTORS.md`](../../docs/handoffs/FILE_LIBRARY_CONNECTORS.md)**
+
+Do not implement File Library connector UI inside the prism monorepo — work in `orbit-connectors`.

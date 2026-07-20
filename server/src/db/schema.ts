@@ -485,6 +485,53 @@ export const webhooks = pgTable('webhooks', {
 });
 
 // ---------------------------------------------------------------------------
+// File library — native CAD / DCC source files (not Orbit geometry)
+// ---------------------------------------------------------------------------
+//
+// Connector / admin uploads of Rhino .3dm, Vectorworks .vwx, etc. Same
+// filename stacks as immutable versions under one document. Bodies live under
+//   ${FILE_LIBRARY_ROOT|DATA_DIR/files}/<documentId>/v<n>/<filename>
+// Settings key `file_library_root` can point at a LAN fileserver mount.
+
+export const fileDocuments = pgTable('file_documents', {
+  id:              uuid('id').primaryKey().defaultRandom(),
+  name:            varchar('name', { length: 512 }).notNull(),
+  normalizedName:  varchar('normalized_name', { length: 512 }).notNull(),
+  extension:       varchar('extension', { length: 32 }).notNull(),
+  projectId:       text('project_id'),
+  tags:            jsonb('tags').notNull().default(sql`'[]'::jsonb`),
+  latestVersionId: uuid('latest_version_id'),
+  versionCount:    integer('version_count').notNull().default(0),
+  createdAt:       timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt:       timestamp('deleted_at', { withTimezone: true }),
+}, (t) => ({
+  byNormalized: index('file_documents_normalized_name_idx').on(t.normalizedName),
+  byProject:    index('file_documents_project_idx').on(t.projectId),
+}));
+
+export const fileVersions = pgTable('file_versions', {
+  id:                   uuid('id').primaryKey().defaultRandom(),
+  documentId:           uuid('document_id').notNull().references(() => fileDocuments.id, { onDelete: 'cascade' }),
+  versionNumber:        integer('version_number').notNull(),
+  originalFilename:     varchar('original_filename', { length: 512 }).notNull(),
+  contentType:          text('content_type').notNull(),
+  sizeBytes:            bigint('size_bytes', { mode: 'number' }).notNull(),
+  contentHash:          varchar('content_hash', { length: 64 }),
+  storagePath:          text('storage_path').notNull(),
+  source:               varchar('source', { length: 32 }).notNull().default('api'),
+  sourceApp:            varchar('source_app', { length: 64 }),
+  uploadedByLabel:      varchar('uploaded_by_label', { length: 256 }).notNull(),
+  createdByApiKeyId:    uuid('created_by_api_key_id').references((): any => apiKeys.id, { onDelete: 'set null' }),
+  createdByAdminId:     uuid('created_by_admin_id').references((): any => adminUsers.id, { onDelete: 'set null' }),
+  createdAt:            timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt:            timestamp('deleted_at', { withTimezone: true }),
+}, (t) => ({
+  byDocument: index('file_versions_document_idx').on(t.documentId),
+  uniqueVersion: index('file_versions_document_version_idx').on(t.documentId, t.versionNumber),
+}));
+
+// ---------------------------------------------------------------------------
 // Exported type helpers
 // ---------------------------------------------------------------------------
 
@@ -513,3 +560,7 @@ export type Material         = typeof materials.$inferSelect;
 export type NewMaterial      = typeof materials.$inferInsert;
 export type MaterialTexture    = typeof materialTextures.$inferSelect;
 export type NewMaterialTexture = typeof materialTextures.$inferInsert;
+export type FileDocument       = typeof fileDocuments.$inferSelect;
+export type NewFileDocument    = typeof fileDocuments.$inferInsert;
+export type FileVersion        = typeof fileVersions.$inferSelect;
+export type NewFileVersion     = typeof fileVersions.$inferInsert;

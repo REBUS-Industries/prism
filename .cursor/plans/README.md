@@ -15,6 +15,7 @@
 | Materials editor | `feat/materials-editor` | [HANDOFF-materials-editor.md](./HANDOFF-materials-editor.md) |
 | Fixture builder | `feat/fixture-builder` | [HANDOFF-fixture-builder.md](./HANDOFF-fixture-builder.md) |
 | Model library | `feat/model-library` | [HANDOFF-model-library.md](./HANDOFF-model-library.md) |
+| File library | feature PRs (MVP on prism-server) | [HANDOFF-file-library.md](./HANDOFF-file-library.md) · connectors: [`docs/handoffs/FILE_LIBRARY_CONNECTORS.md`](../../docs/handoffs/FILE_LIBRARY_CONNECTORS.md) |
 | Connectors | feature branches in **orbit-connectors** | [HANDOFF-connectors.md](./HANDOFF-connectors.md) (pointer) |
 
 ## Session-start prompts

@@ -30,6 +30,9 @@ import Models from './pages/Models.vue';
 import ModelCreate from './pages/ModelCreate.vue';
 import ModelImport from './pages/ModelImport.vue';
 import ModelEditor from './pages/ModelEditor.vue';
+import Files from './pages/Files.vue';
+import FileDetail from './pages/FileDetail.vue';
+import FileUpload from './pages/FileUpload.vue';
 import Permissions from './pages/Permissions.vue';
 import ToolAccess from './pages/ToolAccess.vue';
 import type { PrismTool } from '../shared/api';
@@ -66,6 +69,10 @@ const router = createRouter({
     { path: '/models/create',          component: ModelCreate,      name: 'model-create', meta: { tool: 'models' as PrismTool } },
     { path: '/models/import',          component: ModelImport,      name: 'model-import', meta: { tool: 'models' as PrismTool } },
     { path: '/models/:id',             component: ModelEditor,      name: 'model-editor', props: true, meta: { tool: 'models' as PrismTool } },
+    // File library — native CAD/DCC source archives (versioned by filename).
+    { path: '/files',                  component: Files,            name: 'files', meta: { tool: 'files' as PrismTool } },
+    { path: '/files/upload',           component: FileUpload,       name: 'file-upload', meta: { tool: 'files' as PrismTool } },
+    { path: '/files/:id',              component: FileDetail,       name: 'file-detail', props: true, meta: { tool: 'files' as PrismTool } },
     { path: '/permissions',            component: Permissions,      name: 'permissions' },
     { path: '/permissions/tools',      component: ToolAccess,       name: 'tool-access', meta: { requiresAdmin: true } },
     { path: '/settings',               component: Settings,         name: 'settings' },

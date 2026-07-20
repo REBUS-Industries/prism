@@ -35,9 +35,9 @@ export const CONNECTOR_FUNCTIONS: ConnectorFunction[] = [
 export type PortalProjectLevel = 'viewer' | 'contributor' | 'owner' | 'admin';
 
 /** PRISM admin tools gated by role-based grants. */
-export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models';
+export type PrismTool = 'convert' | 'visualiser' | 'fixtures' | 'materials' | 'models' | 'files';
 
-export const PRISM_TOOLS: PrismTool[] = ['convert', 'visualiser', 'fixtures', 'materials', 'models'];
+export const PRISM_TOOLS: PrismTool[] = ['convert', 'visualiser', 'fixtures', 'materials', 'models', 'files'];
 
 /** Portal system role (from portal-app UserProfile.role). */
 export type PortalSystemRole = 'superAdmin' | 'admin' | 'staff' | 'viewer';

@@ -1,8 +1,9 @@
-# Handoff: File Library Workstream (plan)
+# Handoff: File Library Workstream
 
-**Status:** Plan only — not yet implemented.  
-**Proposed branch:** `feat/file-library` (REBUS-Industries/prism)  
-**Proposed API polyrepo:** `REBUS-Industries/prism-files-service`  
+**Status:** MVP in progress — API + admin UI + docs on `cursor/file-library-mvp-dd18` (lives in `prism-server` for v1; polyrepo extract later).  
+**Branch:** feature PRs off `main` → merge toward `feat/file-library` if needed  
+**Proposed API polyrepo (later):** `REBUS-Industries/prism-files-service`  
+**Connector handoff:** [`docs/handoffs/FILE_LIBRARY_CONNECTORS.md`](../../docs/handoffs/FILE_LIBRARY_CONNECTORS.md)  
 **Pairs with:** `orbit-connectors` (Rhino / Vectorworks “Send to File Library” button)  
 **Does not replace:** Orbit convert / Model Library / project-attachments (visualiser MVR/GDTF)
 
