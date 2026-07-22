@@ -432,7 +432,18 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
       { name: 'Model library', description: 'Generic 3D model assets — list, edit, and async import via the convert pipeline. JSON list/detail rows include `previewUrl`, `orbitUrl`, and `versions[]` (each version has `createdAt` + `previewUrl`). Portal-facing; requires `models:*` scopes. Narrative: `/docs/library-integration`. Generate meshes with the **Meshy** tag, then import.' },
       { name: 'Meshy', description: 'Server-proxied Meshy.ai text/image-to-3D for connectors and portals. Credentials: Admin → Settings → Meshy (`meshy_api_key`). Scopes: `models:read` (status/poll/download), `models:write` (create tasks). After SUCCEEDED, transfer into the library with `POST /api/model-import` (`models:import`). Narrative: `/docs/library-integration#generate-with-meshy-connectors--portals`.' },
       { name: 'Materials library', description: 'Shared PBR materials + texture slots. JSON list/detail responses include `previewUrl` for material thumbnails and texture rows; stream images via `GET /api/textures/{id}/preview`. Portal-facing; requires `materials:*` scopes. Narrative: `/docs/library-integration`.' },
-      { name: 'File library', description: 'Native CAD/DCC source archives (.3dm, .vwx, …) — **not** Orbit geometry. Same filename stacks as immutable versions with `uploadedBy` + `createdAt`. Storage root from Settings `file_library_root`; each Orbit project needs a relative folder under that root (Admin → Settings → File Library). Uploads require `projectId` with a configured folder. Portal/connector-facing; requires `files:*` scopes. Narrative: `/docs/library-integration#file-library`. Connector handoff: `docs/handoffs/FILE_LIBRARY_CONNECTORS.md`.' },
+      { name: 'File library', description: [
+        'Native CAD/DCC source archives (.3dm, .vwx, …) — **not** Orbit geometry.',
+        'Portal-facing REST under `/api/files/*` with `X-API-Key` + `files:read|write|delete`.',
+        '',
+        '**List/detail rows** include `projectId`, `projectName` (from Admin → Settings → File Library folder mapping),',
+        '`tags`, `versionCount`, and `latestVersion` (`uploadedBy`, `createdAt`, `notes`, `downloadUrl`).',
+        'Same basename within a project stacks as immutable versions.',
+        '',
+        'Uploads require `projectId` with a configured relative folder under `file_library_root`.',
+        'OpenAPI schemas: `FileDocumentListItem`, `FileVersionSummary`, `FileLibraryProjectFolder`.',
+        'Narrative: `/docs/library-integration#file-library`. Connector handoff: `docs/handoffs/FILE_LIBRARY_CONNECTORS.md`.',
+      ].join(' ') },
       { name: 'Webhooks',           description: 'Inspect webhook signature contract.' },
       { name: 'Access', description: [
         'Portal-brokered identity + connector authorisation, served by the',
@@ -1243,6 +1254,111 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
               nullable: true,
               properties: { message: { type: 'string' } },
             },
+          },
+        },
+        FileVersionSummary: {
+          type: 'object',
+          required: ['id', 'versionNumber', 'originalFilename', 'contentType', 'sizeBytes', 'source', 'uploadedBy', 'createdAt', 'downloadUrl'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            versionNumber: { type: 'integer', minimum: 1 },
+            originalFilename: { type: 'string' },
+            contentType: { type: 'string' },
+            sizeBytes: { type: 'integer' },
+            contentHash: { type: 'string', nullable: true },
+            source: { type: 'string', description: '`admin` | `connector` | `api`' },
+            sourceApp: { type: 'string', nullable: true, example: 'rhino' },
+            uploadedBy: { type: 'string', description: 'Display label (OS/Rhino user or API key name).' },
+            notes: { type: 'string', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            downloadUrl: {
+              type: 'string',
+              description: 'Relative path to download this version (prepend API origin; send `X-API-Key`).',
+              example: '/api/files/{documentId}/versions/{versionId}/download',
+            },
+          },
+        },
+        FileDocumentListItem: {
+          type: 'object',
+          required: ['id', 'name', 'extension', 'tags', 'versionCount', 'createdAt', 'updatedAt'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            name: { type: 'string' },
+            extension: { type: 'string', example: '.3dm' },
+            projectId: {
+              type: 'string',
+              nullable: true,
+              description: 'Orbit project id. Required on upload; documents are scoped per project.',
+            },
+            projectName: {
+              type: 'string',
+              nullable: true,
+              description: 'Orbit project display name from Admin → Settings → File Library folder mapping.',
+            },
+            tags: { type: 'array', items: { type: 'string' } },
+            versionCount: { type: 'integer' },
+            latestVersion: { $ref: '#/components/schemas/FileVersionSummary', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        FileDocumentDetail: {
+          allOf: [
+            { $ref: '#/components/schemas/FileDocumentListItem' },
+            {
+              type: 'object',
+              required: ['versions'],
+              properties: {
+                versions: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/FileVersionSummary' },
+                  description: 'Full version history, newest first.',
+                },
+              },
+            },
+          ],
+        },
+        FileDocumentListResponse: {
+          type: 'object',
+          required: ['documents', 'nextCursor'],
+          properties: {
+            documents: { type: 'array', items: { $ref: '#/components/schemas/FileDocumentListItem' } },
+            nextCursor: { type: 'string', nullable: true },
+          },
+        },
+        FileDocumentDetailResponse: {
+          type: 'object',
+          required: ['document'],
+          properties: {
+            document: { $ref: '#/components/schemas/FileDocumentDetail' },
+          },
+        },
+        FileUploadResponse: {
+          type: 'object',
+          required: ['document', 'version'],
+          properties: {
+            document: { $ref: '#/components/schemas/FileDocumentListItem' },
+            version: { $ref: '#/components/schemas/FileVersionSummary' },
+          },
+        },
+        FileLibraryProjectFolder: {
+          type: 'object',
+          required: ['projectId', 'relativePath', 'updatedAt'],
+          properties: {
+            projectId: { type: 'string' },
+            projectName: { type: 'string', nullable: true },
+            relativePath: {
+              type: 'string',
+              description: 'Folder under `file_library_root` where uploads for this project are stored.',
+            },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        FileLibraryProjectFolderListResponse: {
+          type: 'object',
+          required: ['folders'],
+          properties: {
+            folders: { type: 'array', items: { $ref: '#/components/schemas/FileLibraryProjectFolder' } },
           },
         },
       },
@@ -2898,10 +3014,13 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         get: {
           tags: ['File library'],
           summary: 'List per-project folder mappings',
-          description: 'Orbit project id → relative path under the share root. Uploads for a project fail until a folder is set. **Scope:** `files:read`.',
+          description: 'Orbit project id → relative path (+ display name) under the share root. Uploads for a project fail until a folder is set. Portals can use this to label project filters. **Scope:** `files:read`.',
           security: [{ apiKey: [] }],
           responses: {
-            '200': { description: 'Folder mappings.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': {
+              description: 'Folder mappings.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/FileLibraryProjectFolderListResponse' } } },
+            },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
           },
@@ -2934,7 +3053,18 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             },
           },
           responses: {
-            '200': { description: 'Saved mapping.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': {
+              description: 'Saved mapping.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['folder'],
+                    properties: { folder: { $ref: '#/components/schemas/FileLibraryProjectFolder' } },
+                  },
+                },
+              },
+            },
             '400': { description: 'Invalid or missing path.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
@@ -2961,17 +3091,26 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         get: {
           tags: ['File library'],
           summary: 'List file documents',
-          description: 'One row per normalised filename within a project. Each row includes `latestVersion` with `uploadedBy` + `createdAt`. **Scope:** `files:read`.',
+          description: [
+            'One row per normalised filename within an Orbit project.',
+            'Each row includes `projectId`, `projectName`, and `latestVersion` (`uploadedBy`, `createdAt`, `notes`, `downloadUrl`).',
+            'Filter with `projectId` for a portal project view.',
+            '',
+            '**Scope:** `files:read`.',
+          ].join('\n'),
           security: [{ apiKey: [] }],
           parameters: [
             { in: 'query', name: 'q', schema: { type: 'string' }, description: 'Filename search' },
             { in: 'query', name: 'ext', schema: { type: 'string' }, description: 'Extension filter, e.g. `.3dm`' },
-            { in: 'query', name: 'projectId', schema: { type: 'string' } },
+            { in: 'query', name: 'projectId', schema: { type: 'string' }, description: 'Orbit project id filter' },
             { in: 'query', name: 'limit', schema: { type: 'integer', default: 50 } },
             { in: 'query', name: 'cursor', schema: { type: 'string' } },
           ],
           responses: {
-            '200': { description: 'Document list.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': {
+              description: 'Document list.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/FileDocumentListResponse' } } },
+            },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
           },
@@ -3015,7 +3154,10 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             },
           },
           responses: {
-            '201': { description: 'Created document + version.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '201': {
+              description: 'Created document + version.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/FileUploadResponse' } } },
+            },
             '400': { description: 'Missing project/folder, extension not allowed, or empty file.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '413': { description: 'File exceeds max size.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '401': { $ref: '#/components/responses/Unauthorized' },
@@ -3029,11 +3171,14 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
         get: {
           tags: ['File library'],
           summary: 'Get document + all versions',
-          description: 'Full version history (newest first) with `uploadedBy` and `createdAt` on each version. **Scope:** `files:read`.',
+          description: 'Full version history (newest first) with `uploadedBy`, `createdAt`, `notes`, and `downloadUrl` on each version, plus `projectId` / `projectName`. **Scope:** `files:read`.',
           security: [{ apiKey: [] }],
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
-            '200': { description: 'Document detail.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': {
+              description: 'Document detail.',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/FileDocumentDetailResponse' } } },
+            },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },
@@ -3061,7 +3206,18 @@ export function buildOpenApi(publicBaseUrl: string): unknown {
             },
           },
           responses: {
-            '200': { description: 'Updated document.', content: { 'application/json': { schema: { type: 'object' } } } },
+            '200': {
+              description: 'Updated document.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['document'],
+                    properties: { document: { $ref: '#/components/schemas/FileDocumentListItem' } },
+                  },
+                },
+              },
+            },
             '401': { $ref: '#/components/responses/Unauthorized' },
             '403': { $ref: '#/components/responses/Forbidden' },
             '404': { $ref: '#/components/responses/NotFound' },

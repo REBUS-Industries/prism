@@ -2614,6 +2614,8 @@ export interface FileDocumentListItem {
   name: string;
   extension: string;
   projectId?: string | null;
+  /** Orbit project display name from File Library folder mapping (may be null). */
+  projectName?: string | null;
   tags: string[];
   versionCount: number;
   latestVersion: FileVersionSummary | null;

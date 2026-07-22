@@ -117,7 +117,13 @@ watch(() => props.id, () => void reload());
       <div><span class="label">Extension</span><span>{{ document.extension }}</span></div>
       <div><span class="label">Versions</span><span>{{ document.versionCount }}</span></div>
       <div><span class="label">Updated</span><span>{{ formatWhen(document.updatedAt) }}</span></div>
-      <div v-if="document.projectId"><span class="label">Project</span><span>{{ document.projectId }}</span></div>
+      <div v-if="document.projectId || document.projectName">
+        <span class="label">Project</span>
+        <span class="proj-meta">
+          <strong>{{ document.projectName || document.projectId }}</strong>
+          <code v-if="document.projectName && document.projectId" class="muted">{{ document.projectId }}</code>
+        </span>
+      </div>
       <div v-if="document.tags?.length"><span class="label">Tags</span><span>{{ document.tags.join(', ') }}</span></div>
     </div>
   </section>
@@ -176,6 +182,12 @@ watch(() => props.id, () => void reload());
   opacity: 0.6;
   margin-bottom: 2px;
 }
+.proj-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.proj-meta code { font-size: 11px; }
 .section-title { margin: 0 0 4px; font-size: 16px; }
 .table-wrap { overflow-x: auto; }
 .file-table { width: 100%; border-collapse: collapse; font-size: 13px; }
