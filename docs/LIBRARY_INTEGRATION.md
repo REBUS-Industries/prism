@@ -24,7 +24,7 @@ Your portal integrates via **REST + `X-API-Key`**, not via the admin SPA
 routes (`/admin/#/…`). The admin pages are a reference for what the APIs
 manage; all list/create/edit/delete operations are available programmatically.
 
-### Portal card fields (fixtures + models)
+### Portal card fields (fixtures + models + files)
 
 List and detail JSON for **fixtures** and **models** includes everything a
 portal needs to render a library grid without fetching each asset's detail:
@@ -35,8 +35,13 @@ portal needs to render a library grid without fetching each asset's detail:
 | `orbitUrl` | Orbit viewer link when published | Orbit Model Library link after import |
 | `versions[]` | Stored revisions with `downloadedAt` + `previewUrl` | Import history with `createdAt` + `previewUrl` + `orbitUrl` |
 
+**File library** list/detail rows include `projectId`, `projectName`, and
+`latestVersion` (`uploadedBy`, `createdAt`, `downloadUrl`) — see
+[File library](#file-library).
+
 OpenAPI schemas: **`FixtureListItem`**, **`FixtureVersionSummary`**,
-**`ModelListItem`**, **`ModelVersionSummary`** on [`/docs`](https://prism.rebus.industries/docs).
+**`ModelListItem`**, **`ModelVersionSummary`**, **`FileDocumentListItem`**,
+**`FileVersionSummary`** on [`/docs`](https://prism.rebus.industries/docs).
 Materials/textures use the same `previewUrl` pattern for 2D thumbnails — see
 [Texture previews](#texture-previews) below.
 
@@ -532,15 +537,37 @@ See also external provider browse/import: [`docs/EXTERNAL_MATERIALS.md`](EXTERNA
 source files** (`.3dm`, `.vwx`, …). This is **not** Orbit convert / Model Library
 and **not** visualiser project-attachments (MVR/GDTF).
 
-**Versioning:** uploads with the same basename (case-insensitive) stack as
-immutable versions under one document. Re-sending `Auditorium.3dm` creates
-`vN+1`; prior bytes are kept. Each version records **uploaded by** and
-**date/time**.
+**Versioning:** uploads with the same basename (case-insensitive) **within an
+Orbit project** stack as immutable versions under one document. Re-sending
+`Auditorium.3dm` for the same `projectId` creates `vN+1`; prior bytes are kept.
+Each version records **uploaded by**, **date/time**, and optional **notes**.
 
 **Storage:** Admin → Settings → **File Library** (`file_library_root`), or
 `${DATA_DIR}/files` when unset. Prefer a LAN fileserver bind-mount in production.
+Each Orbit project must have a relative folder configured before uploads succeed.
 
 **Connector handoff:** [`docs/handoffs/FILE_LIBRARY_CONNECTORS.md`](handoffs/FILE_LIBRARY_CONNECTORS.md)
+
+### Portal card / list fields
+
+List and detail JSON include everything a portal needs for a project-scoped
+file browser (no N+1 to resolve project names):
+
+| Field | Notes |
+|-------|--------|
+| `projectId` | Orbit project id (required on upload; filter with `?projectId=`) |
+| `projectName` | Display name from Settings → File Library folder mapping (nullable) |
+| `name` / `extension` | Document filename + type |
+| `versionCount` | Immutable stack size |
+| `latestVersion` | Tip version: `uploadedBy`, `createdAt`, `sizeBytes`, `notes`, `downloadUrl`, `sourceApp` |
+| `versions[]` | Detail only — full history (newest first), each with `downloadUrl` |
+
+Also: `GET /api/files/project-folders` returns `{ projectId, projectName, relativePath }[]`
+for portal project filters / labels.
+
+OpenAPI schemas: **`FileDocumentListItem`**, **`FileVersionSummary`**,
+**`FileLibraryProjectFolder`** on [`/docs`](https://prism.rebus.industries/docs)
+(tag **File library**).
 
 ### Read
 
@@ -551,9 +578,13 @@ export PRISM_KEY=prism_xyz
 curl -sS -H "X-API-Key: $PRISM_KEY" \
   https://prism.rebus.industries/api/files/status
 
-# List documents (one row per filename; includes latestVersion.uploadedBy + createdAt)
+# Project folder map (names + paths)
 curl -sS -H "X-API-Key: $PRISM_KEY" \
-  "https://prism.rebus.industries/api/files?q=Auditorium&limit=50"
+  https://prism.rebus.industries/api/files/project-folders
+
+# List documents (includes projectId, projectName, latestVersion.*)
+curl -sS -H "X-API-Key: $PRISM_KEY" \
+  "https://prism.rebus.industries/api/files?projectId=$ORBIT_PROJECT_ID&limit=50"
 
 # Document + full version history
 curl -sS -H "X-API-Key: $PRISM_KEY" \

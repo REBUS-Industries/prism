@@ -37,6 +37,8 @@ Auth: `X-API-Key` with scopes **`files:read`** + **`files:write`** (mint in Admi
 | `GET` | `/api/files/status` | `files:read` | Preflight: `writable`, `allowedExts`, `maxBytes`, `root` |
 | `POST` | `/api/files` | `files:write` | Multipart upload (new doc or new version) |
 | `GET` | `/api/files` | `files:read` | List documents |
+| `GET` | `/api/files` | `files:read` | List docs (`projectId`, `projectName`, `latestVersion`) |
+| `GET` | `/api/files/project-folders` | `files:read` | Orbit project → folder + display name |
 | `GET` | `/api/files/{id}` | `files:read` | Detail + all versions (`uploadedBy`, `createdAt`) |
 | `GET` | `/api/files/{id}/download` | `files:read` | Latest bytes |
 | `GET` | `/api/files/{id}/versions/{versionId}/download` | `files:read` | Specific version |

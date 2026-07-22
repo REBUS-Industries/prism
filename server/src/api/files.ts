@@ -413,18 +413,37 @@ function toVersionPublic(row: typeof fileVersions.$inferSelect) {
 function toDocumentSummary(
   doc: typeof fileDocuments.$inferSelect,
   latest: typeof fileVersions.$inferSelect | null,
+  projectName: string | null = null,
 ) {
   return {
     id: doc.id,
     name: doc.name,
     extension: doc.extension,
     projectId: doc.projectId,
+    /** Display name from File Library project-folder mapping (may be null). */
+    projectName,
     tags: Array.isArray(doc.tags) ? doc.tags : [],
     versionCount: doc.versionCount,
     latestVersion: latest ? toVersionPublic(latest) : null,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };
+}
+
+/** Resolve Orbit project display names from `file_library_project_folders`. */
+async function projectNamesById(projectIds: Array<string | null | undefined>): Promise<Map<string, string | null>> {
+  const ids = [...new Set(projectIds.filter((id): id is string => !!id?.trim()).map((id) => id.trim()))];
+  const map = new Map<string, string | null>();
+  if (!ids.length) return map;
+  const rows = await db
+    .select({
+      projectId: fileLibraryProjectFolders.projectId,
+      projectName: fileLibraryProjectFolders.projectName,
+    })
+    .from(fileLibraryProjectFolders)
+    .where(inArray(fileLibraryProjectFolders.projectId, ids));
+  for (const r of rows) map.set(r.projectId, r.projectName ?? null);
+  return map;
 }
 
 const plugin: FastifyPluginAsync = async (app) => {
@@ -618,8 +637,13 @@ const plugin: FastifyPluginAsync = async (app) => {
       ? await db.select().from(fileVersions).where(inArray(fileVersions.id, latestIds))
       : [];
     const latestById = new Map(latestRows.map((v) => [v.id, v]));
+    const nameByProject = await projectNamesById(page.map((d) => d.projectId));
 
-    const documents = page.map((d) => toDocumentSummary(d, d.latestVersionId ? latestById.get(d.latestVersionId) ?? null : null));
+    const documents = page.map((d) => toDocumentSummary(
+      d,
+      d.latestVersionId ? latestById.get(d.latestVersionId) ?? null : null,
+      d.projectId ? (nameByProject.get(d.projectId) ?? null) : null,
+    ));
     return {
       documents,
       nextCursor: rows.length > limit ? String(offset + limit) : null,
@@ -639,9 +663,14 @@ const plugin: FastifyPluginAsync = async (app) => {
       .from(fileVersions)
       .where(and(eq(fileVersions.documentId, doc.id), isNull(fileVersions.deletedAt)))
       .orderBy(desc(fileVersions.versionNumber));
+    const nameByProject = await projectNamesById([doc.projectId]);
     return {
       document: {
-        ...toDocumentSummary(doc, versions[0] ?? null),
+        ...toDocumentSummary(
+          doc,
+          versions[0] ?? null,
+          doc.projectId ? (nameByProject.get(doc.projectId) ?? null) : null,
+        ),
         versions: versions.map(toVersionPublic),
       },
     };
@@ -848,8 +877,13 @@ const plugin: FastifyPluginAsync = async (app) => {
     }).where(eq(fileDocuments.id, doc.id)).returning();
     const updated = updatedDocs[0]!;
 
+    const nameByProject = await projectNamesById([updated.projectId]);
     return reply.code(201).send({
-      document: toDocumentSummary(updated, version),
+      document: toDocumentSummary(
+        updated,
+        version,
+        updated.projectId ? (nameByProject.get(updated.projectId) ?? null) : null,
+      ),
       version: toVersionPublic(version),
     });
   });
@@ -881,7 +915,14 @@ const plugin: FastifyPluginAsync = async (app) => {
       const v = await db.select().from(fileVersions).where(eq(fileVersions.id, doc.latestVersionId)).limit(1);
       latest = v[0] ?? null;
     }
-    return { document: toDocumentSummary(doc, latest) };
+    const nameByProject = await projectNamesById([doc.projectId]);
+    return {
+      document: toDocumentSummary(
+        doc,
+        latest,
+        doc.projectId ? (nameByProject.get(doc.projectId) ?? null) : null,
+      ),
+    };
   });
 
   app.delete<{ Params: { id: string } }>('/:id', {

@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import { filesApi, type ApiError, type FileDocumentListItem, type FileLibraryStatus } from '../../shared/api';
+import {
+  filesApi,
+  type ApiError,
+  type FileDocumentListItem,
+  type FileLibraryProjectFolder,
+  type FileLibraryStatus,
+} from '../../shared/api';
 import Icon from '../../shared/Icon.vue';
 
 const documents = ref<FileDocumentListItem[]>([]);
+const folders = ref<FileLibraryProjectFolder[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const search = ref('');
 const extFilter = ref('');
+const projectFilter = ref('');
 const nextCursor = ref<string | null>(null);
 const status = ref<FileLibraryStatus | null>(null);
 const PAGE = 50;
@@ -36,11 +44,30 @@ function formatWhen(iso: string | undefined | null): string {
   });
 }
 
+function projectLabel(d: FileDocumentListItem): string {
+  if (d.projectName?.trim()) return d.projectName.trim();
+  if (d.projectId?.trim()) return d.projectId.trim();
+  return '—';
+}
+
 async function loadStatus(): Promise<void> {
   try {
     status.value = await filesApi.status();
   } catch {
     status.value = null;
+  }
+}
+
+async function loadFolders(): Promise<void> {
+  try {
+    const res = await filesApi.listProjectFolders();
+    folders.value = [...res.folders].sort((a, b) =>
+      (a.projectName || a.projectId).localeCompare(b.projectName || b.projectId, undefined, {
+        sensitivity: 'base',
+      }),
+    );
+  } catch {
+    folders.value = [];
   }
 }
 
@@ -51,6 +78,7 @@ async function load(reset = true): Promise<void> {
     const res = await filesApi.list({
       q: search.value.trim() || undefined,
       ext: extFilter.value || undefined,
+      projectId: projectFilter.value || undefined,
       limit: PAGE,
       cursor: reset ? null : nextCursor.value,
     });
@@ -72,10 +100,15 @@ function onExtFilter(): void {
   void load(true);
 }
 
+function onProjectFilter(): void {
+  void load(true);
+}
+
 const isEmpty = computed(() => !loading.value && documents.value.length === 0);
 
 onMounted(() => {
   void loadStatus();
+  void loadFolders();
   void load(true);
 });
 </script>
@@ -90,6 +123,7 @@ onMounted(() => {
 
   <p class="muted small mt">
     Native CAD / DCC source archives (not Orbit geometry). Re-uploading the same filename stacks a new version.
+    Each file belongs to an Orbit project (folder configured in Settings → File Library).
   </p>
 
   <p v-if="status" class="muted small status-line" :class="{ warn: !status.writable }">
@@ -105,6 +139,12 @@ onMounted(() => {
         <Icon name="search" :size="16" class="search-icon" />
         <input v-model="search" placeholder="Search by filename…" @input="onSearch" />
       </div>
+      <select v-model="projectFilter" class="project-filter" @change="onProjectFilter">
+        <option value="">All projects</option>
+        <option v-for="f in folders" :key="f.projectId" :value="f.projectId">
+          {{ f.projectName || f.projectId }}
+        </option>
+      </select>
       <select v-model="extFilter" class="ext-filter" @change="onExtFilter">
         <option value="">All types</option>
         <option v-for="ext in (status?.allowedExts ?? [])" :key="ext" :value="ext">{{ ext }}</option>
@@ -121,6 +161,7 @@ onMounted(() => {
       <thead>
         <tr>
           <th>Name</th>
+          <th>Project</th>
           <th>Type</th>
           <th>Versions</th>
           <th>Latest size</th>
@@ -136,6 +177,12 @@ onMounted(() => {
             <RouterLink :to="{ name: 'file-detail', params: { id: d.id } }" class="name-link">
               {{ d.name }}
             </RouterLink>
+          </td>
+          <td>
+            <div class="proj-cell" :title="d.projectId || undefined">
+              <span class="proj-name">{{ projectLabel(d) }}</span>
+              <span v-if="d.projectName && d.projectId" class="muted small mono">{{ d.projectId }}</span>
+            </div>
           </td>
           <td class="muted">{{ d.extension }}</td>
           <td><span class="pill">v{{ d.versionCount }}</span></td>
@@ -157,26 +204,30 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.toolbar { display: flex; gap: 12px; align-items: center; }
-.search-box { position: relative; flex: 1; }
+.toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.search-box { position: relative; flex: 1; min-width: 180px; }
 .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.5; }
 .search-box input { width: 100%; padding-left: 32px; }
+.project-filter { min-width: 180px; max-width: 280px; }
 .ext-filter { min-width: 120px; }
 .status-line { margin-top: 6px; }
 .status-line.warn { color: var(--color-warning, #c9a227); }
 .status-line code { font-size: 12px; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--color-border, #2a2a32); border-radius: 8px; }
 .file-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.file-table th, .file-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--color-border, #2a2a32); }
-.file-table th { font-weight: 600; background: var(--surface-2, #1a1a1f); white-space: nowrap; }
-.file-table tbody tr:hover { background: var(--surface-hover, rgba(255,255,255,0.03)); }
+.file-table th, .file-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--color-border, #2a2a32); vertical-align: top; }
+.file-table th { font-weight: 600; background: var(--color-bg-hover, var(--surface-2, #1a1a1f)); white-space: nowrap; color: var(--color-text); }
+.file-table tbody tr:hover { background: var(--color-bg-hover, rgba(255,255,255,0.03)); }
 .name-link { color: inherit; font-weight: 500; text-decoration: none; }
 .name-link:hover { text-decoration: underline; }
+.proj-cell { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+.proj-name { font-weight: 500; }
+.mono { font-family: ui-monospace, monospace; font-size: 11px; }
 .pill {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
-  background: var(--surface-3, #24242c);
+  background: var(--color-bg-hover, var(--surface-3, #24242c));
   font-size: 12px;
 }
 .notes-cell {
